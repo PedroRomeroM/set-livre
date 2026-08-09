@@ -1,0 +1,297 @@
+# UX Blueprint, rotas e fluxos
+
+## 1. Princípios
+
+- rotas representam intenções;
+- mobile tem composição própria;
+- nenhuma informação essencial depende de hover;
+- erro explica ação;
+- reserva nunca promete vaga antes do hold;
+- preço sempre explicável;
+- mudanças de estado importantes ficam visíveis;
+- filtros pertencem à URL;
+- login preserva intenção, não preço/garantia.
+
+## 2. Navegação pública
+
+Header:
+
+- marca;
+- `Encontrar estúdio`;
+- `Anuncie seu estúdio`;
+- login/conta;
+- menu mobile.
+
+Footer:
+
+- produto;
+- cidade;
+- termos/privacidade/cancelamento;
+- contato;
+- acessibilidade.
+
+## 3. Home
+
+A home não lista estúdios.
+
+Seções:
+
+1. hero com proposta de valor;
+2. formulário inicial:
+   - data;
+   - bairro opcional;
+   - tipo opcional;
+   - CTA;
+3. categorias de uso;
+4. como funciona para locatário;
+5. como funciona para dono;
+6. diferenciais/confiança;
+7. CTA final;
+8. conteúdo comercial fixo.
+
+O submit navega para `/estudios?...`.
+
+Estados:
+
+- data inválida;
+- ausência de opções;
+- mobile teclado/date picker;
+- sem JavaScript: conteúdo e links continuam.
+
+## 4. Listagem
+
+Desktop:
+
+- header de resultados;
+- filtros laterais ou barra;
+- ordem;
+- grid;
+- `Carregar mais`.
+
+Mobile:
+
+- resumo;
+- botão Filtros com contador;
+- bottom sheet/fullscreen;
+- chips;
+- grid/lista de uma coluna.
+
+Filtros:
+
+- bairro;
+- data;
+- preço;
+- tipo;
+- capacidade;
+- comodidades/tags.
+
+Card:
+
+- imagem/capa;
+- nome;
+- bairro;
+- preço exato/h;
+- capacidade;
+- tipo;
+- até 4 destaques;
+- disponibilidade da data;
+- card inteiro abre detalhe;
+- sem botões internos conflitantes.
+
+## 5. Detalhe
+
+Ordem:
+
+1. breadcrumb;
+2. título/endereço/preço;
+3. galeria;
+4. resumo e capacidade;
+5. descrição;
+6. comodidades;
+7. vídeo;
+8. regras;
+9. FAQ;
+10. calendário/configurador;
+11. CTA sticky mobile quando apropriado.
+
+Sem mapa. Endereço completo visível.
+
+Galeria:
+
+- grid desktop;
+- carousel mobile;
+- lightbox acessível;
+- contador;
+- alt;
+- foco.
+
+## 6. Configuração
+
+Campos:
+
+- data;
+- hora inicial;
+- duração;
+- pessoas;
+- adicionais;
+- observações.
+
+Painel de resumo:
+
+- horas;
+- multiplicadores;
+- adicionais;
+- total;
+- validade;
+- aviso de disponibilidade.
+
+CTA:
+
+- anônimo: `Entrar para continuar`;
+- autenticado: `Ir para pagamento`.
+
+## 7. Auth no contexto
+
+Ao clicar:
+
+- salvar draft;
+- navegar `/entrar?returnTo=...`;
+- após auth voltar;
+- mostrar “Recalculamos disponibilidade e preço”;
+- se indisponível, manter escolhas e sugerir horários;
+- não apagar observações sem necessidade.
+
+## 8. Checkout
+
+### Cartão
+
+- resumo;
+- dados do pagador;
+- componente/tokenização provider;
+- botão com estado;
+- sem duplo submit;
+- mensagem de processamento;
+- sucesso só após confirmação.
+
+### PIX
+
+- QR;
+- copia/cola;
+- contador;
+- estado aguardando;
+- polling sem spam;
+- expiração;
+- `Gerar novo PIX`.
+
+### Conflito
+
+Mensagem:
+
+“O horário ficou indisponível antes da confirmação do pagamento. Nenhuma reserva foi criada. Escolha outro horário.”
+
+Se provider cobrou indevidamente, não usar essa mensagem; abrir estado de reembolso/incidente.
+
+## 9. Área do locatário
+
+`/conta/reservas`:
+
+- próximas;
+- passadas;
+- canceladas;
+- cursor;
+- status;
+- data, estúdio, valor.
+
+Detalhe:
+
+- período;
+- endereço;
+- adicionais;
+- pagamento;
+- cancelamento;
+- comprovantes/status;
+- política usada.
+
+## 10. Área do dono
+
+Dashboard:
+
+- estúdios/status;
+- próximas reservas;
+- pendências de revisão/recipient;
+- próximos repasses;
+- alertas operacionais.
+
+Editor de estúdio:
+
+- navegação por etapas;
+- progresso derivado;
+- autosave somente se seguro; baseline usa salvar explícito;
+- status da revisão;
+- preview aprovado/draft;
+- submit com checklist.
+
+Agenda:
+
+- views;
+- filtros;
+- create/move block;
+- eventos;
+- iCal.
+
+Financeiro:
+
+- valores a receber;
+- pagos;
+- bloqueados;
+- reserva relacionada;
+- sem dados do cartão.
+
+## 11. Backoffice
+
+Definido em documento próprio. Composição densa, filtros server-side, preview de impacto e confirmação forte.
+
+## 12. Estados obrigatórios
+
+Toda rota:
+
+- loading inicial estável;
+- background refresh sem desmontar;
+- vazio com CTA;
+- erro de campo;
+- erro de seção;
+- erro global recuperável;
+- 404 segura;
+- 403;
+- conflito;
+- sucesso;
+- offline/timeout quando relevante.
+
+## 13. Copy crítica
+
+- `Disponível` significa resultado atual, não garantia.
+- `Preço estimado` até snapshot; `Total` quando quote.
+- `Reserva confirmada` somente após pagamento.
+- `Pagamento pendente` não é reserva.
+- `Repasse programado` não é pago.
+- `Alterações em análise` mantém versão pública anterior.
+
+## 14. Deep links
+
+- filtros na URL;
+- date/slot em reserva;
+- backoffice alvo;
+- parâmetros de foco consumidos e removidos;
+- nenhuma URL aberta pode executar ação destrutiva.
+
+## 15. Mobile
+
+- 320 px sem overflow;
+- bottom nav só em áreas autenticadas se necessário;
+- CTA respeita safe area;
+- filtros em sheet;
+- editor longo em páginas/steps;
+- calendário adapta view padrão para dia;
+- teclado não cobre ação;
+- input 16 px;
+- touch 44 px.

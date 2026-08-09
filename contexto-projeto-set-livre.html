@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Resumo executivo do produto, das features e do contexto de implementação da plataforma Set Livre."
+    />
+    <title>Set Livre — Contexto resumido do projeto</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #17211d;
+        --muted: #58645e;
+        --paper: #f6f7f3;
+        --surface: #ffffff;
+        --line: #d9ded8;
+        --brand: #176b53;
+        --brand-dark: #0c4938;
+        --brand-soft: #e3f1eb;
+        --accent: #ef9e42;
+        --accent-soft: #fff1dc;
+        --danger: #9b3b2e;
+        --danger-soft: #fbe8e4;
+        --shadow: 0 14px 34px rgb(22 46 36 / 8%);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        font-size: 1rem;
+        line-height: 1.6;
+      }
+
+      a {
+        color: var(--brand-dark);
+        text-underline-offset: 0.18em;
+      }
+
+      a:hover {
+        color: var(--brand);
+      }
+
+      a:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 4px;
+        border-radius: 4px;
+      }
+
+      code {
+        padding: 0.12em 0.35em;
+        border-radius: 5px;
+        background: #edf0ec;
+        font-size: 0.9em;
+      }
+
+      .skip-link {
+        position: absolute;
+        z-index: 10;
+        top: 0.75rem;
+        left: 0.75rem;
+        padding: 0.65rem 0.9rem;
+        border-radius: 8px;
+        background: var(--surface);
+        transform: translateY(-180%);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .hero {
+        overflow: hidden;
+        position: relative;
+        padding: 4.5rem 1.25rem 3.5rem;
+        background:
+          radial-gradient(circle at 85% 15%, rgb(239 158 66 / 22%), transparent 25rem),
+          linear-gradient(145deg, #0c4938, #176b53 58%, #208266);
+        color: #fff;
+      }
+
+      .hero::after {
+        position: absolute;
+        right: -8rem;
+        bottom: -12rem;
+        width: 28rem;
+        height: 28rem;
+        border: 1px solid rgb(255 255 255 / 18%);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .wrap {
+        width: min(1100px, 100%);
+        margin: 0 auto;
+      }
+
+      .hero-content {
+        position: relative;
+        z-index: 1;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.85rem;
+        color: #cde8de;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.18;
+        text-wrap: balance;
+      }
+
+      h1 {
+        max-width: 850px;
+        margin: 0;
+        font-size: clamp(2.35rem, 7vw, 5rem);
+        letter-spacing: -0.055em;
+      }
+
+      .lead {
+        max-width: 780px;
+        margin: 1.35rem 0 0;
+        color: #e7f4ef;
+        font-size: clamp(1.05rem, 2.3vw, 1.3rem);
+      }
+
+      .meta-row,
+      .chip-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        padding: 0;
+        list-style: none;
+      }
+
+      .meta-row {
+        margin: 1.6rem 0 0;
+      }
+
+      .meta-row li {
+        padding: 0.42rem 0.72rem;
+        border: 1px solid rgb(255 255 255 / 28%);
+        border-radius: 999px;
+        background: rgb(255 255 255 / 9%);
+        color: #fff;
+        font-size: 0.88rem;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.85rem;
+        margin-top: 2.3rem;
+      }
+
+      .stat {
+        padding: 1rem;
+        border: 1px solid rgb(255 255 255 / 20%);
+        border-radius: 14px;
+        background: rgb(8 51 39 / 32%);
+        backdrop-filter: blur(6px);
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 1.65rem;
+        line-height: 1.1;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 0.32rem;
+        color: #d9eee6;
+        font-size: 0.86rem;
+      }
+
+      .quick-nav {
+        position: sticky;
+        z-index: 5;
+        top: 0;
+        border-bottom: 1px solid var(--line);
+        background: rgb(246 247 243 / 94%);
+        backdrop-filter: blur(10px);
+      }
+
+      .quick-nav ul {
+        display: flex;
+        gap: 1.1rem;
+        overflow-x: auto;
+        margin: 0;
+        padding: 0.9rem 0;
+        list-style: none;
+        scrollbar-width: thin;
+      }
+
+      .quick-nav a {
+        color: var(--muted);
+        font-size: 0.88rem;
+        font-weight: 700;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      main {
+        padding: 1.5rem 1.25rem 5rem;
+      }
+
+      section {
+        padding-top: 3.5rem;
+        scroll-margin-top: 3.5rem;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+        gap: 2rem;
+        align-items: start;
+        margin-bottom: 1.5rem;
+      }
+
+      .section-head h2 {
+        margin: 0;
+        color: var(--brand-dark);
+        font-size: clamp(1.65rem, 3.4vw, 2.45rem);
+        letter-spacing: -0.03em;
+      }
+
+      .section-head p {
+        margin: 0.15rem 0 0;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .notice {
+        padding: 1.15rem 1.25rem;
+        border: 1px solid #ebd09d;
+        border-left: 5px solid var(--accent);
+        border-radius: 12px;
+        background: var(--accent-soft);
+      }
+
+      .notice strong {
+        color: #74440f;
+      }
+
+      .notice.danger {
+        border-color: #e8b7af;
+        border-left-color: var(--danger);
+        background: var(--danger-soft);
+      }
+
+      .notice.danger strong {
+        color: var(--danger);
+      }
+
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .card-grid.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .card {
+        padding: 1.25rem;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .card h3 {
+        margin: 0 0 0.55rem;
+        font-size: 1.05rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .card ul {
+        margin: 0.65rem 0 0;
+        padding-left: 1.15rem;
+      }
+
+      .card li + li,
+      .tight-list li + li {
+        margin-top: 0.4rem;
+      }
+
+      .journey {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 0.65rem;
+        margin: 1.25rem 0 0;
+        padding: 0;
+        counter-reset: journey;
+        list-style: none;
+      }
+
+      .journey li {
+        position: relative;
+        min-height: 7.5rem;
+        padding: 2.55rem 0.8rem 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 0.88rem;
+        counter-increment: journey;
+      }
+
+      .journey li::before {
+        position: absolute;
+        top: 0.75rem;
+        left: 0.75rem;
+        display: grid;
+        width: 1.35rem;
+        height: 1.35rem;
+        border-radius: 50%;
+        background: var(--brand-soft);
+        color: var(--brand-dark);
+        content: counter(journey);
+        font-size: 0.72rem;
+        font-weight: 800;
+        place-items: center;
+      }
+
+      .feature-card {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.8rem;
+        align-items: start;
+      }
+
+      .feature-number {
+        min-width: 2.6rem;
+        padding: 0.25rem 0.4rem;
+        border-radius: 8px;
+        background: var(--brand-soft);
+        color: var(--brand-dark);
+        font-size: 0.75rem;
+        font-weight: 850;
+        text-align: center;
+      }
+
+      .feature-card h3 {
+        margin-bottom: 0.35rem;
+      }
+
+      .feature-card p {
+        font-size: 0.92rem;
+      }
+
+      .feature-card p + p {
+        margin-top: 0.3rem;
+      }
+
+      .feature-list {
+        margin: 0;
+        padding: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+        list-style: none;
+      }
+
+      .feature-list li + li {
+        margin-top: 0.32rem;
+      }
+
+      .feature-list strong {
+        color: var(--ink);
+        font-size: 0.78rem;
+      }
+
+      .rule-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.75rem;
+      }
+
+      .rule {
+        padding: 1rem 1.1rem;
+        border-left: 4px solid var(--brand);
+        border-radius: 0 12px 12px 0;
+        background: var(--surface);
+      }
+
+      .rule strong {
+        display: block;
+        margin-bottom: 0.25rem;
+      }
+
+      .rule span {
+        color: var(--muted);
+      }
+
+      .architecture {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.65rem;
+        align-items: stretch;
+        margin: 1.2rem 0;
+      }
+
+      .architecture div {
+        position: relative;
+        display: grid;
+        min-height: 7.2rem;
+        padding: 1rem;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--surface);
+        font-size: 0.9rem;
+        text-align: center;
+        place-items: center;
+      }
+
+      .architecture div:not(:last-child)::after {
+        position: absolute;
+        z-index: 1;
+        right: -0.8rem;
+        color: var(--brand);
+        content: "→";
+        font-size: 1.35rem;
+        font-weight: 900;
+      }
+
+      .architecture strong {
+        display: block;
+      }
+
+      .architecture span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .chip-list {
+        margin: 1rem 0 0;
+      }
+
+      .chip-list li {
+        padding: 0.4rem 0.65rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .pipeline {
+        margin: 1.2rem 0 0;
+        padding: 1rem 1.2rem;
+        overflow-x: auto;
+        border-radius: 12px;
+        background: #15251e;
+        color: #def1e9;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.85rem;
+        white-space: nowrap;
+      }
+
+      .phase-list {
+        display: grid;
+        gap: 0;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .phase-list li {
+        display: grid;
+        grid-template-columns: 8rem 1fr;
+        gap: 1.1rem;
+        padding: 1rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .phase-list li:last-child {
+        border-bottom: 0;
+      }
+
+      .phase-list strong {
+        color: var(--brand-dark);
+      }
+
+      .phase-list span {
+        color: var(--muted);
+      }
+
+      .top-gap {
+        margin-top: 1rem;
+      }
+
+      .top-gap-large {
+        margin-top: 1.25rem;
+      }
+
+      .source-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem 1rem;
+        padding: 0;
+        list-style: none;
+      }
+
+      .source-list li {
+        padding: 0.8rem 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      footer {
+        padding: 2rem 1.25rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      @media (max-width: 900px) {
+        .stats,
+        .card-grid.three {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .journey {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .architecture {
+          grid-template-columns: 1fr;
+        }
+
+        .architecture div {
+          min-height: auto;
+        }
+
+        .architecture div:not(:last-child)::after {
+          right: auto;
+          bottom: -1.15rem;
+          content: "↓";
+        }
+      }
+
+      @media (max-width: 680px) {
+        .hero {
+          padding-top: 3.5rem;
+        }
+
+        .stats,
+        .card-grid,
+        .card-grid.three,
+        .rule-grid,
+        .section-head,
+        .source-list {
+          grid-template-columns: 1fr;
+        }
+
+        .journey {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .section-head {
+          gap: 0.65rem;
+        }
+
+        .phase-list li {
+          grid-template-columns: 1fr;
+          gap: 0.25rem;
+        }
+      }
+
+      @media (max-width: 390px) {
+        main,
+        .hero,
+        footer {
+          padding-right: 1rem;
+          padding-left: 1rem;
+        }
+
+        .journey {
+          grid-template-columns: 1fr;
+        }
+
+        .journey li {
+          min-height: auto;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
+      @media print {
+        :root {
+          --paper: #fff;
+          --shadow: none;
+        }
+
+        .quick-nav,
+        .skip-link {
+          display: none;
+        }
+
+        .hero {
+          padding: 1.5rem 0;
+          background: #fff;
+          color: #000;
+        }
+
+        .hero::after {
+          display: none;
+        }
+
+        .lead,
+        .eyebrow,
+        .stat span {
+          color: #333;
+        }
+
+        .meta-row li,
+        .stat {
+          border-color: #bbb;
+          background: #fff;
+          color: #000;
+        }
+
+        main {
+          padding: 0;
+        }
+
+        section {
+          padding-top: 1.6rem;
+          break-inside: avoid;
+        }
+
+        a {
+          color: #000;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+    <header class="hero">
+      <div class="wrap hero-content">
+        <p class="eyebrow">Set Livre · contexto executivo · baseline 1.1</p>
+        <h1>Marketplace completo para aluguel de estúdios audiovisuais</h1>
+        <p class="lead">
+          A Set Livre conecta quem precisa produzir foto, vídeo, podcast ou live
+          com donos de estúdios. A proposta é operar o ciclo comercial inteiro:
+          descoberta, agenda, reserva, pagamento, repasse e suporte.
+        </p>
+        <ul class="meta-row" aria-label="Contexto do lançamento">
+          <li>Curitiba / PR</li>
+          <li>PT-BR</li>
+          <li>BRL</li>
+          <li>America/Sao_Paulo</li>
+          <li>MVP completo comercializável</li>
+        </ul>
+
+        <div class="stats" aria-label="Números do pacote documental">
+          <div class="stat"><strong>34</strong><span>features especificadas</span></div>
+          <div class="stat"><strong>193</strong><span>cenários E2E planejados</span></div>
+          <div class="stat"><strong>16</strong><span>decisões arquiteturais</span></div>
+          <div class="stat"><strong>0</strong><span>código implementado aqui</span></div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="quick-nav" aria-label="Navegação deste resumo">
+      <div class="wrap">
+        <ul>
+          <li><a href="#visao">Visão</a></li>
+          <li><a href="#jornada">Pessoas e jornada</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#ideias">Ideias centrais</a></li>
+          <li><a href="#arquitetura">Arquitetura</a></li>
+          <li><a href="#implementacao">Implementação</a></li>
+          <li><a href="#pendencias">Pendências</a></li>
+          <li><a href="#fora">Fora de escopo</a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <main id="conteudo">
+      <div class="wrap">
+        <section id="visao">
+          <div class="section-head">
+            <h2>O projeto, em uma frase</h2>
+            <p>
+              Uma plataforma web de locação de estúdios com catálogo aprovado,
+              disponibilidade confiável e operação financeira rastreável — não
+              apenas uma vitrine ou protótipo.
+            </p>
+          </div>
+
+          <div class="notice">
+            <strong>Estado real deste diretório:</strong> é um pacote documental.
+            Antes da criação deste resumo, havia 110 arquivos Markdown e nenhum
+            <code>.git</code>, <code>package.json</code>, aplicação, migration,
+            teste ou pipeline de CI. As 34 features e os 193 cenários estão
+            planejados, não implementados.
+          </div>
+        </section>
+
+        <section id="jornada">
+          <div class="section-head">
+            <h2>Pessoas e jornada principal</h2>
+            <p>
+              Visitantes descobrem; locatários reservam; donos publicam e operam;
+              a equipe Set Livre revisa, atende e controla o financeiro.
+            </p>
+          </div>
+
+          <div class="card-grid">
+            <article class="card">
+              <h3>Visitante e locatário PF/PJ</h3>
+              <p>
+                Pesquisa estúdios, consulta preço e disponibilidade, cria conta,
+                paga, acompanha ou cancela reservas elegíveis e exerce direitos
+                de dados.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Dono do estúdio</h3>
+              <p>
+                Mantém vários estúdios, conteúdo, mídia, calendário, preços e
+                adicionais; envia para aprovação e acompanha reservas e repasses.
+                Cada estúdio tem apenas um dono nesta versão.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Operação Set Livre</h3>
+              <p>
+                Reviewer, suporte, financeiro e admin operam em backoffice
+                separado, com papéis server-side e auditoria de ações sensíveis.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Workers</h3>
+              <p>
+                Expiram holds, reconciliam pagamentos, enviam e-mails, encerram
+                reservas, processam repasses e executam manutenção de forma
+                idempotente.
+              </p>
+            </article>
+          </div>
+
+          <ol class="journey" aria-label="Jornada de reserva e repasse">
+            <li>Home e filtros</li>
+            <li>Listagem e detalhe</li>
+            <li>Configuração e cotação</li>
+            <li>Login e revalidação</li>
+            <li>Pagamento e hold</li>
+            <li>Reserva confirmada</li>
+            <li>Uso do estúdio</li>
+            <li>Repasse ao dono</li>
+            <li>Painéis e suporte</li>
+            <li>Cancelamento ou refund</li>
+            <li>Reconciliação</li>
+            <li>Auditoria</li>
+          </ol>
+        </section>
+
+        <section id="features">
+          <div class="section-head">
+            <h2>Features, agrupadas</h2>
+            <p>
+              O catálogo possui 34 features: 33 P0 e apenas a agenda/iCal
+              (FEAT-015) como P1.
+            </p>
+          </div>
+
+          <div class="card-grid three">
+            <article class="card feature-card">
+              <span class="feature-number">001 · 010–011</span>
+              <div>
+                <h3>Descoberta pública</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-001</strong> — shell e home sem cards de estúdio.</li>
+                  <li><strong>FEAT-010</strong> — listagem, filtros, preço e cursor.</li>
+                  <li><strong>FEAT-011</strong> — detalhe, galeria, disponibilidade e SEO.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">002–003 · 034</span>
+              <div>
+                <h3>Identidade e privacidade</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-002</strong> — cadastro, confirmação, login e recuperação.</li>
+                  <li><strong>FEAT-003</strong> — perfil, conta e dados PF/PJ.</li>
+                  <li><strong>FEAT-034</strong> — termos, LGPD, exportação e exclusão.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">004–005</span>
+              <div>
+                <h3>Entrada do dono</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-004</strong> — ativação e onboarding do recebedor.</li>
+                  <li><strong>FEAT-005</strong> — dashboard e portfólio de estúdios.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">006–009</span>
+              <div>
+                <h3>Estúdios e publicação</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-006</strong> — estúdio e dados centrais versionados.</li>
+                  <li><strong>FEAT-007</strong> — taxonomias, regras, FAQ e YouTube.</li>
+                  <li><strong>FEAT-008</strong> — fotos, capa, upload e ordenação.</li>
+                  <li><strong>FEAT-009</strong> — revisão, publicação, edição e pausa.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">012–015</span>
+              <div>
+                <h3>Calendário</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-012</strong> — disponibilidade semanal.</li>
+                  <li><strong>FEAT-013</strong> — exceções, bloqueios, buffer e duração.</li>
+                  <li><strong>FEAT-014</strong> — calendário avançado e drag-and-drop.</li>
+                  <li><strong>FEAT-015</strong> — agenda consolidada e iCal manual.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">016–017</span>
+              <div>
+                <h3>Preço e adicionais</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-016</strong> — preço por hora e multiplicadores.</li>
+                  <li><strong>FEAT-017</strong> — adicionais por unidade.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">018–023</span>
+              <div>
+                <h3>Reserva e checkout</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-018</strong> — configurador e cotação autoritativa.</li>
+                  <li><strong>FEAT-019</strong> — retorno pós-login e restauração.</li>
+                  <li><strong>FEAT-020</strong> — início, hold e concorrência.</li>
+                  <li><strong>FEAT-021</strong> — pagamento com cartão.</li>
+                  <li><strong>FEAT-022</strong> — pagamento com PIX.</li>
+                  <li><strong>FEAT-023</strong> — webhooks, reconciliação e retry.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">024–029</span>
+              <div>
+                <h3>Pós-reserva e financeiro</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-024</strong> — confirmação e ciclo da reserva.</li>
+                  <li><strong>FEAT-025</strong> — cancelamento e reembolso total.</li>
+                  <li><strong>FEAT-026</strong> — split 80/20 e repasse.</li>
+                  <li><strong>FEAT-027</strong> — área de reservas do locatário.</li>
+                  <li><strong>FEAT-028</strong> — reservas e financeiro do dono.</li>
+                  <li><strong>FEAT-029</strong> — e-mails, outbox e lembretes.</li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="card feature-card">
+              <span class="feature-number">030–033</span>
+              <div>
+                <h3>Backoffice</h3>
+                <ul class="feature-list">
+                  <li><strong>FEAT-030</strong> — revisão e moderação de estúdios.</li>
+                  <li><strong>FEAT-031</strong> — usuários, papéis e taxonomias.</li>
+                  <li><strong>FEAT-032</strong> — financeiro, reembolso, repasse e fiscal.</li>
+                  <li><strong>FEAT-033</strong> — operação, jobs, incidentes e auditoria.</li>
+                </ul>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="ideias">
+          <div class="section-head">
+            <h2>Ideias centrais do produto</h2>
+            <p>
+              Estes contratos sustentam o projeto e não devem ser reduzidos a
+              comportamento apenas visual no frontend.
+            </p>
+          </div>
+
+          <div class="rule-grid">
+            <div class="rule">
+              <strong>Conteúdo aprovado e versionado</strong>
+              <span>Editar um anúncio publicado cria nova revisão; a versão atual continua pública até nova aprovação.</span>
+            </div>
+            <div class="rule">
+              <strong>Calendário interno canônico</strong>
+              <span>Disponibilidade deriva de regras, exceções e alocações. iCal é manual; Google Calendar não integra a baseline.</span>
+            </div>
+            <div class="rule">
+              <strong>Concorrência garantida no banco</strong>
+              <span>Slots são de 1h e uma constraint de exclusão impede alocações sobrepostas; o frontend não é lock.</span>
+            </div>
+            <div class="rule">
+              <strong>Cotação não reserva</strong>
+              <span>A cotação vale 5 minutos. A intenção pós-login dura 2h, mas preço e vaga sempre são recalculados.</span>
+            </div>
+            <div class="rule">
+              <strong>Reserva nasce após pagamento</strong>
+              <span>O provider inicia o pagamento; depois o sistema tenta adquirir hold. Confirmação depende de evento autoritativo e idempotente.</span>
+            </div>
+            <div class="rule">
+              <strong>Histórico financeiro é imutável</strong>
+              <span>Valores ficam em centavos e snapshots. Correções usam eventos, reembolso e compensação — nunca apagamento.</span>
+            </div>
+            <div class="rule">
+              <strong>Split e repasse explícitos</strong>
+              <span>80% do bruto para o dono, 20% para a plataforma; taxas são da plataforma. Repasse padrão em fim + 24h.</span>
+            </div>
+            <div class="rule">
+              <strong>Falha não vira sucesso falso</strong>
+              <span>Refund, payout, e-mail e jobs mantêm estados recuperáveis, retry, reconciliação, alerta e auditoria.</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="arquitetura">
+          <div class="section-head">
+            <h2>Arquitetura em alto nível</h2>
+            <p>
+              Duas aplicações Next.js, processos de background e Supabase, com
+              leitura e escrita deliberadamente separadas.
+            </p>
+          </div>
+
+          <div class="architecture" aria-label="Fluxo arquitetural resumido">
+            <div><span>Usuários</span><strong>Visitante · locatário · dono · operador</strong></div>
+            <div><span>Entrada</span><strong>Nginx + TLS + rede admin restrita</strong></div>
+            <div><span>Apps</span><strong>Web público/autenticado + backoffice separado</strong></div>
+            <div><span>Contratos</span><strong>Read models + POST /api/commands + workers</strong></div>
+            <div><span>Dados</span><strong>Supabase Auth · Postgres · Storage + providers</strong></div>
+          </div>
+
+          <div class="pipeline" aria-label="Pipeline obrigatório de escrita crítica">
+            POST /api/commands → sessão/origem/limites → Zod → registry → DAL server-only → função SQL privada → transação/lock → retorno autoritativo → invalidação
+          </div>
+
+          <ul class="chip-list" aria-label="Stack obrigatória">
+            <li>npm workspaces</li>
+            <li>Next.js 16 App Router</li>
+            <li>React 19</li>
+            <li>TypeScript strict</li>
+            <li>CSS Modules + variables</li>
+            <li>TanStack Query</li>
+            <li>Zod</li>
+            <li>Supabase Cloud/local</li>
+            <li>pg server-only</li>
+            <li>Vitest</li>
+            <li>Playwright + axe</li>
+            <li>Oracle ARM64</li>
+            <li>systemd + Nginx</li>
+            <li>releases imutáveis por SHA</li>
+          </ul>
+
+          <div class="card-grid top-gap">
+            <article class="card">
+              <h3>Leituras</h3>
+              <p>
+                Read models pequenos, tipados, filtrados no servidor e paginados
+                por keyset: <code>{ items, nextCursor }</code>. Nada de
+                <code>select('*')</code> ou tabelas inteiras no browser.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Segurança</h3>
+              <p>
+                Grants mínimos, RLS, ownership, constraints, rate limit, funções
+                privadas, webhook assinado e auditoria são camadas independentes.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Interface</h3>
+              <p>
+                Server Components por padrão; mobile desde 320px, WCAG 2.2 AA,
+                zoom de 200%, toque de 44px e estados de loading, vazio, erro,
+                conflito, sucesso e recuperação.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Entrega</h3>
+              <p>
+                Cada fatia inclui banco, RLS, comando, read model, UI, testes,
+                observabilidade, documentação e rollback. Sem mocks de produção
+                ou botões falsos.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="implementacao">
+          <div class="section-head">
+            <h2>Contexto para começar a implementação</h2>
+            <p>
+              A engenharia começa na Fase 0 e avança por fatias verticais com
+              resultado demonstrável, não por camadas horizontais incompletas.
+            </p>
+          </div>
+
+          <ol class="phase-list">
+            <li><strong>Fase 0 · Fundação</strong><span>Definir o repositório real; npm workspaces; app público e backoffice; Supabase local; migrations; lint, testes, CI, primitives e observabilidade base.</span></li>
+            <li><strong>Fase 1 · Oferta</strong><span>Identidade e dono; estúdio/revisão/mídia; aprovação; home, listagem e detalhe. Resultado: catálogo público aprovado.</span></li>
+            <li><strong>Fase 2 · Agenda</strong><span>Horários, exceções, bloqueios, calendário, iCal, preço, adicionais e cotação. Resultado: disponibilidade e preço reais.</span></li>
+            <li><strong>Fase 3 · Transação</strong><span>Retorno pós-login, hold, cartão, PIX, webhooks, reserva, reembolso e repasse. Resultado: primeira reserva paga segura.</span></li>
+            <li><strong>Fase 4 · Operação</strong><span>Áreas do locatário/dono, e-mails, backoffice, fiscal, privacidade, jobs e auditoria.</span></li>
+            <li><strong>Fase 5 · Produção</strong><span>Oracle, TLS, systemd, release/rollback, backup/restore, smoke, carga, segurança e acessibilidade.</span></li>
+          </ol>
+
+          <div class="notice danger top-gap-large">
+            <strong>Pré-condição antes de codificar:</strong> normalizar a ordem de
+            implementação. Os documentos contêm ciclos explícitos, como
+            FEAT-002 ↔ FEAT-034, FEAT-007 ↔ FEAT-031, FEAT-008/009 ↔ FEAT-030,
+            FEAT-017 ↔ FEAT-018 e FEAT-024 ↔ FEAT-026/029. O handoff e
+            <code>docs/implementation-order.md</code> também distribuem algumas
+            features de formas diferentes. É preciso registrar formalmente se
+            “dependência” significa contrato para concluir ou pré-requisito para
+            iniciar, e decompor capacidades bootstrap. Não resolver por suposição.
+          </div>
+
+          <div class="card-grid top-gap">
+            <article class="card">
+              <h3>Primeiro corte vertical sugerido pelos documentos</h3>
+              <p>
+                Dono cria estúdio em rascunho → envia revisão → operador aprova →
+                visitante vê o conteúdo publicado, com isolamento entre usuários,
+                RLS, comando, read model, UI e Playwright.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Gates mínimos</h3>
+              <p>
+                npm ci; format; lint; typecheck; unit; reset Supabase; testes DB/RLS;
+                docs check; E2E afetado; build; audit; Knip. Release exige suíte
+                completa, ARM64, smoke, rollback e restore ensaiados.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="pendencias">
+          <div class="section-head">
+            <h2>Decisões e riscos pendentes</h2>
+            <p>
+              A fundação pode avançar com adapters e defaults documentados, mas
+              produção/publicação dependem das decisões abaixo.
+            </p>
+          </div>
+
+          <div class="card-grid three">
+            <article class="card">
+              <h3>Bloqueiam produção/publicação</h3>
+              <ul class="tight-list">
+                <li>Gateway e contrato comercial de marketplace.</li>
+                <li>Capacidade real de split e repasse diferido.</li>
+                <li>Termos, privacidade e cancelamento finais.</li>
+                <li>Domínio, DNS, SMTP e credenciais reais.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h3>Defaults reversíveis</h3>
+              <ul class="tight-list">
+                <li>Pagar.me apenas como adapter de sandbox.</li>
+                <li>Tokens visuais neutros até a marca final.</li>
+                <li>1–20 fotos, 15 MB por arquivo.</li>
+                <li>Repasse 24h após o fim; lembrete 24h antes.</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h3>Riscos prioritários</h3>
+              <ul class="tight-list">
+                <li>Dupla reserva e pagamento sem hold.</li>
+                <li>Refund/payout fora de ordem.</li>
+                <li>RLS/grants incorretos ou backoffice exposto.</li>
+                <li>Limites Supabase, VM única e capacidade ARM64.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="fora">
+          <div class="section-head">
+            <h2>Fora de escopo</h2>
+            <p>
+              Não criar telas, schemas, botões ou dependências “para o futuro” sem
+              novo escopo e ADR aprovado.
+            </p>
+          </div>
+
+          <ul class="chip-list">
+            <li>mini fórum/comunidade</li>
+            <li>app nativo</li>
+            <li>chat/WhatsApp</li>
+            <li>avaliações</li>
+            <li>busca textual</li>
+            <li>mapa/geolocalização</li>
+            <li>assinaturas</li>
+            <li>seguros</li>
+            <li>cupons/caução</li>
+            <li>múltiplos gestores</li>
+            <li>carrinho multiestúdio</li>
+            <li>upload de vídeo</li>
+            <li>Google Calendar automático</li>
+            <li>NFS-e automática</li>
+            <li>multi-idioma/fuso/região</li>
+            <li>BI/recomendação avançada</li>
+          </ul>
+        </section>
+
+        <section id="fontes">
+          <div class="section-head">
+            <h2>Fontes para aprofundar</h2>
+            <p>
+              Este HTML é um mapa executivo. Em caso de divergência, a cadeia
+              normativa do repositório continua sendo a autoridade.
+            </p>
+          </div>
+
+          <ul class="source-list">
+            <li><a href="AGENTS.md">Contrato operacional — AGENTS.md</a></li>
+            <li><a href="docs/reference/architecture-blueprint.md">Blueprint arquitetural</a></li>
+            <li><a href="docs/specification.md">Especificação canônica</a></li>
+            <li><a href="docs/feature-catalog.md">Catálogo das 34 features</a></li>
+            <li><a href="docs/implementation-order.md">Ordem de implementação</a></li>
+            <li><a href="docs/architecture.md">Arquitetura end-to-end</a></li>
+            <li><a href="docs/domain-model.md">Modelo de domínio</a></li>
+            <li><a href="docs/open-decisions.md">Decisões abertas</a></li>
+            <li><a href="docs/qa-traceability.md">Rastreabilidade dos 193 cenários</a></li>
+            <li><a href="CODEX_HANDOFF.md">Handoff de implementação</a></li>
+          </ul>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        Resumo gerado a partir da baseline documental 1.1 em 09/08/2026.
+        Autoridade: Blueprint → ADRs → especificação → documentos vivos → testes/migrations → código.
+      </div>
+    </footer>
+  </body>
+</html>
