@@ -1,144 +1,108 @@
 # Tooling e comandos do repositório
 
-## 1. Runtime
+## 1. Runtime reproduzível
 
-- Node.js LTS suportado pelo Next.js 16, fixado em `.nvmrc`/`engines`;
-- default documental: Node 24.x;
-- npm 11.x;
-- um `package-lock.json`;
-- `npm ci` em CI.
+- Node.js `24.18.0`, fixado em `.nvmrc`, `.node-version`, `engines` e `devEngines`;
+- npm `11.19.0`, fixado em `packageManager` e `devEngines`;
+- um único `package-lock.json` para todos os workspaces;
+- `npm ci` é o bootstrap reproduzível; `npm install` somente altera dependências deliberadamente;
+- dependências e ferramentas adotadas ficam em `docs/dependencias-utilizadas.md`.
 
 ## 2. Workspaces
 
 ```json
 {
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ]
+  "workspaces": ["apps/*", "packages/*"]
 }
 ```
 
-A aplicação pública usa o package raiz. Backoffice e packages usam workspaces.
+A aplicação pública é o package raiz. `apps/backoffice` é a aplicação administrativa separada. `packages/contracts` e `packages/ui` são compartilhados e não criam um terceiro sistema visual ou domínio paralelo.
 
-## 3. Scripts obrigatórios
+## 3. Comandos atuais
 
-```json
-{
-  "scripts": {
-    "dev": "executa app público",
-    "dev:backoffice": "executa backoffice",
-    "dev:all": "executa apps e workers locais",
-    "build": "build público + backoffice + workers",
-    "build:web": "next build",
-    "build:backoffice": "npm --workspace apps/backoffice run build",
-    "start": "next start",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint .",
-    "typecheck": "tsc --noEmit && workspaces typecheck",
-    "test:unit": "vitest run",
-    "test:unit:watch": "vitest",
-    "supabase:start": "supabase start",
-    "supabase:stop": "supabase stop",
-    "supabase:reset": "supabase db reset",
-    "test:db": "executa pgTAP/SQL/integration",
-    "test:e2e": "playwright test",
-    "test:e2e:affected": "seleciona features alteradas",
-    "test:e2e:critical": "playwright test tests/e2e/critical",
-    "test:a11y": "suíte axe",
-    "docs:check": "links, IDs, mudanças, source chain",
-    "audit": "npm audit --audit-level=high",
-    "knip": "knip",
-    "release:manifest": "gera manifest do artifact"
-  }
-}
-```
+| Área               | Comandos                                                                              | Contrato                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| desenvolvimento    | `npm run dev`, `dev:backoffice`, `dev:all`                                            | portas locais 3000/3001; `dev:all` encaminha sinais aos dois filhos                                                  |
+| build/runtime      | `build`, `build:web`, `build:backoffice`, `start`, `start:backoffice`                 | os dois apps geram standalone; `agentRules: false` preserva o `AGENTS.md` canônico                                   |
+| código             | `format`, `format:check`, `lint`, `typecheck`                                         | Prettier no código e Markdown alterado; ESLint sem warnings; quatro workspaces e testes tipados                      |
+| unitário           | `test:unit`, `test:unit:watch`                                                        | Vitest em contratos e guardrails puros                                                                               |
+| Supabase           | `supabase:start`, `supabase:stop`, `supabase:status`, `supabase:reset`, `test:db`     | somente stack local; reset provisiona ambiente e role DAL restrita antes do pgTAP                                    |
+| artefatos de banco | `supabase:schema`, `supabase:types`, `supabase:generate`                              | snapshot SQL normalizado em `supabase/schema.generated.sql`; tipos em `packages/contracts/src/database.generated.ts` |
+| browser            | `test:e2e:install`, `test:e2e`, `test:e2e:affected`, `test:e2e:critical`, `test:a11y` | browsers reproduzíveis; execução exige opt-in e endpoints locais validados                                           |
+| governança         | `docs:check`, `audit`, `knip`                                                         | sequência das 34 features, docs vivas, supply chain e código morto                                                   |
+| release local      | `release:manifest`                                                                    | rebuild limpo; pacote, hashes, tar/checksum e smoke dos dois standalones                                             |
 
-Os comandos reais devem ser implementados sem shell não portável desnecessário.
+Nesta fundação, `test:e2e:affected` executa conservadoramente a suíte completa. Seleção por feature só será introduzida quando houver specs de produto reais.
+
+`release:manifest` exige checkout limpo e uma `.artifacts` física dentro do repositório antes de qualquer remoção. Cada app é recompilado com seu próprio `.env.local`, limitado aos nomes runtime documentados, `BUILD_ID` igual ao SHA e uma allowlist operacional; outros arquivos `.env` de produção, credenciais E2E, banco, tokens, opções de processo e secrets não são herdados pelo build. O pacote inclui static/public/migrations e o lockfile, recusa configuração local, secret conhecido e link externo, e revalida hashes e o conjunto exato de nós da release após o smoke.
+
+Depois o comando inicia exatamente `web/server.js` e `backoffice/apps/backoffice/server.js` com ambientes runtime separados, exercita páginas, health, readiness, headers e asset estático, redige eventual log de falha e produz tar/checksum determinísticos a partir do timestamp do commit. O tar candidato é reextraído em diretório privado e comparado, por tipo e hash, à árvore validada antes de ser publicado. Um artefato já existente para o mesmo SHA só é reutilizado se os bytes forem idênticos; conteúdo divergente nunca é sobrescrito. O manifesto registra plataforma/arquitetura; validação ARM64 continua bloqueada por PEND-003.
 
 ## 4. TypeScript
 
-- `strict: true`;
-- `noUncheckedIndexedAccess`;
-- `exactOptionalPropertyTypes`;
-- `noImplicitOverride`;
-- `useUnknownInCatchVariables`;
-- aliases estáveis;
-- `server-only` para DAL/providers;
-- tipos de banco gerados após migration.
+- `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables` e `verbatimModuleSyntax`;
+- cada app executa `next typegen` antes de `tsc --noEmit`;
+- packages possuem tsconfig próprio;
+- `tsconfig.tests.json` cobre Playwright, Vitest, configs e helpers;
+- `server-only` e `pg` já protegem o contrato de readiness; comandos de negócio continuarão restritos a módulos DAL server-only.
 
 ## 5. ESLint
 
-Gates:
-
-- regras Next/React;
-- imports;
-- no floating promises;
-- no explicit any;
-- no console;
-- hooks;
-- server/client boundary guard;
-- no restricted imports (`pg` fora server, backoffice/public crossing).
+- ESLint 9 e configs Next/TypeScript alinhados à versão do framework;
+- regras React, hooks, Core Web Vitals, imports, ciclos, promises, `any` e `console`;
+- imports de DAL/provider são proibidos em qualquer módulo com diretiva `"use client"` e nos diretórios visuais `components`/`packages/ui`, independentemente do caminho da feature;
+- Server Components, route handlers e DAL fora das bordas visuais não recebem essa restrição por nome de pasta genérico;
+- arquivos gerados e artefatos locais são ignorados explicitamente, nunca por exceção ampla.
 
 ## 6. Formatting
 
-Prettier apenas formata. Não substitui lint. Markdown também é formatado/verificado.
+O Blueprint tem checksum canônico e não é reformatado. `scripts/format-scope.mjs` verifica todo código/config mantido e o Markdown alterado em relação a `origin/main`, inclusive depois do commit da branch. Prettier não substitui lint ou validação documental.
 
-## 7. Vitest
+## 7. Playwright e axe
 
-Cobrir:
+Pré-requisito de máquina:
 
-- normalizers;
-- Zod schemas;
-- preço;
-- data/fuso;
-- estado;
-- cursor;
-- provider mapping;
-- templates;
-- route helpers.
+```bash
+npm run test:e2e:install
+```
 
-Não mockar domínio até o teste deixar de provar contrato.
+O config parseia `.env.e2e.local` sem contaminar `process.env`, rejeita origem/host/protocolo/porta remotos, exige `E2E_ALLOW_LOCAL=1` e comprova por conexão um marcador efêmero da instância. A credencial administrativa é zerada nos filhos; os apps recebem apenas a DAL restrita. A matriz cobre 1440×900, 390×844, 320×720, altura compacta, backoffice isolado, axe claro/escuro/mobile e os fluxos críticos nos três engines, com retries zero e artefatos somente em falha.
 
-## 8. Playwright
+O processo de cada browser recebe uma allowlist operacional independente do ambiente dos apps: paths/home/temporários, locale/fuso/terminal, variáveis gráficas locais não ligadas a Snap e os equivalentes mínimos do Windows. Segredos, URLs de banco, SSH, npm, opções Node, variáveis `SNAP*`, `LD_*`/`DYLD_*` e qualquer nome não enumerado nunca são herdados. Segmentos Snap e entradas vazias também são removidos do `PATH`/`Path`, evitando tanto bibliotecas do host incompatíveis quanto resolução pelo diretório atual.
 
-Config:
+## 8. Supabase local
 
-- webServer local;
-- projects;
-- trace on-first-retry ou failure;
-- screenshot only-on-failure;
-- retries 0 local, máximo controlado CI;
-- one worker para specs stateful quando necessário;
-- global safety guard.
+`npm run supabase:reset` executa:
 
-## 9. Supabase
+1. comprovação do daemon Docker;
+2. criação idempotente da bridge `set-livre-loopback`, cujo default de publicação é `127.0.0.1` sem alterar o daemon Docker;
+3. parada restrita à stack `set-livre` se containers preexistentes estiverem em outra rede ou binding;
+4. `supabase start --network-id set-livre-loopback`, validação dos bindings efetivos e `supabase db reset --local`;
+5. migrations e seed;
+6. criação/rotação local de `app_runtime_local` com estado exato e somente `CONNECT` direto;
+7. associação exclusiva à role `app_dal NOLOGIN`, sem admin/inherit e com `SET ROLE` explícito;
+8. smoke de identidade efetiva `current_user=app_dal`;
+9. gravação separada dos dois `.env.local` de runtime e de `.env.e2e.local`, todos com modo `0600`, sem imprimir secrets.
 
-Local setup:
+A URL administrativa fica em `E2E_DATABASE_URL` somente no arquivo do harness. Runtime usa `DATABASE_URL_APP_DAL` com `SET ROLE app_dal`. Os wrappers de start/status/test/dump/types recusam stack fora da bridge e nunca imprimem o status completo com chaves. Nenhuma migration contém senha e nenhum comando usa `supabase link` ou cloud.
 
-1. Docker;
-2. `supabase start`;
-3. `supabase db reset`;
-4. seed;
-5. roles;
-6. users QA;
-7. type generation;
-8. DB tests.
+## 9. Knip e supply chain
 
-## 10. Knip
+Knip descobre os quatro workspaces pelos manifests/configs. A única exceção é restrita aos packages `@types/react` e `@types/react-dom` necessários ao JSX do pacote UI. `npm audit --audit-level=high` e a política `allowScripts` completam o gate.
 
-Configurar workspaces/entrypoints. Exceção documentada; nenhuma lista ampla para esconder código morto.
+## 10. Docs check
 
-## 11. Docs check
+O gate falha, entre outros casos, quando:
 
-Falha quando:
-
-- mudança técnica sem `.md`;
-- change record ausente;
-- feature/scenario ID duplicado;
-- feature sem Playwright;
-- migration sem banco/QA;
-- link inexistente;
-- termo proibido introduzido como stack;
-- Blueprint ausente/alterado sem registro.
+- o Blueprint muda sem novo contrato;
+- feature, cenário ou ADR duplica ID;
+- a sequência não contém exatamente as 34 features;
+- `dependency-to-start` cria ciclo ou aponta para frente;
+- integração posterior não possui proprietário;
+- dependência de release não referencia `pendencias.md`;
+- link local está quebrado;
+- dependência proibida entra em qualquer workspace;
+- código contém marcador de dívida informal;
+- Playwright contém `.only`, `.skip` ou `waitForTimeout`;
+- um intervalo de features na tabela normativa ou em `pendencias.md` é descendente;
+- uma inclusão, alteração, renomeação ou exclusão técnica da branch não possui registro em `docs/changes/`.

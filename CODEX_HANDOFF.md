@@ -6,24 +6,23 @@ Implementar integralmente a plataforma final Set Livre, um marketplace web de al
 
 A implementação deve produzir uma aplicação comercializável e operável, e não apenas telas demonstrativas. O mini fórum não faz parte deste trabalho.
 
-## Estado do repositório recebido
+## Estado vivo do repositório
 
-- Primeiro commit local: `d755c9f chore: initialize repository architecture foundation`.
-- O commit contém a inicialização do Git e o Blueprint.
-- Nenhum push foi realizado no estado informado.
-- A documentação de governança está preparada para um commit separado.
+- Remoto autorizado: `PedroRomeroM/set-livre`.
+- `main` contém a baseline documental no commit `e0cca5a`.
+- A fundação local está isolada em `agent/foundation-local-platform`.
+- O identificador `d755c9f` veio do pacote, mas não existe no histórico verificado deste repositório.
+- Cada feature posterior deve usar branch e PR próprios, sem implementação paralela de outra feature.
 - Nenhum arquivo do Spenses foi alterado.
 
-Não reescreva esse commit. Não execute `push` sem instrução humana explícita.
+Não reescreva a baseline. Push, PR e merge seguem a autorização operacional do usuário: execute os gates completos, publique o PR, solicite `@codex review` e aguarde 60 minutos completos antes de consultar o resultado. Se houver correção pertinente, implemente-a, rode novamente todos os gates e a suíte Playwright completa, faça commit e push, solicite um novo `@codex review` e aguarde outros 60 minutos completos. Repita esse ciclo até o review não apontar problema corrigível; somente então faça o merge.
 
-## Primeiras ações obrigatórias
+## Ações de fundação
 
-1. Confirmar branch, status e conteúdo do commit informado.
-2. Copiar este pacote para o repositório preservando caminhos e conteúdo.
-3. Verificar que `docs/reference/architecture-blueprint.md` é idêntico à fonte existente.
-4. Executar ou criar o validador `npm run docs:check`.
-5. Criar um commit exclusivo para governança/documentação.
-6. Somente depois iniciar fundação de código.
+1. Preservar o Blueprint e sua precedência.
+2. Validar a fundação executável com todos os gates locais.
+3. Publicar o PR técnico e concluir o ciclo de revisão.
+4. Somente após o merge iniciar a FEAT-002, na ordem canônica.
 
 ## Ordem de leitura obrigatória
 
@@ -83,7 +82,7 @@ Não declare uma feature pronta com mocks visuais, dados fixos, botão sem açã
 
 ## Fases obrigatórias
 
-### Fase 0 — Governança e fundação
+### Fase 0 — Governança e fundação local
 
 - documentos e ADRs;
 - npm workspaces;
@@ -91,56 +90,42 @@ Não declare uma feature pronta com mocks visuais, dados fixos, botão sem açã
 - TypeScript strict, lint, Vitest, Playwright, Knip;
 - design tokens/primitives iniciais;
 - Supabase local e migrations;
-- CI inicial;
+- gates locais reproduzíveis;
 - headers, erros e observabilidade base.
 
-### Fase 1 — Identidade e primeiro corte vertical
+Durante a vigência do ADR-018, CI/CD, Supabase Cloud, Oracle, DNS e TLS são dependências de release registradas em `pendencias.md`, não tarefas da fundação local.
 
-- FEAT-001 a FEAT-011;
-- autenticação e perfil;
-- dono/recebedor em sandbox;
-- criação, revisão, mídia, publicação;
-- listagem e detalhe público;
-- primeiro ciclo completo de RLS, comando, read model, UI, Playwright e docs.
+### Fases 1 a 4 — Features em sequência executável
 
-### Fase 2 — Calendário e preço
+A única ordem operacional das 34 features é `docs/implementation-order.md`, derivada do ADR-017. Não inferir ordem por número, faixa ou domínio.
 
-- FEAT-012 a FEAT-017;
-- regras semanais, exceções e alocações;
-- constraint de exclusão;
-- calendário avançado;
-- iCal;
-- preço e adicionais.
+Antes de abrir a branch de uma feature:
 
-### Fase 3 — Reserva e pagamento
+1. confirmar suas `dependency-to-start` já mergeadas;
+2. identificar integrações `dependency-to-complete` e o cenário/proprietário posterior;
+3. registrar como `dependency-to-release` qualquer bloqueio externo;
+4. introduzir capacidade bootstrap somente se houver uso real no mesmo PR;
+5. confirmar que nenhuma outra feature de produto será implementada na branch.
 
-- FEAT-018 a FEAT-026;
-- cotação e retorno pós-login;
-- tentativa, início no provedor e hold;
-- cartão/PIX;
-- webhooks e reconciliação;
-- reserva, cancelamento, reembolso, split e repasse.
+Os gates de jornada são:
 
-### Fase 4 — Operação
+- identidade, oferta e publicação atômica;
+- disponibilidade, preço e descoberta pública;
+- cotação, pagamento autoritativo e reserva concorrente;
+- calendário integrado, operação, financeiro, comunicação e direitos de dados.
 
-- FEAT-027 a FEAT-034;
-- áreas de locatário e dono;
-- e-mails;
-- backoffice;
-- financeiro/fiscal;
-- operação/auditoria;
-- LGPD.
+### Fase 5 — Dependências de release
 
-### Fase 5 — Produção
+Executar somente após a liberação das pendências externas e conforme ADR-014, ADR-018 e a Fase 5 de `docs/implementation-order.md`:
 
-- acceptance;
+- CI e política de branches;
+- Supabase Cloud e providers reais;
+- conteúdo jurídico final;
 - build ARM64 standalone;
 - systemd/Nginx/TLS;
 - release por SHA e rollback;
-- jobs;
-- backup e restore ensaiado;
-- smoke real;
-- observabilidade e runbooks.
+- jobs, backup e restore ensaiado;
+- smoke real, observabilidade e runbooks.
 
 ## Stop conditions
 
@@ -197,4 +182,4 @@ Antes de release:
 
 ## Prompt operacional resumido
 
-> Implemente a Set Livre obedecendo integralmente `AGENTS.md` e a cadeia de autoridade documental. Trabalhe na ordem de `docs/implementation-order.md`, uma fatia vertical por vez. Para cada mudança, crie registro em `docs/changes/`, implemente migrations/grants/RLS, read models, comandos server-side, UI responsiva/acessível, testes de banco e Playwright com os IDs catalogados, e atualize a documentação no mesmo commit. Não resolva decisões abertas por suposição, não implemente itens fora de escopo, não faça push sem autorização e nunca trate mock/sandbox como produção.
+> Implemente a Set Livre obedecendo integralmente `AGENTS.md` e a cadeia de autoridade documental. Trabalhe na ordem de `docs/implementation-order.md`, uma fatia vertical por vez. Para cada mudança, crie registro em `docs/changes/`, implemente migrations/grants/RLS, read models, comandos server-side, UI responsiva/acessível, testes de banco e Playwright com os IDs catalogados, e atualize a documentação no mesmo commit. Não resolva decisões abertas por suposição, não implemente itens fora de escopo e nunca trate mock/sandbox como produção. Publique somente pela branch/PR autorizada e conclua o ciclo de revisão antes do merge.

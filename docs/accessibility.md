@@ -66,6 +66,7 @@ Todas as rotas públicas, autenticadas e de backoffice devem atender WCAG 2.2 AA
 - manual keyboard checklist;
 - screen reader spot checks;
 - zoom 200%;
+- safe areas com insets não nulos em cenário de device;
 - Windows high contrast when practical;
 - reduced motion;
 - mobile touch target scan.

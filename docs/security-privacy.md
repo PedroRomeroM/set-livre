@@ -136,6 +136,14 @@ Nginx/Next:
 
 CSP inclui somente Supabase, provider de pagamento, YouTube privacy embed e origens necessárias. Alteração exige teste.
 
+Na fundação local, a CSP permite somente a própria origem e dados/imagens necessários à tela técnica. `unsafe-eval` e conexões HTTP/WebSocket localhost existem apenas em desenvolvimento para o runtime Next; o smoke standalone recusa ambos no build de produção. Novas origens entram somente no PR da integração consumidora e com teste correspondente.
+
+A stack Supabase local usa uma bridge Docker exclusiva com publicação efetiva somente em `127.0.0.1`. O bootstrap para apenas containers rotulados para o projeto `set-livre` quando encontra estado anterior inseguro, valida a matriz 54321–54324 depois do start e falha fechado se a bridge preexistente tiver configuração divergente.
+
+O empacotamento local não herda o ambiente amplo do shell: build, tar e processos de smoke recebem uma allowlist operacional, complementada apenas pelo arquivo runtime específico de cada app quando aplicável. Credenciais E2E/admin não chegam aos filhos, valores sensíveis conhecidos são procurados na release inteira antes e depois do smoke, e logs de falha redigem tokens, cookies, autenticação e URLs de banco.
+
+Os processos Chromium, Firefox e WebKit também partem de allowlist própria e mínima. Nenhuma variável de banco, SSH, npm, Node, loader dinâmico, Snap ou secret conhecido é encaminhada pelo Playwright; valores operacionais ligados a caminhos Snap são descartados e o `PATH` não aceita entradas vazias.
+
 ## 10. Supply chain
 
 - npm lock;

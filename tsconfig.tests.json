@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": [
+    "apps/backoffice/next.config.ts",
+    "next.config.ts",
+    "playwright.config.ts",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "vitest.config.ts"
+  ]
+}

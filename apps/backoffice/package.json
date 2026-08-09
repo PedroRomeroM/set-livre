@@ -1,0 +1,28 @@
+{
+  "name": "@set-livre/backoffice",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3001",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port 3001",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@set-livre/contracts": "0.0.0",
+    "@set-livre/ui": "0.0.0",
+    "next": "16.3.0",
+    "pg": "8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "0.0.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/pg": "8.21.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "typescript": "5.9.3"
+  }
+}

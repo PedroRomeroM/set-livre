@@ -4,6 +4,12 @@
 
 Detectar falha antes de gerar dupla reserva, cobrança sem reserva, e-mail perdido ou repasse atrasado.
 
+### 1.1 Estado da fundação local
+
+Os dois apps já expõem `/live` e `/ready` sem cache, com aplicação, release, timestamp e `requestId`; um UUID de entrada válido é propagado e qualquer valor inválido é substituído. Readiness consulta a função privada com timeout, comprova role efetiva, atributos e membership da sessão, mantém um único pool após erro de cliente ocioso e retorna apenas `ready` ou `unready`, sem erro de banco.
+
+Ainda não existe evento de domínio que justifique logger, métrica ou alerta falso. O logger JSON com redaction entra junto ao primeiro comando real; error tracking, alertas externos e dashboards dependem de PEND-008.
+
 ## 2. Logs
 
 Formato JSON:
@@ -48,6 +54,7 @@ Redaction:
 
 - conexão DB simples com timeout;
 - migration head compatível;
+- `current_user=app_dal` e `session_user` sem atributo ou membership privilegiada;
 - configuração crítica presente;
 - sem revelar detalhes;
 - provider não deve tornar app inteiro unready por falha temporária, mas estado aparece em métrica.

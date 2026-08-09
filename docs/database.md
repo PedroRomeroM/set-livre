@@ -13,6 +13,19 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot é gerado.
 
+### 1.1 Estado implementado na fundação
+
+A migration head atual é `20260809000300`. A fundação não antecipa nenhuma tabela de domínio e aplica somente:
+
+- `20260809000100_security_baseline.sql`: extensões estruturais, schemas `private`/`audit`, role `app_dal NOLOGIN NOINHERIT`, revogações e default privileges fechados;
+- `20260809000200_readiness_contract.sql`: `private.check_readiness(text)` como `security definer`, `search_path = ''` e `execute` exclusivo para `app_dal`;
+- `20260809000300_security_default_privileges_hardening.sql`: fecha o default global de `execute` de funções, normaliza `app_dal` e recusa atributos privilegiados que exigiriam superuser;
+- login `app_runtime_local` criado e rotacionado fora das migrations pelo bootstrap local, com atributos, memberships, parâmetros, ownership e grants diretos normalizados antes de assumir `app_dal` explicitamente;
+- 54 asserts pgTAP, incluindo funções-probe que comprovam deny-by-default nos três schemas e o estado exato das roles;
+- snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
+
+As migrations aplicadas são imutáveis. Tabelas, RLS e comandos de cada domínio entram apenas na respectiva fatia vertical.
+
 ## 2. Extensões
 
 Obrigatórias:
@@ -38,31 +51,31 @@ create schema if not exists audit;
 
 ### 4.1 `profiles`
 
-| Coluna | Tipo | Regra |
-|---|---|---|
-| `id` | uuid | PK/FK `auth.users`, cascade |
-| `person_type` | text | `individual/company` |
-| `display_name` | text | 2–120 |
-| `phone_e164` | text | formato normalizado |
-| `tax_document_type` | text | `cpf/cnpj` coerente |
-| `tax_document_number` | text | dígitos, acesso privado |
-| `identity_document_number` | text null | até 30 |
-| `status` | text | `active/suspended/deletion_pending/anonymized` |
-| `created_at` | timestamptz | UTC |
-| `updated_at` | timestamptz | UTC |
-| `anonymized_at` | timestamptz null | |
+| Coluna                     | Tipo             | Regra                                          |
+| -------------------------- | ---------------- | ---------------------------------------------- |
+| `id`                       | uuid             | PK/FK `auth.users`, cascade                    |
+| `person_type`              | text             | `individual/company`                           |
+| `display_name`             | text             | 2–120                                          |
+| `phone_e164`               | text             | formato normalizado                            |
+| `tax_document_type`        | text             | `cpf/cnpj` coerente                            |
+| `tax_document_number`      | text             | dígitos, acesso privado                        |
+| `identity_document_number` | text null        | até 30                                         |
+| `status`                   | text             | `active/suspended/deletion_pending/anonymized` |
+| `created_at`               | timestamptz      | UTC                                            |
+| `updated_at`               | timestamptz      | UTC                                            |
+| `anonymized_at`            | timestamptz null |                                                |
 
 O e-mail canônico permanece no Auth. Read models privados podem obtê-lo server-side quando necessário.
 
 ### 4.2 `owner_profiles`
 
-| Coluna | Regra |
-|---|---|
-| `user_id` | PK/FK profile |
-| `business_name` | 2–160 |
-| `support_phone_e164` | opcional |
-| `terms_version_id` | aceite do dono |
-| `status` | `active/blocked` |
+| Coluna               | Regra            |
+| -------------------- | ---------------- |
+| `user_id`            | PK/FK profile    |
+| `business_name`      | 2–160            |
+| `support_phone_e164` | opcional         |
+| `terms_version_id`   | aceite do dono   |
+| `status`             | `active/blocked` |
 
 ### 4.3 `platform_roles`
 
@@ -110,18 +123,18 @@ Browser lê ativos; somente backoffice altera via comando.
 
 ### 4.7 `studios`
 
-| Coluna | Tipo/Regra |
-|---|---|
-| `id` | uuid PK |
-| `owner_user_id` | FK profile, not null |
-| `status` | check de ciclo |
-| `published_revision_id` | FK revision null |
-| `draft_revision_id` | FK revision null |
-| `timezone` | default America/Sao_Paulo |
-| `reservations_enabled` | boolean |
-| `disabled_reason` | text null |
-| `created_at/updated_at` | timestamptz |
-| `paused_at/disabled_at` | timestamptz null |
+| Coluna                  | Tipo/Regra                |
+| ----------------------- | ------------------------- |
+| `id`                    | uuid PK                   |
+| `owner_user_id`         | FK profile, not null      |
+| `status`                | check de ciclo            |
+| `published_revision_id` | FK revision null          |
+| `draft_revision_id`     | FK revision null          |
+| `timezone`              | default America/Sao_Paulo |
+| `reservations_enabled`  | boolean                   |
+| `disabled_reason`       | text null                 |
+| `created_at/updated_at` | timestamptz               |
+| `paused_at/disabled_at` | timestamptz null          |
 
 A FK circular revisão↔estúdio é criada em etapas de migration.
 
@@ -229,18 +242,18 @@ Como janelas são consultadas e validadas, preferir tabela filha:
 
 ### 4.15 `calendar_allocations`
 
-| Coluna | Regra |
-|---|---|
-| `id` | uuid |
-| `studio_id` | FK |
-| `kind` | `hold/reservation/manual/ical` |
-| `actual_period` | tstzrange `[)` |
-| `blocked_period` | tstzrange `[)` incluindo buffer |
-| `status` | `active/released/cancelled/expired` |
-| `expires_at` | apenas hold |
-| `created_by_user_id` | null para system |
-| `label` | texto seguro |
-| timestamps | |
+| Coluna               | Regra                               |
+| -------------------- | ----------------------------------- |
+| `id`                 | uuid                                |
+| `studio_id`          | FK                                  |
+| `kind`               | `hold/reservation/manual/ical`      |
+| `actual_period`      | tstzrange `[)`                      |
+| `blocked_period`     | tstzrange `[)` incluindo buffer     |
+| `status`             | `active/released/cancelled/expired` |
+| `expires_at`         | apenas hold                         |
+| `created_by_user_id` | null para system                    |
+| `label`              | texto seguro                        |
+| timestamps           |                                     |
 
 Constraint estrutural:
 

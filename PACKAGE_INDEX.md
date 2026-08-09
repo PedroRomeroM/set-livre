@@ -1,8 +1,8 @@
 # Índice do pacote de implementação — Set Livre 1.1
 
-## Conteúdo
+## Baseline recebida e repositório vivo
 
-Este pacote contém somente arquivos `.md` e representa a documentação de implementação end-to-end da plataforma final Set Livre.
+A baseline recebida continha somente arquivos `.md` e representava a documentação de implementação end-to-end. Ela foi preservada no commit `e0cca5a`. O repositório atual também contém código, migrations, testes e configuração; este índice não deve ser usado como inventário da árvore viva.
 
 ## Arquivos de entrada obrigatórios
 
@@ -16,17 +16,20 @@ Este pacote contém somente arquivos `.md` e representa a documentação de impl
 8. `docs/qa-traceability.md` — catálogo dos 193 cenários.
 9. `docs/validation-report.md` — validação estrutural da baseline.
 10. `MANIFEST_SHA256.md` — hashes de integridade do pacote.
+11. `contexto-projeto-set-livre.html` — resumo derivado para leitura humana; não é fonte canônica.
 
-## Indicadores do pacote
+## Indicadores da especificação de produto
 
-| Item | Quantidade |
-|---|---:|
-| Features | 34 |
-| ADRs | 16 |
-| Cenários Playwright | 193 |
-| Cenários P0 | 134 |
-| Cenários P1 | 59 |
-| Runbooks | 6 |
+| Item                | Quantidade |
+| ------------------- | ---------: |
+| Features            |         34 |
+| ADRs                |         18 |
+| Cenários Playwright |        193 |
+| Cenários P0         |        134 |
+| Cenários P1         |         59 |
+| Runbooks            |          6 |
+
+Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 10 IDs técnicos estáveis, 33 execuções Playwright na matriz atual, 57 testes unitários, 54 asserts pgTAP e 3 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
 
 ## Garantias documentais
 
@@ -36,12 +39,11 @@ Este pacote contém somente arquivos `.md` e representa a documentação de impl
 - calendário, reserva, pagamento, split, reembolso e repasse possuem contratos próprios;
 - cada feature possui cenários Playwright concretos e rastreáveis;
 - nenhuma decisão aberta pode ser preenchida silenciosamente pelo agente;
-- o manifesto de integridade deve ser regenerado após qualquer alteração do pacote.
+- o manifesto histórico prova a baseline no commit indicado; mudanças posteriores são provadas por Git, registros em `docs/changes/` e gates locais.
 
-## Estado inicial do repositório informado
+## Estado inicial efetivamente verificado
 
-- commit local existente: `d755c9f chore: initialize repository architecture foundation`;
-- contém inicialização do Git e o Blueprint;
-- nenhum push realizado;
-- governança deve entrar em commit separado;
-- nenhum arquivo do Spenses foi alterado.
+- o remoto `PedroRomeroM/set-livre` não possuía refs;
+- a baseline documental foi publicada em `main` no commit `e0cca5a`;
+- a fundação executável passou a ser desenvolvida em branch separada;
+- nenhum código de outro projeto foi copiado para este repositório.

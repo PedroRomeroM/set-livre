@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {},
+    "apps/backoffice": {},
+    "packages/contracts": {},
+    "packages/ui": {
+      "ignoreDependencies": ["@types/react", "@types/react-dom"]
+    }
+  }
+}

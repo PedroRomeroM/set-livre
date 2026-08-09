@@ -1,0 +1,94 @@
+{
+  "name": "@set-livre/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Marketplace web de aluguel de estúdios audiovisuais.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "npm": ">=11.19.0 <12"
+  },
+  "packageManager": "npm@11.19.0",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "onFail": "error",
+      "version": "24.18.0"
+    },
+    "packageManager": {
+      "name": "npm",
+      "onFail": "error",
+      "version": "11.19.0"
+    }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "dev:backoffice": "npm run dev --workspace @set-livre/backoffice",
+    "dev:all": "node scripts/dev-all.mjs",
+    "build": "npm run build:web && npm run build:backoffice",
+    "build:web": "next build",
+    "build:backoffice": "npm run build --workspace @set-livre/backoffice",
+    "start": "next start --hostname 127.0.0.1 --port 3000",
+    "start:backoffice": "npm run start --workspace @set-livre/backoffice",
+    "format": "node scripts/format-scope.mjs --write",
+    "format:check": "node scripts/format-scope.mjs --check",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "npm run typecheck:web && npm run typecheck --workspaces --if-present && npm run typecheck:tests",
+    "typecheck:web": "next typegen && tsc --noEmit",
+    "typecheck:tests": "tsc --noEmit --project tsconfig.tests.json",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "supabase:start": "node scripts/supabase-local-command.mjs start",
+    "supabase:stop": "node scripts/supabase-local-command.mjs stop",
+    "supabase:status": "node scripts/supabase-local-command.mjs status",
+    "supabase:reset": "node scripts/local-setup.mjs",
+    "supabase:schema": "node scripts/supabase-local-command.mjs schema",
+    "supabase:types": "node scripts/supabase-local-command.mjs types > packages/contracts/src/database.generated.ts",
+    "supabase:generate": "npm run supabase:schema && npm run supabase:types && npm run format",
+    "test:db": "node scripts/supabase-local-command.mjs test-db",
+    "test:e2e:install": "playwright install --with-deps chromium firefox webkit",
+    "test:e2e": "E2E_ALLOW_LOCAL=1 playwright test",
+    "test:e2e:affected": "E2E_ALLOW_LOCAL=1 playwright test",
+    "test:e2e:critical": "E2E_ALLOW_LOCAL=1 playwright test tests/e2e/critical",
+    "test:a11y": "E2E_ALLOW_LOCAL=1 playwright test --grep @a11y",
+    "docs:check": "node scripts/docs-check.mjs",
+    "local:setup": "node scripts/local-setup.mjs",
+    "audit": "npm audit --audit-level=high",
+    "knip": "E2E_ALLOW_LOCAL=1 E2E_BASE_URL=http://127.0.0.1:3000 E2E_BACKOFFICE_URL=http://127.0.0.1:3001 E2E_DATABASE_MARKER=local-only-marker-0000000000000000 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 E2E_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres DATABASE_URL_APP_DAL='postgresql://app_runtime_local:local-only@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal' knip",
+    "release:manifest": "node scripts/release-manifest.mjs"
+  },
+  "dependencies": {
+    "@set-livre/contracts": "0.0.0",
+    "@set-livre/ui": "0.0.0",
+    "next": "16.3.0",
+    "pg": "8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "0.0.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "@types/pg": "8.21.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.0",
+    "eslint-import-resolver-typescript": "3.10.1",
+    "knip": "6.32.0",
+    "prettier": "3.9.6",
+    "supabase": "2.113.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  },
+  "allowScripts": {
+    "unrs-resolver@1.12.2": true
+  }
+}

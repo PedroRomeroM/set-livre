@@ -1,0 +1,36 @@
+@import "@set-livre/ui/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--sl-color-canvas);
+}
+
+body {
+  min-height: 100svh;
+  margin: 0;
+  color: var(--sl-color-ink);
+  font-family: var(--sl-font-sans);
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 0.2rem solid var(--sl-color-focus);
+  outline-offset: 0.2rem;
+}
+
+::selection {
+  background: var(--sl-color-brand-soft);
+  color: var(--sl-color-ink-strong);
+}

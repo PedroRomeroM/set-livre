@@ -55,7 +55,8 @@ O runner deve abortar antes de abrir browser se detectar production/acceptance h
 - telefone estreito 320x720 em regressão;
 - height compact;
 - backoffice desktop;
-- axe.
+- axe em claro/escuro e nos viewports móveis de 390 e 320 px;
+- safe-area móvel com insets não nulos.
 
 A matriz completa pode distribuir specs, mas todos os P0 passam em Chromium e pelo menos um segundo engine nos fluxos críticos de auth/booking/payment.
 
@@ -195,15 +196,15 @@ Timeout sem resumo é inconclusivo.
 
 ## 15. Gate por mudança
 
-| Mudança | Gate |
-|---|---|
-| UI | unit + affected E2E + axe/responsive |
-| Command | unit + integration + E2E |
-| Schema/RLS | reset + DB suite + affected E2E |
-| Calendar/payment | concurrency + full critical |
-| Infra | build + shell/static checks + deploy smoke |
-| Docs | docs check/link/ID |
-| Dependency | audit + build + tests |
+| Mudança          | Gate                                       |
+| ---------------- | ------------------------------------------ |
+| UI               | unit + affected E2E + axe/responsive       |
+| Command          | unit + integration + E2E                   |
+| Schema/RLS       | reset + DB suite + affected E2E            |
+| Calendar/payment | concurrency + full critical                |
+| Infra            | build + shell/static checks + deploy smoke |
+| Docs             | docs check/link/ID                         |
+| Dependency       | audit + build + tests                      |
 
 ## 16. Critério de release
 

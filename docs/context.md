@@ -1,15 +1,16 @@
 # Contexto técnico vivo
 
-## Estado atual recebido
+## Estado vivo verificado
 
 - Projeto: Set Livre.
 - Produto alvo: plataforma web completa de aluguel de estúdios audiovisuais.
 - Mercado inicial: Curitiba/PR.
 - Equipe informada: três desenvolvedores com disponibilidade média de duas horas produtivas por dia cada.
-- Commit local inicial informado: `d755c9f chore: initialize repository architecture foundation`.
-- Esse commit contém a inicialização do Git e o Blueprint.
-- Nenhum push foi realizado até o estado informado.
-- A documentação de governança está prevista para commit separado.
+- Repositório remoto: `PedroRomeroM/set-livre`.
+- A baseline documental e o HTML derivado estão publicados em `main` no commit `e0cca5a`.
+- A fundação executável é desenvolvida isoladamente em `agent/foundation-local-platform`.
+- O commit `d755c9f`, citado no pacote recebido, não pertence ao histórico efetivamente encontrado.
+- O fluxo autorizado é branch separada, PR para `main`, suíte completa e ciclos de `@codex review` antes de merge.
 - Nenhum arquivo do projeto Spenses foi alterado.
 
 ## Estado desta documentação
@@ -38,6 +39,8 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 - Mobile a partir de 320 px e WCAG 2.2 AA.
 - Toda alteração de código atualiza documentação viva.
 - Toda feature possui Playwright.
+- Dependências de feature são classificadas pelo ADR-017; `docs/implementation-order.md` é a única sequência executável das 34 features.
+- A etapa atual é local-first conforme ADR-018; CI/CD, Supabase Cloud, Oracle e APIs externas permanecem dependências de release.
 
 ## Baseline técnica
 
@@ -58,14 +61,6 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 - output standalone;
 - release imutável por SHA.
 
-## Próxima ação recomendada
+## Próxima ação operacional
 
-O próximo commit deve conter somente a governança e a estrutura documental, sem código de feature. Depois:
-
-1. fundação do monorepo/workspaces;
-2. Supabase local e primeira migration;
-3. autenticação;
-4. primeiro corte vertical: estúdio rascunho → revisão → leitura pública;
-5. calendário e disponibilidade;
-6. reserva/pagamento;
-7. backoffice e operação.
+Concluir o PR da fundação local sem entidade de negócio antecipada e submetê-lo ao ciclo de revisão. Depois do merge, iniciar a FEAT-002 e seguir estritamente `docs/implementation-order.md`, uma feature por branch/PR. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.

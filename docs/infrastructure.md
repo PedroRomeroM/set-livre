@@ -113,6 +113,8 @@ Usuário `setlivre` sem sudo executa serviços. Deploy user só escreve releases
 
 Não usar GHCR.
 
+Na fundação local, `npm run release:manifest` já recompila um checkout limpo com ambientes isolados por app e `BUILD_ID` igual ao SHA, empacota os dois entrypoints com static/public, migrations e lockfile, recusa raiz de artefatos simbólica, configuração local, secret incorporado e link externo, e revalida a árvore completa após o smoke. O tar usa ordem, ownership e timestamp determinísticos, é reextraído e comparado à árvore manifestada; um SHA existente nunca é sobrescrito por bytes divergentes. O artefato registra `platform`/`arch`; ele não é apresentado como ARM64 até o smoke real de PEND-003.
+
 ## 6. systemd
 
 Serviços:

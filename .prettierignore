@@ -1,0 +1,10 @@
+.next
+.artifacts
+coverage
+node_modules
+package-lock.json
+supabase/.branches
+supabase/.temp
+supabase/schema.generated.sql
+docs/reference/architecture-blueprint.md
+MANIFEST_SHA256.md

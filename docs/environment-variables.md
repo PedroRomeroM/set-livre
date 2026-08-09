@@ -6,10 +6,29 @@
 - nenhuma URL de banco privada no client;
 - env separada por app/worker;
 - validação Zod no boot;
-- startup falha com variável crítica ausente;
+- uma rota que depende de variável crítica falha fechada; `/ready` responde `503` quando o banco não está utilizável;
 - logs mostram apenas nomes ausentes, nunca valores.
 
-## 2. Aplicação pública
+## 2. Fundação local
+
+`.env.example` e `.env.e2e.example` contêm somente nomes e endpoints locais não secretos. `npm run supabase:reset` gera três arquivos ignorados com modo `0600`.
+
+Os arquivos `.env.local` da aplicação pública e do backoffice contêm somente runtime:
+
+- `APP_ENV=local`;
+- `APP_RELEASE_SHA=local`;
+- `NEXT_PUBLIC_APP_URL` da respectiva aplicação, `NEXT_PUBLIC_SUPABASE_URL` e anon key local;
+- `DATABASE_URL_APP_DAL`: login local sem herança e sem outra membership que assume explicitamente `app_dal` por `options=-c role=app_dal`;
+
+O arquivo separado `.env.e2e.local`, lido apenas pelo harness, contém:
+
+- `E2E_DATABASE_URL`: conexão administrativa local usada somente pelo guard/test tooling, nunca pelo runtime;
+- `E2E_DATABASE_MARKER`: marcador efêmero comprovado por conexão antes da suíte;
+- `E2E_BASE_URL`, `E2E_BACKOFFICE_URL`, Supabase local, DAL restrita e `E2E_ALLOW_LOCAL=1`.
+
+O Playwright parseia o arquivo E2E sem incorporá-lo ao ambiente global, rejeita origem, host, protocolo, porta ou identidade divergentes e comprova banco, usuário e marcador local antes da suíte. Os filhos Next recebem `E2E_DATABASE_URL` vazio e seus `.env.local` nunca contêm a credencial administrativa. Cada processo de browser recebe separadamente apenas uma allowlist de paths, home/temporários, locale/fuso/terminal e integração gráfica local; credenciais, variáveis de banco, SSH, npm, loader e Snap são excluídas por construção. Senhas não entram em migration, log, screenshot ou arquivo versionado.
+
+## 3. Aplicação pública
 
 ### Públicas
 
@@ -17,7 +36,7 @@
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `NEXT_PUBLIC_PAYMENT_PROVIDER_PUBLIC_KEY` somente se provider exigir
-- `NEXT_PUBLIC_ENVIRONMENT`
+- `NEXT_PUBLIC_ENVIRONMENT` somente se uma UI futura realmente precisar expor esse estado; a fundação usa `APP_ENV` server-side
 
 ### Server-only
 
@@ -29,15 +48,18 @@
 - `EMAIL_PROVIDER`
 - `EMAIL_FROM`
 - `EMAIL_SECRET`
-- `SENTRY_DSN` server e public conforme configuração
+- `SENTRY_DSN` somente server-side; uma integração browser futura exige variável `NEXT_PUBLIC_*` distinta e aprovação de privacidade
 - `REQUEST_ID_SECRET`
 - `CURSOR_SIGNING_SECRET`
 - `FIELD_ENCRYPTION_KEY`
 - `APP_RELEASE_SHA`
 
-## 3. Backoffice
+`DATABASE_URL_APP_DAL` nunca aponta para `postgres`, `service_role` ou usuário proprietário. O parser exige protocolo PostgreSQL, login/senha/banco explícitos e exatamente um `options=-c role=app_dal`, permitindo parâmetros TLS sem aceitar overrides de identidade. Readiness também prova `current_user=app_dal`, identidade e atributos restritos do `session_user` e sua única membership antes de responder `200`. Em produção, a credencial de login/membership será provisionada fora das migrations e permanece bloqueada por PEND-002.
 
-- `BACKOFFICE_APP_URL`
+## 4. Backoffice
+
+- `NEXT_PUBLIC_APP_URL` apontando para a origem do backoffice;
+- `BACKOFFICE_APP_URL` server-side somente quando um consumidor real exigir;
 - Supabase public/session;
 - `DATABASE_URL_APP_DAL`;
 - secrets necessários a ações admin server-only;
@@ -46,7 +68,7 @@
 
 Não compartilhar cookie name/domain com app público sem decisão.
 
-## 4. Workers
+## 5. Workers
 
 - `DATABASE_URL_APP_DAL`;
 - provider secrets;
@@ -56,7 +78,7 @@ Não compartilhar cookie name/domain com app público sem decisão.
 - `APP_RELEASE_SHA`;
 - intervalos/limites.
 
-## 5. Deploy/CI
+## 6. Deploy/CI
 
 - host/user/key;
 - known_hosts;
@@ -66,7 +88,7 @@ Não compartilhar cookie name/domain com app público sem decisão.
 - provider sandbox;
 - Sentry auth token para sourcemaps.
 
-## 6. Defaults não secretos
+## 7. Defaults não secretos
 
 - `APP_TIMEZONE=America/Sao_Paulo`;
 - `BOOKING_HORIZON_DAYS=365`;
@@ -82,6 +104,6 @@ Não compartilhar cookie name/domain com app público sem decisão.
 
 Defaults de negócio idealmente ficam em configuração versionada; env é aceitável para global operacional.
 
-## 7. Rotação
+## 8. Rotação
 
 Documentar owner, criado, último rotate, próximo rotate e impacto. Rotação de cursor/encryption precisa de key ring/versão, não troca destrutiva.

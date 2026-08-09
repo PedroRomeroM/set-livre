@@ -1,5 +1,7 @@
 # Manifesto SHA-256 — Set Livre Plataforma Completa 1.1
 
+> Registro histórico imutável da baseline documental recebida. Os 109 caminhos enumerados abaixo conferem com o commit `e0cca5a`; o próprio manifesto e o HTML derivado `contexto-projeto-set-livre.html` não pertencem ao conjunto. A evolução viva é rastreada por Git, `docs/changes/` e gates locais.
+
 - Gerado em: 2026-08-09.
 - Algoritmo: SHA-256.
 - Ordenação: caminho relativo em ordem lexicográfica.
