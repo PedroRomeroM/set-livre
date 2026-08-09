@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./server/database-readiness": "./src/server/database-readiness.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "server-only": "0.0.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

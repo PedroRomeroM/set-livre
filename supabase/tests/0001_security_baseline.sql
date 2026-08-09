@@ -27,7 +27,7 @@ as $function$
   select true;
 $function$;
 
-select plan(54);
+select plan(55);
 
 select ok(
   exists (select 1 from pg_catalog.pg_namespace where nspname = 'private'),
@@ -403,6 +403,28 @@ select ok(
   not private.check_readiness('versao-inexistente'),
   'readiness rejeita migration head divergente'
 );
+
+-- A alteração é transacional e também é revertida explicitamente antes do
+-- rollback final para não deixar a role adulterada mesmo quando o assert falha.
+alter role app_dal bypassrls;
+
+select ok(
+  not (
+    select
+      not effective.rolcanlogin
+      and not effective.rolinherit
+      and not effective.rolsuper
+      and not effective.rolcreatedb
+      and not effective.rolcreaterole
+      and not effective.rolreplication
+      and not effective.rolbypassrls
+    from pg_catalog.pg_roles as effective
+    where effective.rolname = 'app_dal'
+  ),
+  'readiness detecta app_dal adulterada com BYPASSRLS'
+);
+
+alter role app_dal nobypassrls;
 
 select * from finish();
 

@@ -50,7 +50,7 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 - `20260809000200_readiness_contract.sql`: função privada mínima vinculada à migration head;
 - `20260809000300_security_default_privileges_hardening.sql`: default global de funções fechado e estado da role DAL normalizado.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships e grants diretos normalizados, que assume `app_dal` explicitamente. O snapshot SQL e os tipos são regeneráveis; 54 asserts pgTAP comprovam roles, deny-by-default, grants, extensões e função.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships e grants diretos normalizados, que assume `app_dal` explicitamente. O snapshot SQL e os tipos são regeneráveis; 55 asserts pgTAP comprovam roles, deny-by-default, grants, extensões, função e a rejeição de uma role efetiva adulterada.
 
 ## Segurança e privacidade
 
@@ -74,8 +74,8 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 62 testes unitários de docs, segurança E2E/browser, isolamento local, health/release e migration head;
-- 54 asserts pgTAP;
+- 78 testes unitários de docs, segurança E2E/browser, isolamento local, health/release, geração atômica e migration head;
+- 55 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -89,6 +89,15 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - Playwright diferencia as superfícies por heading exato e comprova reflow equivalente ao zoom de 200% nos três engines;
 - readiness inválida falha fechada com JSON `503/unready`, `release=unknown`, headers autoritativos e sem consulta à DAL;
 - threads efetivamente atendidas passam a ser resolvidas no PR antes de cada nova solicitação de review.
+
+## Correções do segundo Codex review
+
+- os gates Git escolhem a base válida cujo `merge-base` está mais próximo de `HEAD`, impedindo que uma `origin/main` defasada reutilize change record já incorporado à `main` local;
+- configurações mantidas em diretórios aninhados, inclusive contratos JSON em `docs/`, também exigem documentação e change record novo;
+- readiness valida os atributos restritos do login e da role efetiva `app_dal`; um smoke real com `BYPASSRLS` comprova `503/unready` nos dois apps e restaura a role ao final;
+- o smoke da release usa exclusivamente a URL DAL local validada de cada aplicação e ignora override remoto herdado do host;
+- o bootstrap recusa destinos de ambiente simbólicos ou não regulares e publica arquivos `0600` por substituição atômica sem alterar alvo de symlink ou hard link;
+- tipos do banco são gerados, validados, formatados e sincronizados em temporário irmão; qualquer falha preserva o contrato rastreado anterior.
 
 ## Observabilidade e operação
 
@@ -122,9 +131,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 62 aprovados;
+- `npm run test:unit`: 78 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 54 aprovados;
+- `npm run test:db`: 55 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

@@ -34,9 +34,11 @@ A aplicação pública é o package raiz. `apps/backoffice` é a aplicação adm
 
 Nesta fundação, `test:e2e:affected` executa conservadoramente a suíte completa. Seleção por feature só será introduzida quando houver specs de produto reais.
 
+`supabase:types` não usa redirecionamento do shell para o contrato rastreado. A CLI escreve em um arquivo temporário exclusivo no mesmo diretório de `database.generated.ts`; o script exige os exports esperados, valida a sintaxe TypeScript, aplica a configuração Prettier do repositório, sincroniza o arquivo e somente então substitui o destino com `rename` atômico. Falha de Docker, stack, CLI, validação ou formatação remove o temporário e preserva integralmente a versão anterior.
+
 `release:manifest` exige checkout limpo e uma `.artifacts` física dentro do repositório antes de qualquer remoção. Cada app é recompilado com seu próprio `.env.local`, limitado aos nomes runtime documentados, `BUILD_ID` igual ao SHA e uma allowlist operacional; outros arquivos `.env` de produção, credenciais E2E, banco, tokens, opções de processo e secrets não são herdados pelo build. O pacote inclui static/public/migrations e o lockfile, recusa configuração local, secret conhecido e link externo, e revalida hashes e o conjunto exato de nós da release após o smoke.
 
-Depois o comando inicia exatamente `web/server.js` e `backoffice/apps/backoffice/server.js` com ambientes runtime separados, exercita páginas, health, readiness, headers e asset estático, redige eventual log de falha e produz tar/checksum determinísticos a partir do timestamp do commit. O tar candidato é reextraído em diretório privado e comparado, por tipo e hash, à árvore validada antes de ser publicado. Um artefato já existente para o mesmo SHA só é reutilizado se os bytes forem idênticos; conteúdo divergente nunca é sobrescrito. O manifesto registra plataforma/arquitetura; validação ARM64 continua bloqueada por PEND-003.
+Depois o comando inicia exatamente `web/server.js` e `backoffice/apps/backoffice/server.js` com ambientes runtime separados. A URL DAL vem exclusivamente do `.env.local` do respectivo app e precisa comprovar protocolo PostgreSQL, loopback na porta `54322`, login `app_runtime_local`, banco `postgres` e `options=-c role=app_dal`; uma `DATABASE_URL_APP_DAL` exportada no host nunca a substitui. O smoke exercita páginas, health, readiness, headers e asset estático, redige eventual log de falha e produz tar/checksum determinísticos a partir do timestamp do commit. O tar candidato é reextraído em diretório privado e comparado, por tipo e hash, à árvore validada antes de ser publicado. Um artefato já existente para o mesmo SHA só é reutilizado se os bytes forem idênticos; conteúdo divergente nunca é sobrescrito. O manifesto registra plataforma/arquitetura; validação ARM64 continua bloqueada por PEND-003.
 
 ## 4. TypeScript
 
@@ -56,7 +58,7 @@ Depois o comando inicia exatamente `web/server.js` e `backoffice/apps/backoffice
 
 ## 6. Formatting
 
-O Blueprint tem checksum canônico e não é reformatado. `scripts/format-scope.mjs` verifica todo código/config mantido e o Markdown alterado, inclusive depois do commit da branch. A base Git é resolvida, em ordem, por `origin/main`, `main` local e commit raiz alcançável; em um repositório ainda no commit inicial, todos os arquivos rastreados entram no conjunto. A ausência da ref remota nunca elimina silenciosamente Markdown commitado. Prettier não substitui lint ou validação documental.
+O Blueprint tem checksum canônico e não é reformatado. `scripts/format-scope.mjs` verifica todo código/config mantido e o Markdown alterado, inclusive depois do commit da branch. Entre `origin/main` e `main` local, a base Git escolhida é a candidata válida cujo `merge-base` está a menos commits de `HEAD`; assim uma ref remota atrasada não amplia o diff com trabalho já incorporado à `main` local. Empates preservam a precedência remota e, sem candidata útil, o gate usa o commit raiz alcançável; em um repositório ainda no commit inicial, todos os arquivos rastreados entram no conjunto. A ausência ou defasagem da ref remota nunca elimina Markdown commitado nem permite reutilizar um change record anterior. Prettier não substitui lint ou validação documental.
 
 ## 7. Playwright e axe
 
@@ -105,6 +107,6 @@ O gate falha, entre outros casos, quando:
 - código contém marcador de dívida informal;
 - Playwright contém `.only`, `.skip` ou `waitForTimeout`;
 - um intervalo de features na tabela normativa ou em `pendencias.md` é descendente;
-- uma mudança em código, testes, banco ou qualquer configuração raiz mantida — inclusive dotfiles, exemplos de ambiente, versões de runtime e configs JSON/TypeScript — não possui registro em `docs/changes/`;
+- uma mudança em código, testes, banco ou qualquer configuração mantida, na raiz ou aninhada — inclusive dotfiles, exemplos de ambiente, versões de runtime, configs JSON/TypeScript e contratos legíveis por máquina como `docs/feature-sequence.json` — não possui registro em `docs/changes/`;
 - o registro correspondente em `docs/changes/` foi apenas modificado, renomeado ou excluído: o gate exige ao menos um arquivo com status Git `A` e ainda presente;
-- nenhuma base Git segura pode ser lida; a mesma resolução `origin/main` → `main` local → commit raiz usada pelo formatador preserva mudanças já commitadas.
+- nenhuma base Git segura pode ser lida; a mesma seleção pelo `merge-base` mais próximo, com fallback no commit raiz, usada pelo formatador preserva mudanças já commitadas sem aceitar registros herdados de uma `main` local mais nova que `origin/main`.

@@ -25,7 +25,7 @@ import {
   operationalEnvironment,
   redactEnvironmentSecrets,
   releaseBuildEnvironment,
-  releaseRuntimeEnvironment,
+  releaseSmokeEnvironment,
   secretEnvironmentEntries,
 } from "./release-guards.mjs";
 
@@ -247,15 +247,8 @@ function assertNoUnexpectedNextEnvironmentFiles(application) {
 }
 
 function runtimeEnvironment(application, commit, port, localEnvironment) {
-  const databaseUrl = process.env.DATABASE_URL_APP_DAL ?? localEnvironment.DATABASE_URL_APP_DAL;
-  if (databaseUrl === undefined || databaseUrl === "") {
-    throw new Error(
-      `DATABASE_URL_APP_DAL é obrigatória para validar ${application.application}/api/health/ready.`,
-    );
-  }
-  return releaseRuntimeEnvironment(process.env, localEnvironment, {
+  return releaseSmokeEnvironment(process.env, localEnvironment, {
     APP_RELEASE_SHA: commit,
-    DATABASE_URL_APP_DAL: databaseUrl,
     HOSTNAME: "127.0.0.1",
     NODE_ENV: "production",
     PORT: String(port),

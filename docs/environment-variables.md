@@ -11,7 +11,7 @@
 
 ## 2. Fundação local
 
-`.env.example` e `.env.e2e.example` contêm somente nomes e endpoints locais não secretos. `npm run supabase:reset` gera três arquivos ignorados com modo `0600`.
+`.env.example` e `.env.e2e.example` contêm somente nomes e endpoints locais não secretos. `npm run supabase:reset` gera três arquivos ignorados com modo `0600`. Antes de alterar Docker ou banco, o bootstrap recusa destino existente que não seja arquivo regular e recusa diretório-pai simbólico. Cada conteúdo é gravado em arquivo temporário exclusivo no mesmo diretório, sincronizado e publicado por rename atômico; o destino nunca é aberto para escrita, portanto symlink e hard link não fazem o setup sobrescrever seu outro alvo.
 
 Os arquivos `.env.local` da aplicação pública e do backoffice contêm somente runtime:
 
@@ -27,6 +27,8 @@ O arquivo separado `.env.e2e.local`, lido apenas pelo harness, contém:
 - `E2E_BASE_URL`, `E2E_BACKOFFICE_URL`, Supabase local, DAL restrita e `E2E_ALLOW_LOCAL=1`.
 
 O Playwright parseia o arquivo E2E sem incorporá-lo ao ambiente global, rejeita origem, host, protocolo, porta ou identidade divergentes e comprova banco, usuário e marcador local antes da suíte. Os filhos Next recebem `E2E_DATABASE_URL` vazio e seus `.env.local` nunca contêm a credencial administrativa. Cada processo de browser recebe separadamente apenas uma allowlist de paths, home/temporários, locale/fuso/terminal e integração gráfica local; credenciais, variáveis de banco, SSH, npm, loader e Snap são excluídas por construção. Senhas não entram em migration, log, screenshot ou arquivo versionado.
+
+Durante a fronteira local-first, o smoke de release ignora `DATABASE_URL_APP_DAL` herdada do processo e usa somente a entrada do `.env.local` de cada app. Além do contrato de identidade, essa URL precisa usar loopback e a porta local `54322`; valor ausente, remoto ou divergente interrompe o smoke sem iniciar o runtime empacotado.
 
 ## 3. Aplicação pública
 

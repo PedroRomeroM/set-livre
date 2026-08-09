@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import {
+  assertSafeEnvironmentFileDestination,
+  writeEnvironmentFileAtomic,
+} from "./safe-environment-file.mjs";
 import {
   assertSupabaseLoopbackBindings,
   assertSupabaseProjectStopped,
@@ -14,6 +17,16 @@ import {
 
 const root = resolve(import.meta.dirname, "..");
 const localHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+const applicationEnvironmentDestinations = [
+  [resolve(root, ".env.local"), "http://127.0.0.1:3000"],
+  [resolve(root, "apps/backoffice/.env.local"), "http://127.0.0.1:3001"],
+];
+const e2eEnvironmentPath = resolve(root, ".env.e2e.local");
+
+for (const [path] of applicationEnvironmentDestinations) {
+  assertSafeEnvironmentFileDestination(path);
+}
+assertSafeEnvironmentFileDestination(e2eEnvironmentPath);
 
 function run(command, argumentsList, options = {}) {
   const result = spawnSync(command, argumentsList, {
@@ -367,16 +380,10 @@ const e2eEnvironment = [
   "",
 ].join("\n");
 
-for (const [path, applicationUrl] of [
-  [resolve(root, ".env.local"), "http://127.0.0.1:3000"],
-  [resolve(root, "apps/backoffice/.env.local"), "http://127.0.0.1:3001"],
-]) {
-  writeFileSync(path, applicationEnvironment(applicationUrl), { encoding: "utf8", mode: 0o600 });
-  chmodSync(path, 0o600);
+for (const [path, applicationUrl] of applicationEnvironmentDestinations) {
+  writeEnvironmentFileAtomic(path, applicationEnvironment(applicationUrl));
 }
-const e2eEnvironmentPath = resolve(root, ".env.e2e.local");
-writeFileSync(e2eEnvironmentPath, e2eEnvironment, { encoding: "utf8", mode: 0o600 });
-chmodSync(e2eEnvironmentPath, 0o600);
+writeEnvironmentFileAtomic(e2eEnvironmentPath, e2eEnvironment);
 
 process.stdout.write(
   "Supabase local pronto em http://127.0.0.1:54321. Runtime e E2E foram gravados separadamente em arquivos ignorados.\n",

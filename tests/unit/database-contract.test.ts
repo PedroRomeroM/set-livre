@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { isDatabaseReadinessSatisfied } from "../../packages/contracts/src/database-readiness-contract";
 import { parseDalDatabaseUrl } from "../../packages/contracts/src";
 
 const validUrl =
   "postgresql://app_runtime:secret@db.example.test:6543/set_livre?sslmode=verify-full&options=-c%20role%3Dapp_dal";
+const restrictedReadinessRow = {
+  currentRole: "app_dal",
+  currentRoleRestricted: true,
+  ready: true,
+  sessionMembershipRestricted: true,
+  sessionRestricted: true,
+  sessionRole: "app_runtime",
+};
+const restrictedReadinessRows = [restrictedReadinessRow];
 
 describe("DAL database URL contract", () => {
   it("accepts a restricted session role with required SET ROLE and TLS parameters", () => {
@@ -51,5 +61,24 @@ describe("DAL database URL contract", () => {
         "sobrescrever sua identidade",
       );
     }
+  });
+
+  it("accepts readiness only when the login and effective DAL role are restricted", () => {
+    expect(isDatabaseReadinessSatisfied(restrictedReadinessRows, "app_runtime")).toBe(true);
+    expect(
+      isDatabaseReadinessSatisfied(
+        [{ ...restrictedReadinessRow, currentRoleRestricted: false }],
+        "app_runtime",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a different effective role even when every boolean claim is true", () => {
+    expect(() =>
+      isDatabaseReadinessSatisfied(
+        [{ ...restrictedReadinessRow, currentRole: "postgres" }],
+        "app_runtime",
+      ),
+    ).toThrow();
   });
 });

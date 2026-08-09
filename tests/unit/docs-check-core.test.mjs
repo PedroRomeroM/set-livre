@@ -172,6 +172,73 @@ describe("docs check core", () => {
     }
   });
 
+  it("prefers the closest main base and classifies nested config changes", () => {
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-closest-git-base-"));
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+
+    try {
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      git("config", "diff.renames", "true");
+      writeFileSync(join(repository, "README.md"), "# Baseline\n", "utf8");
+      git("add", "README.md");
+      git("commit", "-m", "baseline");
+      const staleOriginRevision = git("rev-parse", "HEAD").trim();
+      git("update-ref", "refs/remotes/origin/main", staleOriginRevision);
+
+      mkdirSync(join(repository, "docs/changes"), { recursive: true });
+      mkdirSync(join(repository, "docs/contracts"), { recursive: true });
+      writeFileSync(
+        join(repository, "docs/changes/2026-08-09-main-baseline.md"),
+        "# Registro anterior\n",
+        "utf8",
+      );
+      writeFileSync(join(repository, "docs/contracts/modified.json"), '{"version":1}\n', "utf8");
+      writeFileSync(join(repository, "docs/contracts/deleted.json"), '{"delete":true}\n', "utf8");
+      writeFileSync(join(repository, "docs/contracts/old.json"), '{"rename":true}\n', "utf8");
+      git("add", "docs");
+      git("commit", "-m", "advance local main");
+      const localMainRevision = git("rev-parse", "HEAD").trim();
+
+      git("switch", "--create", "feature");
+      writeFileSync(join(repository, "docs/feature-sequence.json"), '{"version":1}\n', "utf8");
+      writeFileSync(join(repository, "docs/contracts/modified.json"), '{"version":2}\n', "utf8");
+      rmSync(join(repository, "docs/contracts/deleted.json"));
+      git("mv", "docs/contracts/old.json", "docs/contracts/renamed.json");
+      git("add", "--all");
+      git("commit", "-m", "change nested configs");
+
+      const featureChanges = readGitChanges(repository);
+      expect(featureChanges.comparisonBase).toBe(localMainRevision);
+      expect(featureChanges.comparisonBase).not.toBe(staleOriginRevision);
+      expect(featureChanges.changes).not.toContainEqual({
+        path: "docs/changes/2026-08-09-main-baseline.md",
+        status: "A",
+      });
+
+      const expectedNestedChanges = [
+        { path: "docs/feature-sequence.json", status: "A" },
+        { path: "docs/contracts/modified.json", status: "M" },
+        { path: "docs/contracts/deleted.json", status: "D" },
+        { path: "docs/contracts/old.json", status: "R" },
+        { path: "docs/contracts/renamed.json", status: "R" },
+      ];
+      expect(featureChanges.changes).toEqual(expect.arrayContaining(expectedNestedChanges));
+      expect(expectedNestedChanges.every((change) => isTechnicalChangePath(change.path))).toBe(
+        true,
+      );
+      expect(featureChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
   it("accepts an ordered acyclic feature contract", () => {
     expect(
       validateFeatureSequence(

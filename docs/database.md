@@ -21,8 +21,11 @@ A migration head atual é `20260809000300`. A fundação não antecipa nenhuma t
 - `20260809000200_readiness_contract.sql`: `private.check_readiness(text)` como `security definer`, `search_path = ''` e `execute` exclusivo para `app_dal`;
 - `20260809000300_security_default_privileges_hardening.sql`: fecha o default global de `execute` de funções, normaliza `app_dal` e recusa atributos privilegiados que exigiriam superuser;
 - login `app_runtime_local` criado e rotacionado fora das migrations pelo bootstrap local, com atributos, memberships, parâmetros, ownership e grants diretos normalizados antes de assumir `app_dal` explicitamente;
-- 54 asserts pgTAP, incluindo funções-probe que comprovam deny-by-default nos três schemas e o estado exato das roles;
+- readiness consulta o catálogo por um subpath compartilhado `server-only` e falha se o login ou a role efetiva `app_dal` possuir login, herança, criação, replicação, superuser ou `BYPASSRLS`; o teste SQL adultera `app_dal` transacionalmente com `BYPASSRLS`, comprova a detecção e restaura a role;
+- 55 asserts pgTAP, incluindo funções-probe que comprovam deny-by-default nos três schemas, o estado exato das roles e a detecção de `app_dal` adulterada;
 - snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
+
+`npm run supabase:types` gera os tipos em um temporário irmão do destino, valida os exports e a sintaxe TypeScript, aplica a configuração Prettier versionada, sincroniza em disco e publica por substituição atômica somente depois do sucesso integral. Uma falha da stack local, CLI, validação ou formatação preserva o contrato rastreado anterior e não deixa saída parcial.
 
 As migrations aplicadas são imutáveis. Tabelas, RLS e comandos de cada domínio entram apenas na respectiva fatia vertical.
 

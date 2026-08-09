@@ -62,6 +62,7 @@ function resolveGitComparisonBase(runGit) {
     return null;
   }
 
+  let closestCandidate = null;
   for (const reference of ["refs/remotes/origin/main", "refs/heads/main"]) {
     try {
       const revision = runGit(["rev-parse", "--verify", "--quiet", `${reference}^{commit}`]).trim();
@@ -69,12 +70,30 @@ function resolveGitComparisonBase(runGit) {
         revision === "" || revision === headRevision
           ? ""
           : runGit(["merge-base", revision, "HEAD"]).trim();
-      if (mergeBase !== "") {
-        return revision;
+      if (mergeBase === "") {
+        continue;
+      }
+
+      const distanceOutput = runGit([
+        "rev-list",
+        "--count",
+        `${mergeBase}..${headRevision}`,
+      ]).trim();
+      const distance = /^\d+$/.test(distanceOutput) ? Number(distanceOutput) : Number.NaN;
+      if (!Number.isSafeInteger(distance)) {
+        continue;
+      }
+
+      if (closestCandidate === null || distance < closestCandidate.distance) {
+        closestCandidate = { distance, revision };
       }
     } catch {
       // A ausência de uma ref candidata é esperada em clones e pacotes locais.
     }
+  }
+
+  if (closestCandidate !== null) {
+    return closestCandidate.revision;
   }
 
   let rootRevision = "";
@@ -171,15 +190,13 @@ export function isTechnicalChangePath(path) {
     return true;
   }
 
-  if (path.includes("/")) {
-    return false;
-  }
+  const fileName = path.split("/").at(-1) ?? "";
 
   return (
-    (path.startsWith(".") && !path.endsWith(".md")) ||
-    path.endsWith(".json") ||
-    /(?:^|[.-])config\.(?:[cm]?[jt]s|json)$/.test(path) ||
-    path === "next-env.d.ts"
+    (fileName.startsWith(".") && !fileName.endsWith(".md")) ||
+    /\.(?:json|toml|ya?ml)$/.test(fileName) ||
+    /(?:^|[.-])config\.(?:[cm]?[jt]s|json|toml|ya?ml)$/.test(fileName) ||
+    fileName === "next-env.d.ts"
   );
 }
 

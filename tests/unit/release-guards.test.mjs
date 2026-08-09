@@ -21,6 +21,7 @@ import {
   redactEnvironmentSecrets,
   releaseBuildEnvironment,
   releaseRuntimeEnvironment,
+  releaseSmokeEnvironment,
 } from "../../scripts/release-guards.mjs";
 
 const temporaryRoots = [];
@@ -164,6 +165,49 @@ describe("release environment isolation", () => {
     expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
     expect(environment).not.toHaveProperty("LD_PRELOAD");
     expect(environment).not.toHaveProperty("TAR_OPTIONS");
+  });
+
+  it("uses the validated local DAL URL even when the inherited environment points remotely", () => {
+    const localDatabaseUrl =
+      "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+    const environment = releaseSmokeEnvironment(
+      {
+        DATABASE_URL_APP_DAL: "postgresql://remote:secret@database.example.com/production",
+        PATH: "/usr/bin",
+      },
+      { DATABASE_URL_APP_DAL: localDatabaseUrl },
+      { APP_RELEASE_SHA: "c".repeat(40), PORT: "4100" },
+    );
+
+    expect(environment.DATABASE_URL_APP_DAL).toBe(localDatabaseUrl);
+    expect(environment.DATABASE_URL_APP_DAL).not.toContain("database.example.com");
+  });
+
+  it("rejects a remote DAL URL in the app-local runtime file", () => {
+    expect(() =>
+      releaseSmokeEnvironment(
+        { PATH: "/usr/bin" },
+        {
+          DATABASE_URL_APP_DAL:
+            "postgresql://app_runtime_local:secret@database.example.com:54322/postgres?options=-c%20role%3Dapp_dal",
+        },
+        { APP_RELEASE_SHA: "d".repeat(40), PORT: "4100" },
+      ),
+    ).toThrow("instância Supabase local");
+  });
+
+  it("does not fall back to an inherited DAL URL when the app-local file omits it", () => {
+    expect(() =>
+      releaseSmokeEnvironment(
+        {
+          DATABASE_URL_APP_DAL:
+            "postgresql://app_runtime_local:secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
+          PATH: "/usr/bin",
+        },
+        {},
+        { APP_RELEASE_SHA: "e".repeat(40), PORT: "4100" },
+      ),
+    ).toThrow("local é obrigatória");
   });
 
   it("redacts configured credentials, database passwords, authorization and cookies", () => {

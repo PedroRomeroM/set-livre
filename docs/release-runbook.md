@@ -13,6 +13,8 @@
 - [ ] release notes;
 - [ ] aprovação.
 
+Enquanto o ADR-018 estiver vigente, o smoke local do artefato usa exclusivamente a URL DAL do `.env.local` de cada aplicação. A URL precisa apontar para a instância Supabase em loopback `:54322` com `app_runtime_local` assumindo `app_dal`; uma variável homônima exportada no host não tem precedência e uma URL local inválida aborta antes de iniciar os servidores empacotados.
+
 ## Deploy
 
 1. verificar capacidade/disco;
@@ -26,11 +28,13 @@
 9. restart;
 10. ready;
 11. HTTPS smoke:
-   - home;
-   - listagem;
-   - login;
-   - backoffice restrito;
-   - command auth rejection;
+
+- home;
+- listagem;
+- login;
+- backoffice restrito;
+- command auth rejection;
+
 12. monitorar 15 minutos;
 13. marcar sucesso.
 
