@@ -6,7 +6,7 @@
 - nenhuma URL de banco privada no client;
 - env separada por app/worker;
 - validação Zod no boot;
-- uma rota que depende de variável crítica falha fechada; `/ready` responde `503` quando o banco não está utilizável;
+- uma rota que depende de variável crítica falha fechada; `/ready` responde `503` quando `APP_RELEASE_SHA` é ausente/inválido ou o banco não está utilizável;
 - logs mostram apenas nomes ausentes, nunca valores.
 
 ## 2. Fundação local

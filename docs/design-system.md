@@ -18,7 +18,7 @@ A fundação implementa apenas `packages/ui/src/tokens.css` e a superfície téc
 
 Os tokens atuais usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, tipografia, spacing, radius, foco, sombra e largura de conteúdo. A identidade é deliberadamente neutra enquanto PEND-007/OPEN-003 estiver aberta. Primitives do catálogo abaixo nascem somente junto ao primeiro uso real e devem ampliar os tokens sem criar um sistema paralelo.
 
-A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow com texto a 200% em 390 e 320 px.
+A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
 
 ## 2. Tokens
 

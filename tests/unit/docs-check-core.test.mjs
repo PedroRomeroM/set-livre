@@ -1,14 +1,23 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   collectMatches,
   findDuplicates,
   gitChangedFileArgumentLists,
+  isAddedChangeRecord,
+  isTechnicalChangePath,
+  parseGitChanges,
   parseNormativeIntegrationPairs,
   parseOpenPendingFeaturePairs,
   parsePendingRows,
   parseFeatureReferences,
   parseQaRows,
+  readGitChanges,
   sha256,
   validateFeatureSequence,
   validateGovernanceAlignment,
@@ -52,13 +61,115 @@ describe("docs check core", () => {
     );
   });
 
-  it("includes deleted files in every Git diff used by the documentation gate", () => {
-    const diffArguments = gitChangedFileArgumentLists().filter(([command]) => command === "diff");
-
+  it("keeps Git change detection conservative without origin/main", () => {
+    const argumentDescriptors = gitChangedFileArgumentLists("base-revision");
+    const diffArguments = argumentDescriptors
+      .map((descriptor) => descriptor.argumentsList)
+      .filter(([command]) => command === "diff");
     expect(diffArguments).toHaveLength(3);
     expect(
-      diffArguments.every((argumentList) => argumentList.includes("--diff-filter=ACMRD")),
+      diffArguments.every(
+        (argumentList) =>
+          argumentList.includes("--name-status") && argumentList.includes("--diff-filter=ACMRD"),
+      ),
     ).toBe(true);
+
+    const parsedChanges = parseGitChanges(
+      "M\0docs/changes/2026-08-09-existing.md\0A\0docs/changes/2026-08-09-new.md\0D\0deleted.ts\0R100\0old.ts\0new.ts\0",
+    );
+    expect(parsedChanges).toEqual([
+      { path: "docs/changes/2026-08-09-existing.md", status: "M" },
+      { path: "docs/changes/2026-08-09-new.md", status: "A" },
+      { path: "deleted.ts", status: "D" },
+      { path: "old.ts", status: "R" },
+      { path: "new.ts", status: "R" },
+    ]);
+    expect(parsedChanges.filter(isAddedChangeRecord)).toEqual([
+      { path: "docs/changes/2026-08-09-new.md", status: "A" },
+    ]);
+    expect(
+      ["M", "D", "R"].some((status) =>
+        isAddedChangeRecord({ path: "docs/changes/2026-08-09-reused.md", status }),
+      ),
+    ).toBe(false);
+
+    for (const path of [
+      ".editorconfig",
+      ".env.e2e.example",
+      ".env.example",
+      ".gitignore",
+      ".node-version",
+      ".npmrc",
+      ".nvmrc",
+      ".prettierignore",
+      ".prettierrc.json",
+      "eslint.config.mjs",
+      "knip.json",
+      "next-env.d.ts",
+      "next.config.ts",
+      "package-lock.json",
+      "package.json",
+      "playwright.config.ts",
+      "tsconfig.base.json",
+      "tsconfig.json",
+      "tsconfig.tests.json",
+      "vitest.config.ts",
+    ]) {
+      expect(isTechnicalChangePath(path), path).toBe(true);
+    }
+    expect(isTechnicalChangePath("README.md")).toBe(false);
+
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-git-changes-"));
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    try {
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      writeFileSync(join(repository, "README.md"), "# Baseline\n", "utf8");
+      git("add", "README.md");
+      git("commit", "-m", "baseline");
+      const rootRevision = git("rev-parse", "HEAD").trim();
+
+      mkdirSync(join(repository, "docs"));
+      writeFileSync(join(repository, "docs/on-main.md"), "# Markdown na main local\n", "utf8");
+      git("add", "docs/on-main.md");
+      git("commit", "-m", "docs on main");
+      const mainRevision = git("rev-parse", "HEAD").trim();
+
+      const localMainAtHeadChanges = readGitChanges(repository);
+      expect(localMainAtHeadChanges.comparisonBase).toBe(rootRevision);
+      expect(localMainAtHeadChanges.changes).toContainEqual({
+        path: "docs/on-main.md",
+        status: "A",
+      });
+
+      git("switch", "--create", "feature");
+      writeFileSync(join(repository, "docs/committed.md"), "# Markdown commitado\n", "utf8");
+      git("add", "docs/committed.md");
+      git("commit", "-m", "docs");
+
+      const localMainChanges = readGitChanges(repository);
+      expect(localMainChanges.comparisonBase).toBe(mainRevision);
+      expect(localMainChanges.changes).toContainEqual({
+        path: "docs/committed.md",
+        status: "A",
+      });
+
+      git("branch", "--delete", "--force", "main");
+      const rootFallbackChanges = readGitChanges(repository);
+      expect(rootFallbackChanges.comparisonBase).toBe(rootRevision);
+      expect(rootFallbackChanges.changes).toContainEqual({
+        path: "docs/committed.md",
+        status: "A",
+      });
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
   });
 
   it("accepts an ordered acyclic feature contract", () => {

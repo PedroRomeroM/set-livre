@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createHealthPayload,
   databaseMigrationHead,
+  evaluateReadiness,
   healthPayloadSchema,
   resolveRequestId,
 } from "../../packages/contracts/src";
@@ -53,6 +54,99 @@ describe("health contract", () => {
       "requestId",
       "status",
     ]);
+  });
+
+  it.each([
+    ["web", undefined],
+    ["backoffice", "not-a-release-sha"],
+  ] as const)(
+    "returns authoritative %s unready metadata for an invalid release",
+    async (application, releaseCandidate) => {
+      const dependencyCheck = vi.fn(() => true);
+      const requestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
+
+      const result = await evaluateReadiness(
+        application,
+        requestId,
+        releaseCandidate,
+        dependencyCheck,
+        new Date("2026-08-09T12:00:00.000Z"),
+      );
+
+      expect(dependencyCheck).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        headers: {
+          "cache-control": "no-store",
+          "x-request-id": requestId,
+        },
+        payload: {
+          application,
+          checkedAt: "2026-08-09T12:00:00.000Z",
+          release: "unknown",
+          requestId,
+          status: "unready",
+        },
+        status: 503,
+      });
+      expect(healthPayloadSchema.safeParse(result.payload).success).toBe(true);
+    },
+  );
+
+  it("returns ready only when release and dependency are both valid", async () => {
+    const requestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
+    const dependencyCheck = vi.fn(() => true);
+
+    const result = await evaluateReadiness(
+      "backoffice",
+      requestId,
+      "0123456789abcdef0123456789abcdef01234567",
+      dependencyCheck,
+      new Date("2026-08-09T12:00:00.000Z"),
+    );
+
+    expect(dependencyCheck).toHaveBeenCalledOnce();
+    expect(result.status).toBe(200);
+    expect(result.payload).toMatchObject({
+      application: "backoffice",
+      release: "0123456789abcdef0123456789abcdef01234567",
+      requestId,
+      status: "ready",
+    });
+  });
+
+  it("fails closed without exposing a dependency exception", async () => {
+    const requestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
+
+    const result = await evaluateReadiness(
+      "web",
+      requestId,
+      "local",
+      () => Promise.reject(new Error("sensitive database detail")),
+      new Date("2026-08-09T12:00:00.000Z"),
+    );
+
+    expect(result.status).toBe(503);
+    expect(result.payload).toEqual({
+      application: "web",
+      checkedAt: "2026-08-09T12:00:00.000Z",
+      release: "local",
+      requestId,
+      status: "unready",
+    });
+    expect(JSON.stringify(result)).not.toContain("sensitive database detail");
+  });
+
+  it("allows an unknown release only on an unready payload", () => {
+    const base = {
+      application: "web",
+      checkedAt: "2026-08-09T12:00:00.000Z",
+      release: "unknown",
+      requestId: "e65fe64c-3788-4cf0-beb3-c344025b0bb0",
+    };
+
+    expect(healthPayloadSchema.safeParse({ ...base, status: "unready" }).success).toBe(true);
+    expect(healthPayloadSchema.safeParse({ ...base, status: "ready" }).success).toBe(false);
+    expect(healthPayloadSchema.safeParse({ ...base, status: "live" }).success).toBe(false);
   });
 
   it("propagates only a valid request ID", () => {

@@ -15,7 +15,7 @@ A implementação deve produzir uma aplicação comercializável e operável, e 
 - Cada feature posterior deve usar branch e PR próprios, sem implementação paralela de outra feature.
 - Nenhum arquivo do Spenses foi alterado.
 
-Não reescreva a baseline. Push, PR e merge seguem a autorização operacional do usuário: execute os gates completos, publique o PR, solicite `@codex review` e aguarde 60 minutos completos antes de consultar o resultado. Se houver correção pertinente, implemente-a, rode novamente todos os gates e a suíte Playwright completa, faça commit e push, solicite um novo `@codex review` e aguarde outros 60 minutos completos. Repita esse ciclo até o review não apontar problema corrigível; somente então faça o merge.
+Não reescreva a baseline. Push, PR e merge seguem a autorização operacional do usuário: execute os gates completos, publique o PR, solicite `@codex review` e aguarde 60 minutos completos antes de consultar o resultado. Se houver correção pertinente, implemente-a, rode novamente todos os gates e a suíte Playwright completa, faça commit e push, resolva no PR cada thread do Codex efetivamente atendida, solicite um novo `@codex review` e aguarde outros 60 minutos completos. Comentário não atendido ou deliberadamente rejeitado permanece aberto com justificativa. Repita esse ciclo até o review não apontar problema corrigível; somente então faça o merge.
 
 ## Ações de fundação
 

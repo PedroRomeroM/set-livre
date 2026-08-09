@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,11 +5,13 @@ import { fileURLToPath } from "node:url";
 import {
   collectMatches,
   findDuplicates,
-  gitChangedFileArgumentLists,
+  isAddedChangeRecord,
+  isTechnicalChangePath,
   parseNormativeIntegrationPairs,
   parseOpenPendingFeaturePairs,
   parsePendingRows,
   parseQaRows,
+  readGitChanges,
   sha256,
   validateFeatureSequence,
   validateGovernanceAlignment,
@@ -223,29 +224,16 @@ for (const file of playwrightFiles) {
   check(!/waitForTimeout\s*\(/.test(content), `${file} contém waitForTimeout.`);
 }
 
-const changedFiles = new Set();
-function addChangedFiles(argumentsList) {
-  const output = execFileSync("git", argumentsList, { cwd: root, encoding: "utf8" });
-  for (const path of output.split("\0").filter(Boolean)) {
-    changedFiles.add(path);
-  }
-}
-
+let gitChanges = [];
 try {
-  for (const argumentList of gitChangedFileArgumentLists()) {
-    addChangedFiles(argumentList);
-  }
+  gitChanges = readGitChanges(root).changes;
 } catch {
   errors.push("Não foi possível ler o status Git para validar o registro de mudança.");
 }
 
-const technicalChange = [...changedFiles].some(
-  (path) =>
-    /^(?:src|apps|packages|scripts|supabase|tests)\//.test(path) ||
-    /^(?:package(?:-lock)?\.json|.*config\.(?:ts|mjs|json)|\.nvmrc|\.npmrc)$/.test(path),
-);
-const changeRecord = [...changedFiles].some((path) =>
-  /^docs\/changes\/\d{4}-\d{2}-\d{2}-.+\.md$/.test(path),
+const technicalChange = gitChanges.some((change) => isTechnicalChangePath(change.path));
+const changeRecord = gitChanges.some(
+  (change) => isAddedChangeRecord(change) && existsSync(resolve(root, change.path)),
 );
 check(!technicalChange || changeRecord, "Mudança técnica sem novo registro em docs/changes/.");
 

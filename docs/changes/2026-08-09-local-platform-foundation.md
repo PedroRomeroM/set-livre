@@ -74,13 +74,21 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 57 testes unitários de docs, segurança E2E/browser, isolamento local, health/release e migration head;
+- 62 testes unitários de docs, segurança E2E/browser, isolamento local, health/release e migration head;
 - 54 asserts pgTAP;
-- IDs técnicos estáveis `FOUNDATION-E2E-001` a `010`, fora da matriz das 34 features;
-- 33 execuções Playwright: desktop, 390 px, 320 px, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
+- IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
+- 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
 - build standalone das duas aplicações e smoke do pacote de release;
 - guardrails adversariais para raiz simbólica/permissiva, herança de credenciais, separação de URLs e redaction do empacotamento.
+
+## Correções do primeiro Codex review
+
+- gates de documentação e formatação resolvem `origin/main`, `main` local e fallback conservador sem eliminar Markdown commitado;
+- mudança técnica reconhece todos os configs raiz mantidos e exige change record com status Git `A`;
+- Playwright diferencia as superfícies por heading exato e comprova reflow equivalente ao zoom de 200% nos três engines;
+- readiness inválida falha fechada com JSON `503/unready`, `release=unknown`, headers autoritativos e sem consulta à DAL;
+- threads efetivamente atendidas passam a ser resolvidas no PR antes de cada nova solicitação de review.
 
 ## Observabilidade e operação
 
@@ -114,11 +122,11 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 57 aprovados;
+- `npm run test:unit`: 62 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 54 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
-- `npm run test:e2e:affected`: 33 aprovados;
+- `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;
 - `npm run audit`: zero vulnerabilidades;
 - `npm run knip`: aprovado sem hint.

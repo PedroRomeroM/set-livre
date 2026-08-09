@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 export function collectMatches(content, pattern) {
@@ -53,13 +54,133 @@ export function parseFeatureReferences(content) {
   return [...featureIds].sort();
 }
 
-export function gitChangedFileArgumentLists() {
+function resolveGitComparisonBase(runGit) {
+  let headRevision = "";
+  try {
+    headRevision = runGit(["rev-parse", "--verify", "HEAD^{commit}"]).trim();
+  } catch {
+    return null;
+  }
+
+  for (const reference of ["refs/remotes/origin/main", "refs/heads/main"]) {
+    try {
+      const revision = runGit(["rev-parse", "--verify", "--quiet", `${reference}^{commit}`]).trim();
+      const mergeBase =
+        revision === "" || revision === headRevision
+          ? ""
+          : runGit(["merge-base", revision, "HEAD"]).trim();
+      if (mergeBase !== "") {
+        return revision;
+      }
+    } catch {
+      // A ausência de uma ref candidata é esperada em clones e pacotes locais.
+    }
+  }
+
+  let rootRevision = "";
+  try {
+    rootRevision =
+      runGit(["rev-list", "--max-parents=0", "HEAD"])
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .sort()[0] ?? "";
+  } catch {
+    return null;
+  }
+
+  return rootRevision !== "" && rootRevision !== headRevision ? rootRevision : null;
+}
+
+export function gitChangedFileArgumentLists(comparisonBase) {
   return [
-    ["diff", "--name-only", "-z", "--diff-filter=ACMRD", "origin/main...HEAD"],
-    ["diff", "--name-only", "-z", "--diff-filter=ACMRD"],
-    ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRD"],
-    ["ls-files", "--others", "--exclude-standard", "-z"],
+    comparisonBase === null
+      ? { argumentsList: ["ls-files", "-z"], implicitStatus: "A" }
+      : {
+          argumentsList: [
+            "diff",
+            "--name-status",
+            "-z",
+            "--diff-filter=ACMRD",
+            `${comparisonBase}...HEAD`,
+          ],
+        },
+    {
+      argumentsList: ["diff", "--name-status", "-z", "--diff-filter=ACMRD"],
+    },
+    {
+      argumentsList: ["diff", "--cached", "--name-status", "-z", "--diff-filter=ACMRD"],
+    },
+    {
+      argumentsList: ["ls-files", "--others", "--exclude-standard", "-z"],
+      implicitStatus: "A",
+    },
   ];
+}
+
+export function parseGitChanges(output, implicitStatus) {
+  const tokens = output.split("\0").filter(Boolean);
+  if (implicitStatus !== undefined) {
+    return tokens.map((path) => ({ path, status: implicitStatus }));
+  }
+
+  const changes = [];
+  for (let index = 0; index < tokens.length;) {
+    const statusToken = tokens[index];
+    const status = statusToken?.at(0);
+    index += 1;
+    if (status === undefined || !/[ACDMR]/.test(status)) {
+      throw new Error(`Status Git inválido: ${statusToken ?? "ausente"}.`);
+    }
+
+    const pathsToRead = status === "R" || status === "C" ? 2 : 1;
+    for (let pathIndex = 0; pathIndex < pathsToRead; pathIndex += 1) {
+      const path = tokens[index];
+      index += 1;
+      if (path === undefined) {
+        throw new Error(`Saída Git incompleta para status ${statusToken}.`);
+      }
+      changes.push({ path, status });
+    }
+  }
+
+  return changes;
+}
+
+export function readGitChanges(root, executeGit = execFileSync) {
+  const runGit = (argumentsList) =>
+    executeGit("git", argumentsList, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  const comparisonBase = resolveGitComparisonBase(runGit);
+  const changes = gitChangedFileArgumentLists(comparisonBase).flatMap(
+    ({ argumentsList, implicitStatus }) => parseGitChanges(runGit(argumentsList), implicitStatus),
+  );
+
+  return { changes, comparisonBase };
+}
+
+export function isAddedChangeRecord(change) {
+  return change.status === "A" && /^docs\/changes\/\d{4}-\d{2}-\d{2}-.+\.md$/.test(change.path);
+}
+
+export function isTechnicalChangePath(path) {
+  if (/^(?:src|apps|packages|scripts|supabase|tests)\//.test(path)) {
+    return true;
+  }
+
+  if (path.includes("/")) {
+    return false;
+  }
+
+  return (
+    (path.startsWith(".") && !path.endsWith(".md")) ||
+    path.endsWith(".json") ||
+    /(?:^|[.-])config\.(?:[cm]?[jt]s|json)$/.test(path) ||
+    path === "next-env.d.ts"
+  );
 }
 
 export function parseNormativeIntegrationPairs(content) {

@@ -1,9 +1,10 @@
-import { execFileSync } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as prettier from "prettier";
+
+import { readGitChanges } from "./docs-check-core.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const mode = process.argv[2];
@@ -57,33 +58,8 @@ async function walk(relativeDirectory) {
   return files;
 }
 
-function gitFiles(argumentsList) {
-  try {
-    return execFileSync("git", argumentsList, {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split("\0")
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 function changedFiles() {
-  const committed = gitFiles([
-    "diff",
-    "--name-only",
-    "-z",
-    "--diff-filter=ACMR",
-    "origin/main...HEAD",
-  ]);
-  const workingTree = gitFiles(["diff", "--name-only", "-z", "--diff-filter=ACMR"]);
-  const staged = gitFiles(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"]);
-  const untracked = gitFiles(["ls-files", "--others", "--exclude-standard", "-z"]);
-
-  return [...committed, ...workingTree, ...staged, ...untracked];
+  return readGitChanges(root).changes.map((change) => change.path);
 }
 
 const candidates = new Set([...rootCandidates, ...changedFiles()]);

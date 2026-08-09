@@ -53,6 +53,7 @@ O runner deve abortar antes de abrir browser se detectar production/acceptance h
 - WebKit desktop para critical;
 - Chromium mobile 390x844;
 - telefone estreito 320x720 em regressão;
+- reflow equivalente a 320x720 com zoom 200%: layout viewport 160x360 nos três engines, com escala física 2 quando suportada pelo engine;
 - height compact;
 - backoffice desktop;
 - axe em claro/escuro e nos viewports móveis de 390 e 320 px;
@@ -125,7 +126,7 @@ Fixtures de sandbox do provider real são sanitizadas e testes de contrato não 
 - teclado;
 - focus trap/restore;
 - aria errors/live regions;
-- zoom 200%;
+- zoom 200% com redução real do layout viewport, sem substituir o cenário de texto ampliado;
 - contrast;
 - touch target;
 - calendar alternative;

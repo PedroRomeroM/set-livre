@@ -143,6 +143,15 @@ export default defineConfig({
         viewport: { height: 844, width: 390 },
       },
     },
+    ...(["chromium", "firefox", "webkit"] as const).map((browserName) => ({
+      name: `zoom-200-reflow-${browserName}`,
+      testMatch: /reflow\/.*\.spec\.ts/,
+      use: {
+        browserName,
+        deviceScaleFactor: 2,
+        viewport: { height: 360, width: 160 },
+      },
+    })),
   ],
   reporter: [["line"], ["html", { open: "never", outputFolder: ".artifacts/playwright-report" }]],
   retries: 0,

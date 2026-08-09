@@ -140,6 +140,6 @@ Após a implementação local e a resolução das entradas de `pendencias.md`:
 - Uma única feature de produto por branch e PR.
 - A próxima feature começa somente após merge da anterior e atualização local de `main`.
 - Todos os gates e a suíte Playwright completa são executados antes do PR e após cada correção de review.
-- Depois de solicitar `@codex review`, aguardar 60 minutos completos antes de consultar o resultado. Cada correção pertinente exige novamente gates completos, suíte Playwright completa, commit, push, nova solicitação de `@codex review` e nova espera integral de 60 minutos. O ciclo termina somente com review sem problema corrigível; então o PR pode ser mergeado.
+- Depois de solicitar `@codex review`, aguardar 60 minutos completos antes de consultar o resultado. Cada correção pertinente exige novamente gates completos, suíte Playwright completa, commit e push; toda thread efetivamente atendida deve ser resolvida no PR, enquanto comentário não atendido ou rejeitado permanece aberto com justificativa. Em seguida, solicitar novo `@codex review` e cumprir nova espera integral de 60 minutos. O ciclo termina somente com review sem problema corrigível; então o PR pode ser mergeado.
 - Uma mudança de ordem exige atualização do ADR-017, deste documento e da rastreabilidade.
 - Calendário, hold, pagamento e reserva mantêm um responsável técnico integrador, mesmo com execução serial.

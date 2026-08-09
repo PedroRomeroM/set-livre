@@ -56,7 +56,7 @@ Depois o comando inicia exatamente `web/server.js` e `backoffice/apps/backoffice
 
 ## 6. Formatting
 
-O Blueprint tem checksum canônico e não é reformatado. `scripts/format-scope.mjs` verifica todo código/config mantido e o Markdown alterado em relação a `origin/main`, inclusive depois do commit da branch. Prettier não substitui lint ou validação documental.
+O Blueprint tem checksum canônico e não é reformatado. `scripts/format-scope.mjs` verifica todo código/config mantido e o Markdown alterado, inclusive depois do commit da branch. A base Git é resolvida, em ordem, por `origin/main`, `main` local e commit raiz alcançável; em um repositório ainda no commit inicial, todos os arquivos rastreados entram no conjunto. A ausência da ref remota nunca elimina silenciosamente Markdown commitado. Prettier não substitui lint ou validação documental.
 
 ## 7. Playwright e axe
 
@@ -105,4 +105,6 @@ O gate falha, entre outros casos, quando:
 - código contém marcador de dívida informal;
 - Playwright contém `.only`, `.skip` ou `waitForTimeout`;
 - um intervalo de features na tabela normativa ou em `pendencias.md` é descendente;
-- uma inclusão, alteração, renomeação ou exclusão técnica da branch não possui registro em `docs/changes/`.
+- uma mudança em código, testes, banco ou qualquer configuração raiz mantida — inclusive dotfiles, exemplos de ambiente, versões de runtime e configs JSON/TypeScript — não possui registro em `docs/changes/`;
+- o registro correspondente em `docs/changes/` foi apenas modificado, renomeado ou excluído: o gate exige ao menos um arquivo com status Git `A` e ainda presente;
+- nenhuma base Git segura pode ser lida; a mesma resolução `origin/main` → `main` local → commit raiz usada pelo formatador preserva mudanças já commitadas.
