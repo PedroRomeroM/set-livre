@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
 
 import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
+import { generateSchemaSnapshot } from "./generate-schema-snapshot.mjs";
 import {
   assertSupabaseLoopbackBindings,
   assertSupabaseProjectStopped,
@@ -12,7 +12,6 @@ import {
 import { executeSupabaseLocalCommand } from "./supabase-command-executor.mjs";
 
 const command = process.argv[2];
-const schemaSnapshotPath = "supabase/schema.generated.sql";
 const localDockerEnvironment = assertLocalDockerDaemon();
 
 function supabase(argumentsList, capture = false, includeNetwork = true) {
@@ -62,13 +61,14 @@ if (command === "stop") {
     supabase(["test", "db", "--local"]);
   } else if (command === "schema") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
-    supabase(
-      ["db", "dump", "--local", "--schema", "public,private,audit", "--file", schemaSnapshotPath],
-      true,
-      false,
-    );
-    const schemaSnapshot = readFileSync(schemaSnapshotPath, "utf8");
-    writeFileSync(schemaSnapshotPath, `${schemaSnapshot.trimEnd()}\n`);
+    generateSchemaSnapshot({
+      runDump: (temporaryPath) =>
+        supabase(
+          ["db", "dump", "--local", "--schema", "public,private,audit", "--file", temporaryPath],
+          true,
+          false,
+        ),
+    });
   } else if (command === "types") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
     supabase(["gen", "types", "typescript", "--local", "--schema", "public"]);

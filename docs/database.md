@@ -25,7 +25,7 @@ A migration head atual é `20260809000300`. A fundação não antecipa nenhuma t
 - 56 asserts pgTAP, incluindo funções-probe que comprovam deny-by-default nos três schemas, o estado exato das roles e a detecção de atributos ou memberships adulterados em `app_dal`;
 - snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
 
-`npm run supabase:types` gera os tipos em um temporário irmão do destino, valida os exports e a sintaxe TypeScript, aplica a configuração Prettier versionada, sincroniza em disco e publica por substituição atômica somente depois do sucesso integral. Uma falha da stack local, CLI, validação ou formatação preserva o contrato rastreado anterior e não deixa saída parcial.
+`npm run supabase:schema` direciona o dump a um temporário exclusivo e irmão de `schema.generated.sql`; após a CLI terminar com sucesso, comprova que o arquivo físico não mudou, exige declarações dos schemas `audit`, `private` e `public`, normaliza a quebra de linha final, sincroniza em disco e publica por substituição atômica. `npm run supabase:types` usa o mesmo padrão para os tipos, valida os exports e a sintaxe TypeScript e aplica a configuração Prettier versionada antes da publicação. Uma falha da stack local, CLI, leitura, normalização, validação ou formatação preserva o artefato rastreado anterior e não deixa saída parcial.
 
 As migrations aplicadas são imutáveis. Tabelas, RLS e comandos de cada domínio entram apenas na respectiva fatia vertical.
 

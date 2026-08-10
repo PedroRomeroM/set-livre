@@ -74,7 +74,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 119 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
+- 137 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
 - 56 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -124,6 +124,12 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram o grupo npm/Next sem deixar descendentes ou portas ocupadas;
 - desenvolvimento e Playwright derivam `npm-cli.js` exclusivamente de `process.execPath`, validam Node/npm e manifests fixados imediatamente antes do spawn e não usam `npm.cmd`, shell ou resolução por `PATH`; release valida a mesma instalação antes do primeiro build e lê dela a versão manifestada, sob a fronteira explícita de toolchain/checkout confiáveis e sem alteração concorrente por qualquer principal com permissão de escrita.
 
+## Correções do sexto Codex review
+
+- o snapshot de schema é produzido em temporário irmão exclusivo, validado e sincronizado antes de substituição atômica; falha, dump vazio, schema obrigatório ausente ou troca de arquivo preservam o snapshot rastreado anterior;
+- o supervisor de desenvolvimento encerra a árvore completa de cada aplicação no Windows por `taskkill.exe /T /F` absoluto, sem shell e com timeout; no POSIX, mantém o PGID mesmo após o root encerrar para aplicar o fallback `SIGKILL` a qualquer descendente sobrevivente;
+- a matriz Playwright foi recontada pelo runner e permanece em 36 execuções: smoke `4 x 4`, critical `1 x 3`, backoffice `1 x 1`, acessibilidade `3 x 4`, safe area `1 x 1` e reflow `1 x 3`.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -156,7 +162,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 119 aprovados;
+- `npm run test:unit`: 137 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 56 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
