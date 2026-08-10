@@ -1,6 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 
+import { assertDatabaseGeneratedArtifactsCurrent } from "./check-database-generated-artifacts.mjs";
 import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
+import { generateDatabaseTypes } from "./generate-database-types.mjs";
 import { generateSchemaSnapshot } from "./generate-schema-snapshot.mjs";
 import {
   assertSupabaseLoopbackBindings,
@@ -59,6 +62,38 @@ if (command === "stop") {
   } else if (command === "test-db") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
     supabase(["test", "db", "--local"]);
+    await assertDatabaseGeneratedArtifactsCurrent({
+      generateSchema: (destinationPath) =>
+        generateSchemaSnapshot({
+          destinationPath,
+          runDump: (temporaryPath) =>
+            supabase(
+              [
+                "db",
+                "dump",
+                "--local",
+                "--schema",
+                "public,private,audit",
+                "--file",
+                temporaryPath,
+              ],
+              true,
+              false,
+            ),
+        }),
+      generateTypes: (destinationPath) =>
+        generateDatabaseTypes({
+          destinationPath,
+          runGenerator: (outputDescriptor) => {
+            const generatedTypes = supabase(
+              ["gen", "types", "typescript", "--local", "--schema", "public"],
+              true,
+            );
+            writeFileSync(outputDescriptor, generatedTypes, "utf8");
+          },
+        }),
+    });
+    process.stdout.write("Artefatos gerados do banco conferem com a instância local.\n");
   } else if (command === "schema") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
     generateSchemaSnapshot({

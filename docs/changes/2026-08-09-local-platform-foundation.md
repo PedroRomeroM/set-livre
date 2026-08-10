@@ -75,7 +75,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 145 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
+- 156 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
 - 129 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -138,6 +138,11 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - no Windows, desenvolvimento e Playwright encerram a árvore pelo `taskkill.exe` absoluto derivado de `SystemRoot/System32`, com `/PID /T /F`, ambiente mínimo, sem `PATH`/shell e timeout de cinco segundos;
 - o gate de supply chain cobre todas as seções instaláveis, bundles, aliases e overrides, fixa os workspaces/manifests físicos e recusa specs não-registry, hooks, `binding.gyp`, shrinkwrap ou lock paralelo; `.npmrc` desabilita todo lifecycle durante `npm ci`, mantém o preflight estrito sem `allowScripts` e bloqueia o escape global perigoso.
 
+## Correções do oitavo Codex review
+
+- o supervisor trata `SIGHUP` pelo mesmo shutdown completo de grupos POSIX usado para os demais sinais, retorna código 129 e comprova por processo real que pai, descendente e porta não sobrevivem ao fechamento do terminal;
+- `npm run test:db` gera snapshot SQL e tipos em destinos temporários não rastreados, compara os bytes normalizados/formatados aos contratos versionados e falha sem modificá-los quando qualquer artefato estiver stale.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -170,9 +175,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 145 aprovados;
+- `npm run test:unit`: 156 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 129 aprovados;
+- `npm run test:db`: 129 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

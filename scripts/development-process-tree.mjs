@@ -1,6 +1,6 @@
 import { terminateWindowsProcessTree } from "./windows-process-tree.mjs";
 
-const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
+const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 function isMissingProcessError(error) {
   return error instanceof Error && "code" in error && error.code === "ESRCH";
@@ -106,6 +106,7 @@ export function superviseDevelopmentProcesses({
   }
 
   function removeSignalHandlers() {
+    signalSource.removeListener("SIGHUP", handleSighup);
     signalSource.removeListener("SIGINT", handleSigint);
     signalSource.removeListener("SIGTERM", handleSigterm);
   }
@@ -160,10 +161,15 @@ export function superviseDevelopmentProcesses({
     beginShutdown("SIGINT", signalExitCodes.SIGINT);
   }
 
+  function handleSighup() {
+    beginShutdown("SIGHUP", signalExitCodes.SIGHUP);
+  }
+
   function handleSigterm() {
     beginShutdown("SIGTERM", signalExitCodes.SIGTERM);
   }
 
+  signalSource.on("SIGHUP", handleSighup);
   signalSource.on("SIGINT", handleSigint);
   signalSource.on("SIGTERM", handleSigterm);
 

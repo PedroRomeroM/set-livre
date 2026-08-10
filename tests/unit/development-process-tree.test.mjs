@@ -146,7 +146,7 @@ describe("development process tree supervisor", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "preserves POSIX process-group signaling and forcefully removes descendants",
+    "handles SIGHUP across a detached POSIX process group without orphaning descendants",
     async () => {
       const root = mkdtempSync(resolve(tmpdir(), "set-livre-dev-tree-"));
       temporaryRoots.push(root);
@@ -159,11 +159,11 @@ describe("development process tree supervisor", () => {
       const parentScriptPath = resolve(root, "parent.cjs");
       writeFileSync(
         leafScriptPath,
-        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port))); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(leafTerminatedPath)}, "seen"));\n`,
+        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port))); process.on("SIGHUP", () => fs.writeFileSync(${JSON.stringify(leafTerminatedPath)}, "seen"));\n`,
       );
       writeFileSync(
         parentScriptPath,
-        `const fs = require("node:fs"); const { spawn } = require("node:child_process"); fs.writeFileSync(${JSON.stringify(parentPidPath)}, String(process.pid)); spawn(process.execPath, [${JSON.stringify(leafScriptPath)}], { stdio: "ignore" }); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(parentTerminatedPath)}, "seen")); setInterval(() => {}, 1000);\n`,
+        `const fs = require("node:fs"); const { spawn } = require("node:child_process"); fs.writeFileSync(${JSON.stringify(parentPidPath)}, String(process.pid)); spawn(process.execPath, [${JSON.stringify(leafScriptPath)}], { stdio: "ignore" }); process.on("SIGHUP", () => fs.writeFileSync(${JSON.stringify(parentTerminatedPath)}, "seen")); setInterval(() => {}, 1000);\n`,
       );
 
       const child = spawn(process.execPath, [parentScriptPath], {
@@ -188,9 +188,9 @@ describe("development process tree supervisor", () => {
         leafPid = Number(readFileSync(leafPidPath, "utf8"));
         leafPort = Number(readFileSync(portPath, "utf8"));
 
-        signalSource.emit("SIGTERM");
+        signalSource.emit("SIGHUP");
 
-        await expect(supervisor.completion).resolves.toBe(143);
+        await expect(supervisor.completion).resolves.toBe(129);
         await waitFor(() => !processExists(leafPid));
         await assertPortCanBeRebound(leafPort);
         expect(readFileSync(parentTerminatedPath, "utf8")).toBe("seen");
