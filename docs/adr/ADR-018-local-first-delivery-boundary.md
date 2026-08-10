@@ -18,6 +18,7 @@ A restrição de APIs externas também suspende temporariamente três instruçõ
 - todos os gates são executados localmente em cada branch e após cada correção de review;
 - nenhum workflow em `.github/workflows`, projeto Supabase remoto, recurso Oracle, DNS, TLS ou secret cloud será criado nesta etapa;
 - providers externos usam interfaces server-only e adapters locais determinísticos apenas em desenvolvimento/teste;
+- o bootstrap Supabase local revoga das roles runtime schema, objetos e funções HTTP de `pg_net`; a capacidade somente volta após revisão deste ADR e normalização privilegiada equivalente no ambiente Cloud;
 - adapters locais nunca são habilitados ou apresentados como integração de produção;
 - enquanto este ADR estiver vigente, nenhuma menção a Pagar.me/Asaas sandbox autoriza instalar SDK, chamar endpoint externo, solicitar credencial ou tratar fixture como resposta remota; esses pontos do ADR-009, OPEN-001 e `docs/payments.md` ficam suspensos;
 - pendências externas ficam em `pendencias.md`, com critério de desbloqueio e trabalho já concluído;

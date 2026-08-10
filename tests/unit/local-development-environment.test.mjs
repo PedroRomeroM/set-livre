@@ -1,7 +1,5 @@
-import { execFileSync } from "node:child_process";
 import {
   chmodSync,
-  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -16,15 +14,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createLocalDevelopmentEnvironment,
-  localDevelopmentNpmRunArguments,
   readLocalDevelopmentEnvironmentFile,
   validateLocalDalDatabaseUrl,
 } from "../../scripts/local-development-environment.mjs";
-import { resolveTrustedNpmCliLaunch } from "../../scripts/trusted-npm-cli.mjs";
 
 const localDatabaseUrl =
   "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
-const projectRoot = resolve(import.meta.dirname, "../..");
 const temporaryRoots = [];
 
 function localEnvironment(overrides = {}) {
@@ -201,7 +196,7 @@ describe("local development child environment", () => {
     ).toThrow("DATABASE_URL_APP_DAL");
   });
 
-  it("rejects unexpected runtime names and isolates real npm from hostile host configs", () => {
+  it("rejects unexpected runtime names", () => {
     expect(() =>
       createLocalDevelopmentEnvironment(
         { PATH: "/usr/bin" },
@@ -209,132 +204,6 @@ describe("local development child environment", () => {
         "http://127.0.0.1:3000",
       ),
     ).toThrow("NODE_OPTIONS");
-
-    const root = temporaryRoot();
-    const hostileHome = resolve(root, "hostile-home");
-    const packageRoot = resolve(root, "package");
-    const hostileGlobalConfiguration = resolve(root, "hostile-global.npmrc");
-    const loaderSentinel = resolve(packageRoot, "loader-ran");
-    const preScriptSentinel = resolve(packageRoot, "pre-script-ran");
-    const probeResult = resolve(packageRoot, "probe-result.json");
-    mkdirSync(hostileHome);
-    mkdirSync(packageRoot);
-    const hostileConfiguration = [
-      "ignore-scripts=false",
-      "node-options=--require=./hostile-loader.cjs",
-      `script-shell=${resolve(root, "shell-that-must-not-exist")}`,
-      "",
-    ].join("\n");
-    writeFileSync(resolve(hostileHome, ".npmrc"), hostileConfiguration, "utf8");
-    writeFileSync(hostileGlobalConfiguration, hostileConfiguration, "utf8");
-    writeFileSync(
-      resolve(packageRoot, "package.json"),
-      `${JSON.stringify(
-        {
-          name: "set-livre-npm-isolation-probe",
-          private: true,
-          scripts: {
-            preprobe: "node preprobe.cjs",
-            "preprobe:child": "node preprobe.cjs",
-            probe: "npm run probe:child",
-            "probe:child": "node probe.cjs",
-          },
-          version: "0.0.0",
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      resolve(packageRoot, "hostile-loader.cjs"),
-      `require("node:fs").writeFileSync(${JSON.stringify(loaderSentinel)}, "executed");\n`,
-      "utf8",
-    );
-    writeFileSync(
-      resolve(packageRoot, "preprobe.cjs"),
-      `require("node:fs").writeFileSync(${JSON.stringify(preScriptSentinel)}, "executed");\n`,
-      "utf8",
-    );
-    writeFileSync(
-      resolve(packageRoot, "probe.cjs"),
-      `require("node:fs").writeFileSync(${JSON.stringify(
-        probeResult,
-      )}, JSON.stringify({ globalConfig: process.env.npm_config_globalconfig ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null, npmNodeOptions: process.env.npm_config_node_options ?? null, scriptShell: process.env.npm_config_script_shell ?? null, userConfig: process.env.npm_config_userconfig ?? null }));\n`,
-      "utf8",
-    );
-
-    const environment = createLocalDevelopmentEnvironment(
-      {
-        HOME: hostileHome,
-        NPM_CONFIG_GLOBALCONFIG: hostileGlobalConfiguration,
-        NPM_CONFIG_USERCONFIG: resolve(hostileHome, ".npmrc"),
-        NODE_OPTIONS: "--require=./hostile-loader.cjs",
-        PATH: process.env.PATH,
-        Path: process.env.Path,
-        USERPROFILE: hostileHome,
-        npm_config_script_shell: resolve(root, "shell-that-must-not-exist"),
-      },
-      localEnvironment(),
-      "http://127.0.0.1:3000",
-    );
-    const argumentsList = localDevelopmentNpmRunArguments(projectRoot, "probe", environment);
-    const expectedScriptShell = argumentsList
-      .find((argument) => argument.startsWith("--script-shell="))
-      ?.slice("--script-shell=".length);
-    const trustedNpm = resolveTrustedNpmCliLaunch({ repositoryRoot: projectRoot });
-    execFileSync(trustedNpm.command, [...trustedNpm.argumentPrefix, ...argumentsList], {
-      cwd: packageRoot,
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    expect(existsSync(loaderSentinel)).toBe(false);
-    expect(existsSync(preScriptSentinel)).toBe(false);
-    expect(JSON.parse(readFileSync(probeResult, "utf8"))).toEqual({
-      globalConfig: resolve(projectRoot, "config/npm/dev-global.npmrc"),
-      nodeOptions: null,
-      npmNodeOptions: "",
-      scriptShell: expectedScriptShell,
-      userConfig: resolve(projectRoot, "config/npm/dev-user.npmrc"),
-    });
-
-    const unsafeRepository = resolve(root, "unsafe-repository");
-    const unsafeNpmDirectory = resolve(unsafeRepository, "config/npm");
-    const unsafeUserConfiguration = resolve(unsafeNpmDirectory, "dev-user.npmrc");
-    mkdirSync(unsafeNpmDirectory, { recursive: true });
-    writeFileSync(
-      resolve(unsafeRepository, ".npmrc"),
-      "engine-strict=true\nfund=false\nsave-exact=true\n",
-      "utf8",
-    );
-    writeFileSync(resolve(unsafeNpmDirectory, "dev-global.npmrc"), "# neutro\n", "utf8");
-    symlinkSync(hostileGlobalConfiguration, unsafeUserConfiguration);
-    expect(() => localDevelopmentNpmRunArguments(unsafeRepository, "probe", environment)).toThrow(
-      "arquivo físico regular",
-    );
-    rmSync(unsafeUserConfiguration);
-    writeFileSync(unsafeUserConfiguration, hostileConfiguration, "utf8");
-    expect(() => localDevelopmentNpmRunArguments(unsafeRepository, "probe", environment)).toThrow(
-      "precisa permanecer vazia",
-    );
-
-    const symbolicRepository = resolve(root, "symbolic-config-repository");
-    const externalConfiguration = resolve(root, "external-configuration");
-    mkdirSync(symbolicRepository);
-    mkdirSync(resolve(externalConfiguration, "npm"), { recursive: true });
-    writeFileSync(
-      resolve(symbolicRepository, ".npmrc"),
-      "engine-strict=true\nfund=false\nsave-exact=true\n",
-      "utf8",
-    );
-    for (const name of ["dev-global.npmrc", "dev-user.npmrc"]) {
-      writeFileSync(resolve(externalConfiguration, "npm", name), "# neutro\n", "utf8");
-    }
-    symlinkSync(externalConfiguration, resolve(symbolicRepository, "config"), "dir");
-    expect(() => localDevelopmentNpmRunArguments(symbolicRepository, "probe", environment)).toThrow(
-      "diretório não físico",
-    );
   });
 
   it("reads a physical file without mutating the parent process environment", () => {

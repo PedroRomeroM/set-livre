@@ -75,6 +75,6 @@ O comando oficial do Playwright instalou, via pacotes Ubuntu, somente os itens a
 
 ## Exceção de script transitivo revisada
 
-`unrs-resolver@1.12.2` (MIT), transitivo de `eslint-import-resolver-typescript`, possui `postinstall`. O script foi inspecionado: chama somente `napi-postinstall` para localizar/preparar o binding nativo opcional já fixado no lockfile. A execução foi autorizada de forma exata em `allowScripts`; nenhum outro script de instalação permanece sem decisão.
+`unrs-resolver@1.12.2` (MIT), transitivo de `eslint-import-resolver-typescript`, declara `postinstall`. O conteúdo foi inspecionado, mas a política do projeto é mais restritiva: `ignore-scripts=true` impede sua execução e a de qualquer outro lifecycle durante `npm ci`; o binding opcional precisa funcionar apenas com os artefatos já fixados por integridade no lockfile, comprovado pelos gates após instalação limpa. `strict-allow-scripts=true`, ausência obrigatória de `allowScripts` e `dangerously-allow-all-scripts=false` fecham overrides acidentais, enquanto hooks do root/workspaces também são recusados pelo gate documental.
 
 TanStack Query, clientes Supabase, ícones e providers externos ainda não foram instalados porque não existe consumidor de produto nesta fundação. Cada um entra somente no primeiro PR que o usar.

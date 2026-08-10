@@ -16,8 +16,10 @@ import { describe, expect, it } from "vitest";
 import {
   collectMatches,
   findDuplicates,
+  findForbiddenInstallDependencies,
   gitChangedFileArgumentLists,
   hasPlaywrightTestWithId,
+  installDependencyNames,
   isAddedChangeRecord,
   isTechnicalChangePath,
   parseGitChanges,
@@ -26,16 +28,173 @@ import {
   parsePendingRows,
   parseFeatureReferences,
   parseQaRows,
+  readCanonicalPackageManifests,
   readGitChanges,
   sha256,
   validateAutomatedQaSpec,
+  validateAllowedInstallScripts,
   validateFeatureSequence,
   validateGovernanceAlignment,
+  validateNpmProjectConfiguration,
+  validateWorkspacePatterns,
 } from "../../scripts/docs-check-core.mjs";
 
 describe("docs check core", () => {
   it("finds duplicate identifiers deterministically", () => {
     expect(findDuplicates(["A", "B", "A", "C", "B", "A"])).toEqual(["A", "B"]);
+  });
+
+  it("covers every package section that can install or bundle dependencies", () => {
+    const packageJson = {
+      bundleDependencies: ["cache", "duplicate"],
+      bundledDependencies: ["bundled", "duplicate"],
+      dependencies: { cache: "NPM:redis@5", duplicate: "1.0.0", runtime: "1.0.0" },
+      devDependencies: { development: "1.0.0" },
+      optionalDependencies: { css: "npm:tailwindcss@4" },
+      overrides: {
+        "parent@2": {
+          ".": "2.1.0",
+          child: "npm:zustand@5",
+          nested: { redis: "5.0.0" },
+        },
+      },
+      peerDependencies: { peer: "npm:@scope/state@5" },
+      peerDependenciesMeta: { ignoredMetadata: { optional: true } },
+    };
+
+    expect(installDependencyNames(packageJson)).toEqual([
+      "@scope/state",
+      "bundled",
+      "cache",
+      "child",
+      "css",
+      "development",
+      "duplicate",
+      "nested",
+      "parent",
+      "peer",
+      "redis",
+      "runtime",
+      "tailwindcss",
+      "zustand",
+    ]);
+    expect(
+      findForbiddenInstallDependencies(packageJson, new Set(["redis", "tailwindcss", "zustand"])),
+    ).toEqual(["redis", "tailwindcss", "zustand"]);
+    expect(
+      findForbiddenInstallDependencies(
+        { optionalDependencies: { cache: "NPM:redis@5" } },
+        new Set(["redis"]),
+      ),
+    ).toEqual(["redis"]);
+    for (const invalidPackageJson of [
+      { dependencies: ["npm:redis@5"] },
+      { devDependencies: { redis: null } },
+      { optionalDependencies: "npm:redis@5" },
+      { overrides: ["npm:redis@5"] },
+      { overrides: { cache: "https://registry.npmjs.org/redis/-/redis-5.10.0.tgz" } },
+      { peerDependencies: { redis: 5 } },
+      { dependencies: { cache: "https://registry.npmjs.org/redis/-/redis-5.10.0.tgz" } },
+      { dependencies: { cache: "github:example/redis" } },
+      { dependencies: { cache: "file:../redis" } },
+      { dependencies: { cache: "redis.tar.gz" } },
+      { dependencies: { cache: "$redis" } },
+      { scripts: { dependencies: "npm install redis --no-save" } },
+      { scripts: { postdependencies: "npm install redis --no-save" } },
+      { scripts: { predependencies: "npm install redis --no-save" } },
+      { scripts: { preinstall: "npm install redis --no-save" } },
+      { bundledDependencies: ["redis", 42] },
+    ]) {
+      expect(() => installDependencyNames(invalidPackageJson)).toThrow("seção");
+    }
+    expect(
+      installDependencyNames({ bundleDependencies: true, dependencies: { react: "19" } }),
+    ).toEqual(["react"]);
+    expect(
+      installDependencyNames({
+        dependencies: { react: "19.2.8" },
+        overrides: { react: "$react" },
+      }),
+    ).toEqual(["react"]);
+  });
+
+  it("keeps every npm workspace inside the dependency gate", () => {
+    expect(() =>
+      validateNpmProjectConfiguration(
+        "engine-strict=true\nfund=false\nsave-exact=true\nstrict-allow-scripts=true\nignore-scripts=true\ndangerously-allow-all-scripts=false\n",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateNpmProjectConfiguration(
+        "engine-strict=true\nfund=false\nsave-exact=true\nstrict-allow-scripts=false\n",
+      ),
+    ).toThrow(".npmrc");
+    expect(() => validateAllowedInstallScripts({})).not.toThrow();
+    for (const allowScripts of [
+      {},
+      { "unrs-resolver@1.12.2": true },
+      { "unrs-resolver@*": true },
+    ]) {
+      expect(() => validateAllowedInstallScripts({ allowScripts })).toThrow("allowScripts");
+    }
+    expect(validateWorkspacePatterns({ workspaces: ["packages/*", "apps/*"] })).toEqual([
+      "apps/*",
+      "packages/*",
+    ]);
+
+    for (const workspaces of [
+      undefined,
+      { packages: ["apps/*", "packages/*"] },
+      ["apps/*", "packages/*", "vendor/*"],
+      ["apps/*", "packages/*", 42],
+      ["apps/*", "apps/*"],
+    ]) {
+      expect(() => validateWorkspacePatterns({ workspaces })).toThrow("workspaces");
+    }
+
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-workspaces-"));
+    try {
+      writeFileSync(
+        join(repository, ".npmrc"),
+        "engine-strict=true\nfund=false\nsave-exact=true\nstrict-allow-scripts=true\nignore-scripts=true\ndangerously-allow-all-scripts=false\n",
+      );
+      for (const packagePath of [
+        "package.json",
+        "apps/backoffice/package.json",
+        "packages/contracts/package.json",
+        "packages/ui/package.json",
+      ]) {
+        mkdirSync(join(repository, packagePath, ".."), { recursive: true });
+        writeFileSync(join(repository, packagePath), "{}\n");
+      }
+      expect(
+        readCanonicalPackageManifests(repository).map(({ packagePath }) => packagePath),
+      ).toEqual([
+        "package.json",
+        "apps/backoffice/package.json",
+        "packages/contracts/package.json",
+        "packages/ui/package.json",
+      ]);
+
+      mkdirSync(join(repository, "apps/coverage"));
+      expect(() => readCanonicalPackageManifests(repository)).toThrow("conjunto canônico");
+      rmSync(join(repository, "apps/coverage"), { recursive: true });
+      symlinkSync("backoffice", join(repository, "apps/symbolic-workspace"));
+      expect(() => readCanonicalPackageManifests(repository)).toThrow("precisa ser físico");
+      rmSync(join(repository, "apps/symbolic-workspace"));
+      rmSync(join(repository, "packages/ui/package.json"));
+      symlinkSync("../contracts/package.json", join(repository, "packages/ui/package.json"));
+      expect(() => readCanonicalPackageManifests(repository)).toThrow("físico e regular");
+      rmSync(join(repository, "packages/ui/package.json"));
+      writeFileSync(join(repository, "packages/ui/package.json"), "{}\n");
+      writeFileSync(join(repository, "packages/ui/binding.gyp"), "{}\n");
+      expect(() => readCanonicalPackageManifests(repository)).toThrow("binding.gyp");
+      rmSync(join(repository, "packages/ui/binding.gyp"));
+      writeFileSync(join(repository, "npm-shrinkwrap.json"), "{}\n");
+      expect(() => readCanonicalPackageManifests(repository)).toThrow("npm-shrinkwrap");
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
   });
 
   it("extracts markdown link targets", () => {

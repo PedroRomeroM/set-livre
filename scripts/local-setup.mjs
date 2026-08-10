@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
+import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
+
 import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
 import {
   assertSafeEnvironmentFileDestination,
@@ -178,13 +180,245 @@ if (
 ) {
   throw new Error("DB_URL não usa a identidade administrativa local esperada.");
 }
+const supabaseAdminDatabaseUrl = new URL(adminDatabaseUrl);
+supabaseAdminDatabaseUrl.username = "supabase_admin";
+const managedSchemaSql = `
+begin;
+
+do $block$
+begin
+  if current_user <> 'supabase_admin'
+    or not (select rolsuper from pg_catalog.pg_roles where rolname = current_user)
+  then
+    raise exception 'A normalização de schemas gerenciados exige o superuser local esperado.';
+  end if;
+end
+$block$;
+
+revoke all on schema public from public;
+grant usage on schema public to anon, authenticated, service_role;
+
+do $block$
+declare
+  owner_role text;
+begin
+  if pg_catalog.to_regnamespace('net') is not null then
+    if pg_catalog.current_setting('pg_net.username', true) <> 'postgres' then
+      raise exception 'A identidade local do worker pg_net divergiu do contrato esperado.';
+    end if;
+
+    execute 'revoke all on schema net from public, anon, authenticated, service_role, app_dal';
+    execute 'revoke all on all tables in schema net from public, anon, authenticated, service_role, app_dal';
+    execute 'revoke all on all sequences in schema net from public, anon, authenticated, service_role, app_dal';
+    execute 'revoke all on all functions in schema net from public, anon, authenticated, service_role, app_dal';
+    execute 'grant usage on schema net to postgres';
+    execute 'grant all on all tables in schema net to postgres';
+    execute 'grant all on all sequences in schema net to postgres';
+    execute 'grant execute on all functions in schema net to postgres';
+
+    foreach owner_role in array array['supabase_admin', 'postgres']
+    loop
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke all on tables from public, anon, authenticated, service_role, app_dal',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net grant all on tables to postgres',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke all on sequences from public, anon, authenticated, service_role, app_dal',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net grant all on sequences to postgres',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I revoke execute on functions from public, anon, authenticated, service_role, app_dal',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I revoke usage on types from public, anon, authenticated, service_role, app_dal',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke execute on functions from public, anon, authenticated, service_role, app_dal',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net grant execute on functions to postgres',
+        owner_role
+      );
+    end loop;
+  end if;
+end
+$block$;
+
+do $block$
+begin
+  if not exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
+    create role ${runtimeRole}
+      login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+  end if;
+end
+$block$;
+
+revoke all privileges on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+  from public, anon, authenticated, service_role, app_dal, ${runtimeRole};
+
+do $block$
+declare
+  catalog_name text;
+  column_list text;
+begin
+  foreach catalog_name in array array['pg_db_role_setting', 'pg_roles', 'pg_user']
+  loop
+    select pg_catalog.string_agg(pg_catalog.format('%I', attribute.attname), ', ' order by attribute.attnum)
+      into column_list
+    from pg_catalog.pg_attribute as attribute
+    where attribute.attrelid = pg_catalog.to_regclass(
+        pg_catalog.format('pg_catalog.%I', catalog_name)
+      )
+      and attribute.attnum > 0
+      and not attribute.attisdropped;
+
+    execute pg_catalog.format(
+      'revoke all privileges (%s) on table pg_catalog.%I from public, anon, authenticated, service_role, app_dal, %I',
+      column_list,
+      catalog_name,
+      '${runtimeRole}'
+    );
+  end loop;
+end
+$block$;
+
+grant all privileges on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+  to supabase_admin;
+grant select on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+  to postgres, supabase_admin;
+
+do $block$
+declare
+  membership_record record;
+begin
+  for membership_record in
+    select
+      granted.rolname as granted_role,
+      member.rolname as member_role,
+      grantor.rolname as grantor_role
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    join pg_catalog.pg_roles as grantor on grantor.oid = membership.grantor
+    where granted.rolname = any (array['app_dal', '${runtimeRole}'])
+    order by granted.rolname, (member.rolname = 'postgres'), member.rolname, grantor.rolname
+  loop
+    execute pg_catalog.format(
+      'revoke %I from %I granted by %I cascade',
+      membership_record.granted_role,
+      membership_record.member_role,
+      membership_record.grantor_role
+    );
+  end loop;
+end
+$block$;
+
+do $block$
+declare
+  database_name text;
+  managed_role text;
+  setting_name text;
+begin
+  for managed_role in
+    select role.rolname
+    from pg_catalog.pg_roles as role
+    where role.rolname = any (array['app_dal', '${runtimeRole}'])
+    order by role.rolname
+  loop
+    for database_name in
+      select database.datname
+      from pg_catalog.pg_db_role_setting as setting
+      join pg_catalog.pg_database as database on database.oid = setting.setdatabase
+      join pg_catalog.pg_roles as role on role.oid = setting.setrole
+      where role.rolname = managed_role
+      order by database.datname
+    loop
+      execute pg_catalog.format(
+        'alter role %I in database %I reset all',
+        managed_role,
+        database_name
+      );
+    end loop;
+    execute pg_catalog.format('alter role %I reset all', managed_role);
+    if managed_role = '${runtimeRole}' then
+      execute pg_catalog.format(
+        'alter role %I in database %I set "app.settings.jwt_secret" = %L',
+        managed_role,
+        pg_catalog.current_database(),
+        ''
+      );
+    end if;
+  end loop;
+
+  for setting_name in
+    select distinct pg_catalog.split_part(configuration.value, '=', 1)
+    from pg_catalog.pg_db_role_setting as setting
+    cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
+    where setting.setrole = 0
+      and setting.setdatabase = (
+        select database.oid
+        from pg_catalog.pg_database as database
+        where database.datname = pg_catalog.current_database()
+      )
+      and pg_catalog.split_part(configuration.value, '=', 1)
+        not in ('app.settings.jwt_exp', 'app.settings.jwt_secret')
+    order by 1
+  loop
+    execute pg_catalog.format(
+      'alter database %I reset %I',
+      pg_catalog.current_database(),
+      setting_name
+    );
+  end loop;
+end
+$block$;
+
+do $block$
+begin
+  if exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
+    grant ${runtimeRole} to postgres with admin true, inherit false, set false;
+  end if;
+end
+$block$;
+
+grant app_dal to postgres with admin true, inherit false, set false;
+
+commit;
+`;
+run("psql", psqlArguments(supabaseAdminDatabaseUrl.toString()), {
+  capture: true,
+  environment: { PGPASSWORD: decodeURIComponent(supabaseAdminDatabaseUrl.password) },
+  input: managedSchemaSql,
+  redactions: [decodeURIComponent(supabaseAdminDatabaseUrl.password)],
+  safeStderr: true,
+});
 const runtimeSql = `
 begin;
 
 do $block$
 begin
   if not exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
-    create role ${runtimeRole} login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+    raise exception 'A role local do runtime não foi criada pelo bootstrap privilegiado.';
   end if;
 end
 $block$;
@@ -230,7 +464,6 @@ alter role ${runtimeRole}
   login noinherit nocreatedb nocreaterole
   connection limit 10 valid until 'infinity'
   password '${runtimePassword}';
-alter role ${runtimeRole} reset all;
 
 revoke all privileges on database postgres from ${runtimeRole};
 
@@ -333,6 +566,133 @@ grant connect on database postgres to ${runtimeRole};
 grant app_dal to ${runtimeRole} with admin false, inherit false, set true;
 comment on database postgres is 'set-livre-e2e:${e2eDatabaseMarker}';
 
+do $block$
+begin
+  if not (
+    select pg_catalog.count(*) = 2
+      and pg_catalog.bool_and(
+        (
+          member.rolname = '${runtimeRole}'
+          and not membership.admin_option
+          and not membership.inherit_option
+          and membership.set_option
+        )
+        or (
+          member.rolname = 'postgres'
+          and membership.admin_option
+          and not membership.inherit_option
+          and not membership.set_option
+        )
+      )
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where granted.rolname = 'app_dal'
+  ) then
+    raise exception 'O manifesto de membros de app_dal não foi restaurado.';
+  end if;
+
+  if not (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        member.rolname = 'postgres'
+        and membership.admin_option
+        and not membership.inherit_option
+        and not membership.set_option
+      )
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where granted.rolname = '${runtimeRole}'
+  ) then
+    raise exception 'O manifesto administrativo do login restrito local divergiu.';
+  end if;
+
+  if not (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        setting.setdatabase = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and setting.setconfig = array['app.settings.jwt_secret=']::text[]
+      )
+    from pg_catalog.pg_db_role_setting as setting
+    join pg_catalog.pg_roles as role on role.oid = setting.setrole
+    where role.rolname = '${runtimeRole}'
+  ) then
+    raise exception 'O login restrito local não preservou somente a máscara de segredo esperada.';
+  end if;
+
+  if not (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        dependency.dbid = 0
+        and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
+        and dependency.objid = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and dependency.objsubid = 0
+      )
+    from pg_catalog.pg_shdepend as dependency
+    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
+    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      and role.rolname = '${runtimeRole}'
+      and dependency.deptype = 'a'
+  ) then
+    raise exception 'O login restrito local possui dependências ACL fora do CONNECT autorizado.';
+  end if;
+
+  if not (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        privilege.grantee = role.oid
+        and privilege.grantor <> role.oid
+        and privilege.privilege_type = 'CONNECT'
+        and not privilege.is_grantable
+      )
+    from pg_catalog.pg_database as database
+    cross join pg_catalog.pg_roles as role
+    cross join lateral pg_catalog.aclexplode(database.datacl) as privilege
+    where database.datname = pg_catalog.current_database()
+      and role.rolname = '${runtimeRole}'
+      and (privilege.grantee = role.oid or privilege.grantor = role.oid)
+  ) then
+    raise exception 'O CONNECT direto do login restrito local divergiu do manifesto.';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_shdepend as dependency
+    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
+    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      and role.rolname = '${runtimeRole}'
+      and dependency.deptype = 'o'
+  ) then
+    raise exception 'O login restrito local possui ownership indevido.';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_db_role_setting as setting
+    cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
+    where setting.setrole = 0
+      and setting.setdatabase = (
+        select database.oid
+        from pg_catalog.pg_database as database
+        where database.datname = pg_catalog.current_database()
+      )
+      and pg_catalog.split_part(configuration.value, '=', 1)
+        not in ('app.settings.jwt_exp', 'app.settings.jwt_secret')
+  ) then
+    raise exception 'O banco local possui parâmetro global fora da allowlist.';
+  end if;
+end
+$block$;
+
 commit;
 `;
 run("psql", psqlArguments(values.DB_URL), {
@@ -354,7 +714,9 @@ const identity = run(
     "--tuples-only",
     "--no-align",
     "--command",
-    "select current_user || ':' || session_user",
+    `select current_user || ':' || session_user || ':'
+      || private.check_readiness('${databaseMigrationHead}') || ':'
+      || private.check_runtime_readiness('${runtimeRole}')`,
   ],
   {
     capture: true,
@@ -364,8 +726,8 @@ const identity = run(
     },
   },
 ).trim();
-if (identity !== "app_dal:app_runtime_local") {
-  throw new Error("A conexão DAL local não assumiu a role restrita esperada.");
+if (identity !== "app_dal:app_runtime_local:true:true") {
+  throw new Error("A conexão DAL local não satisfez o manifesto restrito esperado.");
 }
 
 function applicationEnvironment(applicationUrl) {

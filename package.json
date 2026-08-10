@@ -27,8 +27,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1 --port 3000",
-    "dev:backoffice": "npm run dev --workspace @set-livre/backoffice",
+    "dev": "node scripts/local-development-server.mjs web",
+    "dev:backoffice": "node scripts/local-development-server.mjs backoffice",
     "build": "npm run build:web && npm run build:backoffice",
     "build:web": "next build",
     "build:backoffice": "npm run build --workspace @set-livre/backoffice",
@@ -85,8 +85,5 @@
     "supabase": "2.113.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
-  },
-  "allowScripts": {
-    "unrs-resolver@1.12.2": true
   }
 }

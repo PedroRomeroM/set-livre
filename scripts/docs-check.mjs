@@ -5,17 +5,21 @@ import { fileURLToPath } from "node:url";
 import {
   collectMatches,
   findDuplicates,
+  findForbiddenInstallDependencies,
   isAddedChangeRecord,
   isTechnicalChangePath,
   parseNormativeIntegrationPairs,
   parseOpenPendingFeaturePairs,
   parsePendingRows,
   parseQaRows,
+  readCanonicalPackageManifests,
   readGitChanges,
   sha256,
   validateAutomatedQaSpec,
+  validateAllowedInstallScripts,
   validateFeatureSequence,
   validateGovernanceAlignment,
+  validateWorkspacePatterns,
 } from "./docs-check-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -172,11 +176,24 @@ for (const markdownPath of listFiles("docs").filter((path) => path.endsWith(".md
   }
 }
 
-const packageFiles = [
-  "package.json",
-  ...listFiles("apps").filter((path) => path.endsWith("package.json")),
-  ...listFiles("packages").filter((path) => path.endsWith("package.json")),
-].filter((path) => existsSync(resolve(root, path)));
+let packageManifests = [];
+try {
+  packageManifests = readCanonicalPackageManifests(root).map(({ packagePath, source }) => ({
+    packageJson: JSON.parse(source),
+    packagePath,
+  }));
+  const rootPackageJson =
+    packageManifests.find(({ packagePath }) => packagePath === "package.json")?.packageJson ?? {};
+  validateWorkspacePatterns(rootPackageJson);
+  for (const { packageJson } of packageManifests) {
+    validateAllowedInstallScripts(packageJson);
+  }
+} catch (error) {
+  check(
+    false,
+    `Os manifests npm não correspondem aos workspaces físicos canônicos: ${error instanceof Error ? error.message : "formato desconhecido"}`,
+  );
+}
 const forbiddenDependencies = new Set([
   "@emotion/react",
   "@prisma/client",
@@ -190,13 +207,15 @@ const forbiddenDependencies = new Set([
   "tailwindcss",
   "zustand",
 ]);
-for (const packageFile of packageFiles) {
-  const packageJson = JSON.parse(read(packageFile));
-  const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
-  for (const dependency of Object.keys(dependencies)) {
+for (const { packageJson, packagePath } of packageManifests) {
+  try {
+    for (const dependency of findForbiddenInstallDependencies(packageJson, forbiddenDependencies)) {
+      check(false, `${packagePath} introduziu dependência proibida: ${dependency}.`);
+    }
+  } catch (error) {
     check(
-      !forbiddenDependencies.has(dependency),
-      `${packageFile} introduziu dependência proibida: ${dependency}.`,
+      false,
+      `${packagePath} possui seção de dependência inválida: ${error instanceof Error ? error.message : "formato desconhecido"}`,
     );
   }
 }

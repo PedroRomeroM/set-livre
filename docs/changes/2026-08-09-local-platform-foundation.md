@@ -48,9 +48,10 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 
 - `20260809000100_security_baseline.sql`: schemas privados, extensões, role DAL e privilégios fechados;
 - `20260809000200_readiness_contract.sql`: função privada mínima vinculada à migration head;
-- `20260809000300_security_default_privileges_hardening.sql`: default global de funções fechado e estado da role DAL normalizado.
+- `20260809000300_security_default_privileges_hardening.sql`: default global de funções fechado e estado da role DAL normalizado;
+- `20260810000100_app_dal_readiness_authorization.sql`: manifesto exato de ACL/ownership da DAL, defaults de tipos fechados e recusa de privilégios efetivos herdados de `PUBLIC`.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships e grants diretos normalizados, que assume `app_dal` explicitamente. O snapshot SQL e os tipos são regeneráveis; 56 asserts pgTAP comprovam roles, deny-by-default, grants, extensões, função e a rejeição de atributos ou memberships adulterados na role efetiva.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 129 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
 
 ## Segurança e privacidade
 
@@ -66,7 +67,7 @@ O bootstrap cria fora das migrations um login local efêmero com atributos, memb
 
 ## Read models, comandos e invalidação
 
-A fundação implementa somente o read contract de readiness via `private.check_readiness(text)`, com timeout, role DAL e retorno público não expositivo. Não existe comando de negócio, estado TanStack ou invalidação sem consumidor real.
+A fundação implementa somente o read contract de readiness via `private.check_readiness(text)` e `private.check_runtime_readiness(text)`, com timeout, identidades DAL e retorno público não expositivo. Não existe comando de negócio, estado TanStack ou invalidação sem consumidor real.
 
 ## UX, mobile e acessibilidade
 
@@ -74,8 +75,8 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 137 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
-- 56 asserts pgTAP;
+- 145 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
+- 129 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -115,20 +116,27 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - o launcher direto `node scripts/dev-all.mjs` faz preflight físico dos dois `.env.local`, valida origens, Supabase e DAL locais e cria ambientes separados sem herdar overrides ou credenciais do host após a fronteira de entrada;
 - o smoke de release e o launcher de desenvolvimento reutilizam o mesmo validador puro da identidade DAL local.
 
-## Correções do quinto Codex review
+## Correções do quinto Codex review — registro histórico supersedido onde indicado
 
-- a entrada isolada dos dois apps não passa por npm pai: `node scripts/dev-all.mjs` deriva a CLI da instalação adjacente, fixa `userconfig` e `globalconfig` neutros, zera `node-options`, bloqueia hooks `pre`/`post` e usa shell controlado;
+- naquele ciclo, a entrada isolada dos dois apps usava uma camada npm endurecida; o sétimo review a substituiu pelo launcher Next direto descrito abaixo;
 - uma row QA `automatizado` exige spec Playwright física dentro de `tests/e2e/`, binding runtime nomeado `test` importado de `@playwright/test` e registro direto no módulo ou em `test.describe(...)`, com callback e ID estável no título literal, validado por AST;
 - bootstrap e todos os wrappers Supabase comprovam contexto Docker `default` e endpoint local antes de qualquer operação, propagando o daemon pinado a cada subprocesso operacional;
 - todo `stderr` da CLI Supabase permanece privado e é descartado; falhas são relançadas sem erro original, buffers, URL de banco ou chaves, enquanto somente o `stdout` necessário a pgTAP e geração de tipos pode ser herdado;
-- os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram o grupo npm/Next sem deixar descendentes ou portas ocupadas;
-- desenvolvimento e Playwright derivam `npm-cli.js` exclusivamente de `process.execPath`, validam Node/npm e manifests fixados imediatamente antes do spawn e não usam `npm.cmd`, shell ou resolução por `PATH`; release valida a mesma instalação antes do primeiro build e lê dela a versão manifestada, sob a fronteira explícita de toolchain/checkout confiáveis e sem alteração concorrente por qualquer principal com permissão de escrita.
+- os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram a árvore wrapper/Next sem deixar descendentes ou portas ocupadas;
+- a validação da instalação npm permanece no release; desenvolvimento e Playwright passaram a validar e iniciar diretamente a CLI Next absoluta no sétimo review, sob a fronteira explícita de toolchain/checkout confiáveis e sem alteração concorrente por qualquer principal com permissão de escrita.
 
 ## Correções do sexto Codex review
 
 - o snapshot de schema é produzido em temporário irmão exclusivo, validado e sincronizado antes de substituição atômica; falha, dump vazio, schema obrigatório ausente ou troca de arquivo preservam o snapshot rastreado anterior;
 - o supervisor de desenvolvimento encerra a árvore completa de cada aplicação no Windows por `taskkill.exe /T /F` absoluto, sem shell e com timeout; no POSIX, mantém o PGID mesmo após o root encerrar para aplicar o fallback `SIGKILL` a qualquer descendente sobrevivente;
 - a matriz Playwright foi recontada pelo runner e permanece em 36 execuções: smoke `4 x 4`, critical `1 x 3`, backoffice `1 x 1`, acessibilidade `3 x 4`, safe area `1 x 1` e reflow `1 x 3`.
+
+## Correções do sétimo Codex review
+
+- `dev`, `dev:backoffice`, o workspace administrativo, `dev-all` e os `webServer` Playwright convergem no launcher compartilhado, relêem o ambiente local físico e iniciam a CLI Next validada por caminho absoluto, sem npm filho, shell ou precedência de uma DAL cloud herdada; isso substitui a camada npm descrita nos ciclos anteriores;
+- readiness exige os manifestos diretos mínimos de `app_dal` e do login runtime, zero ownership indevido, memberships de entrada/saída exatas, parâmetros restritos e a baseline pública exata; o bootstrap privilegiado fecha `pg_net` para runtimes, preserva o worker administrativo, mascara o GUC JWT local e nega leitura direta/transitiva de `pg_roles`, `pg_user` e `pg_db_role_setting`, enquanto a normalização Cloud permanece bloqueada por PEND-002;
+- no Windows, desenvolvimento e Playwright encerram a árvore pelo `taskkill.exe` absoluto derivado de `SystemRoot/System32`, com `/PID /T /F`, ambiente mínimo, sem `PATH`/shell e timeout de cinco segundos;
+- o gate de supply chain cobre todas as seções instaláveis, bundles, aliases e overrides, fixa os workspaces/manifests físicos e recusa specs não-registry, hooks, `binding.gyp`, shrinkwrap ou lock paralelo; `.npmrc` desabilita todo lifecycle durante `npm ci`, mantém o preflight estrito sem `allowScripts` e bloqueia o escape global perigoso.
 
 ## Observabilidade e operação
 
@@ -162,9 +170,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 137 aprovados;
+- `npm run test:unit`: 145 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 56 aprovados;
+- `npm run test:db`: 129 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

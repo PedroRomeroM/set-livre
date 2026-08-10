@@ -1,52 +1,19 @@
+revoke all on schema public from public;
+grant usage on schema public to anon, authenticated, service_role;
 
+-- PostgreSQL concede USAGE em novos tipos a PUBLIC por padrão. A revogação
+-- precisa ser global para a role criadora; uma revogação limitada ao schema
+-- somente altera grants adicionais e não remove o default embutido.
+alter default privileges for role postgres
+  revoke usage on types from public;
 
-
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET idle_in_transaction_session_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', '', false);
-SET check_function_bodies = false;
-SET xmloption = content;
-SET client_min_messages = warning;
-SET row_security = off;
-
-
-CREATE SCHEMA IF NOT EXISTS "audit";
-
-
-ALTER SCHEMA "audit" OWNER TO "postgres";
-
-
-COMMENT ON SCHEMA "audit" IS 'Eventos sensíveis append-only não expostos pela Data API.';
-
-
-
-CREATE SCHEMA IF NOT EXISTS "private";
-
-
-ALTER SCHEMA "private" OWNER TO "postgres";
-
-
-COMMENT ON SCHEMA "private" IS 'Objetos internos e comandos não expostos pela Data API.';
-
-
-
-CREATE SCHEMA IF NOT EXISTS "public";
-
-
-ALTER SCHEMA "public" OWNER TO "pg_database_owner";
-
-
-COMMENT ON SCHEMA "public" IS 'standard public schema';
-
-
-
-CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
-    LANGUAGE "sql" STABLE SECURITY DEFINER
-    SET "search_path" TO ''
-    AS $$
+create or replace function private.check_readiness(expected_version text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $function$
   with runtime_role as (
     select role.oid
     from pg_catalog.pg_roles as role
@@ -489,20 +456,15 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     ),
     false
   );
-$$;
+$function$;
 
-
-ALTER FUNCTION "private"."check_readiness"("expected_version" "text") OWNER TO "postgres";
-
-
-COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Comprova migration head e manifesto mínimo de autorização da role app_dal sem expor detalhes.';
-
-
-
-CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") RETURNS boolean
-    LANGUAGE "sql" STABLE SECURITY DEFINER
-    SET "search_path" TO ''
-    AS $$
+create or replace function private.check_runtime_readiness(expected_session_role text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $function$
   with session_role as (
     select role.oid
     from pg_catalog.pg_roles as role
@@ -644,50 +606,14 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
     ),
     false
   );
-$$;
+$function$;
 
+comment on function private.check_readiness(text)
+  is 'Comprova migration head e manifesto mínimo de autorização da role app_dal sem expor detalhes.';
+comment on function private.check_runtime_readiness(text)
+  is 'Comprova a identidade e o manifesto mínimo do login DAL sem expor o catálogo.';
 
-ALTER FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") OWNER TO "postgres";
-
-
-COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Comprova a identidade e o manifesto mínimo do login DAL sem expor o catálogo.';
-
-
-
-GRANT USAGE ON SCHEMA "private" TO "app_dal";
-
-
-
-REVOKE USAGE ON SCHEMA "public" FROM PUBLIC;
-GRANT USAGE ON SCHEMA "public" TO "postgres";
-GRANT USAGE ON SCHEMA "public" TO "anon";
-GRANT USAGE ON SCHEMA "public" TO "authenticated";
-GRANT USAGE ON SCHEMA "public" TO "service_role";
-
-
-
-REVOKE ALL ON FUNCTION "private"."check_readiness"("expected_version" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."check_readiness"("expected_version" "text") TO "app_dal";
-
-
-
-REVOKE ALL ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") TO "app_dal";
-
-
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
-
-
-
-
-
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
-
-
-
-
-
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+revoke all on function private.check_readiness(text), private.check_runtime_readiness(text)
+  from public, anon, authenticated, service_role, app_dal;
+grant execute on function private.check_readiness(text), private.check_runtime_readiness(text)
+  to app_dal;

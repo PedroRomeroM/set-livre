@@ -55,6 +55,10 @@ Camadas:
 
 Nunca aceitar `owner_user_id`, `role`, `status`, shares ou `approved` do cliente como autoridade.
 
+Na DAL, `app_dal` é `NOLOGIN`/`NOINHERIT` e pode ser assumida somente pelo login restrito configurado; as referências administrativas `postgres` exigidas pelo PostgreSQL 17 não possuem `SET/INHERIT`, e nenhuma role intermediária pode assumir o login. O readiness aplica allowlists exatas às duas identidades: `app_dal` não possui objetos nem default privileges e recebe diretamente apenas `USAGE` em `private` e `EXECUTE` nas duas funções privadas de readiness, totalizando três dependências ACL; o login recebe somente `CONNECT`, sua membership DAL, limite de dez conexões, validade infinita e a máscara local vazia do GUC de assinatura. A inspeção recusa grants por coluna, a role como grantor, parâmetros residuais, terceiro membro ou ownership fora do manifesto. A baseline pública é exata; objetos alcançáveis de `private`, objetos compartilhados monitorados e os catálogos `pg_roles`, `pg_user` e `pg_db_role_setting` falham fechados diante de acesso direto, por coluna ou transitivo das roles web/DAL. Row types, arrays e multiranges implícitos seguem seus objetos canônicos; composites explícitos continuam monitorados. A garantia de catálogo é específica a esses três objetos e não se estende silenciosamente aos demais catálogos internos.
+
+O `pg_net` fornecido pela stack Supabase concede capacidades HTTP e de fila por ACLs gerenciados por `supabase_admin`, que a role de migration não pode revogar. Durante a fronteira local-first do ADR-018, o bootstrap usa exclusivamente o superuser local, em loopback, para revogar schema, tabelas, sequências, funções e defaults de `net` para `PUBLIC` e todas as roles runtime; somente o worker administrativo configurado como `postgres` mantém o acesso técnico necessário. A normalização equivalente na Supabase Cloud permanece bloqueada por PEND-002 e precisa garantir que o login DAL não leia material de assinatura nem por GUC/current_setting nem diretamente em `pg_roles`, `pg_user` ou `pg_db_role_setting` antes de liberar tráfego.
+
 ## 4. Dados pessoais
 
 Inventário:

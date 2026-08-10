@@ -38,11 +38,11 @@ function localEnvironment(applicationUrl) {
   ].join("\n");
 }
 
-function temporaryRepository(scripts) {
+function temporaryRepository(scripts = {}) {
   const root = mkdtempSync(resolve(tmpdir(), "set-livre-playwright-server-"));
   temporaryRoots.push(root);
   mkdirSync(resolve(root, "apps/backoffice"), { recursive: true });
-  mkdirSync(resolve(root, "config/npm"), { recursive: true });
+  mkdirSync(resolve(root, "node_modules/next/dist/bin"), { recursive: true });
   writeFileSync(resolve(root, ".env.local"), localEnvironment("http://127.0.0.1:3000"), {
     mode: 0o600,
   });
@@ -51,13 +51,19 @@ function temporaryRepository(scripts) {
     localEnvironment("http://127.0.0.1:3001"),
     { mode: 0o600 },
   );
-  writeFileSync(resolve(root, ".npmrc"), "engine-strict=true\nfund=false\nsave-exact=true\n");
-  writeFileSync(resolve(root, "config/npm/dev-user.npmrc"), "# neutral\n");
-  writeFileSync(resolve(root, "config/npm/dev-global.npmrc"), "# neutral\n");
   writeFileSync(
     resolve(root, "package.json"),
-    `${JSON.stringify({ devEngines: { packageManager: { name: "npm", onFail: "error", version: "11.19.0" }, runtime: { name: "node", onFail: "error", version: process.versions.node } }, name: "playwright-server-probe", packageManager: "npm@11.19.0", private: true, scripts, version: "0.0.0" })}\n`,
+    `${JSON.stringify({ dependencies: { next: "16.3.0" }, devEngines: { packageManager: { name: "npm", onFail: "error", version: "11.19.0" }, runtime: { name: "node", onFail: "error", version: process.versions.node } }, name: "playwright-server-probe", packageManager: "npm@11.19.0", private: true, scripts, version: "0.0.0" })}\n`,
   );
+  writeFileSync(
+    resolve(root, "apps/backoffice/package.json"),
+    `${JSON.stringify({ dependencies: { next: "16.3.0" } })}\n`,
+  );
+  writeFileSync(
+    resolve(root, "node_modules/next/package.json"),
+    `${JSON.stringify({ bin: { next: "./dist/bin/next" }, name: "next", version: "16.3.0" })}\n`,
+  );
+  writeFileSync(resolve(root, "node_modules/next/dist/bin/next"), "process.exitCode = 0;\n");
   return root;
 }
 
@@ -132,7 +138,7 @@ describe("isolated Playwright webServer wrapper", () => {
       `require("node:fs").writeFileSync(${JSON.stringify(prehookSentinel)}, "executed");\n`,
     );
     writeFileSync(
-      resolve(repository, "probe.cjs"),
+      resolve(repository, "node_modules/next/dist/bin/next"),
       `require("node:fs").writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ APP_ENV: process.env.APP_ENV, APP_RELEASE_SHA: process.env.APP_RELEASE_SHA, DATABASE_URL_APP_DAL: process.env.DATABASE_URL_APP_DAL, NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, globalConfig: process.env.npm_config_globalconfig ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null, npmNodeOptions: process.env.npm_config_node_options ?? null, pgPassword: process.env.PGPASSWORD ?? null, serviceRole: process.env.SUPABASE_SERVICE_ROLE_KEY ?? null, sshAgent: process.env.SSH_AUTH_SOCK ?? null, userConfig: process.env.npm_config_userconfig ?? null }));\n`,
     );
 
@@ -150,13 +156,13 @@ describe("isolated Playwright webServer wrapper", () => {
       DATABASE_URL_APP_DAL: localDatabaseUrl,
       NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "local-anon-from-physical-file",
-      globalConfig: resolve(repository, "config/npm/dev-global.npmrc"),
+      globalConfig: null,
       nodeOptions: null,
-      npmNodeOptions: "",
+      npmNodeOptions: null,
       pgPassword: null,
       serviceRole: null,
       sshAgent: null,
-      userConfig: resolve(repository, "config/npm/dev-user.npmrc"),
+      userConfig: null,
     });
   });
 
@@ -179,9 +185,24 @@ describe("isolated Playwright webServer wrapper", () => {
 
     expect(web.options.env.NEXT_PUBLIC_APP_URL).toBe("http://127.0.0.1:3000");
     expect(backoffice.options.env.NEXT_PUBLIC_APP_URL).toBe("http://127.0.0.1:3001");
-    expect(web.argumentsList.at(-1)).toBe("dev");
-    expect(backoffice.argumentsList.at(-1)).toBe("dev");
-    expect(backoffice.argumentsList).toContain("--workspace=@set-livre/backoffice");
+    expect(web.argumentsList.slice(1)).toEqual([
+      "dev",
+      "--hostname",
+      "127.0.0.1",
+      "--port",
+      "3000",
+    ]);
+    expect(backoffice.argumentsList.slice(1)).toEqual([
+      "dev",
+      "--hostname",
+      "127.0.0.1",
+      "--port",
+      "3001",
+    ]);
+    expect(web.options.cwd).toBe(repository);
+    expect(backoffice.options.cwd).toBe(resolve(repository, "apps/backoffice"));
+    expect(web.options.shell).toBe(false);
+    expect(backoffice.options.shell).toBe(false);
     expect(web.options.env.APP_ENV).toBe("test");
     expect(backoffice.options.env.APP_ENV).toBe("test");
   });
@@ -218,8 +239,46 @@ describe("isolated Playwright webServer wrapper", () => {
     expect(receivedSignals).toEqual(["SIGTERM"]);
   });
 
+  it("terminates the Windows tree without forwarding the app environment to taskkill", async () => {
+    const repository = temporaryRepository({ dev: "node probe.cjs" });
+    const signalSource = new EventEmitter();
+    const child = new EventEmitter();
+    const terminationCalls = [];
+    child.pid = 515_151;
+    child.exitCode = null;
+    child.signalCode = null;
+
+    const completion = runPlaywrightWebServer({
+      application: "web",
+      inheritedEnvironment: {
+        ...hostileInheritedEnvironment(repository),
+        SYSTEMROOT: "C:\\Windows",
+      },
+      platform: "win32",
+      repositoryRoot: repository,
+      signalSource,
+      spawnProcess: () => child,
+      terminateWindowsTree: (pid, options) => {
+        terminationCalls.push({ options, pid });
+        queueMicrotask(() => {
+          child.signalCode = "SIGKILL";
+          child.emit("close", null, "SIGKILL");
+        });
+      },
+    });
+    signalSource.emit("SIGTERM");
+
+    await expect(completion).resolves.toBe(143);
+    expect(terminationCalls).toEqual([
+      {
+        options: { systemRoot: "C:\\Windows" },
+        pid: 515_151,
+      },
+    ]);
+  });
+
   it.runIf(process.platform !== "win32")(
-    "forwards termination to the isolated npm process group without leaving descendants",
+    "forwards termination to the isolated Next process group without leaving descendants",
     async () => {
       const repository = temporaryRepository({ dev: "node tree-parent.cjs" });
       const parentPidPath = resolve(repository, "tree-parent.pid");
@@ -232,7 +291,7 @@ describe("isolated Playwright webServer wrapper", () => {
         `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(leafPortPath)}, String(server.address().port))); process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(leafStoppedPath)}, "term-seen"); });\n`,
       );
       writeFileSync(
-        resolve(repository, "tree-parent.cjs"),
+        resolve(repository, "node_modules/next/dist/bin/next"),
         `const { spawn } = require("node:child_process"); const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(parentPidPath)}, String(process.pid)); spawn(process.execPath, [${JSON.stringify(resolve(repository, "tree-leaf.cjs"))}], { stdio: "ignore" }); process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(parentStoppedPath)}, "term-seen"); }); setInterval(() => {}, 1000);\n`,
       );
 

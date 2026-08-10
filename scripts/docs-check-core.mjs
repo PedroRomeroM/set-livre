@@ -1,7 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 
 import ts from "typescript";
 
@@ -21,6 +29,289 @@ export function findDuplicates(values) {
   }
 
   return [...duplicates].sort();
+}
+
+const dependencyMapFields = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+const bundledDependencyFields = ["bundleDependencies", "bundledDependencies"];
+const canonicalWorkspacePatterns = ["apps/*", "packages/*"];
+const canonicalWorkspacePackagePaths = [
+  "apps/backoffice/package.json",
+  "packages/contracts/package.json",
+  "packages/ui/package.json",
+];
+const canonicalNpmConfiguration = [
+  "engine-strict=true",
+  "fund=false",
+  "save-exact=true",
+  "strict-allow-scripts=true",
+  "ignore-scripts=true",
+  "dangerously-allow-all-scripts=false",
+  "",
+].join("\n");
+const installLifecycleScriptNames = new Set([
+  "dependencies",
+  "install",
+  "postdependencies",
+  "postinstall",
+  "postprepare",
+  "predependencies",
+  "preinstall",
+  "prepare",
+  "preprepare",
+  "prepublish",
+]);
+
+export function validateWorkspacePatterns(packageJson) {
+  const workspaces = packageJson.workspaces;
+  if (!Array.isArray(workspaces) || workspaces.some((workspace) => typeof workspace !== "string")) {
+    throw new TypeError("A seção workspaces precisa ser uma lista textual.");
+  }
+
+  const normalizedWorkspaces = [...new Set(workspaces)].sort();
+  if (
+    normalizedWorkspaces.length !== canonicalWorkspacePatterns.length ||
+    normalizedWorkspaces.some((workspace, index) => workspace !== canonicalWorkspacePatterns[index])
+  ) {
+    throw new TypeError(
+      `A seção workspaces precisa conter exatamente ${canonicalWorkspacePatterns.join(", ")}.`,
+    );
+  }
+
+  return normalizedWorkspaces;
+}
+
+export function validateNpmProjectConfiguration(source) {
+  if (source !== canonicalNpmConfiguration) {
+    throw new Error(".npmrc precisa preservar a configuração estrita canônica.");
+  }
+}
+
+export function validateAllowedInstallScripts(packageJson) {
+  if (packageJson.allowScripts !== undefined) {
+    throw new TypeError(
+      "allowScripts é proibido porque nenhum lifecycle de instalação é executado.",
+    );
+  }
+}
+
+export function readCanonicalPackageManifests(repositoryRoot) {
+  const resolvedRoot = resolve(repositoryRoot);
+  validateNpmProjectConfiguration(readPhysicalRepositoryFile(resolvedRoot, ".npmrc"));
+  const canonicalWorkspaceDirectories = new Set(
+    canonicalWorkspacePackagePaths.map((packagePath) => dirname(packagePath)),
+  );
+
+  for (const workspaceRoot of canonicalWorkspacePatterns.map((pattern) => pattern.slice(0, -2))) {
+    const absoluteWorkspaceRoot = resolve(resolvedRoot, workspaceRoot);
+    const rootInformation = lstatSync(absoluteWorkspaceRoot, { throwIfNoEntry: false });
+    if (
+      rootInformation === undefined ||
+      !rootInformation.isDirectory() ||
+      rootInformation.isSymbolicLink()
+    ) {
+      throw new Error(`A raiz de workspaces ${workspaceRoot} precisa ser um diretório físico.`);
+    }
+
+    for (const entry of readdirSync(absoluteWorkspaceRoot)) {
+      const workspacePath = `${workspaceRoot}/${entry}`;
+      const information = lstatSync(resolve(absoluteWorkspaceRoot, entry), {
+        throwIfNoEntry: false,
+      });
+      if (information === undefined || information.isSymbolicLink()) {
+        throw new Error(`O workspace ${workspacePath} precisa ser físico.`);
+      }
+      if (information.isDirectory() && !canonicalWorkspaceDirectories.has(workspacePath)) {
+        throw new Error(`O workspace ${workspacePath} não pertence ao conjunto canônico.`);
+      }
+    }
+  }
+
+  return ["package.json", ...canonicalWorkspacePackagePaths].map((packagePath) => {
+    const packageDirectory = resolve(resolvedRoot, dirname(packagePath));
+    if (lstatSync(resolve(packageDirectory, "npm-shrinkwrap.json"), { throwIfNoEntry: false })) {
+      throw new Error(`${packagePath} não pode introduzir npm-shrinkwrap.json.`);
+    }
+    if (
+      packagePath !== "package.json" &&
+      lstatSync(resolve(packageDirectory, "package-lock.json"), { throwIfNoEntry: false })
+    ) {
+      throw new Error(`${packagePath} não pode introduzir um lockfile paralelo.`);
+    }
+    const implicitNodeGypPath = resolve(resolvedRoot, dirname(packagePath), "binding.gyp");
+    if (lstatSync(implicitNodeGypPath, { throwIfNoEntry: false }) !== undefined) {
+      throw new Error(`${packagePath} não pode ativar install implícito por binding.gyp.`);
+    }
+    return {
+      packagePath,
+      source: readPhysicalRepositoryFile(resolvedRoot, packagePath),
+    };
+  });
+}
+
+function assertNoInstallLifecycleScripts(packageJson) {
+  const scripts = packageJson.scripts;
+  if (scripts === undefined) {
+    return;
+  }
+  if (scripts === null || typeof scripts !== "object" || Array.isArray(scripts)) {
+    throw new TypeError("A seção scripts precisa ser um mapa textual.");
+  }
+
+  for (const [scriptName, command] of Object.entries(scripts)) {
+    if (typeof command !== "string") {
+      throw new TypeError("A seção scripts precisa conter somente comandos textuais.");
+    }
+    if (installLifecycleScriptNames.has(scriptName)) {
+      throw new TypeError(`A seção scripts não pode declarar o lifecycle ${scriptName}.`);
+    }
+  }
+}
+
+function dependencyNameFromVersionedKey(value) {
+  if (value === "." || value === "") {
+    return undefined;
+  }
+  if (value.startsWith("@")) {
+    const scopeSeparator = value.indexOf("/");
+    if (scopeSeparator === -1) {
+      return value;
+    }
+    const versionSeparator = value.indexOf("@", scopeSeparator);
+    return (versionSeparator === -1 ? value : value.slice(0, versionSeparator)).toLowerCase();
+  }
+  const versionSeparator = value.indexOf("@");
+  return (versionSeparator === -1 ? value : value.slice(0, versionSeparator)).toLowerCase();
+}
+
+function dependencyAliasTarget(value) {
+  if (typeof value !== "string" || value.slice(0, "npm:".length).toLowerCase() !== "npm:") {
+    return undefined;
+  }
+  return dependencyNameFromVersionedKey(value.slice("npm:".length));
+}
+
+function assertRegistryVersionSpec(value, field, { allowReference = false } = {}) {
+  if (allowReference && /^\$(?:@[^/\s]+\/)?[^/\s]+$/u.test(value)) {
+    return;
+  }
+
+  if (value.startsWith("$")) {
+    throw new TypeError(`A seção ${field} aceita referências $ somente em overrides.`);
+  }
+
+  const aliasPrefix = value.slice(0, "npm:".length).toLowerCase() === "npm:";
+  const registrySpec = aliasPrefix ? value.slice("npm:".length) : value;
+  if (registrySpec === "") {
+    throw new TypeError(`A seção ${field} contém uma spec vazia.`);
+  }
+
+  let versionSpec = registrySpec;
+  if (aliasPrefix) {
+    const targetName = dependencyNameFromVersionedKey(registrySpec);
+    if (targetName === undefined || targetName === "") {
+      throw new TypeError(`A seção ${field} contém um alias npm inválido.`);
+    }
+    const versionOffset = registrySpec.startsWith("@")
+      ? registrySpec.indexOf("@", registrySpec.indexOf("/"))
+      : registrySpec.indexOf("@");
+    versionSpec = versionOffset === -1 ? "*" : registrySpec.slice(versionOffset + 1);
+  }
+
+  if (
+    versionSpec === "" ||
+    versionSpec.includes(":") ||
+    versionSpec.includes("/") ||
+    versionSpec.includes("\\") ||
+    versionSpec.includes("#") ||
+    /\.(?:tar|tar\.gz|tgz)$/iu.test(versionSpec) ||
+    versionSpec.startsWith(".")
+  ) {
+    throw new TypeError(
+      `A seção ${field} aceita somente versões do registry, aliases npm ou referências permitidas.`,
+    );
+  }
+}
+
+function collectOverrideDependencyNames(overrides, dependencyNames) {
+  if (overrides === undefined) {
+    return;
+  }
+  if (overrides === null || typeof overrides !== "object" || Array.isArray(overrides)) {
+    throw new TypeError("A seção overrides precisa ser um objeto de specs ou regras aninhadas.");
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
+    const dependencyName = dependencyNameFromVersionedKey(key);
+    if (dependencyName !== undefined) {
+      dependencyNames.add(dependencyName);
+    }
+    const aliasTarget = dependencyAliasTarget(value);
+    if (aliasTarget !== undefined) {
+      dependencyNames.add(aliasTarget);
+    }
+    if (typeof value === "string") {
+      assertRegistryVersionSpec(value, "overrides", { allowReference: true });
+      continue;
+    }
+    collectOverrideDependencyNames(value, dependencyNames);
+  }
+}
+
+export function installDependencyNames(packageJson) {
+  assertNoInstallLifecycleScripts(packageJson);
+  const dependencyNames = new Set();
+
+  for (const field of dependencyMapFields) {
+    const dependencies = packageJson[field];
+    if (dependencies === undefined) {
+      continue;
+    }
+    if (dependencies === null || typeof dependencies !== "object" || Array.isArray(dependencies)) {
+      throw new TypeError(`A seção ${field} precisa ser um mapa de specs.`);
+    }
+    for (const [dependency, version] of Object.entries(dependencies)) {
+      if (typeof version !== "string") {
+        throw new TypeError(`A seção ${field} precisa conter somente specs textuais.`);
+      }
+      assertRegistryVersionSpec(version, field);
+      dependencyNames.add(dependency.toLowerCase());
+      const aliasTarget = dependencyAliasTarget(version);
+      if (aliasTarget !== undefined) {
+        dependencyNames.add(aliasTarget);
+      }
+    }
+  }
+
+  for (const field of bundledDependencyFields) {
+    const dependencies = packageJson[field];
+    if (dependencies === undefined || typeof dependencies === "boolean") {
+      continue;
+    }
+    if (!Array.isArray(dependencies)) {
+      throw new TypeError(`A seção ${field} precisa ser uma lista ou booleano.`);
+    }
+    for (const dependency of dependencies) {
+      if (typeof dependency !== "string") {
+        throw new TypeError(`A seção ${field} precisa conter somente nomes textuais.`);
+      }
+      dependencyNames.add(dependency.toLowerCase());
+    }
+  }
+
+  collectOverrideDependencyNames(packageJson.overrides, dependencyNames);
+
+  return [...dependencyNames].sort();
+}
+
+export function findForbiddenInstallDependencies(packageJson, forbiddenDependencies) {
+  return installDependencyNames(packageJson).filter((dependency) =>
+    forbiddenDependencies.has(dependency),
+  );
 }
 
 export function sha256(content) {

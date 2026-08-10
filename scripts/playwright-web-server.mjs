@@ -1,69 +1,25 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import {
-  localDevelopmentNpmRunArguments,
-  readLocalDevelopmentEnvironmentFile,
-} from "./local-development-environment.mjs";
-import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
+import { createLocalDevelopmentServerLaunch } from "./local-development-server.mjs";
+import { terminateWindowsProcessTree } from "./windows-process-tree.mjs";
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
 const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
-
-function playwrightWebServerApplication(application, repositoryRoot) {
-  if (application === "web") {
-    return {
-      environmentPath: resolve(repositoryRoot, ".env.local"),
-      expectedApplicationUrl: "http://127.0.0.1:3000",
-      scriptName: "dev",
-    };
-  }
-  if (application === "backoffice") {
-    return {
-      environmentPath: resolve(repositoryRoot, "apps/backoffice/.env.local"),
-      expectedApplicationUrl: "http://127.0.0.1:3001",
-      scriptName: "dev",
-      workspaceName: "@set-livre/backoffice",
-    };
-  }
-  throw new Error("A aplicação solicitada pelo webServer Playwright é inválida.");
-}
 
 export function createPlaywrightWebServerLaunch({
   application,
   inheritedEnvironment = process.env,
   repositoryRoot = defaultRepositoryRoot,
 } = {}) {
-  const contract = playwrightWebServerApplication(application, repositoryRoot);
-  const trustedNpm = resolveTrustedNpmCliLaunch({ repositoryRoot });
-  const environment = {
-    ...readLocalDevelopmentEnvironmentFile(
-      contract.environmentPath,
-      inheritedEnvironment,
-      contract.expectedApplicationUrl,
-    ),
-    APP_ENV: "test",
-  };
-
-  return {
-    argumentsList: [
-      ...trustedNpm.argumentPrefix,
-      ...localDevelopmentNpmRunArguments(
-        repositoryRoot,
-        contract.scriptName,
-        environment,
-        contract.workspaceName,
-      ),
-    ],
-    command: trustedNpm.command,
-    options: {
-      cwd: repositoryRoot,
-      detached: false,
-      env: environment,
-      stdio: "inherit",
-    },
-  };
+  return createLocalDevelopmentServerLaunch({
+    application,
+    detached: false,
+    inheritedEnvironment,
+    repositoryRoot,
+    runtimeMode: "test",
+  });
 }
 
 export async function runPlaywrightWebServer({
@@ -75,6 +31,7 @@ export async function runPlaywrightWebServer({
   signalProcessGroup = process.kill,
   signalSource = process,
   spawnProcess = spawn,
+  terminateWindowsTree = terminateWindowsProcessTree,
 } = {}) {
   const launch = createPlaywrightWebServerLaunch({
     application,
@@ -92,11 +49,13 @@ export async function runPlaywrightWebServer({
         return;
       }
       if (platform === "win32") {
-        spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-          env: launch.options.env,
-          stdio: "ignore",
-          windowsHide: true,
-        });
+        try {
+          terminateWindowsTree(child.pid, {
+            systemRoot: launch.options.env.SystemRoot ?? launch.options.env.SYSTEMROOT,
+          });
+        } catch {
+          // O timeout repetirá a tentativa sem expor ambiente ou detalhes do processo.
+        }
         return;
       }
 

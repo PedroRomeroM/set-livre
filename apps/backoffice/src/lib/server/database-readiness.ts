@@ -40,7 +40,10 @@ function getDatabaseConnection() {
 export async function isDatabaseReady() {
   try {
     const connection = getDatabaseConnection();
-    const result = await connection.pool.query(databaseReadinessQuery, [databaseMigrationHead]);
+    const result = await connection.pool.query(databaseReadinessQuery, [
+      databaseMigrationHead,
+      connection.sessionRole,
+    ]);
     return isDatabaseReadinessSatisfied(result.rows, connection.sessionRole);
   } catch {
     return false;

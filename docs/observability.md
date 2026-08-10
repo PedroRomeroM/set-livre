@@ -6,7 +6,7 @@ Detectar falha antes de gerar dupla reserva, cobrança sem reserva, e-mail perdi
 
 ### 1.1 Estado da fundação local
 
-Os dois apps já expõem `/live` e `/ready` sem cache, com aplicação, release, timestamp e `requestId`; um UUID de entrada válido é propagado e qualquer valor inválido é substituído. Liveness não depende de configuração: `APP_RELEASE_SHA` ausente ou inválido mantém `200`, `status=live` e usa `release=unknown`. Readiness valida o mesmo valor antes de consultar dependências e, nesse caso, retorna `503`, `status=unready` e `release=unknown`, preservando `requestId` e `cache-control: no-store` sem expor configuração. Com release válido, consulta a função privada com timeout e comprova separadamente os atributos restritos e a ausência de memberships da role efetiva `app_dal`, além dos atributos do login e sua única membership permitida. Qualquer ampliação de privilégio retorna somente `unready`, sem erro de banco; um erro de cliente ocioso mantém o pool único.
+Os dois apps já expõem `/live` e `/ready` sem cache, com aplicação, release, timestamp e `requestId`; um UUID de entrada válido é propagado e qualquer valor inválido é substituído. Liveness não depende de configuração: `APP_RELEASE_SHA` ausente ou inválido mantém `200`, `status=live` e usa `release=unknown`. Readiness valida o mesmo valor antes de consultar dependências e, nesse caso, retorna `503`, `status=unready` e `release=unknown`, preservando `requestId` e `cache-control: no-store` sem expor configuração. Com release válido, consulta duas funções privadas com timeout e comprova atributos, memberships de entrada/saída, grants/ownership de `app_dal` e do login, a baseline pública exata, ACLs efetivas de `private` e a negação dos catálogos sensíveis. Qualquer ampliação retorna somente `unready`, sem erro de banco; um erro de cliente ocioso mantém o pool único.
 
 Ainda não existe evento de domínio que justifique logger, métrica ou alerta falso. O logger JSON com redaction entra junto ao primeiro comando real; error tracking, alertas externos e dashboards dependem de PEND-008.
 
@@ -54,7 +54,10 @@ Redaction:
 
 - conexão DB simples com timeout;
 - migration head compatível;
-- `current_user=app_dal` sem atributo privilegiado ou qualquer membership, e `session_user` restrito com somente a membership esperada;
+- `current_user=app_dal` sem atributo privilegiado, membership de saída, ownership ou grant direto além de `USAGE private` e `EXECUTE` nas duas funções de readiness sem grant option;
+- `PUBLIC` conserva somente `USAGE` em `pg_catalog`/`information_schema`, `CONNECT`/`TEMPORARY` no banco e `USAGE` nas quatro linguagens internas; não recebe default ACL, objeto grande, parâmetro, FDW/server ou tablespace, e `net` permanece inacessível às roles runtime;
+- nenhuma relação, coluna, sequência, rotina ou tipo autônomo de `private` concede privilégio efetivo a `PUBLIC`; row types, arrays e multiranges implícitos seguem o objeto canônico. Especificamente, `pg_roles`, `pg_user` e `pg_db_role_setting` negam leitura direta ou transitiva às roles web/DAL; o contrato não generaliza essa garantia aos demais catálogos internos;
+- exatamente `session_user` restrito pode assumir `app_dal`; as referências administrativas `postgres` não possuem `SET/INHERIT`, nenhuma role intermediária assume o login, e esse login conserva somente `CONNECT`, membership DAL e a máscara vazia do GUC JWT local;
 - configuração crítica presente;
 - sem revelar detalhes;
 - provider não deve tornar app inteiro unready por falha temporária, mas estado aparece em métrica.

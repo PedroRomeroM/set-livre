@@ -4,11 +4,8 @@ const databaseReadinessRowsSchema = z
   .array(
     z.strictObject({
       currentRole: z.literal("app_dal"),
-      currentRoleMembershipRestricted: z.boolean(),
-      currentRoleRestricted: z.boolean(),
       ready: z.boolean(),
-      sessionMembershipRestricted: z.boolean(),
-      sessionRestricted: z.boolean(),
+      runtimeReady: z.boolean(),
       sessionRole: z.string().min(1),
     }),
   )
@@ -19,10 +16,8 @@ export function isDatabaseReadinessSatisfied(rows: unknown, expectedSessionRole:
 
   return (
     row?.ready === true &&
-    row.currentRoleMembershipRestricted &&
-    row.currentRoleRestricted &&
-    row.sessionMembershipRestricted &&
-    row.sessionRestricted &&
-    row.sessionRole === expectedSessionRole
+    row.runtimeReady &&
+    row.sessionRole === expectedSessionRole &&
+    row.currentRole === "app_dal"
   );
 }
