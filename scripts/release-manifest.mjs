@@ -18,18 +18,19 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { parseEnv } from "node:util";
 
 import {
   deterministicReleaseTarArguments,
   ensurePhysicalArtifactsRoot,
   operationalEnvironment,
+  readReleaseRuntimeEnvironmentFile,
   redactEnvironmentSecrets,
   releaseBuildEnvironment,
   releaseSmokeEnvironment,
   secretEnvironmentEntries,
   withExclusiveReleaseLock,
 } from "./release-guards.mjs";
+import { runPackagedReleaseSmokeWithProcessCleanup } from "./release-process-tree.mjs";
 import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -38,20 +39,13 @@ const releaseRoot = resolve(artifactsRoot, "release");
 const manifestPath = resolve(releaseRoot, "manifest.json");
 const migrationsSource = resolve(root, "supabase/migrations");
 const nextExecutable = resolve(root, "node_modules/next/dist/bin/next");
-const localRuntimeEnvironmentNames = new Set([
-  "APP_ENV",
-  "APP_RELEASE_SHA",
-  "DATABASE_URL_APP_DAL",
-  "NEXT_PUBLIC_APP_URL",
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-  "NEXT_PUBLIC_SUPABASE_URL",
-]);
 const applications = [
   {
     application: "web",
     buildIdDestination: ".next/BUILD_ID",
     buildIdSource: resolve(root, ".next/BUILD_ID"),
     entrypoint: "server.js",
+    expectedApplicationUrl: "http://127.0.0.1:3000",
     packageRoot: resolve(releaseRoot, "web"),
     projectRoot: root,
     publicDestination: "public",
@@ -66,6 +60,7 @@ const applications = [
     buildIdDestination: "apps/backoffice/.next/BUILD_ID",
     buildIdSource: resolve(root, "apps/backoffice/.next/BUILD_ID"),
     entrypoint: "apps/backoffice/server.js",
+    expectedApplicationUrl: "http://127.0.0.1:3001",
     packageRoot: resolve(releaseRoot, "backoffice"),
     projectRoot: resolve(root, "apps/backoffice"),
     publicDestination: "apps/backoffice/public",
@@ -205,23 +200,6 @@ function assertSafeTree(directory, description) {
       }
     }
   }
-}
-
-function readOptionalEnvironmentFile(path, application) {
-  if (!pathExists(path)) {
-    return {};
-  }
-  requireRegularFile(path, "Arquivo local de runtime");
-  const environment = parseEnv(readFileSync(path, "utf8"));
-  const unexpectedNames = Object.keys(environment).filter(
-    (name) => !localRuntimeEnvironmentNames.has(name),
-  );
-  if (unexpectedNames.length > 0) {
-    throw new Error(
-      `${application} possui variáveis locais não autorizadas: ${unexpectedNames.sort().join(", ")}.`,
-    );
-  }
-  return environment;
 }
 
 function assertNoUnexpectedNextEnvironmentFiles(application) {
@@ -549,48 +527,6 @@ function startPackagedServer(application, environment) {
   return state;
 }
 
-function childExit(state) {
-  return new Promise((resolveExit) => {
-    if (state.child.exitCode !== null || state.child.signalCode !== null) {
-      resolveExit();
-      return;
-    }
-    state.child.once("exit", resolveExit);
-  });
-}
-
-function signalChild(state, signal) {
-  if (state.exited || state.child.pid === undefined) {
-    return;
-  }
-  try {
-    if (process.platform !== "win32") {
-      process.kill(-state.child.pid, signal);
-    } else {
-      state.child.kill(signal);
-    }
-  } catch (error) {
-    if (error?.code !== "ESRCH") {
-      throw error;
-    }
-  }
-}
-
-async function stopPackagedServer(state) {
-  if (state.exited) {
-    return;
-  }
-  signalChild(state, "SIGTERM");
-  await Promise.race([childExit(state), delay(5_000)]);
-  if (!state.exited) {
-    signalChild(state, "SIGKILL");
-    await Promise.race([childExit(state), delay(5_000)]);
-  }
-  if (!state.exited) {
-    throw new Error(`Não foi possível encerrar o processo empacotado ${state.application}.`);
-  }
-}
-
 async function waitUntilListening(state, baseUrl) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -706,65 +642,45 @@ async function expectProductionSecurityHeaders(baseUrl, application) {
 
 async function smokePackagedApplications(commit, localEnvironments) {
   const ports = await availablePorts(applications.length);
-  const states = applications.map((application, index) => {
-    const port = ports[index];
-    if (port === undefined) {
-      throw new Error(`Porta local ausente para ${application.application}.`);
-    }
-    return startPackagedServer(
-      application,
-      runtimeEnvironment(application, commit, port, localEnvironments[application.application]),
-    );
+  await runPackagedReleaseSmokeWithProcessCleanup({
+    smokeOperation: async (states) => {
+      await Promise.all(
+        states.map((state, index) => waitUntilListening(state, `http://127.0.0.1:${ports[index]}`)),
+      );
+      const rootPages = [];
+      for (const [index, application] of applications.entries()) {
+        const baseUrl = `http://127.0.0.1:${ports[index]}`;
+        rootPages.push(await expectPage(baseUrl, `${application.application}/`));
+        await expectHealth(baseUrl, application.application, "live", commit);
+        await expectHealth(baseUrl, application.application, "ready", commit);
+        await expectStaticAsset(baseUrl, application);
+        await expectProductionSecurityHeaders(baseUrl, application.application);
+      }
+      if (rootPages[0] === rootPages[1]) {
+        throw new Error("Web e backoffice serviram o mesmo documento na raiz.");
+      }
+      await expectPage(`http://127.0.0.1:${ports[0]}/admin`, "web/admin", 404);
+    },
+    startProcesses: (registerState) => {
+      for (const [index, application] of applications.entries()) {
+        const port = ports[index];
+        if (port === undefined) {
+          throw new Error(`Porta local ausente para ${application.application}.`);
+        }
+        registerState(
+          startPackagedServer(
+            application,
+            runtimeEnvironment(
+              application,
+              commit,
+              port,
+              localEnvironments[application.application],
+            ),
+          ),
+        );
+      }
+    },
   });
-  let interruptedSignal;
-  const handleSignal = (signal) => {
-    interruptedSignal = signal;
-    for (const state of states) {
-      signalChild(state, "SIGTERM");
-    }
-  };
-  const handleSigint = () => handleSignal("SIGINT");
-  const handleSigterm = () => handleSignal("SIGTERM");
-  process.once("SIGINT", handleSigint);
-  process.once("SIGTERM", handleSigterm);
-
-  let smokeFailure;
-  try {
-    await Promise.all(
-      states.map((state, index) => waitUntilListening(state, `http://127.0.0.1:${ports[index]}`)),
-    );
-    const rootPages = [];
-    for (const [index, application] of applications.entries()) {
-      const baseUrl = `http://127.0.0.1:${ports[index]}`;
-      rootPages.push(await expectPage(baseUrl, `${application.application}/`));
-      await expectHealth(baseUrl, application.application, "live", commit);
-      await expectHealth(baseUrl, application.application, "ready", commit);
-      await expectStaticAsset(baseUrl, application);
-      await expectProductionSecurityHeaders(baseUrl, application.application);
-    }
-    if (rootPages[0] === rootPages[1]) {
-      throw new Error("Web e backoffice serviram o mesmo documento na raiz.");
-    }
-    await expectPage(`http://127.0.0.1:${ports[0]}/admin`, "web/admin", 404);
-  } catch (error) {
-    smokeFailure = error;
-  } finally {
-    process.removeListener("SIGINT", handleSigint);
-    process.removeListener("SIGTERM", handleSigterm);
-    await Promise.all(states.map((state) => stopPackagedServer(state)));
-  }
-
-  if (interruptedSignal !== undefined) {
-    const exitCode = interruptedSignal === "SIGINT" ? 130 : 143;
-    const error = new Error(
-      `Smoke test interrompido por ${interruptedSignal} (código ${exitCode}).`,
-    );
-    error.exitCode = exitCode;
-    throw error;
-  }
-  if (smokeFailure !== undefined) {
-    throw smokeFailure;
-  }
 }
 
 function expectedArchiveListing() {
@@ -931,7 +847,10 @@ async function generateRelease(commit) {
   const localEnvironments = Object.fromEntries(
     applications.map((application) => [
       application.application,
-      readOptionalEnvironmentFile(application.runtimeEnvironmentSource, application.application),
+      readReleaseRuntimeEnvironmentFile(
+        application.runtimeEnvironmentSource,
+        application.expectedApplicationUrl,
+      ),
     ]),
   );
   const secretSourceEnvironments = [process.env, ...Object.values(localEnvironments)];

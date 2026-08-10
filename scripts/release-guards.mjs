@@ -9,11 +9,16 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   realpathSync,
 } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
+import { parseEnv } from "node:util";
 
-import { validateLocalDalDatabaseUrl } from "./local-development-environment.mjs";
+import {
+  createLocalDevelopmentEnvironment,
+  validateLocalDalDatabaseUrl,
+} from "./local-development-environment.mjs";
 
 const alwaysSensitiveEnvironmentNames = [
   "CURSOR_SIGNING_SECRET",
@@ -66,6 +71,72 @@ const childProcessControlEnvironmentNames = new Set([
 ]);
 const childProcessControlPrefixes = ["DYLD_", "GIT_", "LD_", "NPM_CONFIG_"];
 const releaseArchiveMode = "u+rwX,go+rX,go-w,a-s,a-t";
+
+function samePhysicalFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function assertPhysicalReleaseRuntimeFile(information, environmentPath, stage) {
+  if (
+    information === undefined ||
+    !information.isFile() ||
+    information.isSymbolicLink() ||
+    information.nlink !== 1
+  ) {
+    throw new Error(
+      `O ambiente runtime da release precisa ser um arquivo físico regular exclusivo ${stage}: ${environmentPath}.`,
+    );
+  }
+  if (process.platform !== "win32" && (information.mode & 0o7777) !== 0o600) {
+    throw new Error(`O ambiente runtime da release precisa usar modo 0600: ${environmentPath}.`);
+  }
+}
+
+export function readReleaseRuntimeEnvironmentFile(
+  environmentPath,
+  expectedApplicationUrl,
+  { readDescriptor = (descriptor) => readFileSync(descriptor, "utf8") } = {},
+) {
+  let descriptor;
+  try {
+    const pathInformation = lstatSync(environmentPath, { throwIfNoEntry: false });
+    assertPhysicalReleaseRuntimeFile(pathInformation, environmentPath, "antes da abertura");
+
+    descriptor = openSync(environmentPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedInformation = fstatSync(descriptor);
+    assertPhysicalReleaseRuntimeFile(openedInformation, environmentPath, "durante a abertura");
+    if (!samePhysicalFile(pathInformation, openedInformation)) {
+      throw new Error(
+        `O ambiente runtime da release mudou durante a abertura: ${environmentPath}.`,
+      );
+    }
+
+    const source = readDescriptor(descriptor);
+    if (typeof source !== "string" || source === "") {
+      throw new Error(`O ambiente runtime da release está vazio: ${environmentPath}.`);
+    }
+
+    const finalInformation = lstatSync(environmentPath, { throwIfNoEntry: false });
+    assertPhysicalReleaseRuntimeFile(finalInformation, environmentPath, "após a leitura");
+    if (!samePhysicalFile(openedInformation, finalInformation)) {
+      throw new Error(`O ambiente runtime da release mudou durante a leitura: ${environmentPath}.`);
+    }
+
+    let localEnvironment;
+    try {
+      localEnvironment = parseEnv(source);
+    } catch {
+      throw new Error(
+        `Não foi possível interpretar o ambiente runtime da release: ${environmentPath}.`,
+      );
+    }
+    return createLocalDevelopmentEnvironment({}, localEnvironment, expectedApplicationUrl);
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
 
 function isInside(parent, child) {
   const pathFromParent = relative(parent, child);

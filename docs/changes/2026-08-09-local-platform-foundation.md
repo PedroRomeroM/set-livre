@@ -49,9 +49,10 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 - `20260809000100_security_baseline.sql`: schemas privados, extensões, role DAL e privilégios fechados;
 - `20260809000200_readiness_contract.sql`: função privada mínima vinculada à migration head;
 - `20260809000300_security_default_privileges_hardening.sql`: default global de funções fechado e estado da role DAL normalizado;
-- `20260810000100_app_dal_readiness_authorization.sql`: manifesto exato de ACL/ownership da DAL, defaults de tipos fechados e recusa de privilégios efetivos herdados de `PUBLIC`.
+- `20260810000100_app_dal_readiness_authorization.sql`: manifesto exato de ACL/ownership da DAL, defaults de tipos fechados e recusa de privilégios efetivos herdados de `PUBLIC`;
+- `20260810000200_pg_catalog_public_acl_hardening.sql`: baseline canônica das ACLs públicas de relações e colunas de `pg_catalog`, recusando expansões como acesso a `pg_authid.rolpassword`.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 129 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 134 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
 
 ## Segurança e privacidade
 
@@ -75,8 +76,8 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 156 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
-- 129 asserts pgTAP;
+- 164 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
+- 134 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -143,6 +144,12 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - o supervisor trata `SIGHUP` pelo mesmo shutdown completo de grupos POSIX usado para os demais sinais, retorna código 129 e comprova por processo real que pai, descendente e porta não sobrevivem ao fechamento do terminal;
 - `npm run test:db` gera snapshot SQL e tipos em destinos temporários não rastreados, compara os bytes normalizados/formatados aos contratos versionados e falha sem modificá-los quando qualquer artefato estiver stale.
 
+## Correções do nono Codex review
+
+- o smoke da release instala `SIGHUP`/`SIGINT`/`SIGTERM` antes do primeiro spawn, limpa integralmente os dois PGIDs detached e preserva o código 129, inclusive quando líderes encerram antes dos descendentes;
+- a release exige os dois `.env.local` físicos, exclusivos e `0600` antes do build, abre sem seguir links e revalida identidade, modo e quantidade de links antes de interpretar o runtime local;
+- o readiness compara toda ACL pública de relação ou coluna em `pg_catalog` à baseline de `pg_init_privs`, preserva somente privilégios canônicos e recusa grants posteriores em catálogos restritos.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -175,9 +182,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 156 aprovados;
+- `npm run test:unit`: 164 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 129 aprovados e snapshot SQL/tipos conferidos byte a byte;
+- `npm run test:db`: 134 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

@@ -13,11 +13,13 @@
 - [ ] release notes;
 - [ ] aprovação.
 
-Enquanto o ADR-018 estiver vigente, o smoke local do artefato usa exclusivamente a URL DAL do `.env.local` de cada aplicação. A URL precisa apontar para a instância Supabase em loopback `:54322` com `app_runtime_local` assumindo `app_dal`; uma variável homônima exportada no host não tem precedência e uma URL local inválida aborta antes de iniciar os servidores empacotados.
+Enquanto o ADR-018 estiver vigente, a geração exige um `.env.local` físico, regular, exclusivo e `0600` para cada aplicação. A identidade e o modo precisam permanecer estáveis entre caminho e descritor durante a leitura; arquivo ausente, link ou permissão ampla aborta antes do build. O smoke local do artefato usa exclusivamente a URL DAL desse arquivo. A URL precisa apontar para a instância Supabase em loopback `:54322` com `app_runtime_local` assumindo `app_dal`; uma variável homônima exportada no host não tem precedência e uma URL local inválida aborta antes de iniciar os servidores empacotados.
 
 A release local exige Linux com GNU tar e `util-linux flock`. O lock exclusivo cobre build, `releaseRoot`, smoke, candidatos `.incoming`, verificação e publicação; invocações simultâneas esperam em vez de compartilhar temporários. Não remova `.artifacts/release.lock`: o arquivo permanece, sem lock ativo, para que todas as invocações usem o mesmo inode. Confirme os requisitos com `tar --version` e `flock --version`; ausência de `flock` interrompe o comando antes do build.
 
 O tar normaliza modos independentemente do `umask`: diretórios e arquivos executáveis são `0755`; arquivos regulares não executáveis são `0644`; bits especiais `setuid`, `setgid` e `sticky` são removidos. Rebuild do mesmo SHA precisa reproduzir checksum idêntico.
+
+O smoke registra `SIGHUP`, `SIGINT` e `SIGTERM` antes de iniciar qualquer servidor. Se a sessão de terminal/SSH encerrar, `SIGHUP` limpa os dois grupos de processo detached — inclusive descendentes após a saída do líder — e a release termina com código `129`; confirme que as portas temporárias foram liberadas antes de repetir.
 
 ## Deploy
 

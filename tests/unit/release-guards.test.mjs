@@ -1,9 +1,11 @@
 import {
   chmodSync,
+  linkSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,6 +20,7 @@ import {
   environmentWithoutSecrets,
   isSensitiveEnvironmentName,
   operationalEnvironment,
+  readReleaseRuntimeEnvironmentFile,
   redactEnvironmentSecrets,
   releaseBuildEnvironment,
   releaseRuntimeEnvironment,
@@ -31,6 +34,21 @@ function temporaryRoot() {
   const root = mkdtempSync(resolve(tmpdir(), "set-livre-release-"));
   temporaryRoots.push(root);
   return root;
+}
+
+const localDatabaseUrl =
+  "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+
+function localRuntimeEnvironment(applicationUrl) {
+  return [
+    "APP_ENV=local",
+    "APP_RELEASE_SHA=local",
+    `DATABASE_URL_APP_DAL=${localDatabaseUrl}`,
+    `NEXT_PUBLIC_APP_URL=${applicationUrl}`,
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY=local-anon-key",
+    "NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321",
+    "",
+  ].join("\n");
 }
 
 afterEach(() => {
@@ -98,6 +116,101 @@ describe("release artifact root guard", () => {
 });
 
 describe("release environment isolation", () => {
+  it("requires and reads a physical private runtime file through its stable descriptor", () => {
+    const root = temporaryRoot();
+    const environmentPath = resolve(root, ".env.local");
+    writeFileSync(environmentPath, localRuntimeEnvironment("http://127.0.0.1:3000"), {
+      mode: 0o600,
+    });
+
+    expect(readReleaseRuntimeEnvironmentFile(environmentPath, "http://127.0.0.1:3000")).toEqual({
+      APP_ENV: "local",
+      APP_RELEASE_SHA: "local",
+      DATABASE_URL_APP_DAL: localDatabaseUrl,
+      NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "local-anon-key",
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+    });
+    expect(() =>
+      readReleaseRuntimeEnvironmentFile(
+        resolve(root, "missing.env.local"),
+        "http://127.0.0.1:3000",
+      ),
+    ).toThrow("arquivo físico regular exclusivo");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a readable mode before the release can read the runtime secret",
+    () => {
+      const root = temporaryRoot();
+      const environmentPath = resolve(root, ".env.local");
+      let descriptorWasRead = false;
+      writeFileSync(environmentPath, localRuntimeEnvironment("http://127.0.0.1:3000"), {
+        mode: 0o644,
+      });
+
+      expect(() =>
+        readReleaseRuntimeEnvironmentFile(environmentPath, "http://127.0.0.1:3000", {
+          readDescriptor: () => {
+            descriptorWasRead = true;
+            return "";
+          },
+        }),
+      ).toThrow("modo 0600");
+      expect(descriptorWasRead).toBe(false);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects symbolic and hard-linked runtime files without reading either target",
+    () => {
+      const root = temporaryRoot();
+      const target = resolve(root, "runtime-target");
+      const symbolic = resolve(root, "symbolic.env.local");
+      const hardLinked = resolve(root, "hard-linked.env.local");
+      let descriptorReads = 0;
+      writeFileSync(target, localRuntimeEnvironment("http://127.0.0.1:3000"), { mode: 0o600 });
+      symlinkSync(target, symbolic);
+      linkSync(target, hardLinked);
+      const options = {
+        readDescriptor: () => {
+          descriptorReads += 1;
+          return "";
+        },
+      };
+
+      expect(() =>
+        readReleaseRuntimeEnvironmentFile(symbolic, "http://127.0.0.1:3000", options),
+      ).toThrow("arquivo físico regular exclusivo");
+      expect(() =>
+        readReleaseRuntimeEnvironmentFile(hardLinked, "http://127.0.0.1:3000", options),
+      ).toThrow("arquivo físico regular exclusivo");
+      expect(descriptorReads).toBe(0);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a runtime path replaced after opening its physical descriptor",
+    () => {
+      const root = temporaryRoot();
+      const environmentPath = resolve(root, ".env.local");
+      const originalPath = resolve(root, "original.env.local");
+      const source = localRuntimeEnvironment("http://127.0.0.1:3000");
+      writeFileSync(environmentPath, source, { mode: 0o600 });
+
+      expect(() =>
+        readReleaseRuntimeEnvironmentFile(environmentPath, "http://127.0.0.1:3000", {
+          readDescriptor: (descriptor) => {
+            const contents = readFileSync(descriptor, "utf8");
+            renameSync(environmentPath, originalPath);
+            writeFileSync(environmentPath, source, { mode: 0o600 });
+            return contents;
+          },
+        }),
+      ).toThrow("mudou durante a leitura");
+    },
+  );
+
   it("classifies administrative and server credentials without treating anon public data as secret", () => {
     expect(isSensitiveEnvironmentName("E2E_DATABASE_MARKER")).toBe(true);
     expect(isSensitiveEnvironmentName("GH_TOKEN")).toBe(true);
