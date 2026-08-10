@@ -76,7 +76,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 164 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
+- 183 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
 - 134 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -150,6 +150,14 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - a release exige os dois `.env.local` físicos, exclusivos e `0600` antes do build, abre sem seguir links e revalida identidade, modo e quantidade de links antes de interpretar o runtime local;
 - o readiness compara toda ACL pública de relação ou coluna em `pg_catalog` à baseline de `pg_init_privs`, preserva somente privilégios canônicos e recusa grants posteriores em catálogos restritos.
 
+## Correções do décimo Codex review
+
+- `start`, `start:backoffice` e o workspace administrativo usam o launcher local fail-closed, retiram qualquer `.next` física anterior, constroem um build fresco com o mesmo ambiente sanitizado do servidor e supervisionam cada fase desde antes do primeiro spawn, preservando sinais, limpando descendentes POSIX/Windows e recusando encerramento prematuro;
+- um change record novo só satisfaz o gate quando é Markdown não vazio, físico, regular e exclusivo, sob raiz e ancestrais físicos, aberto com `O_NOFOLLOW` e revalidado contra troca concorrente;
+- entrypoints raiz do Next (`proxy`, `middleware`, `instrumentation`, `instrumentation-client` e `mdx-components`) entram no gate documental em todas as extensões reconhecidas, sem classificar nomes apenas semelhantes;
+- a política de dependências recusa por nomes, scopes e prefixos delimitados as alternativas mantidas das famílias proibidas, inclusive aliases e overrides de ORM/query builder, CSS-in-JS, estado remoto paralelo, Redis/Kafka/filas e CMS;
+- os dois apps geram nonce CSP por request no Proxy, removem `unsafe-inline` de `script-src` em produção, renderizam HTML dinamicamente sem cache e entregam fallback global 500 sem JavaScript; testes hostis cobrem headers de prefetch, prefixos parecidos, erros de método/range/path em assets estáticos, nonce renovado e bootstrap real.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -182,7 +190,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 164 aprovados;
+- `npm run test:unit`: 183 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 134 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;

@@ -1,9 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -28,6 +30,7 @@ import {
   parsePendingRows,
   parseFeatureReferences,
   parseQaRows,
+  readAddedChangeRecord,
   readCanonicalPackageManifests,
   readGitChanges,
   sha256,
@@ -78,14 +81,13 @@ describe("docs check core", () => {
       "tailwindcss",
       "zustand",
     ]);
+    expect(findForbiddenInstallDependencies(packageJson)).toEqual([
+      "redis",
+      "tailwindcss",
+      "zustand",
+    ]);
     expect(
-      findForbiddenInstallDependencies(packageJson, new Set(["redis", "tailwindcss", "zustand"])),
-    ).toEqual(["redis", "tailwindcss", "zustand"]);
-    expect(
-      findForbiddenInstallDependencies(
-        { optionalDependencies: { cache: "NPM:redis@5" } },
-        new Set(["redis"]),
-      ),
+      findForbiddenInstallDependencies({ optionalDependencies: { cache: "NPM:redis@5" } }),
     ).toEqual(["redis"]);
     for (const invalidPackageJson of [
       { dependencies: ["npm:redis@5"] },
@@ -116,6 +118,76 @@ describe("docs check core", () => {
         overrides: { react: "$react" },
       }),
     ).toEqual(["react"]);
+  });
+
+  it("rejects maintained prohibited dependency families through aliases and overrides", () => {
+    expect(
+      findForbiddenInstallDependencies({
+        dependencies: {
+          cache: "npm:ioredis@5",
+          cmsClient: "npm:@directus/sdk@20",
+          cms: "npm:@strapi/strapi@5",
+          css: "npm:@emotion/styled@11",
+          distributedLog: "npm:no-kafka@3",
+          eventBus: "npm:kafkajs@2",
+          orm: "npm:typeorm@0.3",
+          query: "npm:swr@2",
+          queue: "npm:bullmq@5",
+          ui: "npm:shadcn@3",
+        },
+        devDependencies: {
+          migrationToolkit: "NPM:drizzle-kit@0.31",
+          tailwindPlugin: "npm:@tailwindcss/postcss@4",
+        },
+        optionalDependencies: {
+          cluster: "npm:@kubernetes/client-node@1",
+        },
+        overrides: {
+          "safe-parent@1": {
+            ".": "1.0.1",
+            cssRuntime: "npm:fela@12",
+            managedKafka: "npm:@confluentinc/kafka-javascript@1",
+            redisCompatibility: "npm:handy-redis@2",
+            redisModel: "npm:redis-om@0.4",
+            storage: "npm:@redis/client@5",
+            styling: "npm:@vanilla-extract/css@1",
+          },
+        },
+      }),
+    ).toEqual([
+      "@confluentinc/kafka-javascript",
+      "@directus/sdk",
+      "@emotion/styled",
+      "@kubernetes/client-node",
+      "@redis/client",
+      "@strapi/strapi",
+      "@tailwindcss/postcss",
+      "@vanilla-extract/css",
+      "bullmq",
+      "drizzle-kit",
+      "fela",
+      "handy-redis",
+      "ioredis",
+      "kafkajs",
+      "no-kafka",
+      "redis-om",
+      "shadcn",
+      "swr",
+      "typeorm",
+    ]);
+
+    expect(
+      findForbiddenInstallDependencies({
+        dependencies: {
+          "drizzled-notes": "1.0.0",
+          "emotion-parser": "1.0.0",
+          felafel: "1.0.0",
+          kafkaesque: "1.0.0",
+          "queueing-theory": "1.0.0",
+          "redistribution-tool": "1.0.0",
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("keeps every npm workspace inside the dependency gate", () => {
@@ -395,7 +467,51 @@ describe("docs check core", () => {
     ]) {
       expect(isTechnicalChangePath(path), path).toBe(true);
     }
-    expect(isTechnicalChangePath("README.md")).toBe(false);
+    for (const entrypoint of [
+      "instrumentation",
+      "instrumentation-client",
+      "mdx-components",
+      "middleware",
+      "proxy",
+    ]) {
+      for (const extension of ["js", "jsx", "ts", "tsx"]) {
+        const path = `${entrypoint}.${extension}`;
+        expect(isTechnicalChangePath(path), path).toBe(true);
+      }
+    }
+    for (const path of [
+      "README.md",
+      "docs/proxy.ts",
+      "docs/proxy.tsx",
+      "instrumentation-guide.ts",
+      "instrumentation.cjs",
+      "instrumentation.cts",
+      "instrumentation.mjs",
+      "instrumentation.mts",
+      "instrumentation-client.cjs",
+      "instrumentation-client.cts",
+      "instrumentation-client.mjs",
+      "instrumentation-client.mts",
+      "mdx-components.cjs",
+      "mdx-components.cts",
+      "mdx-components.mjs",
+      "mdx-components.mts",
+      "middleware.ctsx",
+      "middleware.cjs",
+      "middleware.cts",
+      "middleware.mjs",
+      "middleware.mts",
+      "marketing.ts",
+      "proximity.ts",
+      "proxy.ts.example",
+      "proxy.cjs",
+      "proxy.cts",
+      "proxy.mjs",
+      "proxy.mts",
+      "proxy.mjsx",
+    ]) {
+      expect(isTechnicalChangePath(path), path).toBe(false);
+    }
 
     const repository = mkdtempSync(join(tmpdir(), "set-livre-git-changes-"));
     const git = (...argumentsList) =>
@@ -447,6 +563,122 @@ describe("docs check core", () => {
       });
     } finally {
       rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("accepts only a stable physical added change record", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-change-record-"));
+    const createRepository = (name) => {
+      const repository = join(testRoot, name);
+      mkdirSync(join(repository, "docs/changes"), { recursive: true });
+      return repository;
+    };
+    const change = (name) => ({ path: `docs/changes/${name}`, status: "A" });
+
+    try {
+      const validRepository = createRepository("valid");
+      const validChange = change("2026-08-10-stable.md");
+      writeFileSync(join(validRepository, validChange.path), "# Registro estável\n", "utf8");
+      expect(readAddedChangeRecord(validRepository, validChange)).toBe("# Registro estável\n");
+      expect(() => readAddedChangeRecord(validRepository, { ...validChange, status: "M" })).toThrow(
+        "Markdown novo",
+      );
+      expect(() =>
+        readAddedChangeRecord(validRepository, {
+          path: "docs/changes/2026-08-10-invalid.txt",
+          status: "A",
+        }),
+      ).toThrow("Markdown novo");
+
+      const emptyChange = change("2026-08-10-empty.md");
+      writeFileSync(join(validRepository, emptyChange.path), " \n", "utf8");
+      expect(() => readAddedChangeRecord(validRepository, emptyChange)).toThrow(
+        "não pode estar vazio",
+      );
+
+      const symbolicChange = change("2026-08-10-symbolic.md");
+      symlinkSync("2026-08-10-stable.md", join(validRepository, symbolicChange.path));
+      expect(() => readAddedChangeRecord(validRepository, symbolicChange)).toThrow(
+        "físico e regular",
+      );
+
+      const hardLinkSource = join(testRoot, "hard-link-source.md");
+      writeFileSync(hardLinkSource, "# Fora do repositório\n", "utf8");
+      const hardLinkedChange = change("2026-08-10-hard-linked.md");
+      linkSync(hardLinkSource, join(validRepository, hardLinkedChange.path));
+      expect(() => readAddedChangeRecord(validRepository, hardLinkedChange)).toThrow("exclusivo");
+
+      const directoryChange = change("2026-08-10-directory.md");
+      mkdirSync(join(validRepository, directoryChange.path));
+      expect(() => readAddedChangeRecord(validRepository, directoryChange)).toThrow(
+        "físico e regular",
+      );
+
+      const symbolicAncestorRepository = join(testRoot, "symbolic-ancestor");
+      const externalChanges = join(testRoot, "external-changes");
+      mkdirSync(join(symbolicAncestorRepository, "docs"), { recursive: true });
+      mkdirSync(externalChanges);
+      const ancestorChange = change("2026-08-10-ancestor.md");
+      writeFileSync(join(externalChanges, "2026-08-10-ancestor.md"), "# Externo\n", "utf8");
+      symlinkSync(externalChanges, join(symbolicAncestorRepository, "docs/changes"), "dir");
+      expect(() => readAddedChangeRecord(symbolicAncestorRepository, ancestorChange)).toThrow(
+        "diretório não físico",
+      );
+
+      const symbolicRoot = join(testRoot, "symbolic-root");
+      symlinkSync(validRepository, symbolicRoot, "dir");
+      expect(() => readAddedChangeRecord(symbolicRoot, validChange)).toThrow("raiz do repositório");
+
+      const replacedRepository = createRepository("replaced-during-read");
+      const replacedChange = change("2026-08-10-replaced.md");
+      const replacedPath = join(replacedRepository, replacedChange.path);
+      writeFileSync(replacedPath, "# Original\n", "utf8");
+      expect(() =>
+        readAddedChangeRecord(replacedRepository, replacedChange, {
+          readDescriptor(descriptor) {
+            const source = readFileSync(descriptor, "utf8");
+            rmSync(replacedPath);
+            writeFileSync(replacedPath, "# Substituído\n", "utf8");
+            return source;
+          },
+        }),
+      ).toThrow("mudou durante a leitura");
+
+      const mutatedRepository = createRepository("mutated-during-read");
+      const mutatedChange = change("2026-08-10-mutated.md");
+      const mutatedPath = join(mutatedRepository, mutatedChange.path);
+      writeFileSync(mutatedPath, "# Original\n", "utf8");
+      expect(() =>
+        readAddedChangeRecord(mutatedRepository, mutatedChange, {
+          readDescriptor(descriptor) {
+            const source = readFileSync(descriptor, "utf8");
+            writeFileSync(mutatedPath, "# Conteúdo alterado no mesmo inode\n", "utf8");
+            return source;
+          },
+        }),
+      ).toThrow("mudou durante a leitura");
+
+      const swappedAncestorRepository = createRepository("ancestor-swapped-during-read");
+      const swappedAncestorChange = change("2026-08-10-swapped-ancestor.md");
+      const changesDirectory = join(swappedAncestorRepository, "docs/changes");
+      const movedChangesDirectory = join(swappedAncestorRepository, "moved-changes");
+      writeFileSync(
+        join(swappedAncestorRepository, swappedAncestorChange.path),
+        "# Ancestral original\n",
+        "utf8",
+      );
+      expect(() =>
+        readAddedChangeRecord(swappedAncestorRepository, swappedAncestorChange, {
+          readDescriptor(descriptor) {
+            const source = readFileSync(descriptor, "utf8");
+            renameSync(changesDirectory, movedChangesDirectory);
+            symlinkSync(movedChangesDirectory, changesDirectory, "dir");
+            return source;
+          },
+        }),
+      ).toThrow("caminho do arquivo mudou durante a leitura");
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
     }
   });
 

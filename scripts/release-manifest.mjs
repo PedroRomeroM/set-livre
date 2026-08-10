@@ -554,8 +554,9 @@ async function waitUntilListening(state, baseUrl) {
   );
 }
 
-async function expectPage(url, description, expectedStatus = 200) {
+async function expectPage(url, description, expectedStatus = 200, headers = {}) {
   const response = await fetch(url, {
+    headers,
     redirect: "manual",
     signal: AbortSignal.timeout(5_000),
   });
@@ -566,7 +567,7 @@ async function expectPage(url, description, expectedStatus = 200) {
   if (!response.headers.get("content-type")?.includes("text/html") || body.trim() === "") {
     throw new Error(`${description} não apresentou um documento HTML válido.`);
   }
-  return body;
+  return { body, response };
 }
 
 async function expectHealth(baseUrl, application, status, commit) {
@@ -613,30 +614,125 @@ async function expectStaticAsset(baseUrl, application) {
     signal: AbortSignal.timeout(5_000),
   });
   const body = await response.arrayBuffer();
-  if (response.status !== 200 || body.byteLength === 0) {
-    throw new Error(`${application.application}${path} não serviu o asset empacotado.`);
-  }
-}
-
-async function expectProductionSecurityHeaders(baseUrl, application) {
-  const response = await fetch(baseUrl, {
-    redirect: "manual",
-    signal: AbortSignal.timeout(5_000),
-  });
-  await response.body?.cancel();
-  const contentSecurityPolicy = response.headers.get("content-security-policy") ?? "";
   if (
     response.status !== 200 ||
+    body.byteLength === 0 ||
+    !(response.headers.get("cache-control") ?? "").includes("immutable")
+  ) {
+    throw new Error(`${application.application}${path} não serviu o asset empacotado.`);
+  }
+  return {
+    nonce: expectProductionPolicy(application.application, response),
+    path,
+  };
+}
+
+function scriptSourceDirective(contentSecurityPolicy) {
+  return (
+    contentSecurityPolicy
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("script-src ")) ?? ""
+  );
+}
+
+function expectProductionPolicy(application, response) {
+  const contentSecurityPolicy = response.headers.get("content-security-policy") ?? "";
+  const scriptSource = scriptSourceDirective(contentSecurityPolicy);
+  const nonceMatches = [...scriptSource.matchAll(/'nonce-([a-f0-9]{32})'/gu)];
+  if (
     response.headers.has("x-powered-by") ||
     response.headers.get("x-content-type-options") !== "nosniff" ||
     response.headers.get("x-frame-options") !== "DENY" ||
     !contentSecurityPolicy.includes("frame-ancestors 'none'") ||
     !contentSecurityPolicy.includes("object-src 'none'") ||
-    contentSecurityPolicy.includes("'unsafe-eval'") ||
+    nonceMatches.length !== 1 ||
+    !scriptSource.includes("'strict-dynamic'") ||
+    scriptSource.includes("'unsafe-inline'") ||
+    scriptSource.includes("'unsafe-eval'") ||
     contentSecurityPolicy.includes("127.0.0.1") ||
     contentSecurityPolicy.includes("ws:")
   ) {
-    throw new Error(`${application} não serviu os headers de segurança de produção esperados.`);
+    throw new Error(`${application} não serviu a CSP de produção esperada.`);
+  }
+  return nonceMatches[0]?.[1] ?? "";
+}
+
+function expectProductionSecurityDocument(application, { body, response }) {
+  const nonce = expectProductionPolicy(application, response);
+  const scriptTags = body.match(/<script(?:\s[^>]*)?>/gu) ?? [];
+  if (
+    !(response.headers.get("cache-control") ?? "").includes("no-store") ||
+    scriptTags.length === 0 ||
+    scriptTags.some((scriptTag) => !scriptTag.includes(`nonce="${nonce}"`))
+  ) {
+    throw new Error(
+      `${application} não serviu HTML e headers CSP de produção coerentes com nonce.`,
+    );
+  }
+  return nonce;
+}
+
+function expectProductionGlobalErrorDocument(application, { body, response }) {
+  const nonce = expectProductionPolicy(application, response);
+  const scriptTags = body.match(/<script(?:\s[^>]*)?>/gu) ?? [];
+  if (
+    !(response.headers.get("cache-control") ?? "").includes("no-store") ||
+    scriptTags.length !== 0 ||
+    !body.includes("Tente novamente")
+  ) {
+    throw new Error(`${application} não serviu o fallback global seguro de produção.`);
+  }
+  return nonce;
+}
+
+async function expectStaticAssetErrorsCannotBypassProductionPolicy(
+  baseUrl,
+  application,
+  assetPath,
+  assetNonce,
+) {
+  const assetUrl = `${baseUrl}${assetPath}`;
+  const probes = [
+    { description: "método inválido", init: { method: "POST" }, url: assetUrl },
+    {
+      description: "range inválido",
+      init: { headers: { range: "bytes=999999999999999999-" } },
+      url: assetUrl,
+    },
+    {
+      description: "path inválido",
+      init: {},
+      url: `${baseUrl}/_next/static/%2F`,
+    },
+  ];
+  const nonces = [assetNonce];
+  for (const probe of probes) {
+    const response = await fetch(probe.url, {
+      ...probe.init,
+      redirect: "manual",
+      signal: AbortSignal.timeout(5_000),
+    });
+    const body = await response.text();
+    if (response.status < 400) {
+      throw new Error(
+        `${application} aceitou ${probe.description} no asset com HTTP ${response.status}.`,
+      );
+    }
+    const nonce = expectProductionPolicy(application, response);
+    nonces.push(nonce);
+    if ((response.headers.get("content-type") ?? "").includes("text/html")) {
+      const scriptTags = body.match(/<script(?:\s[^>]*)?>/gu) ?? [];
+      if (
+        !(response.headers.get("cache-control") ?? "").includes("no-store") ||
+        scriptTags.some((scriptTag) => !scriptTag.includes(`nonce="${nonce}"`))
+      ) {
+        throw new Error(`${application} serviu erro HTML de asset sem nonce e no-store.`);
+      }
+    }
+  }
+  if (new Set(nonces).size !== nonces.length) {
+    throw new Error(`${application} reutilizou nonce CSP entre asset e respostas adversariais.`);
   }
 }
 
@@ -650,11 +746,72 @@ async function smokePackagedApplications(commit, localEnvironments) {
       const rootPages = [];
       for (const [index, application] of applications.entries()) {
         const baseUrl = `http://127.0.0.1:${ports[index]}`;
-        rootPages.push(await expectPage(baseUrl, `${application.application}/`));
+        const firstDocument = await expectPage(baseUrl, `${application.application}/`);
+        const secondDocument = await expectPage(baseUrl, `${application.application}/ novamente`);
+        const purposePrefetchDocument = await expectPage(
+          baseUrl,
+          `${application.application}/ com Purpose: prefetch`,
+          200,
+          { purpose: "prefetch" },
+        );
+        const routerPrefetchDocument = await expectPage(
+          baseUrl,
+          `${application.application}/ com next-router-prefetch`,
+          200,
+          { "next-router-prefetch": "1" },
+        );
+        const lookalikeDocument = await expectPage(
+          `${baseUrl}/apiary`,
+          `${application.application}/apiary`,
+          404,
+        );
+        const globalErrorDocument = await expectPage(
+          `${baseUrl}/_global-error`,
+          `${application.application}/_global-error`,
+          500,
+        );
+        const firstNonce = expectProductionSecurityDocument(application.application, firstDocument);
+        const secondNonce = expectProductionSecurityDocument(
+          application.application,
+          secondDocument,
+        );
+        const purposePrefetchNonce = expectProductionSecurityDocument(
+          application.application,
+          purposePrefetchDocument,
+        );
+        const routerPrefetchNonce = expectProductionSecurityDocument(
+          application.application,
+          routerPrefetchDocument,
+        );
+        const lookalikeNonce = expectProductionSecurityDocument(
+          application.application,
+          lookalikeDocument,
+        );
+        const globalErrorNonce = expectProductionGlobalErrorDocument(
+          application.application,
+          globalErrorDocument,
+        );
+        const requestNonces = [
+          firstNonce,
+          secondNonce,
+          purposePrefetchNonce,
+          routerPrefetchNonce,
+          lookalikeNonce,
+          globalErrorNonce,
+        ];
+        if (new Set(requestNonces).size !== requestNonces.length) {
+          throw new Error(`${application.application} reutilizou o nonce CSP entre requests.`);
+        }
+        rootPages.push(firstDocument.body);
         await expectHealth(baseUrl, application.application, "live", commit);
         await expectHealth(baseUrl, application.application, "ready", commit);
-        await expectStaticAsset(baseUrl, application);
-        await expectProductionSecurityHeaders(baseUrl, application.application);
+        const staticAsset = await expectStaticAsset(baseUrl, application);
+        await expectStaticAssetErrorsCannotBypassProductionPolicy(
+          baseUrl,
+          application.application,
+          staticAsset.path,
+          staticAsset.nonce,
+        );
       }
       if (rootPages[0] === rootPages[1]) {
         throw new Error("Web e backoffice serviram o mesmo documento na raiz.");

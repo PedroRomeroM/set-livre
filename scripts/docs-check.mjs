@@ -12,6 +12,7 @@ import {
   parseOpenPendingFeaturePairs,
   parsePendingRows,
   parseQaRows,
+  readAddedChangeRecord,
   readCanonicalPackageManifests,
   readGitChanges,
   sha256,
@@ -194,22 +195,9 @@ try {
     `Os manifests npm não correspondem aos workspaces físicos canônicos: ${error instanceof Error ? error.message : "formato desconhecido"}`,
   );
 }
-const forbiddenDependencies = new Set([
-  "@emotion/react",
-  "@prisma/client",
-  "@reduxjs/toolkit",
-  "@supabase/auth-helpers-nextjs",
-  "caddy",
-  "drizzle-orm",
-  "prisma",
-  "redis",
-  "styled-components",
-  "tailwindcss",
-  "zustand",
-]);
 for (const { packageJson, packagePath } of packageManifests) {
   try {
-    for (const dependency of findForbiddenInstallDependencies(packageJson, forbiddenDependencies)) {
+    for (const dependency of findForbiddenInstallDependencies(packageJson)) {
       check(false, `${packagePath} introduziu dependência proibida: ${dependency}.`);
     }
   } catch (error) {
@@ -252,9 +240,20 @@ try {
 }
 
 const technicalChange = gitChanges.some((change) => isTechnicalChangePath(change.path));
-const changeRecord = gitChanges.some(
-  (change) => isAddedChangeRecord(change) && existsSync(resolve(root, change.path)),
+let changeRecord = false;
+const addedChangeRecords = new Map(
+  gitChanges.filter(isAddedChangeRecord).map((change) => [change.path, change]),
 );
+for (const change of addedChangeRecords.values()) {
+  try {
+    readAddedChangeRecord(root, change);
+    changeRecord = true;
+  } catch (error) {
+    errors.push(
+      `${change.path} não é um registro de mudança físico e estável: ${error instanceof Error ? error.message : "formato desconhecido"}`,
+    );
+  }
+}
 check(!technicalChange || changeRecord, "Mudança técnica sem novo registro em docs/changes/.");
 
 if (errors.length > 0) {

@@ -53,6 +53,107 @@ const canonicalNpmConfiguration = [
   "dangerously-allow-all-scripts=false",
   "",
 ].join("\n");
+const forbiddenInstallDependencyExactNames = new Set([
+  "@apollo/client",
+  "@directus/sdk",
+  "@keyv/redis",
+  "@shadcn/ui",
+  "@supabase/auth-helpers-nextjs",
+  "@upstash/redis",
+  "agenda",
+  "aphrodite",
+  "bee-queue",
+  "bookshelf",
+  "bull",
+  "bullmq",
+  "caddy",
+  "cache-manager-ioredis-yet",
+  "cache-manager-redis-yet",
+  "connect-redis",
+  "contentful",
+  "daisyui",
+  "directus",
+  "dockerode",
+  "drizzle-kit",
+  "drizzle-orm",
+  "fela",
+  "flowbite",
+  "flowbite-react",
+  "goober",
+  "handy-redis",
+  "ioredis",
+  "jss",
+  "kafkajs",
+  "kafka-node",
+  "knex",
+  "kubernetes-client",
+  "kysely",
+  "mikro-orm",
+  "node-docker-api",
+  "node-rdkafka",
+  "no-kafka",
+  "objection",
+  "payload",
+  "pg-boss",
+  "prisma",
+  "react-jss",
+  "react-fela",
+  "react-redux",
+  "rate-limit-redis",
+  "redis",
+  "redis-om",
+  "redux",
+  "relay-runtime",
+  "rsmq",
+  "sanity",
+  "sequelize",
+  "sequelize-typescript",
+  "shadcn",
+  "shadcn-ui",
+  "strapi",
+  "styled-components",
+  "styled-jsx",
+  "styletron-engine-atomic",
+  "styletron-react",
+  "swr",
+  "tailwind-merge",
+  "tailwindcss",
+  "tailwindcss-animate",
+  "typeorm",
+  "urql",
+  "waterline",
+  "zustand",
+]);
+const forbiddenInstallDependencyPrefixes = [
+  "@compiled/",
+  "@confluentinc/",
+  "@contentful/",
+  "@directus/",
+  "@emotion/",
+  "@kubernetes/",
+  "@linaria/",
+  "@mikro-orm/",
+  "@pandacss/",
+  "@payloadcms/",
+  "@prisma/",
+  "@prismicio/",
+  "@redis/",
+  "@reduxjs/",
+  "@sanity/",
+  "@sequelize/",
+  "@shadcn/",
+  "@storyblok/",
+  "@stitches/",
+  "@strapi/",
+  "@stylexjs/",
+  "@tailwindcss/",
+  "@urql/",
+  "@vanilla-extract/",
+  "drizzle-",
+  "fela-",
+  "kafka-",
+  "redis-",
+];
 const installLifecycleScriptNames = new Set([
   "dependencies",
   "install",
@@ -308,10 +409,15 @@ export function installDependencyNames(packageJson) {
   return [...dependencyNames].sort();
 }
 
-export function findForbiddenInstallDependencies(packageJson, forbiddenDependencies) {
-  return installDependencyNames(packageJson).filter((dependency) =>
-    forbiddenDependencies.has(dependency),
+function isForbiddenInstallDependency(dependency) {
+  return (
+    forbiddenInstallDependencyExactNames.has(dependency) ||
+    forbiddenInstallDependencyPrefixes.some((prefix) => dependency.startsWith(prefix))
   );
+}
+
+export function findForbiddenInstallDependencies(packageJson) {
+  return installDependencyNames(packageJson).filter(isForbiddenInstallDependency);
 }
 
 export function sha256(content) {
@@ -496,8 +602,12 @@ export function isTechnicalChangePath(path) {
   }
 
   const fileName = path.split("/").at(-1) ?? "";
+  const rootFrameworkEntrypoint =
+    /^(?:instrumentation(?:-client)?|middleware|proxy)\.(?:jsx?|tsx?)$/.test(path) ||
+    /^mdx-components\.(?:jsx?|tsx?)$/.test(path);
 
   return (
+    rootFrameworkEntrypoint ||
     (fileName.startsWith(".") && !fileName.endsWith(".md")) ||
     /\.(?:json|toml|ya?ml)$/.test(fileName) ||
     /(?:^|[.-])config\.(?:[cm]?[jt]s|json|toml|ya?ml)$/.test(fileName) ||
@@ -749,7 +859,39 @@ function samePhysicalFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function readPhysicalRepositoryFile(repositoryRoot, repositoryPath) {
+function sameStableFileSnapshot(left, right) {
+  return (
+    samePhysicalFile(left, right) &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function assertStablePhysicalAncestry(ancestry) {
+  for (const { information, path } of ancestry) {
+    const currentInformation = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+    if (
+      currentInformation === undefined ||
+      !currentInformation.isDirectory() ||
+      currentInformation.isSymbolicLink() ||
+      !samePhysicalFile(information, currentInformation)
+    ) {
+      throw new Error("O caminho do arquivo mudou durante a leitura.");
+    }
+  }
+}
+
+function readPhysicalRepositoryFile(
+  repositoryRoot,
+  repositoryPath,
+  {
+    readDescriptor = (descriptor) => readFileSync(descriptor, "utf8"),
+    requireExclusive = false,
+  } = {},
+) {
   const resolvedRoot = resolve(repositoryRoot);
   const absolutePath = resolve(resolvedRoot, repositoryPath);
   const normalizedPath = relative(resolvedRoot, absolutePath).split(sep).join("/");
@@ -757,7 +899,7 @@ function readPhysicalRepositoryFile(repositoryRoot, repositoryPath) {
     throw new Error("O arquivo precisa permanecer dentro do repositório.");
   }
 
-  const rootInformation = lstatSync(resolvedRoot, { throwIfNoEntry: false });
+  const rootInformation = lstatSync(resolvedRoot, { bigint: true, throwIfNoEntry: false });
   if (
     rootInformation === undefined ||
     !rootInformation.isDirectory() ||
@@ -765,11 +907,15 @@ function readPhysicalRepositoryFile(repositoryRoot, repositoryPath) {
   ) {
     throw new Error("A raiz do repositório precisa ser um diretório físico.");
   }
+  const ancestry = [{ information: rootInformation, path: resolvedRoot }];
 
   let currentParent = resolvedRoot;
   for (const component of normalizedPath.split("/").slice(0, -1)) {
     currentParent = resolve(currentParent, component);
-    const parentInformation = lstatSync(currentParent, { throwIfNoEntry: false });
+    const parentInformation = lstatSync(currentParent, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
     if (
       parentInformation === undefined ||
       !parentInformation.isDirectory() ||
@@ -777,41 +923,75 @@ function readPhysicalRepositoryFile(repositoryRoot, repositoryPath) {
     ) {
       throw new Error("O caminho do arquivo atravessa um diretório não físico.");
     }
+    ancestry.push({ information: parentInformation, path: currentParent });
   }
 
-  const pathInformation = lstatSync(absolutePath, { throwIfNoEntry: false });
+  const pathInformation = lstatSync(absolutePath, { bigint: true, throwIfNoEntry: false });
   if (
     pathInformation === undefined ||
     !pathInformation.isFile() ||
-    pathInformation.isSymbolicLink()
+    pathInformation.isSymbolicLink() ||
+    (requireExclusive && pathInformation.nlink !== 1n)
   ) {
-    throw new Error("O arquivo precisa ser físico e regular.");
+    throw new Error(
+      `O arquivo precisa ser físico e regular${requireExclusive ? " e exclusivo" : ""}.`,
+    );
   }
 
   let descriptor;
   try {
     descriptor = openSync(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const openedInformation = fstatSync(descriptor);
-    if (!openedInformation.isFile() || !samePhysicalFile(pathInformation, openedInformation)) {
+    const openedInformation = fstatSync(descriptor, { bigint: true });
+    if (
+      !openedInformation.isFile() ||
+      !sameStableFileSnapshot(pathInformation, openedInformation) ||
+      (requireExclusive && openedInformation.nlink !== 1n)
+    ) {
       throw new Error("O arquivo mudou durante a abertura.");
     }
 
-    const source = readFileSync(descriptor, "utf8");
-    const finalInformation = lstatSync(absolutePath, { throwIfNoEntry: false });
+    const source = readDescriptor(descriptor);
+    if (typeof source !== "string") {
+      throw new Error("A leitura do arquivo não retornou texto.");
+    }
+    const finalDescriptorInformation = fstatSync(descriptor, { bigint: true });
+    const finalInformation = lstatSync(absolutePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
     if (
       finalInformation === undefined ||
       finalInformation.isSymbolicLink() ||
       !finalInformation.isFile() ||
-      !samePhysicalFile(openedInformation, finalInformation)
+      !sameStableFileSnapshot(openedInformation, finalDescriptorInformation) ||
+      !sameStableFileSnapshot(openedInformation, finalInformation) ||
+      (requireExclusive &&
+        (finalDescriptorInformation.nlink !== 1n || finalInformation.nlink !== 1n))
     ) {
       throw new Error("O arquivo mudou durante a leitura.");
     }
+    assertStablePhysicalAncestry(ancestry);
     return source;
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);
     }
   }
+}
+
+export function readAddedChangeRecord(repositoryRoot, change, options = {}) {
+  if (!isAddedChangeRecord(change)) {
+    throw new Error("O registro precisa ser um Markdown novo em docs/changes/.");
+  }
+
+  const source = readPhysicalRepositoryFile(repositoryRoot, change.path, {
+    readDescriptor: options.readDescriptor,
+    requireExclusive: true,
+  });
+  if (source.trim() === "") {
+    throw new Error("O registro de mudança novo não pode estar vazio.");
+  }
+  return source;
 }
 
 export function validateAutomatedQaSpec(repositoryRoot, row) {

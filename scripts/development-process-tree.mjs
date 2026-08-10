@@ -12,6 +12,7 @@ export function superviseDevelopmentProcesses({
   exitTarget = process,
   forceShutdownMilliseconds = 5_000,
   platform = process.platform,
+  retainExitedWindowsProcessTrees = false,
   scheduleShutdownTimeout = setTimeout,
   signalProcessGroup = process.kill,
   signalSource = process,
@@ -70,7 +71,10 @@ export function superviseDevelopmentProcesses({
       return;
     }
 
-    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+    if (
+      child.pid === undefined ||
+      (!retainExitedWindowsProcessTrees && (child.exitCode !== null || child.signalCode !== null))
+    ) {
       return;
     }
 
@@ -133,7 +137,11 @@ export function superviseDevelopmentProcesses({
     exitTarget.exitCode = exitCode;
 
     for (const processTree of processTrees) {
-      if (platform !== "win32" || runningChildren.has(processTree.child)) {
+      if (
+        platform !== "win32" ||
+        retainExitedWindowsProcessTrees ||
+        runningChildren.has(processTree.child)
+      ) {
         signalProcessTree(processTree, signal);
       }
     }

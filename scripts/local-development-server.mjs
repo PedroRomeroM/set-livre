@@ -1,10 +1,21 @@
 import { spawn } from "node:child_process";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
-import { dirname, parse, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
+import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { superviseDevelopmentProcesses } from "./development-process-tree.mjs";
 import { readLocalDevelopmentEnvironmentFile } from "./local-development-environment.mjs";
+import { runLocalProductionPreviewProcessFlow } from "./local-production-process-tree.mjs";
 import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
@@ -29,6 +40,78 @@ const applicationContracts = {
 
 function samePhysicalFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
+}
+
+function isInside(parent, child) {
+  const pathFromParent = relative(parent, child);
+  return (
+    pathFromParent === "" ||
+    (pathFromParent !== ".." &&
+      !pathFromParent.startsWith(`..${sep}`) &&
+      !isAbsolute(pathFromParent))
+  );
+}
+
+function decodedLinuxMountPath(value) {
+  return value.replace(/\\([0-7]{3})/gu, (_match, octal) =>
+    String.fromCharCode(Number.parseInt(octal, 8)),
+  );
+}
+
+function assertNoKnownLinuxMountInside(directory) {
+  if (process.platform !== "linux") {
+    return;
+  }
+
+  let mountInformation;
+  try {
+    mountInformation = readFileSync("/proc/self/mountinfo", "utf8");
+  } catch {
+    throw new Error("Não foi possível comprovar que a saída .next não contém mounts.");
+  }
+
+  for (const line of mountInformation.split("\n").filter(Boolean)) {
+    const mountPath = line.split(" ")[4];
+    if (mountPath !== undefined && isInside(directory, decodedLinuxMountPath(mountPath))) {
+      throw new Error("A saída .next anterior não pode ser um mount nem conter mounts.");
+    }
+  }
+}
+
+function removePreviousBuildOutput(buildOutputPath) {
+  const information = lstatSync(buildOutputPath, { throwIfNoEntry: false });
+  if (information === undefined) {
+    return;
+  }
+  if (!information.isDirectory() || information.isSymbolicLink()) {
+    throw new Error("A saída .next anterior precisa ser um diretório físico.");
+  }
+  assertNoKnownLinuxMountInside(buildOutputPath);
+
+  const retiredPath = resolve(
+    dirname(buildOutputPath),
+    `.next.preview-retired-${process.pid}-${randomUUID()}`,
+  );
+  if (lstatSync(retiredPath, { throwIfNoEntry: false }) !== undefined) {
+    throw new Error("Não foi possível reservar o retiro físico da saída .next anterior.");
+  }
+
+  renameSync(buildOutputPath, retiredPath);
+  const retiredInformation = lstatSync(retiredPath, { throwIfNoEntry: false });
+  if (
+    retiredInformation === undefined ||
+    !retiredInformation.isDirectory() ||
+    retiredInformation.isSymbolicLink() ||
+    !samePhysicalFile(information, retiredInformation) ||
+    lstatSync(buildOutputPath, { throwIfNoEntry: false }) !== undefined
+  ) {
+    throw new Error("A saída .next anterior mudou durante o retiro atômico.");
+  }
+
+  rmSync(retiredPath, { recursive: true });
+  if (lstatSync(retiredPath, { throwIfNoEntry: false }) !== undefined) {
+    throw new Error("A saída .next anterior não pôde ser removida integralmente.");
+  }
 }
 
 function assertPhysicalAncestry(filePath) {
@@ -123,6 +206,17 @@ function applicationContract(application, repositoryRoot) {
   };
 }
 
+function assertNoUnexpectedProductionEnvironmentFiles(workingDirectory) {
+  for (const name of [".env", ".env.production", ".env.production.local"]) {
+    const environmentPath = resolve(workingDirectory, name);
+    if (lstatSync(environmentPath, { throwIfNoEntry: false }) !== undefined) {
+      throw new Error(
+        `O preview local de produção aceita somente .env.local; remova ${environmentPath}.`,
+      );
+    }
+  }
+}
+
 export function resolveTrustedNextCliLaunch({
   applicationManifestPath,
   nodeExecutable = process.execPath,
@@ -180,10 +274,11 @@ export function resolveTrustedNextCliLaunch({
   };
 }
 
-export function createLocalDevelopmentServerLaunch({
+function createLocalApplicationServerLaunch({
   application,
   detached = process.platform !== "win32",
   inheritedEnvironment = process.env,
+  nextCommand,
   repositoryRoot = defaultRepositoryRoot,
   runtimeMode = "local",
 } = {}) {
@@ -192,6 +287,11 @@ export function createLocalDevelopmentServerLaunch({
   }
 
   const contract = applicationContract(application, repositoryRoot);
+  if (nextCommand === "start") {
+    assertNoUnexpectedProductionEnvironmentFiles(contract.workingDirectory);
+  } else if (nextCommand !== "dev") {
+    throw new Error("O comando do servidor local é inválido.");
+  }
   const environment = {
     ...readLocalDevelopmentEnvironmentFile(
       contract.environmentPath,
@@ -208,7 +308,7 @@ export function createLocalDevelopmentServerLaunch({
   return {
     argumentsList: [
       ...trustedNext.argumentPrefix,
-      "dev",
+      nextCommand,
       "--hostname",
       "127.0.0.1",
       "--port",
@@ -226,13 +326,46 @@ export function createLocalDevelopmentServerLaunch({
   };
 }
 
-export async function runLocalDevelopmentServer({
+export function createLocalDevelopmentServerLaunch(options = {}) {
+  return createLocalApplicationServerLaunch({
+    ...options,
+    nextCommand: "dev",
+  });
+}
+
+export function createLocalProductionServerLaunch(options = {}) {
+  return createLocalProductionPreviewLaunches(options).start;
+}
+
+export function createLocalProductionPreviewLaunches(options = {}) {
+  const start = createLocalApplicationServerLaunch({
+    ...options,
+    nextCommand: "start",
+    runtimeMode: "local",
+  });
+  return {
+    build: {
+      argumentsList: [start.argumentsList[0], "build"],
+      command: start.command,
+      name: `build de ${start.name}`,
+      options: {
+        ...start.options,
+        env: start.options.env,
+      },
+    },
+    buildOutputPath: resolve(start.options.cwd, ".next"),
+    start,
+  };
+}
+
+async function runLocalServer({
   application,
+  createLaunch,
   inheritedEnvironment = process.env,
   repositoryRoot = defaultRepositoryRoot,
   spawnProcess = spawn,
-} = {}) {
-  const launch = createLocalDevelopmentServerLaunch({
+}) {
+  const launch = createLaunch({
     application,
     inheritedEnvironment,
     repositoryRoot,
@@ -242,6 +375,83 @@ export async function runLocalDevelopmentServer({
     children: [{ child, name: launch.name }],
   });
   return supervisor.completion;
+}
+
+export async function runLocalDevelopmentServer({
+  application,
+  inheritedEnvironment = process.env,
+  repositoryRoot = defaultRepositoryRoot,
+  spawnProcess = spawn,
+} = {}) {
+  return runLocalServer({
+    application,
+    createLaunch: createLocalDevelopmentServerLaunch,
+    inheritedEnvironment,
+    repositoryRoot,
+    spawnProcess,
+  });
+}
+
+export async function runLocalProductionServer({
+  application,
+  clearShutdownTimeout = clearTimeout,
+  forceShutdownMilliseconds = 5_000,
+  inheritedEnvironment = process.env,
+  platform = process.platform,
+  repositoryRoot = defaultRepositoryRoot,
+  scheduleShutdownTimeout = setTimeout,
+  signalProcessGroup = process.kill,
+  signalSource = process,
+  spawnProcess = spawn,
+  systemRoot = process.env.SystemRoot,
+  terminateWindowsTree,
+} = {}) {
+  const preview = createLocalProductionPreviewLaunches({
+    application,
+    inheritedEnvironment,
+    repositoryRoot,
+  });
+
+  return runLocalProductionPreviewProcessFlow({
+    clearShutdownTimeout,
+    forceShutdownMilliseconds,
+    platform,
+    prepareBuild: () => {
+      removePreviousBuildOutput(preview.buildOutputPath);
+    },
+    scheduleShutdownTimeout,
+    signalProcessGroup,
+    signalSource,
+    startBuild: (registerProcess) => {
+      registerProcess({
+        child: spawnProcess(
+          preview.build.command,
+          preview.build.argumentsList,
+          preview.build.options,
+        ),
+      });
+    },
+    startServer: (registerProcess) => {
+      registerProcess({
+        child: spawnProcess(
+          preview.start.command,
+          preview.start.argumentsList,
+          preview.start.options,
+        ),
+      });
+    },
+    systemRoot,
+    terminateWindowsTree,
+    validateBuild: () => {
+      const buildId = readProtectedFile(
+        resolve(preview.buildOutputPath, "BUILD_ID"),
+        "BUILD_ID fresco do preview",
+      );
+      if (buildId.trim() === "" || buildId.includes("\0")) {
+        throw new Error("O build fresco do preview não produziu BUILD_ID válido.");
+      }
+    },
+  });
 }
 
 const executedPath = process.argv[1];

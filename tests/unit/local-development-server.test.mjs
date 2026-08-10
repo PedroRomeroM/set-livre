@@ -1,8 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -15,7 +18,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createLocalDevelopmentServerLaunch,
+  createLocalProductionPreviewLaunches,
+  createLocalProductionServerLaunch,
   resolveTrustedNextCliLaunch,
+  runLocalProductionServer,
 } from "../../scripts/local-development-server.mjs";
 
 const localDatabaseUrl =
@@ -104,6 +110,17 @@ function hostileInheritedEnvironment(home) {
   };
 }
 
+async function waitFor(predicate, timeout = 5_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("O preview não atingiu o estado esperado no prazo.");
+}
+
 describe("local development server launcher", () => {
   it("starts the absolute pinned Next CLI with only the physical web environment", () => {
     const fixture = temporaryRepository();
@@ -183,6 +200,245 @@ describe("local development server launcher", () => {
     );
   });
 
+  it("starts production previews through the pinned CLI with a fresh local-only environment", () => {
+    const fixture = temporaryRepository();
+    const resultPath = resolve(fixture.root, "production-result.json");
+    writeFileSync(
+      fixture.nextCliPath,
+      `const fs = require("node:fs"); fs.writeFileSync(${JSON.stringify(
+        resultPath,
+      )}, JSON.stringify({ APP_ENV: process.env.APP_ENV, APP_RELEASE_SHA: process.env.APP_RELEASE_SHA, DATABASE_URL_APP_DAL: process.env.DATABASE_URL_APP_DAL, NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, args: process.argv.slice(2), e2eDatabase: process.env.E2E_DATABASE_URL ?? null, nodeOptions: process.env.NODE_OPTIONS ?? null, npmNodeOptions: process.env.npm_config_node_options ?? null, pgPassword: process.env.PGPASSWORD ?? null, serviceRole: process.env.SUPABASE_SERVICE_ROLE_KEY ?? null }));\n`,
+    );
+    const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
+    inheritedEnvironment.PATH = resolve(fixture.root, "hostile-bin");
+
+    const web = createLocalProductionServerLaunch({
+      application: "web",
+      inheritedEnvironment,
+      repositoryRoot: fixture.root,
+    });
+    execFileSync(web.command, web.argumentsList, {
+      ...web.options,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const backoffice = createLocalProductionServerLaunch({
+      application: "backoffice",
+      detached: false,
+      inheritedEnvironment,
+      repositoryRoot: fixture.root,
+    });
+
+    expect(web).toMatchObject({
+      argumentsList: [fixture.nextCliPath, "start", "--hostname", "127.0.0.1", "--port", "3000"],
+      command: process.execPath,
+      options: { cwd: fixture.root, shell: false },
+    });
+    expect(backoffice).toMatchObject({
+      argumentsList: [fixture.nextCliPath, "start", "--hostname", "127.0.0.1", "--port", "3001"],
+      command: process.execPath,
+      options: {
+        cwd: resolve(fixture.root, "apps/backoffice"),
+        detached: false,
+        shell: false,
+      },
+    });
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
+      APP_ENV: "local",
+      APP_RELEASE_SHA: "local",
+      DATABASE_URL_APP_DAL: localDatabaseUrl,
+      NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "web-anon",
+      args: ["start", "--hostname", "127.0.0.1", "--port", "3000"],
+      e2eDatabase: null,
+      nodeOptions: null,
+      npmNodeOptions: null,
+      pgPassword: null,
+      serviceRole: null,
+    });
+    expect(JSON.stringify(backoffice.options.env)).not.toMatch(
+      /admin-secret|cloud\.example|database\.example|host-anon|hostile-loader|registry-secret|service-role/u,
+    );
+
+    const workflow = createLocalProductionPreviewLaunches({
+      application: "web",
+      inheritedEnvironment,
+      repositoryRoot: fixture.root,
+    });
+    expect(workflow.build.argumentsList).toEqual([fixture.nextCliPath, "build"]);
+    expect(workflow.start.argumentsList).toEqual(web.argumentsList);
+    expect(workflow.build.options.env).toBe(workflow.start.options.env);
+    expect(workflow.buildOutputPath).toBe(resolve(fixture.root, ".next"));
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "removes a stale cloud build and starts only the freshly built local bundle",
+    async () => {
+      const fixture = temporaryRepository();
+      const buildOutputPath = resolve(fixture.root, ".next");
+      const staleMarkerPath = resolve(buildOutputPath, "stale-cloud-bundle");
+      const bundlePath = resolve(buildOutputPath, "preview-bundle.json");
+      const resultPath = resolve(fixture.root, "fresh-preview-result.json");
+      mkdirSync(buildOutputPath);
+      writeFileSync(staleMarkerPath, "https://cloud.example.com", "utf8");
+      writeFileSync(
+        fixture.nextCliPath,
+        `const fs = require("node:fs"); const path = require("node:path"); const command = process.argv[2]; const output = ${JSON.stringify(buildOutputPath)}; const stale = ${JSON.stringify(staleMarkerPath)}; const bundle = ${JSON.stringify(bundlePath)}; if (command === "build") { if (fs.existsSync(stale)) process.exit(41); fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(path.join(output, "BUILD_ID"), "fresh-local-build\\n"); fs.writeFileSync(bundle, JSON.stringify({ APP_ENV: process.env.APP_ENV, DATABASE_URL_APP_DAL: process.env.DATABASE_URL_APP_DAL, NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL, nodeOptions: process.env.NODE_OPTIONS ?? null, serviceRole: process.env.SUPABASE_SERVICE_ROLE_KEY ?? null })); } else if (command === "start") { fs.writeFileSync(${JSON.stringify(resultPath)}, fs.readFileSync(bundle)); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000); } else { process.exit(42); }\n`,
+      );
+      const signalSource = new EventEmitter();
+      const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
+
+      const run = runLocalProductionServer({
+        application: "web",
+        forceShutdownMilliseconds: 150,
+        inheritedEnvironment,
+        repositoryRoot: fixture.root,
+        signalSource,
+      });
+      await waitFor(() => existsSync(resultPath));
+      signalSource.emit("SIGTERM");
+
+      await expect(run).rejects.toMatchObject({ exitCode: 143 });
+      expect(existsSync(staleMarkerPath)).toBe(false);
+      expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
+        APP_ENV: "local",
+        DATABASE_URL_APP_DAL: localDatabaseUrl,
+        NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: "web-anon",
+        NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+        nodeOptions: null,
+        serviceRole: null,
+      });
+      expect(readFileSync(bundlePath, "utf8")).not.toMatch(
+        /cloud\.example|database\.example|host-anon|service-role/u,
+      );
+      expect(
+        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+      ).toEqual([]);
+    },
+    10_000,
+  );
+
+  it("rejects an unsafe previous build output before spawning Next", async () => {
+    const regularFileFixture = temporaryRepository();
+    writeFileSync(resolve(regularFileFixture.root, ".next"), "not-a-directory", "utf8");
+    let spawnAttempted = false;
+
+    await expect(
+      runLocalProductionServer({
+        application: "web",
+        repositoryRoot: regularFileFixture.root,
+        signalSource: new EventEmitter(),
+        spawnProcess: () => {
+          spawnAttempted = true;
+          throw new Error("spawn não deveria ocorrer");
+        },
+      }),
+    ).rejects.toThrow("diretório físico");
+    expect(spawnAttempted).toBe(false);
+
+    if (process.platform !== "win32") {
+      const symbolicFixture = temporaryRepository();
+      const externalBuildOutput = resolve(symbolicFixture.root, "external-build-output");
+      mkdirSync(externalBuildOutput);
+      symlinkSync(externalBuildOutput, resolve(symbolicFixture.root, ".next"), "dir");
+
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          repositoryRoot: symbolicFixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("diretório físico");
+      expect(readdirSync(externalBuildOutput)).toEqual([]);
+      expect(spawnAttempted).toBe(false);
+    }
+  });
+
+  it("rereads the physical preview environment and never falls back to inherited cloud data", () => {
+    const fixture = temporaryRepository();
+    const environmentPath = resolve(fixture.root, ".env.local");
+    const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
+
+    expect(
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment,
+        repositoryRoot: fixture.root,
+      }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    ).toBe("web-anon");
+
+    writeFileSync(
+      environmentPath,
+      localEnvironment("http://127.0.0.1:3000", "rotated-local-anon"),
+      { mode: 0o600 },
+    );
+    expect(
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment,
+        repositoryRoot: fixture.root,
+      }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    ).toBe("rotated-local-anon");
+
+    writeFileSync(
+      environmentPath,
+      localEnvironment("http://127.0.0.1:3000", "rotated-local-anon").replace(
+        localDatabaseUrl,
+        "postgresql://cloud:secret@database.example.com:5432/production",
+      ),
+      { mode: 0o600 },
+    );
+    expect(() =>
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("Supabase local");
+
+    rmSync(environmentPath);
+    expect(() =>
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("arquivo físico regular");
+  });
+
+  it("rejects production env overlays before Next can reload them", () => {
+    const fixture = temporaryRepository();
+    const webOverlay = resolve(fixture.root, ".env.production.local");
+    writeFileSync(webOverlay, "DATABASE_URL_APP_DAL=postgresql://cloud.example/production\n", {
+      mode: 0o600,
+    });
+    expect(() =>
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment: { PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("aceita somente .env.local");
+
+    rmSync(webOverlay);
+    writeFileSync(
+      resolve(fixture.root, "apps/backoffice/.env"),
+      "SUPABASE_SERVICE_ROLE_KEY=cloud-secret\n",
+      { mode: 0o600 },
+    );
+    expect(() =>
+      createLocalProductionServerLaunch({
+        application: "backoffice",
+        inheritedEnvironment: { PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("aceita somente .env.local");
+  });
+
   it("fails closed before launch for invalid app, mode or local runtime", () => {
     const fixture = temporaryRepository();
     expect(() =>
@@ -252,7 +508,7 @@ describe("local development server launcher", () => {
     }
   });
 
-  it("routes every documented npm development entry through the same guard", () => {
+  it("routes every documented npm development and preview entry through the same guard", () => {
     const repositoryRoot = resolve(import.meta.dirname, "../..");
     const rootManifest = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
     const backofficeManifest = JSON.parse(
@@ -262,11 +518,25 @@ describe("local development server launcher", () => {
     expect(rootManifest.scripts).toMatchObject({
       dev: "node scripts/local-development-server.mjs web",
       "dev:backoffice": "node scripts/local-development-server.mjs backoffice",
+      start: "node scripts/local-production-server.mjs web",
+      "start:backoffice": "node scripts/local-production-server.mjs backoffice",
     });
     expect(backofficeManifest.scripts.dev).toBe(
       "node ../../scripts/local-development-server.mjs backoffice",
     );
-    for (const lifecycleName of ["predev", "postdev", "predev:backoffice", "postdev:backoffice"]) {
+    expect(backofficeManifest.scripts.start).toBe(
+      "node ../../scripts/local-production-server.mjs backoffice",
+    );
+    for (const lifecycleName of [
+      "predev",
+      "postdev",
+      "predev:backoffice",
+      "postdev:backoffice",
+      "prestart",
+      "poststart",
+      "prestart:backoffice",
+      "poststart:backoffice",
+    ]) {
       expect(rootManifest.scripts).not.toHaveProperty(lifecycleName);
       expect(backofficeManifest.scripts).not.toHaveProperty(lifecycleName);
     }

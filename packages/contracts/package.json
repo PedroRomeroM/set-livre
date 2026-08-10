@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./content-security-policy": "./src/content-security-policy.ts",
     "./server/database-readiness": "./src/server/database-readiness.ts"
   },
   "scripts": {

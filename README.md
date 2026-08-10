@@ -12,7 +12,7 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker, migrations de segurança e pgTAP;
-- 164 unitários, 134 asserts pgTAP e 36 execuções Playwright/axe nos três engines;
+- 183 unitários, 134 asserts pgTAP e 36 execuções Playwright/axe nos três engines;
 - lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações;
 - 34 features ainda seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 
