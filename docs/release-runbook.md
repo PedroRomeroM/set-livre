@@ -15,6 +15,10 @@
 
 Enquanto o ADR-018 estiver vigente, o smoke local do artefato usa exclusivamente a URL DAL do `.env.local` de cada aplicação. A URL precisa apontar para a instância Supabase em loopback `:54322` com `app_runtime_local` assumindo `app_dal`; uma variável homônima exportada no host não tem precedência e uma URL local inválida aborta antes de iniciar os servidores empacotados.
 
+A release local exige Linux com GNU tar e `util-linux flock`. O lock exclusivo cobre build, `releaseRoot`, smoke, candidatos `.incoming`, verificação e publicação; invocações simultâneas esperam em vez de compartilhar temporários. Não remova `.artifacts/release.lock`: o arquivo permanece, sem lock ativo, para que todas as invocações usem o mesmo inode. Confirme os requisitos com `tar --version` e `flock --version`; ausência de `flock` interrompe o comando antes do build.
+
+O tar normaliza modos independentemente do `umask`: diretórios e arquivos executáveis são `0755`; arquivos regulares não executáveis são `0644`. Rebuild do mesmo SHA precisa reproduzir checksum idêntico.
+
 ## Deploy
 
 1. verificar capacidade/disco;

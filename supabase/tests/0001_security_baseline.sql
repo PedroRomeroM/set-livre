@@ -27,7 +27,7 @@ as $function$
   select true;
 $function$;
 
-select plan(55);
+select plan(56);
 
 select ok(
   exists (select 1 from pg_catalog.pg_namespace where nspname = 'private'),
@@ -425,6 +425,25 @@ select ok(
 );
 
 alter role app_dal nobypassrls;
+
+-- A role efetiva NOINHERIT ainda pode usar SET ROLE quando recebe outra
+-- membership. O grant também é revertido explicitamente antes do rollback.
+grant pg_read_all_data to app_dal;
+
+select ok(
+  not (
+    select not exists (
+      select 1
+      from pg_catalog.pg_auth_members as membership
+      where membership.member = effective.oid
+    )
+    from pg_catalog.pg_roles as effective
+    where effective.rolname = 'app_dal'
+  ),
+  'readiness detecta membership adicional concedida a app_dal'
+);
+
+revoke pg_read_all_data from app_dal;
 
 select * from finish();
 

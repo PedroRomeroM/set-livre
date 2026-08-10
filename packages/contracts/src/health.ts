@@ -12,11 +12,15 @@ const healthPayloadBase = {
   checkedAt: z.iso.datetime(),
 };
 const unavailableHealthRelease = "unknown" as const;
+const observableHealthReleaseSchema = z.union([
+  healthReleaseSchema,
+  z.literal(unavailableHealthRelease),
+]);
 
 export const healthPayloadSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...healthPayloadBase,
-    release: healthReleaseSchema,
+    release: observableHealthReleaseSchema,
     requestId: requestIdSchema,
     status: z.literal("live"),
   }),
@@ -35,6 +39,14 @@ export const healthPayloadSchema = z.discriminatedUnion("status", [
 ]);
 
 export type HealthPayload = z.infer<typeof healthPayloadSchema>;
+export type LivenessResult = {
+  headers: Readonly<{
+    "cache-control": "no-store";
+    "x-request-id": string;
+  }>;
+  payload: HealthPayload;
+  status: 200;
+};
 export type ReadinessResult = {
   headers: Readonly<{
     "cache-control": "no-store";
@@ -58,6 +70,30 @@ export function createHealthPayload(
     requestId,
     status,
   });
+}
+
+export function evaluateLiveness(
+  application: HealthPayload["application"],
+  requestId: string,
+  releaseCandidate: unknown,
+  checkedAt = new Date(),
+): LivenessResult {
+  const parsedRelease = healthReleaseSchema.safeParse(releaseCandidate);
+
+  return {
+    headers: {
+      "cache-control": "no-store",
+      "x-request-id": requestId,
+    },
+    payload: createHealthPayload(
+      application,
+      "live",
+      requestId,
+      parsedRelease.success ? parsedRelease.data : unavailableHealthRelease,
+      checkedAt,
+    ),
+    status: 200,
+  };
 }
 
 export async function evaluateReadiness(

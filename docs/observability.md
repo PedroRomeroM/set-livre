@@ -6,7 +6,7 @@ Detectar falha antes de gerar dupla reserva, cobrança sem reserva, e-mail perdi
 
 ### 1.1 Estado da fundação local
 
-Os dois apps já expõem `/live` e `/ready` sem cache, com aplicação, release, timestamp e `requestId`; um UUID de entrada válido é propagado e qualquer valor inválido é substituído. Readiness valida `APP_RELEASE_SHA` antes de consultar dependências: ausência ou formato inválido retorna o mesmo JSON autoritativo com `503`, `status=unready` e `release=unknown`, preservando `requestId` e `cache-control: no-store` sem expor configuração. Com release válido, consulta a função privada com timeout e comprova separadamente os atributos restritos da role efetiva `app_dal`, os atributos do login e sua única membership permitida. Qualquer ampliação de privilégio retorna somente `unready`, sem erro de banco; um erro de cliente ocioso mantém o pool único.
+Os dois apps já expõem `/live` e `/ready` sem cache, com aplicação, release, timestamp e `requestId`; um UUID de entrada válido é propagado e qualquer valor inválido é substituído. Liveness não depende de configuração: `APP_RELEASE_SHA` ausente ou inválido mantém `200`, `status=live` e usa `release=unknown`. Readiness valida o mesmo valor antes de consultar dependências e, nesse caso, retorna `503`, `status=unready` e `release=unknown`, preservando `requestId` e `cache-control: no-store` sem expor configuração. Com release válido, consulta a função privada com timeout e comprova separadamente os atributos restritos e a ausência de memberships da role efetiva `app_dal`, além dos atributos do login e sua única membership permitida. Qualquer ampliação de privilégio retorna somente `unready`, sem erro de banco; um erro de cliente ocioso mantém o pool único.
 
 Ainda não existe evento de domínio que justifique logger, métrica ou alerta falso. O logger JSON com redaction entra junto ao primeiro comando real; error tracking, alertas externos e dashboards dependem de PEND-008.
 
@@ -48,13 +48,13 @@ Redaction:
 
 - processo responde;
 - não consulta dependência;
-- 200/JSON com release.
+- sempre responde 200/JSON controlado; release ausente ou inválido aparece apenas como `unknown`.
 
 ### `/api/health/ready`
 
 - conexão DB simples com timeout;
 - migration head compatível;
-- `current_user=app_dal` e `session_user` sem atributo ou membership privilegiada;
+- `current_user=app_dal` sem atributo privilegiado ou qualquer membership, e `session_user` restrito com somente a membership esperada;
 - configuração crítica presente;
 - sem revelar detalhes;
 - provider não deve tornar app inteiro unready por falha temporária, mas estado aparece em métrica.

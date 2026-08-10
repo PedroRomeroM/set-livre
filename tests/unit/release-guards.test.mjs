@@ -22,6 +22,7 @@ import {
   releaseBuildEnvironment,
   releaseRuntimeEnvironment,
   releaseSmokeEnvironment,
+  withExclusiveReleaseLock,
 } from "../../scripts/release-guards.mjs";
 
 const temporaryRoots = [];
@@ -77,6 +78,22 @@ describe("release artifact root guard", () => {
     expect(() =>
       ensurePhysicalArtifactsRoot(repository, resolve(repository, "nested/.artifacts")),
     ).toThrow("filha direta");
+  });
+
+  it("rejects a symbolic release lock without touching its target", async () => {
+    const base = temporaryRoot();
+    const repository = resolve(base, "repository");
+    const externalLock = resolve(base, "external.lock");
+    mkdirSync(repository);
+    const artifacts = resolve(repository, ".artifacts");
+    ensurePhysicalArtifactsRoot(repository, artifacts);
+    writeFileSync(externalLock, "preserve", "utf8");
+    symlinkSync(externalLock, resolve(artifacts, "release.lock"));
+
+    await expect(withExclusiveReleaseLock(artifacts, async () => undefined)).rejects.toThrow(
+      "lock físico",
+    );
+    expect(readFileSync(externalLock, "utf8")).toBe("preserve");
   });
 });
 

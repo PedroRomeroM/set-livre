@@ -1,5 +1,17 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+} from "node:fs";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 
 const alwaysSensitiveEnvironmentNames = [
   "CURSOR_SIGNING_SECRET",
@@ -53,6 +65,7 @@ const childProcessControlEnvironmentNames = new Set([
 const childProcessControlPrefixes = ["DYLD_", "GIT_", "LD_", "NPM_CONFIG_"];
 const localDatabaseHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const localDatabaseProtocols = new Set(["postgres:", "postgresql:"]);
+const releaseArchiveMode = "u+rwX,go+rX,go-w";
 
 function isInside(parent, child) {
   const pathFromParent = relative(parent, child);
@@ -190,6 +203,93 @@ export function releaseSmokeEnvironment(inheritedEnvironment, localEnvironment, 
     ...overrides,
     DATABASE_URL_APP_DAL: databaseUrl,
   });
+}
+
+export function deterministicReleaseTarArguments({
+  archivePath,
+  artifactsRoot,
+  commitTimestamp,
+  releaseRoot,
+}) {
+  if (!/^\d+$/u.test(commitTimestamp)) {
+    throw new Error("O timestamp da release precisa ser um epoch inteiro.");
+  }
+  return [
+    "--sort=name",
+    `--mtime=@${commitTimestamp}`,
+    "--owner=0",
+    "--group=0",
+    "--numeric-owner",
+    `--mode=${releaseArchiveMode}`,
+    "--format=gnu",
+    "-czf",
+    archivePath,
+    "-C",
+    artifactsRoot,
+    basename(releaseRoot),
+  ];
+}
+
+function openReleaseLock(artifactsRoot) {
+  const resolvedArtifactsRoot = resolve(artifactsRoot);
+  const rootInformation = lstatSync(resolvedArtifactsRoot);
+  if (!rootInformation.isDirectory() || rootInformation.isSymbolicLink()) {
+    throw new Error("O lock de release exige uma raiz de artefatos física.");
+  }
+
+  const lockPath = resolve(resolvedArtifactsRoot, "release.lock");
+  let descriptor;
+  try {
+    descriptor = openSync(
+      lockPath,
+      constants.O_CREAT | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
+      0o600,
+    );
+    const openedInformation = fstatSync(descriptor);
+    const pathInformation = lstatSync(lockPath);
+    if (
+      !openedInformation.isFile() ||
+      !pathInformation.isFile() ||
+      pathInformation.isSymbolicLink() ||
+      openedInformation.nlink !== 1 ||
+      openedInformation.dev !== pathInformation.dev ||
+      openedInformation.ino !== pathInformation.ino
+    ) {
+      throw new Error("O lock de release precisa ser um arquivo físico exclusivo.");
+    }
+    if (process.platform !== "win32") {
+      fchmodSync(descriptor, 0o600);
+    }
+    return descriptor;
+  } catch (error) {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+    if (error instanceof Error && error.message.includes("lock de release")) {
+      throw error;
+    }
+    throw new Error("Não foi possível abrir o lock físico da release.", { cause: error });
+  }
+}
+
+export async function withExclusiveReleaseLock(artifactsRoot, operation) {
+  const descriptor = openReleaseLock(artifactsRoot);
+  try {
+    try {
+      // O filho trava a mesma open-file description; o descritor do pai mantém o lock após o exit.
+      execFileSync("flock", ["--exclusive", "3"], {
+        env: operationalEnvironment(process.env),
+        stdio: ["ignore", "ignore", "inherit", descriptor],
+      });
+    } catch (error) {
+      throw new Error("util-linux flock é obrigatório para serializar a release.", {
+        cause: error,
+      });
+    }
+    return await operation();
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function secretEnvironmentEntries(...environments) {

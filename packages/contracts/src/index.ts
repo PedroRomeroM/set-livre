@@ -11,6 +11,7 @@ export type {
 } from "./database.generated";
 export {
   createHealthPayload,
+  evaluateLiveness,
   evaluateReadiness,
   healthPayloadSchema,
   healthReleaseSchema,
@@ -18,5 +19,6 @@ export {
   requestIdSchema,
   resolveRequestId,
   type HealthPayload,
+  type LivenessResult,
   type ReadinessResult,
 } from "./health";

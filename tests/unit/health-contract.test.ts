@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createHealthPayload,
   databaseMigrationHead,
+  evaluateLiveness,
   evaluateReadiness,
   healthPayloadSchema,
   resolveRequestId,
@@ -54,6 +55,51 @@ describe("health contract", () => {
       "requestId",
       "status",
     ]);
+  });
+
+  it.each([
+    ["web", undefined],
+    ["backoffice", "not-a-release-sha"],
+  ] as const)(
+    "keeps %s live with controlled metadata when release is unavailable",
+    (application, releaseCandidate) => {
+      const requestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
+
+      const result = evaluateLiveness(
+        application,
+        requestId,
+        releaseCandidate,
+        new Date("2026-08-09T12:00:00.000Z"),
+      );
+
+      expect(result).toEqual({
+        headers: {
+          "cache-control": "no-store",
+          "x-request-id": requestId,
+        },
+        payload: {
+          application,
+          checkedAt: "2026-08-09T12:00:00.000Z",
+          release: "unknown",
+          requestId,
+          status: "live",
+        },
+        status: 200,
+      });
+      expect(healthPayloadSchema.safeParse(result.payload).success).toBe(true);
+    },
+  );
+
+  it("preserves a valid release on liveness", () => {
+    const result = evaluateLiveness(
+      "web",
+      "e65fe64c-3788-4cf0-beb3-c344025b0bb0",
+      "local",
+      new Date("2026-08-09T12:00:00.000Z"),
+    );
+
+    expect(result.payload).toMatchObject({ release: "local", status: "live" });
+    expect(result.status).toBe(200);
   });
 
   it.each([
@@ -136,7 +182,7 @@ describe("health contract", () => {
     expect(JSON.stringify(result)).not.toContain("sensitive database detail");
   });
 
-  it("allows an unknown release only on an unready payload", () => {
+  it("allows an unknown release on observable non-ready payloads", () => {
     const base = {
       application: "web",
       checkedAt: "2026-08-09T12:00:00.000Z",
@@ -146,7 +192,7 @@ describe("health contract", () => {
 
     expect(healthPayloadSchema.safeParse({ ...base, status: "unready" }).success).toBe(true);
     expect(healthPayloadSchema.safeParse({ ...base, status: "ready" }).success).toBe(false);
-    expect(healthPayloadSchema.safeParse({ ...base, status: "live" }).success).toBe(false);
+    expect(healthPayloadSchema.safeParse({ ...base, status: "live" }).success).toBe(true);
   });
 
   it("propagates only a valid request ID", () => {

@@ -15,6 +15,11 @@ export const databaseReadinessQuery = `select
     and not effective.rolreplication
     and not effective.rolbypassrls
   ) as "currentRoleRestricted",
+  not exists (
+    select 1
+    from pg_catalog.pg_auth_members as membership
+    where membership.member = effective.oid
+  ) as "currentRoleMembershipRestricted",
   (
     session.rolcanlogin
     and not session.rolinherit

@@ -21,12 +21,14 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { parseEnv } from "node:util";
 
 import {
+  deterministicReleaseTarArguments,
   ensurePhysicalArtifactsRoot,
   operationalEnvironment,
   redactEnvironmentSecrets,
   releaseBuildEnvironment,
   releaseSmokeEnvironment,
   secretEnvironmentEntries,
+  withExclusiveReleaseLock,
 } from "./release-guards.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -832,19 +834,12 @@ async function createArchive(
   const existingArchive = await validateExistingArchive(archivePath, checksumPath);
   execFileSync(
     "tar",
-    [
-      "--sort=name",
-      `--mtime=@${commitTimestamp}`,
-      "--owner=0",
-      "--group=0",
-      "--numeric-owner",
-      "--format=gnu",
-      "-czf",
-      incomingArchivePath,
-      "-C",
+    deterministicReleaseTarArguments({
+      archivePath: incomingArchivePath,
       artifactsRoot,
-      basename(releaseRoot),
-    ],
+      commitTimestamp,
+      releaseRoot,
+    }),
     {
       cwd: root,
       env: { ...operationalEnvironment(process.env), SOURCE_DATE_EPOCH: commitTimestamp },
@@ -1155,37 +1150,40 @@ async function generateRelease(commit) {
   );
 }
 
-assertCleanWorktree("antes da release");
-const releaseCommit = currentCommit();
-let generationFailure;
-try {
-  await generateRelease(releaseCommit);
-} catch (error) {
-  generationFailure = error;
-}
-
-let finalStateFailure;
-try {
-  assertSameCommit(releaseCommit, "ao finalizar a release");
-  assertCleanWorktree("ao finalizar a release");
-} catch (error) {
-  finalStateFailure = error;
-}
-
-if (generationFailure !== undefined && finalStateFailure !== undefined) {
-  throw new AggregateError(
-    [generationFailure, finalStateFailure],
-    "A release falhou e o estado final do checkout também é inválido.",
-  );
-}
-if (generationFailure !== undefined) {
-  if (generationFailure.exitCode !== undefined) {
-    process.stderr.write(`${generationFailure.message}\n`);
-    process.exitCode = generationFailure.exitCode;
-  } else {
-    throw generationFailure;
+ensurePhysicalArtifactsRoot(root, artifactsRoot);
+await withExclusiveReleaseLock(artifactsRoot, async () => {
+  assertCleanWorktree("antes da release");
+  const releaseCommit = currentCommit();
+  let generationFailure;
+  try {
+    await generateRelease(releaseCommit);
+  } catch (error) {
+    generationFailure = error;
   }
-}
-if (finalStateFailure !== undefined) {
-  throw finalStateFailure;
-}
+
+  let finalStateFailure;
+  try {
+    assertSameCommit(releaseCommit, "ao finalizar a release");
+    assertCleanWorktree("ao finalizar a release");
+  } catch (error) {
+    finalStateFailure = error;
+  }
+
+  if (generationFailure !== undefined && finalStateFailure !== undefined) {
+    throw new AggregateError(
+      [generationFailure, finalStateFailure],
+      "A release falhou e o estado final do checkout também é inválido.",
+    );
+  }
+  if (generationFailure !== undefined) {
+    if (generationFailure.exitCode !== undefined) {
+      process.stderr.write(`${generationFailure.message}\n`);
+      process.exitCode = generationFailure.exitCode;
+    } else {
+      throw generationFailure;
+    }
+  }
+  if (finalStateFailure !== undefined) {
+    throw finalStateFailure;
+  }
+});

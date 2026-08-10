@@ -27,6 +27,8 @@ test("FOUNDATION-E2E-003 health endpoints retornam contrato autoritativo", async
   await expect(publicReadiness).toBeOK();
   await expect(backofficeReadiness).toBeOK();
   expect(publicHealth.headers()["x-request-id"]).toBe(propagatedRequestId);
+  expect(publicHealth.headers()["cache-control"]).toContain("no-store");
+  expect(backofficeHealth.headers()["cache-control"]).toContain("no-store");
   await expect(publicHealth.json()).resolves.toMatchObject({
     application: "web",
     release: "local",

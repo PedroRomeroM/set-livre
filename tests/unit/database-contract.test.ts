@@ -7,6 +7,7 @@ const validUrl =
   "postgresql://app_runtime:secret@db.example.test:6543/set_livre?sslmode=verify-full&options=-c%20role%3Dapp_dal";
 const restrictedReadinessRow = {
   currentRole: "app_dal",
+  currentRoleMembershipRestricted: true,
   currentRoleRestricted: true,
   ready: true,
   sessionMembershipRestricted: true,
@@ -68,6 +69,12 @@ describe("DAL database URL contract", () => {
     expect(
       isDatabaseReadinessSatisfied(
         [{ ...restrictedReadinessRow, currentRoleRestricted: false }],
+        "app_runtime",
+      ),
+    ).toBe(false);
+    expect(
+      isDatabaseReadinessSatisfied(
+        [{ ...restrictedReadinessRow, currentRoleMembershipRestricted: false }],
         "app_runtime",
       ),
     ).toBe(false);

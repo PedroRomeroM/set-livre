@@ -6,7 +6,7 @@
 - nenhuma URL de banco privada no client;
 - env separada por app/worker;
 - validação Zod no boot;
-- uma rota que depende de variável crítica falha fechada; `/ready` responde `503` quando `APP_RELEASE_SHA` é ausente/inválido ou o banco não está utilizável;
+- uma rota que depende de variável crítica falha fechada; `/ready` responde `503` quando `APP_RELEASE_SHA` é ausente/inválido ou o banco não está utilizável, enquanto `/live` permanece `200` e identifica release desconhecido sem expor configuração;
 - logs mostram apenas nomes ausentes, nunca valores.
 
 ## 2. Fundação local
@@ -56,7 +56,7 @@ Durante a fronteira local-first, o smoke de release ignora `DATABASE_URL_APP_DAL
 - `FIELD_ENCRYPTION_KEY`
 - `APP_RELEASE_SHA`
 
-`DATABASE_URL_APP_DAL` nunca aponta para `postgres`, `service_role` ou usuário proprietário. O parser exige protocolo PostgreSQL, login/senha/banco explícitos e exatamente um `options=-c role=app_dal`, permitindo parâmetros TLS sem aceitar overrides de identidade. Readiness também prova `current_user=app_dal`, identidade e atributos restritos do `session_user` e sua única membership antes de responder `200`. Em produção, a credencial de login/membership será provisionada fora das migrations e permanece bloqueada por PEND-002.
+`DATABASE_URL_APP_DAL` nunca aponta para `postgres`, `service_role` ou usuário proprietário. O parser exige protocolo PostgreSQL, login/senha/banco explícitos e exatamente um `options=-c role=app_dal`, permitindo parâmetros TLS sem aceitar overrides de identidade. Readiness também prova `current_user=app_dal` sem atributos privilegiados nem memberships, além da identidade e dos atributos restritos do `session_user` e de sua única membership, antes de responder `200`. Em produção, a credencial de login/membership será provisionada fora das migrations e permanece bloqueada por PEND-002.
 
 ## 4. Backoffice
 
