@@ -51,8 +51,9 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 - `20260809000300_security_default_privileges_hardening.sql`: default global de funções fechado e estado da role DAL normalizado;
 - `20260810000100_app_dal_readiness_authorization.sql`: manifesto exato de ACL/ownership da DAL, defaults de tipos fechados e recusa de privilégios efetivos herdados de `PUBLIC`;
 - `20260810000200_pg_catalog_public_acl_hardening.sql`: baseline canônica das ACLs públicas de relações e colunas de `pg_catalog`, recusando expansões como acesso a `pg_authid.rolpassword`.
+- `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: containment por OID/overload das ACLs públicas de rotinas de `pg_catalog`, incluindo grantor e grant option, sem promover defaults de rotinas normais posteriores a baseline.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 134 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 141 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
 
 ## Segurança e privacidade
 
@@ -77,7 +78,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 ## Testes e IDs QA
 
 - 186 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
-- 134 asserts pgTAP;
+- 141 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -148,7 +149,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 - o smoke da release instala `SIGHUP`/`SIGINT`/`SIGTERM` antes do primeiro spawn, limpa integralmente os dois PGIDs detached e preserva o código 129, inclusive quando líderes encerram antes dos descendentes;
 - a release exige os dois `.env.local` físicos, exclusivos e `0600` antes do build, abre sem seguir links e revalida identidade, modo e quantidade de links antes de interpretar o runtime local;
-- o readiness compara toda ACL pública de relação ou coluna em `pg_catalog` à baseline de `pg_init_privs`, preserva somente privilégios canônicos e recusa grants posteriores em catálogos restritos.
+- o readiness compara toda ACL pública de relação, coluna ou rotina em `pg_catalog` à baseline canônica, preserva somente privilégios iniciais e recusa grants posteriores em catálogos restritos.
 
 ## Correções do décimo Codex review
 
@@ -162,6 +163,11 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 - o gate central de dependências inclui o scope mantido `@griffel/` na proibição de CSS-in-JS e cobre aliases `npm:`, overrides aninhados e nomes apenas semelhantes que devem continuar permitidos;
 - a retirada de `.next` recusa mount raiz ou descendente no Linux com mountinfo, dispositivo e snapshot físico antes/depois do rename; em macOS, Windows e plataformas sem prova equivalente, qualquer árvore anterior falha antes de rename, remoção ou spawn e precisa ser inspecionada/removida manualmente.
+
+## Correções do décimo-segundo Codex review
+
+- o gate de dependências inclui o scope `@mui/` na proibição de primitives e CSS-in-JS paralelos, cobrindo Material/System, aliases, overrides e near-misses permitidos;
+- uma migration append-only estende o containment de `PUBLIC` às rotinas de `pg_catalog` por OID/overload, grantor e grant option; pgTAP prova `pg_read_file(text)`, grantor alternativo, rotina normal posterior sem baseline e recuperação integral.
 
 ## Observabilidade e operação
 
@@ -197,7 +203,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
 - `npm run test:unit`: 186 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 134 aprovados e snapshot SQL/tipos conferidos byte a byte;
+- `npm run test:db`: 141 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

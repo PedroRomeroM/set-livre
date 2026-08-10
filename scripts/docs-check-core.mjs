@@ -134,6 +134,7 @@ const forbiddenInstallDependencyPrefixes = [
   "@kubernetes/",
   "@linaria/",
   "@mikro-orm/",
+  "@mui/",
   "@pandacss/",
   "@payloadcms/",
   "@prisma/",

@@ -123,6 +123,25 @@ describe("docs check core", () => {
   it("rejects maintained prohibited dependency families through aliases and overrides", () => {
     expect(
       findForbiddenInstallDependencies({
+        dependencies: { "@mui/material": "7.3.1" },
+      }),
+    ).toEqual(["@mui/material"]);
+    expect(
+      findForbiddenInstallDependencies({
+        dependencies: { visualSystem: "npm:@mui/system@7.3.1" },
+      }),
+    ).toEqual(["@mui/system"]);
+    expect(
+      findForbiddenInstallDependencies({
+        overrides: {
+          visualLibrary: "npm:@mui/material@7.3.1",
+          visualSystem: "npm:@mui/system@7.3.1",
+        },
+      }),
+    ).toEqual(["@mui/material", "@mui/system"]);
+
+    expect(
+      findForbiddenInstallDependencies({
         dependencies: {
           cache: "npm:ioredis@5",
           cmsClient: "npm:@directus/sdk@20",
@@ -187,8 +206,11 @@ describe("docs check core", () => {
           "emotion-parser": "1.0.0",
           felafel: "1.0.0",
           "@griffelish/react": "1.0.0",
+          "@muiish/material": "1.0.0",
+          "@muix/system": "1.0.0",
           griffelish: "1.0.0",
           kafkaesque: "1.0.0",
+          "mui-material": "1.0.0",
           "queueing-theory": "1.0.0",
           "redistribution-tool": "1.0.0",
         },
