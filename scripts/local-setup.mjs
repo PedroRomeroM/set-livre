@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
+import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
 import {
   assertSafeEnvironmentFileDestination,
   writeEnvironmentFileAtomic,
@@ -28,11 +29,20 @@ for (const [path] of applicationEnvironmentDestinations) {
 }
 assertSafeEnvironmentFileDestination(e2eEnvironmentPath);
 
+const localDockerEnvironment = assertLocalDockerDaemon();
+
 function run(command, argumentsList, options = {}) {
+  const commandEnvironment = {
+    ...localDockerEnvironment,
+    ...options.environment,
+    DOCKER_HOST: localDockerEnvironment.DOCKER_HOST,
+  };
+  delete commandEnvironment.DOCKER_CONTEXT;
+
   const result = spawnSync(command, argumentsList, {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, ...options.environment },
+    env: commandEnvironment,
     input: options.input,
     stdio: options.capture
       ? "pipe"
@@ -66,23 +76,23 @@ function run(command, argumentsList, options = {}) {
 
 function stopScopedSupabaseStack() {
   run("supabase", ["stop", "--project-id", supabaseLocalProjectId], { capture: true });
-  assertSupabaseProjectStopped();
+  assertSupabaseProjectStopped(localDockerEnvironment);
 }
 
 run("docker", ["info"], { capture: true });
-if (supabaseProjectContainersAreRunning()) {
+if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
   try {
-    assertSupabaseLoopbackBindings();
+    assertSupabaseLoopbackBindings(localDockerEnvironment);
   } catch {
     stopScopedSupabaseStack();
   }
 }
-ensureSupabaseLoopbackNetwork();
+ensureSupabaseLoopbackNetwork(localDockerEnvironment);
 try {
   run("supabase", ["start", "--network-id", supabaseLocalNetworkName], { capture: true });
-  assertSupabaseLoopbackBindings();
+  assertSupabaseLoopbackBindings(localDockerEnvironment);
 } catch (error) {
-  if (supabaseProjectContainersAreRunning()) {
+  if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
     stopScopedSupabaseStack();
   }
   throw error;
@@ -90,7 +100,7 @@ try {
 run("supabase", ["db", "reset", "--local", "--network-id", supabaseLocalNetworkName], {
   capture: true,
 });
-assertSupabaseLoopbackBindings();
+assertSupabaseLoopbackBindings(localDockerEnvironment);
 
 const status = run(
   "supabase",

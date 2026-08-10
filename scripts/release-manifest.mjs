@@ -30,14 +30,13 @@ import {
   secretEnvironmentEntries,
   withExclusiveReleaseLock,
 } from "./release-guards.mjs";
+import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const artifactsRoot = resolve(root, ".artifacts");
 const releaseRoot = resolve(artifactsRoot, "release");
 const manifestPath = resolve(releaseRoot, "manifest.json");
 const migrationsSource = resolve(root, "supabase/migrations");
-const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
-const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
 const nextExecutable = resolve(root, "node_modules/next/dist/bin/next");
 const localRuntimeEnvironmentNames = new Set([
   "APP_ENV",
@@ -110,18 +109,7 @@ function currentCommitTimestamp(commit) {
 }
 
 function currentNpmVersion() {
-  const npmConfiguration = resolve(root, ".npmrc");
-  requireRegularFile(npmConfiguration, "Configuração npm versionada");
-  return execFileSync(npmExecutable, ["--version"], {
-    cwd: root,
-    encoding: "utf8",
-    env: {
-      ...operationalEnvironment(process.env),
-      HOME: artifactsRoot,
-      NPM_CONFIG_GLOBALCONFIG: nullDevice,
-      NPM_CONFIG_USERCONFIG: npmConfiguration,
-    },
-  }).trim();
+  return resolveTrustedNpmCliLaunch({ repositoryRoot: root }).npmVersion;
 }
 
 function assertSameCommit(expectedCommit, stage) {
@@ -924,6 +912,7 @@ async function createArchive(
 
 async function generateRelease(commit) {
   ensurePhysicalArtifactsRoot(root, artifactsRoot);
+  const npmVersion = currentNpmVersion();
   const commitTimestamp = currentCommitTimestamp(commit);
   const archivePath = resolve(artifactsRoot, `set-livre-${commit}.tar.gz`);
   const checksumPath = `${archivePath}.sha256`;
@@ -1070,7 +1059,7 @@ async function generateRelease(commit) {
     runtime: {
       arch: process.arch,
       node: process.version,
-      npm: currentNpmVersion(),
+      npm: npmVersion,
       platform: process.platform,
     },
     schemaVersion: 1,

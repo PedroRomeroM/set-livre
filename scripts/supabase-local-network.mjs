@@ -6,9 +6,10 @@ export const supabaseLocalProjectId = "set-livre";
 const loopbackBindingOption = "com.docker.network.bridge.host_binding_ipv4";
 const expectedPublishedPorts = new Set(["54321", "54322", "54323", "54324"]);
 
-function docker(argumentsList) {
+function docker(argumentsList, environment = process.env) {
   return execFileSync("docker", argumentsList, {
     encoding: "utf8",
+    env: environment,
     maxBuffer: 16 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
@@ -76,67 +77,71 @@ export function assertLoopbackContainerInspections(inspections) {
   }
 }
 
-export function ensureSupabaseLoopbackNetwork() {
-  const existingNames = docker([
-    "network",
-    "ls",
-    "--filter",
-    `name=^${supabaseLocalNetworkName}$`,
-    "--format",
-    "{{.Name}}",
-  ])
+export function ensureSupabaseLoopbackNetwork(environment = process.env) {
+  const existingNames = docker(
+    ["network", "ls", "--filter", `name=^${supabaseLocalNetworkName}$`, "--format", "{{.Name}}"],
+    environment,
+  )
     .split("\n")
     .filter(Boolean);
 
   if (existingNames.length === 0) {
-    docker([
-      "network",
-      "create",
-      "--driver",
-      "bridge",
-      "--opt",
-      `${loopbackBindingOption}=127.0.0.1`,
-      supabaseLocalNetworkName,
-    ]);
+    docker(
+      [
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--opt",
+        `${loopbackBindingOption}=127.0.0.1`,
+        supabaseLocalNetworkName,
+      ],
+      environment,
+    );
   } else if (existingNames.length !== 1 || existingNames[0] !== supabaseLocalNetworkName) {
     throw new Error(
       `A rede Docker ${supabaseLocalNetworkName} não pôde ser identificada com segurança.`,
     );
   }
 
-  const inspections = JSON.parse(docker(["network", "inspect", supabaseLocalNetworkName]));
+  const inspections = JSON.parse(
+    docker(["network", "inspect", supabaseLocalNetworkName], environment),
+  );
   assertLoopbackNetworkInspection(inspections);
 }
 
-function supabaseProjectContainerIds() {
-  return docker([
-    "ps",
-    "--filter",
-    `label=com.supabase.cli.project=${supabaseLocalProjectId}`,
-    "--format",
-    "{{.ID}}",
-  ])
+function supabaseProjectContainerIds(environment = process.env) {
+  return docker(
+    [
+      "ps",
+      "--filter",
+      `label=com.supabase.cli.project=${supabaseLocalProjectId}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    environment,
+  )
     .split("\n")
     .filter(Boolean);
 }
 
-export function supabaseProjectContainersAreRunning() {
-  return supabaseProjectContainerIds().length > 0;
+export function supabaseProjectContainersAreRunning(environment = process.env) {
+  return supabaseProjectContainerIds(environment).length > 0;
 }
 
-export function assertSupabaseProjectStopped() {
-  if (supabaseProjectContainersAreRunning()) {
+export function assertSupabaseProjectStopped(environment = process.env) {
+  if (supabaseProjectContainersAreRunning(environment)) {
     throw new Error("A stack Supabase insegura não pôde ser encerrada integralmente.");
   }
 }
 
-export function assertSupabaseLoopbackBindings() {
-  const containerIds = supabaseProjectContainerIds();
+export function assertSupabaseLoopbackBindings(environment = process.env) {
+  const containerIds = supabaseProjectContainerIds(environment);
 
   if (containerIds.length === 0) {
     throw new Error("Nenhum container da stack Set Livre está em execução.");
   }
 
-  const inspections = JSON.parse(docker(["inspect", ...containerIds]));
+  const inspections = JSON.parse(docker(["inspect", ...containerIds], environment));
   assertLoopbackContainerInspections(inspections);
 }

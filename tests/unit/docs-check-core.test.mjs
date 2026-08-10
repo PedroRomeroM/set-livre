@@ -17,6 +17,7 @@ import {
   collectMatches,
   findDuplicates,
   gitChangedFileArgumentLists,
+  hasPlaywrightTestWithId,
   isAddedChangeRecord,
   isTechnicalChangePath,
   parseGitChanges,
@@ -27,6 +28,7 @@ import {
   parseQaRows,
   readGitChanges,
   sha256,
+  validateAutomatedQaSpec,
   validateFeatureSequence,
   validateGovernanceAlignment,
 } from "../../scripts/docs-check-core.mjs";
@@ -55,6 +57,114 @@ describe("docs check core", () => {
         spec: "tests/e2e/example.spec.ts",
       },
     ]);
+
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-qa-spec-"));
+    const specRoot = join(repository, "tests/e2e/critical");
+    const validSpec = "tests/e2e/critical/valid.spec.ts";
+    const otherSpec = "tests/e2e/critical/other.spec.ts";
+    const symbolicSpec = "tests/e2e/critical/symbolic.spec.ts";
+    const symbolicParentSpec = "tests/e2e/symbolic-suite/parent.spec.ts";
+    const directorySpec = "tests/e2e/critical/directory.spec.ts";
+    const scenarioId = "SL-F001-E2E-001";
+    const playwrightImport = 'import { test } from "@playwright/test";\n';
+    try {
+      mkdirSync(specRoot, { recursive: true });
+      writeFileSync(
+        join(repository, validSpec),
+        `${playwrightImport}test("${scenarioId} caminho feliz", () => {});\n`,
+      );
+      writeFileSync(
+        join(repository, otherSpec),
+        `${playwrightImport}test("SL-F001-E2E-002 outro cenário", () => {});\n`,
+      );
+      symlinkSync("valid.spec.ts", join(repository, symbolicSpec));
+      mkdirSync(join(repository, "outside-suite"));
+      writeFileSync(
+        join(repository, "outside-suite/parent.spec.ts"),
+        `${playwrightImport}test("${scenarioId} fora da árvore física", () => {});\n`,
+      );
+      symlinkSync("../../outside-suite", join(repository, "tests/e2e/symbolic-suite"));
+      mkdirSync(join(repository, directorySpec));
+
+      expect(validateAutomatedQaSpec(repository, { id: scenarioId, spec: validSpec })).toBeNull();
+      expect(validateAutomatedQaSpec(repository, { id: scenarioId, spec: otherSpec })).toContain(
+        "não registra um teste importado",
+      );
+      expect(validateAutomatedQaSpec(repository, { id: scenarioId, spec: symbolicSpec })).toContain(
+        "arquivo regular físico",
+      );
+      expect(
+        validateAutomatedQaSpec(repository, { id: scenarioId, spec: symbolicParentSpec }),
+      ).toContain("arquivo regular físico");
+      expect(
+        validateAutomatedQaSpec(repository, { id: scenarioId, spec: directorySpec }),
+      ).toContain("arquivo regular físico");
+      expect(validateAutomatedQaSpec(repository, { id: scenarioId, spec: undefined })).toContain(
+        "caminho de spec Playwright válido",
+      );
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}// test("${scenarioId} apenas comentário", () => {});\nconst title = "${scenarioId} apenas constante";\nconst deadText = \`${scenarioId} texto morto\`;\ntest("${scenarioId} sem corpo");\ntest("${scenarioId} sem callback", { tag: "@critical" });\ntest(title, () => {});\ntest.describe("${scenarioId} apenas describe", () => {});\ntest.only("${scenarioId} proibido", () => {});\ntest.skip("${scenarioId} proibido", () => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}test(\`${scenarioId} template literal real\`, async () => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(true);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}const id = "${scenarioId}"; test(\`\${id} interpolado\`, () => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `function test(_title, callback) { callback(); }\ntest("${scenarioId} função local", () => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}function register(test) { test("${scenarioId} parâmetro sombreado", () => {}); }\nregister(() => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}if (false) { test("${scenarioId} branch morta", () => {}); }\nfunction register() { test("${scenarioId} função arbitrária", () => {}); }\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `import { test as playwrightTest } from "@playwright/test";\nplaywrightTest("${scenarioId} alias real", async () => {});\n`,
+          scenarioId,
+        ),
+      ).toBe(true);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}test.describe("suite real", () => { test("${scenarioId} dentro do describe", function () {}); });\n`,
+          scenarioId,
+        ),
+      ).toBe(true);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}test.describe("suite sombreada", (test) => { test("${scenarioId} não é Playwright", () => {}); });\ntest.describe(() => { test("${scenarioId} describe inválido", () => {}); });\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+      expect(
+        hasPlaywrightTestWithId(
+          `${playwrightImport}test.describe("binding local", () => { const test = (_title, callback) => callback(); test("${scenarioId} binding local", () => {}); });\n`,
+          scenarioId,
+        ),
+      ).toBe(false);
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
   });
 
   it("generates SHA-256", () => {

@@ -29,7 +29,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | Cenários P1         |         59 |
 | Runbooks            |          6 |
 
-Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 11 IDs técnicos estáveis, 36 execuções Playwright na matriz atual, 98 testes unitários, 56 asserts pgTAP e 3 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
+Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 11 IDs técnicos estáveis, 36 execuções Playwright na matriz atual, 119 testes unitários, 56 asserts pgTAP e 3 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
 
 ## Garantias documentais
 

@@ -1,5 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
+
+import ts from "typescript";
 
 export function collectMatches(content, pattern) {
   return [...content.matchAll(pattern)].map((match) => match[1]).filter(Boolean);
@@ -448,4 +452,317 @@ export function parseQaRows(content) {
         spec: columns[8]?.replaceAll("`", ""),
       };
     });
+}
+
+function samePhysicalFile(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function readPhysicalRepositoryFile(repositoryRoot, repositoryPath) {
+  const resolvedRoot = resolve(repositoryRoot);
+  const absolutePath = resolve(resolvedRoot, repositoryPath);
+  const normalizedPath = relative(resolvedRoot, absolutePath).split(sep).join("/");
+  if (normalizedPath === "" || normalizedPath !== repositoryPath) {
+    throw new Error("O arquivo precisa permanecer dentro do repositório.");
+  }
+
+  const rootInformation = lstatSync(resolvedRoot, { throwIfNoEntry: false });
+  if (
+    rootInformation === undefined ||
+    !rootInformation.isDirectory() ||
+    rootInformation.isSymbolicLink()
+  ) {
+    throw new Error("A raiz do repositório precisa ser um diretório físico.");
+  }
+
+  let currentParent = resolvedRoot;
+  for (const component of normalizedPath.split("/").slice(0, -1)) {
+    currentParent = resolve(currentParent, component);
+    const parentInformation = lstatSync(currentParent, { throwIfNoEntry: false });
+    if (
+      parentInformation === undefined ||
+      !parentInformation.isDirectory() ||
+      parentInformation.isSymbolicLink()
+    ) {
+      throw new Error("O caminho do arquivo atravessa um diretório não físico.");
+    }
+  }
+
+  const pathInformation = lstatSync(absolutePath, { throwIfNoEntry: false });
+  if (
+    pathInformation === undefined ||
+    !pathInformation.isFile() ||
+    pathInformation.isSymbolicLink()
+  ) {
+    throw new Error("O arquivo precisa ser físico e regular.");
+  }
+
+  let descriptor;
+  try {
+    descriptor = openSync(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedInformation = fstatSync(descriptor);
+    if (!openedInformation.isFile() || !samePhysicalFile(pathInformation, openedInformation)) {
+      throw new Error("O arquivo mudou durante a abertura.");
+    }
+
+    const source = readFileSync(descriptor, "utf8");
+    const finalInformation = lstatSync(absolutePath, { throwIfNoEntry: false });
+    if (
+      finalInformation === undefined ||
+      finalInformation.isSymbolicLink() ||
+      !finalInformation.isFile() ||
+      !samePhysicalFile(openedInformation, finalInformation)
+    ) {
+      throw new Error("O arquivo mudou durante a leitura.");
+    }
+    return source;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
+
+export function validateAutomatedQaSpec(repositoryRoot, row) {
+  if (typeof row.spec !== "string" || !/^tests\/e2e\/.+\.spec\.(?:ts|tsx)$/u.test(row.spec)) {
+    return `${String(row.id)} automatizado não possui caminho de spec Playwright válido.`;
+  }
+
+  let source;
+  try {
+    source = readPhysicalRepositoryFile(repositoryRoot, row.spec);
+  } catch {
+    return `${String(row.id)} automatizado não aponta para arquivo regular físico de spec: ${row.spec}.`;
+  }
+
+  return hasPlaywrightTestWithId(source, String(row.id), row.spec)
+    ? null
+    : `${String(row.id)} automatizado aponta para ${row.spec}, mas o arquivo não registra um teste importado de @playwright/test com esse ID estável no título.`;
+}
+
+function addBindingNames(bindingName, names) {
+  if (ts.isIdentifier(bindingName)) {
+    names.add(bindingName.text);
+    return;
+  }
+
+  for (const element of bindingName.elements) {
+    if (!ts.isOmittedExpression(element)) {
+      addBindingNames(element.name, names);
+    }
+  }
+}
+
+function importedPlaywrightTestBindings(sourceFile) {
+  const importsByLocalName = new Map();
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue;
+    }
+
+    const importClause = statement.importClause;
+    if (importClause === undefined || importClause.isTypeOnly) {
+      continue;
+    }
+
+    const importedBindings = [];
+    if (importClause.name !== undefined) {
+      importedBindings.push({ importedName: "default", localName: importClause.name.text });
+    }
+    if (importClause.namedBindings !== undefined) {
+      if (ts.isNamespaceImport(importClause.namedBindings)) {
+        importedBindings.push({
+          importedName: "*",
+          localName: importClause.namedBindings.name.text,
+        });
+      } else {
+        for (const specifier of importClause.namedBindings.elements) {
+          if (!specifier.isTypeOnly) {
+            importedBindings.push({
+              importedName: specifier.propertyName?.text ?? specifier.name.text,
+              localName: specifier.name.text,
+            });
+          }
+        }
+      }
+    }
+
+    for (const importedBinding of importedBindings) {
+      const occurrences = importsByLocalName.get(importedBinding.localName) ?? [];
+      occurrences.push({
+        importedName: importedBinding.importedName,
+        moduleName: statement.moduleSpecifier.text,
+      });
+      importsByLocalName.set(importedBinding.localName, occurrences);
+    }
+  }
+
+  return new Set(
+    [...importsByLocalName.entries()]
+      .filter(
+        ([, occurrences]) =>
+          occurrences.length === 1 &&
+          occurrences[0].moduleName === "@playwright/test" &&
+          occurrences[0].importedName === "test",
+      )
+      .map(([localName]) => localName),
+  );
+}
+
+function directRuntimeBindings(statements) {
+  const bindings = new Set();
+
+  for (const statement of statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        addBindingNames(declaration.name, bindings);
+      }
+    } else if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement)) &&
+      statement.name !== undefined &&
+      ts.isIdentifier(statement.name)
+    ) {
+      bindings.add(statement.name.text);
+    } else if (ts.isImportEqualsDeclaration(statement)) {
+      bindings.add(statement.name.text);
+    }
+  }
+
+  return bindings;
+}
+
+function functionScopedVarBindings(node) {
+  const bindings = new Set();
+
+  function visit(current) {
+    if (current !== node && ts.isFunctionLike(current)) {
+      return;
+    }
+    if (ts.isVariableDeclarationList(current) && (current.flags & ts.NodeFlags.BlockScoped) === 0) {
+      for (const declaration of current.declarations) {
+        addBindingNames(declaration.name, bindings);
+      }
+    }
+    ts.forEachChild(current, visit);
+  }
+
+  visit(node);
+  return bindings;
+}
+
+function availableBindingsForScope(bindings, statements, scopeNode, callback) {
+  const shadowedBindings = directRuntimeBindings(statements);
+  for (const binding of functionScopedVarBindings(scopeNode)) {
+    shadowedBindings.add(binding);
+  }
+  if (callback !== undefined) {
+    if (callback.name !== undefined) {
+      shadowedBindings.add(callback.name.text);
+    }
+    for (const parameter of callback.parameters) {
+      addBindingNames(parameter.name, shadowedBindings);
+    }
+  }
+
+  return new Set([...bindings].filter((binding) => !shadowedBindings.has(binding)));
+}
+
+function isInlineCallback(node) {
+  return node !== undefined && (ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+}
+
+function isMatchingTestCall(expression, bindings, idPattern) {
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isIdentifier(expression.expression) ||
+    !bindings.has(expression.expression.text) ||
+    expression.arguments.length < 2
+  ) {
+    return false;
+  }
+
+  const title = expression.arguments[0];
+  const body = expression.arguments.at(-1);
+  return (
+    title !== undefined &&
+    (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title)) &&
+    isInlineCallback(body) &&
+    idPattern.test(title.text)
+  );
+}
+
+function describeCallback(expression, bindings) {
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isPropertyAccessExpression(expression.expression) ||
+    !ts.isIdentifier(expression.expression.expression) ||
+    !bindings.has(expression.expression.expression.text) ||
+    expression.expression.name.text !== "describe" ||
+    expression.arguments.length < 2
+  ) {
+    return undefined;
+  }
+
+  const title = expression.arguments[0];
+  const callback = expression.arguments.at(-1);
+  return title !== undefined &&
+    (ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title)) &&
+    isInlineCallback(callback)
+    ? callback
+    : undefined;
+}
+
+function registrationExpressionContainsTest(expression, bindings, idPattern) {
+  if (isMatchingTestCall(expression, bindings, idPattern)) {
+    return true;
+  }
+
+  const callback = describeCallback(expression, bindings);
+  if (callback === undefined) {
+    return false;
+  }
+
+  const statements = ts.isBlock(callback.body) ? callback.body.statements : [];
+  const callbackBindings = availableBindingsForScope(bindings, statements, callback.body, callback);
+  if (ts.isBlock(callback.body)) {
+    return registrationStatementsContainTest(statements, callbackBindings, idPattern);
+  }
+  return registrationExpressionContainsTest(callback.body, callbackBindings, idPattern);
+}
+
+function registrationStatementsContainTest(statements, bindings, idPattern) {
+  for (const statement of statements) {
+    if (
+      ts.isExpressionStatement(statement) &&
+      registrationExpressionContainsTest(statement.expression, bindings, idPattern)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function hasPlaywrightTestWithId(source, scenarioId, fileName = "scenario.spec.ts") {
+  const scriptKind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind,
+  );
+  const escapedId = scenarioId.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const idPattern = new RegExp(`(?:^|[^A-Za-z0-9_-])${escapedId}(?=$|[^A-Za-z0-9_-])`, "u");
+  const importedBindings = importedPlaywrightTestBindings(sourceFile);
+  const availableBindings = availableBindingsForScope(
+    importedBindings,
+    sourceFile.statements,
+    sourceFile,
+    undefined,
+  );
+  return registrationStatementsContainTest(sourceFile.statements, availableBindings, idPattern);
 }

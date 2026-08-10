@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["tests/fixtures/*.mjs"],
+      "entry": ["scripts/dev-all.mjs", "scripts/release-manifest.mjs", "tests/fixtures/*.mjs"],
       "ignoreBinaries": ["flock"]
     },
     "apps/backoffice": {},

@@ -29,7 +29,6 @@
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
     "dev:backoffice": "npm run dev --workspace @set-livre/backoffice",
-    "dev:all": "node scripts/dev-all.mjs",
     "build": "npm run build:web && npm run build:backoffice",
     "build:web": "next build",
     "build:backoffice": "npm run build --workspace @set-livre/backoffice",
@@ -59,8 +58,7 @@
     "docs:check": "node scripts/docs-check.mjs",
     "local:setup": "node scripts/local-setup.mjs",
     "audit": "npm audit --audit-level=high",
-    "knip": "E2E_ALLOW_LOCAL=1 E2E_BASE_URL=http://127.0.0.1:3000 E2E_BACKOFFICE_URL=http://127.0.0.1:3001 E2E_DATABASE_MARKER=local-only-marker-0000000000000000 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 E2E_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres DATABASE_URL_APP_DAL='postgresql://app_runtime_local:local-only@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal' knip",
-    "release:manifest": "node scripts/release-manifest.mjs"
+    "knip": "E2E_ALLOW_LOCAL=1 E2E_BASE_URL=http://127.0.0.1:3000 E2E_BACKOFFICE_URL=http://127.0.0.1:3001 E2E_DATABASE_MARKER=local-only-marker-0000000000000000 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 E2E_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres DATABASE_URL_APP_DAL='postgresql://app_runtime_local:local-only@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal' knip"
   },
   "dependencies": {
     "@set-livre/contracts": "0.0.0",

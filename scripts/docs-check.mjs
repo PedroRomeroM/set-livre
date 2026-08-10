@@ -13,6 +13,7 @@ import {
   parseQaRows,
   readGitChanges,
   sha256,
+  validateAutomatedQaSpec,
   validateFeatureSequence,
   validateGovernanceAlignment,
 } from "./docs-check-core.mjs";
@@ -146,10 +147,10 @@ for (const row of qaRows) {
     `${row.id} possui status de automação inválido: ${row.automation}.`,
   );
   if (row.automation === "automatizado") {
-    check(
-      row.spec !== undefined && existsSync(resolve(root, row.spec)),
-      `${row.id} automatizado não possui spec.`,
-    );
+    const specError = validateAutomatedQaSpec(root, row);
+    if (specError !== null) {
+      errors.push(specError);
+    }
   }
 }
 

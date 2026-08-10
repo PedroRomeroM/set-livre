@@ -74,7 +74,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 98 testes unitários de docs, segurança E2E/browser, isolamento local, ambiente de desenvolvimento, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
+- 119 testes unitários de docs, segurança E2E/browser/webServer, isolamento local, ambiente de desenvolvimento/npm, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
 - 56 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -112,8 +112,17 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - uma feature recém-criada no mesmo SHA da `main` usa `HEAD` como base, sem herdar change record histórico, enquanto o checkout da própria `main` preserva o fallback alcançável;
 - mudanças Git de tipo `T` entram nos três diffs e o formatador recusa symlinks ou nós especiais antes de qualquer escrita, sem tocar em alvos externos;
 - o tar remove também `setuid`, `setgid` e `sticky`, mantendo diretórios/executáveis em `0755`, arquivos regulares em `0644` e o mesmo checksum entre umasks;
-- `dev:all` faz preflight físico dos dois `.env.local`, valida origens, Supabase e DAL locais e cria ambientes separados sem herdar overrides, credenciais ou opções de injeção do host;
+- o launcher direto `node scripts/dev-all.mjs` faz preflight físico dos dois `.env.local`, valida origens, Supabase e DAL locais e cria ambientes separados sem herdar overrides ou credenciais do host após a fronteira de entrada;
 - o smoke de release e o launcher de desenvolvimento reutilizam o mesmo validador puro da identidade DAL local.
+
+## Correções do quinto Codex review
+
+- a entrada isolada dos dois apps não passa por npm pai: `node scripts/dev-all.mjs` deriva a CLI da instalação adjacente, fixa `userconfig` e `globalconfig` neutros, zera `node-options`, bloqueia hooks `pre`/`post` e usa shell controlado;
+- uma row QA `automatizado` exige spec Playwright física dentro de `tests/e2e/`, binding runtime nomeado `test` importado de `@playwright/test` e registro direto no módulo ou em `test.describe(...)`, com callback e ID estável no título literal, validado por AST;
+- bootstrap e todos os wrappers Supabase comprovam contexto Docker `default` e endpoint local antes de qualquer operação, propagando o daemon pinado a cada subprocesso operacional;
+- todo `stderr` da CLI Supabase permanece privado e é descartado; falhas são relançadas sem erro original, buffers, URL de banco ou chaves, enquanto somente o `stdout` necessário a pgTAP e geração de tipos pode ser herdado;
+- os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram o grupo npm/Next sem deixar descendentes ou portas ocupadas;
+- desenvolvimento e Playwright derivam `npm-cli.js` exclusivamente de `process.execPath`, validam Node/npm e manifests fixados imediatamente antes do spawn e não usam `npm.cmd`, shell ou resolução por `PATH`; release valida a mesma instalação antes do primeiro build e lê dela a versão manifestada, sob a fronteira explícita de toolchain/checkout confiáveis e sem alteração concorrente por qualquer principal com permissão de escrita.
 
 ## Observabilidade e operação
 
@@ -147,7 +156,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 98 aprovados;
+- `npm run test:unit`: 119 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 56 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
@@ -156,4 +165,4 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 - `npm run audit`: zero vulnerabilidades;
 - `npm run knip`: aprovado sem hint.
 
-`npm run release:manifest` exige um commit limpo por desenho e será a primeira validação pós-commit, antes do PR. O PR e seus ciclos de review registrarão a evidência remota.
+`node scripts/release-manifest.mjs` exige um commit limpo por desenho e será a primeira validação pós-commit, antes do PR. O PR e seus ciclos de review registrarão a evidência remota.

@@ -1,28 +1,32 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "@playwright/test";
 
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
 import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
+import {
+  createPlaywrightWebServerCommand,
+  createPlaywrightWebServerEnvironmentOverlay,
+} from "./tests/helpers/playwright-web-server";
 
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
-const sharedServerEnvironment = {
-  APP_ENV: "test",
-  APP_RELEASE_SHA: "local",
-  DATABASE_URL_APP_DAL: safeEnvironment.dalDatabaseUrl,
-  E2E_DATABASE_URL: "",
-  E2E_BACKOFFICE_URL: backofficeBaseUrl,
-  E2E_BASE_URL: publicBaseUrl,
-  NEXT_PUBLIC_SUPABASE_URL: safeEnvironment.supabaseUrl,
+const webServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env);
+const webServerWrapper = resolve(import.meta.dirname, "scripts/playwright-web-server.mjs");
+const webServerCommand = (application: "backoffice" | "web") =>
+  createPlaywrightWebServerCommand({
+    application,
+    nodeExecutable: process.execPath,
+    wrapperPath: webServerWrapper,
+  });
+const posixGracefulWebServerShutdown = {
+  gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
+} satisfies {
+  gracefulShutdown: { signal: "SIGINT" | "SIGTERM"; timeout: number };
 };
-const publicServerEnvironment = {
-  ...sharedServerEnvironment,
-  NEXT_PUBLIC_APP_URL: publicBaseUrl,
-};
-const backofficeServerEnvironment = {
-  ...sharedServerEnvironment,
-  NEXT_PUBLIC_APP_URL: backofficeBaseUrl,
-};
+const gracefulWebServerShutdown =
+  process.platform === "win32" ? {} : posixGracefulWebServerShutdown;
 
 export default defineConfig({
   expect: { timeout: 5_000 },
@@ -166,8 +170,9 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "npm run dev",
-      env: publicServerEnvironment,
+      command: webServerCommand("web"),
+      env: webServerEnvironment,
+      ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",
       stdout: "pipe",
@@ -175,8 +180,9 @@ export default defineConfig({
       url: `${publicBaseUrl}/api/health/live`,
     },
     {
-      command: "npm run dev:backoffice",
-      env: backofficeServerEnvironment,
+      command: webServerCommand("backoffice"),
+      env: webServerEnvironment,
+      ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",
       stdout: "pipe",
