@@ -13,6 +13,8 @@ import {
 } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 
+import { validateLocalDalDatabaseUrl } from "./local-development-environment.mjs";
+
 const alwaysSensitiveEnvironmentNames = [
   "CURSOR_SIGNING_SECRET",
   "DATABASE_URL_APP_DAL",
@@ -63,9 +65,7 @@ const childProcessControlEnvironmentNames = new Set([
   "TAR_OPTIONS",
 ]);
 const childProcessControlPrefixes = ["DYLD_", "GIT_", "LD_", "NPM_CONFIG_"];
-const localDatabaseHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-const localDatabaseProtocols = new Set(["postgres:", "postgresql:"]);
-const releaseArchiveMode = "u+rwX,go+rX,go-w";
+const releaseArchiveMode = "u+rwX,go+rX,go-w,a-s,a-t";
 
 function isInside(parent, child) {
   const pathFromParent = relative(parent, child);
@@ -166,39 +166,8 @@ export function releaseRuntimeEnvironment(inheritedEnvironment, localEnvironment
   };
 }
 
-function validatedLocalDalDatabaseUrl(value) {
-  if (typeof value !== "string" || value === "") {
-    throw new Error("DATABASE_URL_APP_DAL local é obrigatória para o smoke da release.");
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("DATABASE_URL_APP_DAL local é inválida para o smoke da release.");
-  }
-
-  if (
-    !localDatabaseProtocols.has(parsed.protocol) ||
-    !localDatabaseHostnames.has(parsed.hostname) ||
-    parsed.port !== "54322" ||
-    parsed.username !== "app_runtime_local" ||
-    parsed.password === "" ||
-    parsed.pathname !== "/postgres" ||
-    parsed.hash !== "" ||
-    parsed.searchParams.size !== 1 ||
-    parsed.searchParams.get("options") !== "-c role=app_dal"
-  ) {
-    throw new Error(
-      "DATABASE_URL_APP_DAL do smoke precisa usar a identidade DAL restrita na instância Supabase local.",
-    );
-  }
-
-  return value;
-}
-
 export function releaseSmokeEnvironment(inheritedEnvironment, localEnvironment, overrides) {
-  const databaseUrl = validatedLocalDalDatabaseUrl(localEnvironment.DATABASE_URL_APP_DAL);
+  const databaseUrl = validateLocalDalDatabaseUrl(localEnvironment.DATABASE_URL_APP_DAL);
   return releaseRuntimeEnvironment(inheritedEnvironment, localEnvironment, {
     ...overrides,
     DATABASE_URL_APP_DAL: databaseUrl,

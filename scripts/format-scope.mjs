@@ -69,42 +69,73 @@ for (const directory of sourceDirectories) {
   }
 }
 
-const mismatches = [];
+const physicalCandidates = [];
+const unsafeCandidates = [];
 for (const file of [...candidates].sort()) {
   const absolutePath = resolve(root, file);
-  if (!existsSync(absolutePath)) {
+  let information;
+  try {
+    information = await fs.lstat(absolutePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      continue;
+    }
+    throw error;
+  }
+
+  if (information.isDirectory()) {
+    // Uma remoção pode reutilizar o caminho antigo como diretório; seus filhos
+    // regulares já entram pelo walk e o nó em si não possui conteúdo formatável.
     continue;
   }
 
-  const info = await prettier.getFileInfo(absolutePath, {
-    ignorePath: resolve(root, ".prettierignore"),
-  });
-  if (info.ignored || info.inferredParser === null) {
-    continue;
-  }
-
-  const source = await fs.readFile(absolutePath, "utf8");
-  const configuration = (await prettier.resolveConfig(absolutePath)) ?? {};
-  const formatted = await prettier.format(source, {
-    ...configuration,
-    filepath: absolutePath,
-  });
-
-  if (formatted === source) {
-    continue;
-  }
-
-  if (mode === "--write") {
-    await fs.writeFile(absolutePath, formatted, "utf8");
-    process.stdout.write(`formatado ${relative(root, absolutePath)}\n`);
+  if (!information.isFile() || information.isSymbolicLink()) {
+    unsafeCandidates.push(file);
   } else {
-    mismatches.push(relative(root, absolutePath));
+    physicalCandidates.push(file);
   }
 }
 
-if (mismatches.length > 0) {
-  process.stderr.write(`Arquivos fora do padrão:\n- ${mismatches.join("\n- ")}\n`);
+if (unsafeCandidates.length > 0) {
+  process.stderr.write(
+    `Candidatos de formatação precisam ser arquivos regulares físicos:\n- ${unsafeCandidates.join("\n- ")}\n`,
+  );
   process.exitCode = 1;
-} else if (mode === "--check") {
-  process.stdout.write("format:check OK\n");
+} else {
+  const mismatches = [];
+  for (const file of physicalCandidates) {
+    const absolutePath = resolve(root, file);
+
+    const info = await prettier.getFileInfo(absolutePath, {
+      ignorePath: resolve(root, ".prettierignore"),
+    });
+    if (info.ignored || info.inferredParser === null) {
+      continue;
+    }
+
+    const source = await fs.readFile(absolutePath, "utf8");
+    const configuration = (await prettier.resolveConfig(absolutePath)) ?? {};
+    const formatted = await prettier.format(source, {
+      ...configuration,
+      filepath: absolutePath,
+    });
+
+    if (formatted === source) {
+      continue;
+    }
+
+    if (mode === "--write") {
+      await fs.writeFile(absolutePath, formatted, "utf8");
+      process.stdout.write(`formatado ${relative(root, absolutePath)}\n`);
+    } else {
+      mismatches.push(relative(root, absolutePath));
+    }
+  }
+
+  if (mismatches.length > 0) {
+    process.stderr.write(`Arquivos fora do padrão:\n- ${mismatches.join("\n- ")}\n`);
+    process.exitCode = 1;
+  } else if (mode === "--check") {
+    process.stdout.write("format:check OK\n");
+  }
 }

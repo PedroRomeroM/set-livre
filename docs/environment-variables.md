@@ -30,6 +30,8 @@ O Playwright parseia o arquivo E2E sem incorporá-lo ao ambiente global, rejeita
 
 Durante a fronteira local-first, o smoke de release ignora `DATABASE_URL_APP_DAL` herdada do processo e usa somente a entrada do `.env.local` de cada app. Além do contrato de identidade, essa URL precisa usar loopback e a porta local `54322`; valor ausente, remoto ou divergente interrompe o smoke sem iniciar o runtime empacotado.
 
+`npm run dev:all` também faz preflight dos dois `.env.local` antes de iniciar qualquer app. Em POSIX, cada arquivo precisa ser físico, regular, aberto sem seguir link e usar modo `0600`. O conteúdo aceita exatamente os seis nomes runtime documentados nesta seção, exige `APP_ENV=local`, `APP_RELEASE_SHA=local`, Supabase HTTP em loopback na porta `54321` e a origem esperada de cada filho (`3000` para web, `3001` para backoffice). A URL DAL deve usar PostgreSQL em loopback, porta `54322`, banco `postgres`, login `app_runtime_local` com senha e exatamente `options=-c role=app_dal`. O launcher não altera `process.env`: cada filho recebe separadamente apenas seu arquivo validado e uma allowlist operacional mínima do host. URLs cloud, credenciais, variáveis E2E, opções de injeção de runtime, Git, npm e SSH exportadas no terminal não são herdadas e não podem substituir o ambiente local.
+
 ## 3. Aplicação pública
 
 ### Públicas

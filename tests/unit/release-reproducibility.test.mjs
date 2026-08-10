@@ -62,6 +62,18 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function archivedModes(listing) {
+  return Object.fromEntries(
+    listing
+      .trimEnd()
+      .split("\n")
+      .map((line) => {
+        const fields = line.trim().split(/\s+/u);
+        return [fields.at(-1), fields[0]];
+      }),
+  );
+}
+
 afterEach(() => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -150,7 +162,7 @@ describe("release process serialization", () => {
 });
 
 describe("release archive modes", () => {
-  it("produces identical archives from source trees created under different umasks", () => {
+  it("clears special bits and produces identical archives under different umasks", () => {
     const workspaces = ["022", "077"].map((umaskValue) => {
       const workspace = temporaryRoot(`set-livre-release-umask-${umaskValue}-`);
       const result = spawnSync(process.execPath, [tarWorker, workspace, umaskValue], {
@@ -163,6 +175,15 @@ describe("release archive modes", () => {
     expect(workspaces[0].directoryMode).not.toBe(workspaces[1].directoryMode);
     expect(workspaces[0].regularMode).not.toBe(workspaces[1].regularMode);
     expect(workspaces[0].executableMode).not.toBe(workspaces[1].executableMode);
+    expect(workspaces.map(({ setuidExecutableMode }) => setuidExecutableMode)).toEqual([
+      0o4755, 0o4755,
+    ]);
+    expect(workspaces.map(({ setgidExecutableMode }) => setgidExecutableMode)).toEqual([
+      0o2755, 0o2755,
+    ]);
+    expect(workspaces.map(({ stickyDirectoryMode }) => stickyDirectoryMode)).toEqual([
+      0o1777, 0o1777,
+    ]);
     expect(sha256(workspaces[0].archivePath)).toBe(sha256(workspaces[1].archivePath));
 
     const listings = workspaces.map(({ archivePath }) =>
@@ -170,8 +191,15 @@ describe("release archive modes", () => {
     );
     expect(listings.map(({ status }) => status)).toEqual([0, 0]);
     expect(listings[0].stdout).toBe(listings[1].stdout);
-    expect(listings[0].stdout).toContain("drwxr-xr-x");
-    expect(listings[0].stdout).toContain("-rw-r--r--");
-    expect(listings[0].stdout).toContain("-rwxr-xr-x");
+    expect(archivedModes(listings[0].stdout)).toEqual({
+      "release/": "drwxr-xr-x",
+      "release/app/": "drwxr-xr-x",
+      "release/app/bin/": "drwxr-xr-x",
+      "release/app/bin/setgid.sh": "-rwxr-xr-x",
+      "release/app/bin/setuid.sh": "-rwxr-xr-x",
+      "release/app/bin/start.sh": "-rwxr-xr-x",
+      "release/app/config.json": "-rw-r--r--",
+      "release/app/sticky/": "drwxr-xr-x",
+    });
   });
 });

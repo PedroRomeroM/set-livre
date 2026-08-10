@@ -1,5 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,12 +78,12 @@ describe("docs check core", () => {
     expect(
       diffArguments.every(
         (argumentList) =>
-          argumentList.includes("--name-status") && argumentList.includes("--diff-filter=ACMRD"),
+          argumentList.includes("--name-status") && argumentList.includes("--diff-filter=ACMRTD"),
       ),
     ).toBe(true);
 
     const parsedChanges = parseGitChanges(
-      "M\0docs/changes/2026-08-09-existing.md\0A\0docs/changes/2026-08-09-new.md\0D\0deleted.ts\0R100\0old.ts\0new.ts\0",
+      "M\0docs/changes/2026-08-09-existing.md\0A\0docs/changes/2026-08-09-new.md\0D\0deleted.ts\0R100\0old.ts\0new.ts\0T\0type-changed.ts\0",
     );
     expect(parsedChanges).toEqual([
       { path: "docs/changes/2026-08-09-existing.md", status: "M" },
@@ -83,6 +91,7 @@ describe("docs check core", () => {
       { path: "deleted.ts", status: "D" },
       { path: "old.ts", status: "R" },
       { path: "new.ts", status: "R" },
+      { path: "type-changed.ts", status: "T" },
     ]);
     expect(parsedChanges.filter(isAddedChangeRecord)).toEqual([
       { path: "docs/changes/2026-08-09-new.md", status: "A" },
@@ -169,6 +178,140 @@ describe("docs check core", () => {
       });
     } finally {
       rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps a fresh feature at HEAD and detects regular-symlink type changes everywhere", () => {
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-git-type-changes-"));
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+
+    try {
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      mkdirSync(join(repository, "docs/changes"), { recursive: true });
+      mkdirSync(join(repository, "docs/contracts"), { recursive: true });
+      writeFileSync(
+        join(repository, "docs/changes/2026-08-09-main-history.md"),
+        "# Registro histórico\n",
+        "utf8",
+      );
+      writeFileSync(join(repository, "docs/contracts/target.json"), '{"target":true}\n', "utf8");
+      writeFileSync(join(repository, "docs/contracts/regular.json"), '{"regular":true}\n', "utf8");
+      symlinkSync("target.json", join(repository, "docs/contracts/linked.json"));
+      git("add", "docs");
+      git("commit", "-m", "main history");
+      const mainRevision = git("rev-parse", "HEAD").trim();
+
+      git("switch", "--create", "feature");
+      const freshFeatureChanges = readGitChanges(repository);
+      expect(freshFeatureChanges.comparisonBase).toBe(mainRevision);
+      expect(freshFeatureChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
+
+      rmSync(join(repository, "docs/contracts/regular.json"));
+      symlinkSync("target.json", join(repository, "docs/contracts/regular.json"));
+      rmSync(join(repository, "docs/contracts/linked.json"));
+      writeFileSync(join(repository, "docs/contracts/linked.json"), '{"linked":false}\n', "utf8");
+
+      const expectedTypeChanges = [
+        { path: "docs/contracts/linked.json", status: "T" },
+        { path: "docs/contracts/regular.json", status: "T" },
+      ];
+      const workingChanges = readGitChanges(repository);
+      expect(workingChanges.comparisonBase).toBe(mainRevision);
+      expect(workingChanges.changes).toEqual(expect.arrayContaining(expectedTypeChanges));
+      expect(expectedTypeChanges.every((change) => isTechnicalChangePath(change.path))).toBe(true);
+      expect(workingChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
+
+      git("add", "docs/contracts");
+      const stagedChanges = readGitChanges(repository);
+      expect(stagedChanges.changes).toEqual(expect.arrayContaining(expectedTypeChanges));
+      expect(stagedChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
+
+      git("commit", "-m", "change contract node types");
+      const committedChanges = readGitChanges(repository);
+      expect(committedChanges.comparisonBase).toBe(mainRevision);
+      expect(committedChanges.changes).toEqual(expect.arrayContaining(expectedTypeChanges));
+      expect(committedChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses a type-changed symlink before format --write can touch its target", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-format-symlink-"));
+    const repository = join(testRoot, "repository");
+    const externalTarget = join(testRoot, "external.json");
+    const projectRoot = join(import.meta.dirname, "../..");
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+
+    try {
+      mkdirSync(join(repository, "docs/contracts"), { recursive: true });
+      mkdirSync(join(repository, "scripts"));
+      copyFileSync(
+        join(projectRoot, "scripts/docs-check-core.mjs"),
+        join(repository, "scripts/docs-check-core.mjs"),
+      );
+      copyFileSync(
+        join(projectRoot, "scripts/format-scope.mjs"),
+        join(repository, "scripts/format-scope.mjs"),
+      );
+      symlinkSync(join(projectRoot, "node_modules"), join(repository, "node_modules"), "dir");
+      writeFileSync(join(repository, ".gitignore"), "/node_modules\n", "utf8");
+      writeFileSync(join(repository, "docs/contracts/config.json"), '{"local":true}\n', "utf8");
+      writeFileSync(externalTarget, '{"external":"preserve exactly"}\n', "utf8");
+
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      git("add", ".gitignore", "docs", "scripts");
+      git("commit", "-m", "baseline");
+      git("switch", "--create", "feature");
+      rmSync(join(repository, "docs/contracts/config.json"));
+      symlinkSync(externalTarget, join(repository, "docs/contracts/config.json"));
+
+      const result = spawnSync(
+        process.execPath,
+        [join(repository, "scripts/format-scope.mjs"), "--write"],
+        {
+          cwd: repository,
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("arquivos regulares físicos");
+      expect(result.stderr).toContain("docs/contracts/config.json");
+      expect(readFileSync(externalTarget, "utf8")).toBe('{"external":"preserve exactly"}\n');
+
+      rmSync(join(repository, "docs/contracts/config.json"));
+      mkdirSync(join(repository, "docs/contracts/config.json"));
+      writeFileSync(
+        join(repository, "docs/contracts/config.json/child.json"),
+        '{"child":true}\n',
+        "utf8",
+      );
+      const fileToDirectoryResult = spawnSync(
+        process.execPath,
+        [join(repository, "scripts/format-scope.mjs"), "--write"],
+        { cwd: repository, encoding: "utf8" },
+      );
+      expect(fileToDirectoryResult.status, fileToDirectoryResult.stderr).toBe(0);
+      expect(readFileSync(join(repository, "docs/contracts/config.json/child.json"), "utf8")).toBe(
+        '{ "child": true }\n',
+      );
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
     }
   });
 

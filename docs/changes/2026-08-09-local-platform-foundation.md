@@ -74,7 +74,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 87 testes unitários de docs, segurança E2E/browser, isolamento local, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
+- 98 testes unitários de docs, segurança E2E/browser, isolamento local, ambiente de desenvolvimento, health/release, concorrência, reprodutibilidade, geração atômica e migration head;
 - 56 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -104,8 +104,16 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - liveness permanece independente de configuração crítica: SHA ausente ou inválido retorna `200/live` com `release=unknown`, enquanto readiness continua falhando fechada;
 - readiness exige que a role efetiva `app_dal` não possua nenhuma membership, além de validar seus atributos e a sessão restrita;
 - um lock de kernel por descritor serializa toda a geração de release, incluindo builds, montagem, smoke, temporários, verificação e publicação concorrente;
-- o GNU tar normaliza modos de diretórios, executáveis e arquivos regulares, reproduzindo o mesmo checksum sob `umask 022` e `077`.
+- o GNU tar normaliza modos de diretórios, executáveis e arquivos regulares, reproduzindo o mesmo checksum sob `umask 022` e `077`;
 - o Knip trata os workers subprocessados como entradas de teste e reconhece `flock` como binário de sistema documentado, mantendo o gate sem falso positivo.
+
+## Correções do quarto Codex review
+
+- uma feature recém-criada no mesmo SHA da `main` usa `HEAD` como base, sem herdar change record histórico, enquanto o checkout da própria `main` preserva o fallback alcançável;
+- mudanças Git de tipo `T` entram nos três diffs e o formatador recusa symlinks ou nós especiais antes de qualquer escrita, sem tocar em alvos externos;
+- o tar remove também `setuid`, `setgid` e `sticky`, mantendo diretórios/executáveis em `0755`, arquivos regulares em `0644` e o mesmo checksum entre umasks;
+- `dev:all` faz preflight físico dos dois `.env.local`, valida origens, Supabase e DAL locais e cria ambientes separados sem herdar overrides, credenciais ou opções de injeção do host;
+- o smoke de release e o launcher de desenvolvimento reutilizam o mesmo validador puro da identidade DAL local.
 
 ## Observabilidade e operação
 
@@ -139,7 +147,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 87 aprovados;
+- `npm run test:unit`: 98 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 56 aprovados;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;

@@ -62,14 +62,24 @@ function resolveGitComparisonBase(runGit) {
     return null;
   }
 
+  let currentBranchReference = "";
+  try {
+    currentBranchReference = runGit(["symbolic-ref", "--quiet", "HEAD"]).trim();
+  } catch {
+    // HEAD destacado continua podendo usar uma candidata válida no mesmo commit.
+  }
+  const isMainCheckout = currentBranchReference === "refs/heads/main";
+
   let closestCandidate = null;
   for (const reference of ["refs/remotes/origin/main", "refs/heads/main"]) {
     try {
       const revision = runGit(["rev-parse", "--verify", "--quiet", `${reference}^{commit}`]).trim();
       const mergeBase =
-        revision === "" || revision === headRevision
+        revision === "" || (revision === headRevision && isMainCheckout)
           ? ""
-          : runGit(["merge-base", revision, "HEAD"]).trim();
+          : revision === headRevision
+            ? headRevision
+            : runGit(["merge-base", revision, "HEAD"]).trim();
       if (mergeBase === "") {
         continue;
       }
@@ -120,15 +130,15 @@ export function gitChangedFileArgumentLists(comparisonBase) {
             "diff",
             "--name-status",
             "-z",
-            "--diff-filter=ACMRD",
+            "--diff-filter=ACMRTD",
             `${comparisonBase}...HEAD`,
           ],
         },
     {
-      argumentsList: ["diff", "--name-status", "-z", "--diff-filter=ACMRD"],
+      argumentsList: ["diff", "--name-status", "-z", "--diff-filter=ACMRTD"],
     },
     {
-      argumentsList: ["diff", "--cached", "--name-status", "-z", "--diff-filter=ACMRD"],
+      argumentsList: ["diff", "--cached", "--name-status", "-z", "--diff-filter=ACMRTD"],
     },
     {
       argumentsList: ["ls-files", "--others", "--exclude-standard", "-z"],
@@ -148,7 +158,7 @@ export function parseGitChanges(output, implicitStatus) {
     const statusToken = tokens[index];
     const status = statusToken?.at(0);
     index += 1;
-    if (status === undefined || !/[ACDMR]/.test(status)) {
+    if (status === undefined || !/[ACDMRT]/.test(status)) {
       throw new Error(`Status Git inválido: ${statusToken ?? "ausente"}.`);
     }
 
