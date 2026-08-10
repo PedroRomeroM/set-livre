@@ -6,6 +6,7 @@ import {
   fstatSync,
   lstatSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -58,27 +59,131 @@ function decodedLinuxMountPath(value) {
   );
 }
 
-function assertNoKnownLinuxMountInside(directory) {
-  if (process.platform !== "linux") {
-    return;
-  }
+function readCurrentLinuxMountInformation() {
+  return readFileSync("/proc/self/mountinfo", "utf8");
+}
 
+function assertNoKnownLinuxMountInside(directory, readLinuxMountInformation) {
   let mountInformation;
   try {
-    mountInformation = readFileSync("/proc/self/mountinfo", "utf8");
+    mountInformation = readLinuxMountInformation();
   } catch {
     throw new Error("Não foi possível comprovar que a saída .next não contém mounts.");
   }
 
-  for (const line of mountInformation.split("\n").filter(Boolean)) {
-    const mountPath = line.split(" ")[4];
-    if (mountPath !== undefined && isInside(directory, decodedLinuxMountPath(mountPath))) {
+  const lines = mountInformation.split("\n").filter(Boolean);
+  if (lines.length === 0) {
+    throw new Error("Não foi possível comprovar que a saída .next não contém mounts.");
+  }
+  for (const line of lines) {
+    const fields = line.split(" ");
+    const separatorIndex = fields.indexOf("-");
+    const encodedMountPath = fields[4];
+    if (separatorIndex < 6 || encodedMountPath === undefined) {
+      throw new Error("Não foi possível comprovar que a saída .next não contém mounts.");
+    }
+    const mountPath = decodedLinuxMountPath(encodedMountPath);
+    if (!isAbsolute(mountPath)) {
+      throw new Error("Não foi possível comprovar que a saída .next não contém mounts.");
+    }
+    if (isInside(directory, mountPath)) {
       throw new Error("A saída .next anterior não pode ser um mount nem conter mounts.");
     }
   }
 }
 
-function removePreviousBuildOutput(buildOutputPath) {
+function physicalNodeKind(information) {
+  if (information.isSymbolicLink()) {
+    return "link";
+  }
+  if (information.isDirectory()) {
+    return "directory";
+  }
+  if (information.isFile()) {
+    return "file";
+  }
+  throw new Error("A saída .next anterior contém um nó não removível com segurança.");
+}
+
+function inspectPhysicalBuildOutputTree(directory, expectedDevice) {
+  const nodes = new Map();
+  const pending = [{ relativePath: "", path: directory }];
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) {
+      break;
+    }
+    const information = lstatSync(current.path, { throwIfNoEntry: false });
+    if (information === undefined) {
+      throw new Error("A saída .next anterior mudou durante a inspeção física.");
+    }
+    const kind = physicalNodeKind(information);
+    if (information.dev !== expectedDevice) {
+      throw new Error("A saída .next anterior não pode ser um mount nem conter mounts.");
+    }
+    nodes.set(current.relativePath, {
+      dev: information.dev,
+      ino: information.ino,
+      kind,
+    });
+
+    // Links, inclusive junctions reconhecidas pelo runtime, são folhas: nunca são atravessados.
+    if (kind !== "directory") {
+      continue;
+    }
+
+    const names = readdirSync(current.path).sort();
+    const finalInformation = lstatSync(current.path, { throwIfNoEntry: false });
+    if (
+      finalInformation === undefined ||
+      finalInformation.isSymbolicLink() ||
+      !finalInformation.isDirectory() ||
+      !samePhysicalFile(information, finalInformation) ||
+      finalInformation.dev !== expectedDevice
+    ) {
+      throw new Error("A saída .next anterior mudou durante a inspeção física.");
+    }
+
+    for (const name of names.toReversed()) {
+      const childPath = resolve(current.path, name);
+      if (name === "" || dirname(childPath) !== current.path) {
+        throw new Error("A saída .next anterior contém um caminho inválido.");
+      }
+      pending.push({
+        relativePath: current.relativePath === "" ? name : `${current.relativePath}${sep}${name}`,
+        path: childPath,
+      });
+    }
+  }
+
+  return nodes;
+}
+
+function assertSamePhysicalBuildOutputTree(expected, actual) {
+  if (expected.size !== actual.size) {
+    throw new Error("A saída .next anterior mudou durante o retiro atômico.");
+  }
+  for (const [relativePath, expectedNode] of expected) {
+    const actualNode = actual.get(relativePath);
+    if (
+      actualNode === undefined ||
+      actualNode.dev !== expectedNode.dev ||
+      actualNode.ino !== expectedNode.ino ||
+      actualNode.kind !== expectedNode.kind
+    ) {
+      throw new Error("A saída .next anterior mudou durante o retiro atômico.");
+    }
+  }
+}
+
+function removePreviousBuildOutput(
+  buildOutputPath,
+  {
+    platform = process.platform,
+    readLinuxMountInformation = readCurrentLinuxMountInformation,
+  } = {},
+) {
   const information = lstatSync(buildOutputPath, { throwIfNoEntry: false });
   if (information === undefined) {
     return;
@@ -86,7 +191,24 @@ function removePreviousBuildOutput(buildOutputPath) {
   if (!information.isDirectory() || information.isSymbolicLink()) {
     throw new Error("A saída .next anterior precisa ser um diretório físico.");
   }
-  assertNoKnownLinuxMountInside(buildOutputPath);
+  if (platform !== "linux") {
+    throw new Error(
+      "A saída .next anterior precisa ser removida manualmente nesta plataforma antes do preview.",
+    );
+  }
+
+  assertPhysicalAncestry(buildOutputPath);
+  const parentInformation = lstatSync(dirname(buildOutputPath), { throwIfNoEntry: false });
+  if (
+    parentInformation === undefined ||
+    !parentInformation.isDirectory() ||
+    parentInformation.isSymbolicLink() ||
+    information.dev !== parentInformation.dev
+  ) {
+    throw new Error("A saída .next anterior não pode ser um mount nem conter mounts.");
+  }
+  assertNoKnownLinuxMountInside(buildOutputPath, readLinuxMountInformation);
+  const originalTree = inspectPhysicalBuildOutputTree(buildOutputPath, information.dev);
 
   const retiredPath = resolve(
     dirname(buildOutputPath),
@@ -107,6 +229,12 @@ function removePreviousBuildOutput(buildOutputPath) {
   ) {
     throw new Error("A saída .next anterior mudou durante o retiro atômico.");
   }
+
+  assertNoKnownLinuxMountInside(retiredPath, readLinuxMountInformation);
+  assertSamePhysicalBuildOutputTree(
+    originalTree,
+    inspectPhysicalBuildOutputTree(retiredPath, information.dev),
+  );
 
   rmSync(retiredPath, { recursive: true });
   if (lstatSync(retiredPath, { throwIfNoEntry: false }) !== undefined) {
@@ -398,6 +526,7 @@ export async function runLocalProductionServer({
   forceShutdownMilliseconds = 5_000,
   inheritedEnvironment = process.env,
   platform = process.platform,
+  readLinuxMountInformation = readCurrentLinuxMountInformation,
   repositoryRoot = defaultRepositoryRoot,
   scheduleShutdownTimeout = setTimeout,
   signalProcessGroup = process.kill,
@@ -417,7 +546,10 @@ export async function runLocalProductionServer({
     forceShutdownMilliseconds,
     platform,
     prepareBuild: () => {
-      removePreviousBuildOutput(preview.buildOutputPath);
+      removePreviousBuildOutput(preview.buildOutputPath, {
+        platform,
+        readLinuxMountInformation,
+      });
     },
     scheduleShutdownTimeout,
     signalProcessGroup,

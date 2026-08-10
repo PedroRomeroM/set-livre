@@ -130,6 +130,7 @@ const forbiddenInstallDependencyPrefixes = [
   "@contentful/",
   "@directus/",
   "@emotion/",
+  "@griffel/",
   "@kubernetes/",
   "@linaria/",
   "@mikro-orm/",

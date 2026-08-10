@@ -110,6 +110,11 @@ function hostileInheritedEnvironment(home) {
   };
 }
 
+function linuxMountInformation(mountPath) {
+  const encodedMountPath = mountPath.replaceAll("\\", "\\134").replaceAll(" ", "\\040");
+  return `1 0 0:1 / ${encodedMountPath} rw - tmpfs tmpfs rw\n`;
+}
+
 async function waitFor(predicate, timeout = 5_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -270,15 +275,20 @@ describe("local development server launcher", () => {
     expect(workflow.buildOutputPath).toBe(resolve(fixture.root, ".next"));
   });
 
-  it.runIf(process.platform !== "win32")(
+  it.runIf(process.platform === "linux")(
     "removes a stale cloud build and starts only the freshly built local bundle",
     async () => {
       const fixture = temporaryRepository();
       const buildOutputPath = resolve(fixture.root, ".next");
+      const externalBuildOutput = resolve(fixture.root, "external-build-output");
+      const externalMarkerPath = resolve(externalBuildOutput, "external-marker");
       const staleMarkerPath = resolve(buildOutputPath, "stale-cloud-bundle");
       const bundlePath = resolve(buildOutputPath, "preview-bundle.json");
       const resultPath = resolve(fixture.root, "fresh-preview-result.json");
       mkdirSync(buildOutputPath);
+      mkdirSync(externalBuildOutput);
+      writeFileSync(externalMarkerPath, "must-survive", "utf8");
+      symlinkSync(externalBuildOutput, resolve(buildOutputPath, "external-link"), "dir");
       writeFileSync(staleMarkerPath, "https://cloud.example.com", "utf8");
       writeFileSync(
         fixture.nextCliPath,
@@ -299,6 +309,7 @@ describe("local development server launcher", () => {
 
       await expect(run).rejects.toMatchObject({ exitCode: 143 });
       expect(existsSync(staleMarkerPath)).toBe(false);
+      expect(readFileSync(externalMarkerPath, "utf8")).toBe("must-survive");
       expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
         APP_ENV: "local",
         DATABASE_URL_APP_DAL: localDatabaseUrl,
@@ -317,6 +328,140 @@ describe("local development server launcher", () => {
     },
     10_000,
   );
+
+  it("refuses Linux mounts at the .next root or below before rename and spawn", async () => {
+    for (const mountedRelativePath of [
+      "",
+      "nested/mounted-output",
+      "nested with space/mounted\\output",
+    ]) {
+      const fixture = temporaryRepository();
+      const buildOutputPath = resolve(fixture.root, ".next");
+      const mountedPath = resolve(buildOutputPath, mountedRelativePath);
+      const markerPath = resolve(mountedPath, "must-remain");
+      mkdirSync(mountedPath, { recursive: true });
+      writeFileSync(markerPath, "external-volume-content", "utf8");
+      let spawnAttempted = false;
+
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          platform: "linux",
+          readLinuxMountInformation: () => linuxMountInformation(mountedPath),
+          repositoryRoot: fixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("não pode ser um mount nem conter mounts");
+
+      expect(readFileSync(markerPath, "utf8")).toBe("external-volume-content");
+      expect(existsSync(buildOutputPath)).toBe(true);
+      expect(
+        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+      ).toEqual([]);
+      expect(spawnAttempted).toBe(false);
+    }
+
+    for (const readLinuxMountInformation of [
+      () => "",
+      () => "mountinfo-malformado\n",
+      () => {
+        throw new Error("mountinfo-indisponível");
+      },
+    ]) {
+      const fixture = temporaryRepository();
+      const buildOutputPath = resolve(fixture.root, ".next");
+      const markerPath = resolve(buildOutputPath, "nested/must-remain");
+      mkdirSync(resolve(buildOutputPath, "nested"), { recursive: true });
+      writeFileSync(markerPath, "previous-build-content", "utf8");
+      let spawnAttempted = false;
+
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          platform: "linux",
+          readLinuxMountInformation,
+          repositoryRoot: fixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("Não foi possível comprovar");
+
+      expect(readFileSync(markerPath, "utf8")).toBe("previous-build-content");
+      expect(
+        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+      ).toEqual([]);
+      expect(spawnAttempted).toBe(false);
+    }
+  });
+
+  it("fails closed on non-Linux before retiring an existing .next tree", async () => {
+    for (const platform of ["darwin", "win32", "unknown-platform"]) {
+      const fixture = temporaryRepository();
+      const buildOutputPath = resolve(fixture.root, ".next");
+      const rootMarkerPath = resolve(buildOutputPath, "root-marker");
+      const nestedMarkerPath = resolve(buildOutputPath, "nested/deep-marker");
+      mkdirSync(resolve(buildOutputPath, "nested"), { recursive: true });
+      writeFileSync(rootMarkerPath, `${platform}-root`, "utf8");
+      writeFileSync(nestedMarkerPath, `${platform}-nested`, "utf8");
+      let mountInformationRead = false;
+      let spawnAttempted = false;
+
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          platform,
+          readLinuxMountInformation: () => {
+            mountInformationRead = true;
+            throw new Error("mountinfo Linux não deveria ser lido");
+          },
+          repositoryRoot: fixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("removida manualmente nesta plataforma");
+
+      expect(readFileSync(rootMarkerPath, "utf8")).toBe(`${platform}-root`);
+      expect(readFileSync(nestedMarkerPath, "utf8")).toBe(`${platform}-nested`);
+      expect(
+        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+      ).toEqual([]);
+      expect(mountInformationRead).toBe(false);
+      expect(spawnAttempted).toBe(false);
+    }
+  });
+
+  it("allows a non-Linux preview without previous .next to reach the build spawn", async () => {
+    const fixture = temporaryRepository();
+    let spawnAttempted = false;
+
+    await expect(
+      runLocalProductionServer({
+        application: "web",
+        platform: "darwin",
+        repositoryRoot: fixture.root,
+        signalSource: new EventEmitter(),
+        spawnProcess: () => {
+          spawnAttempted = true;
+          throw new Error("synthetic-build-spawn");
+        },
+      }),
+    ).rejects.toThrow("synthetic-build-spawn");
+
+    expect(spawnAttempted).toBe(true);
+    expect(
+      readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+    ).toEqual([]);
+  });
 
   it("rejects an unsafe previous build output before spawning Next", async () => {
     const regularFileFixture = temporaryRepository();
