@@ -52,8 +52,9 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 - `20260810000100_app_dal_readiness_authorization.sql`: manifesto exato de ACL/ownership da DAL, defaults de tipos fechados e recusa de privilégios efetivos herdados de `PUBLIC`;
 - `20260810000200_pg_catalog_public_acl_hardening.sql`: baseline canônica das ACLs públicas de relações e colunas de `pg_catalog`, recusando expansões como acesso a `pg_authid.rolpassword`.
 - `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: containment por OID/overload das ACLs públicas de rotinas de `pg_catalog`, incluindo grantor e grant option, sem promover defaults de rotinas normais posteriores a baseline.
+- `20260810000400_pg_catalog_implicit_routine_owner_hardening.sql`: owner canônico independente de `proowner` para baselines implícitas de rotinas initdb ou membros reais de extensão.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 141 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 148 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
 
 ## Segurança e privacidade
 
@@ -77,8 +78,8 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 186 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
-- 141 asserts pgTAP;
+- 194 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, geração atômica, contratos gerados e migration head;
+- 148 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -169,6 +170,11 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - o gate de dependências inclui o scope `@mui/` na proibição de primitives e CSS-in-JS paralelos, cobrindo Material/System, aliases, overrides e near-misses permitidos;
 - uma migration append-only estende o containment de `PUBLIC` às rotinas de `pg_catalog` por OID/overload, grantor e grant option; pgTAP prova `pg_read_file(text)`, grantor alternativo, rotina normal posterior sem baseline e recuperação integral.
 
+## Correções do décimo-terceiro Codex review
+
+- a baseline implícita de rotina `pg_catalog` nunca deriva do `proowner` auditado: membro de extensão usa `extowner`, initdb sem membership usa o owner bootstrap OID `10`, e drift de owner falha mesmo após revogar `PUBLIC`;
+- serviços persistentes de desenvolvimento convertem saída natural inesperada `0` em falha `1`, encerram as demais árvores e reservam zero apenas a shutdown explicitamente solicitado ou ao build finito do preview.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -201,9 +207,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 186 aprovados;
+- `npm run test:unit`: 194 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 141 aprovados e snapshot SQL/tipos conferidos byte a byte;
+- `npm run test:db`: 148 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

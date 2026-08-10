@@ -121,7 +121,7 @@ describe("packaged release process cleanup", () => {
           registerState({ application: "web", child });
         },
       }),
-    ).rejects.toThrow("encerrou durante o smoke (código 0)");
+    ).rejects.toThrow("encerrou durante o smoke (código 1)");
     expect(smokeStarted).toBe(true);
   });
 

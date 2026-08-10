@@ -191,8 +191,9 @@ export function superviseDevelopmentProcesses({
       runningChildren.delete(child);
 
       if (!shuttingDown) {
-        const exitCode = code ?? 1;
-        const reason = signal === null ? `código ${exitCode}` : `sinal ${signal}`;
+        const reportedExitCode = code ?? 1;
+        const exitCode = reportedExitCode === 0 ? 1 : reportedExitCode;
+        const reason = signal === null ? `código ${reportedExitCode}` : `sinal ${signal}`;
         writeError(`${name} encerrou com ${reason}; encerrando os demais processos.\n`);
         beginShutdown("SIGTERM", exitCode);
       }

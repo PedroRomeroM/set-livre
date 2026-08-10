@@ -48,7 +48,7 @@ export async function runLocalProductionPreviewProcessFlow({
   signalSource.on("SIGINT", handleSigint);
   signalSource.on("SIGTERM", handleSigterm);
 
-  async function runPhase(startProcess, phase) {
+  async function runPhase(startProcess, phase, { requestShutdownOnSuccessfulExit = false } = {}) {
     let processState;
     let startFailure;
     try {
@@ -78,7 +78,16 @@ export async function runLocalProductionPreviewProcessFlow({
     }
 
     const exitTarget = {};
-    const supervisor = superviseDevelopmentProcesses({
+    let supervisor;
+    if (requestShutdownOnSuccessfulExit) {
+      // A fase finita registra sua conclusão esperada antes do handler genérico de serviços.
+      processState.child.once("close", (code, signal) => {
+        if (code === 0 && signal === null) {
+          supervisor.beginShutdown("SIGTERM", 0);
+        }
+      });
+    }
+    supervisor = superviseDevelopmentProcesses({
       children: [{ child: processState.child, name: phase }],
       clearShutdownTimeout,
       exitTarget,
@@ -115,7 +124,9 @@ export async function runLocalProductionPreviewProcessFlow({
       throw interruptionError(requestedSignal);
     }
 
-    const buildExitCode = await runPhase(startBuild, "build do preview");
+    const buildExitCode = await runPhase(startBuild, "build do preview", {
+      requestShutdownOnSuccessfulExit: true,
+    });
     if (buildExitCode !== 0) {
       throw new Error(`O build fresco do preview encerrou com código ${buildExitCode}.`);
     }

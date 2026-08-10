@@ -49,6 +49,12 @@ function closeChild(child, code, signal) {
   child.emit("close", code, signal);
 }
 
+function missingProcessGroup() {
+  const error = new Error("missing process group");
+  error.code = "ESRCH";
+  return error;
+}
+
 function processExists(pid) {
   try {
     process.kill(pid, 0);
@@ -84,6 +90,40 @@ async function assertPortCanBeRebound(port) {
 }
 
 describe("development process tree supervisor", () => {
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ])("preserves an explicitly requested %s shutdown as exit %i", async (signal, exitCode) => {
+    const child = fakeChild(1001);
+    const exitTarget = {};
+    const signalSource = new EventEmitter();
+    const signals = [];
+    const supervisor = superviseDevelopmentProcesses({
+      children: [{ child, name: "aplicação pública" }],
+      exitTarget,
+      platform: "linux",
+      signalProcessGroup: (pid, receivedSignal) => {
+        signals.push([pid, receivedSignal]);
+        if (receivedSignal === 0) {
+          throw missingProcessGroup();
+        }
+      },
+      signalSource,
+      writeError: () => {},
+    });
+
+    signalSource.emit(signal);
+    closeChild(child, null, signal);
+
+    await expect(supervisor.completion).resolves.toBe(exitCode);
+    expect(exitTarget.exitCode).toBe(exitCode);
+    expect(signals).toEqual([
+      [-1001, signal],
+      [-1001, 0],
+    ]);
+  });
+
   it("terminates every Windows tree during a normal launcher shutdown", async () => {
     const children = [fakeChild(101), fakeChild(202)];
     const exitTarget = {};
@@ -144,6 +184,172 @@ describe("development process tree supervisor", () => {
     await expect(supervisor.completion).resolves.toBe(17);
     expect(exitTarget.exitCode).toBe(17);
   });
+
+  it("maps an unexpected clean exit to failure and terminates the other Windows tree", async () => {
+    const cleanExit = fakeChild(505);
+    const remainingApplication = fakeChild(606);
+    const exitTarget = {};
+    const terminated = [];
+    const errors = [];
+    const timeouts = controlledTimeouts();
+    const supervisor = superviseDevelopmentProcesses({
+      children: [
+        { child: cleanExit, name: "aplicação pública" },
+        { child: remainingApplication, name: "backoffice" },
+      ],
+      exitTarget,
+      platform: "win32",
+      signalSource: new EventEmitter(),
+      systemRoot: "C:\\Windows",
+      terminateWindowsTree: (pid) => terminated.push(pid),
+      writeError: (message) => errors.push(message),
+      ...timeouts,
+    });
+
+    closeChild(cleanExit, 0, null);
+
+    expect(terminated).toEqual([606]);
+    expect(exitTarget.exitCode).toBe(1);
+    expect(errors).toEqual([
+      "aplicação pública encerrou com código 0; encerrando os demais processos.\n",
+    ]);
+    closeChild(remainingApplication, null, "SIGKILL");
+    await expect(supervisor.completion).resolves.toBe(1);
+  });
+
+  it("maps an unexpected clean exit to failure and signals every POSIX group", async () => {
+    const cleanExit = fakeChild(707);
+    const remainingApplication = fakeChild(808);
+    const exitTarget = {};
+    const signals = [];
+    const timeouts = controlledTimeouts();
+    const supervisor = superviseDevelopmentProcesses({
+      children: [
+        { child: cleanExit, name: "aplicação pública" },
+        { child: remainingApplication, name: "backoffice" },
+      ],
+      exitTarget,
+      platform: "linux",
+      signalProcessGroup: (pid, signal) => {
+        signals.push([pid, signal]);
+        if (pid === -707 || signal === 0) {
+          throw missingProcessGroup();
+        }
+      },
+      signalSource: new EventEmitter(),
+      writeError: () => {},
+      ...timeouts,
+    });
+
+    closeChild(cleanExit, 0, null);
+
+    expect(signals).toEqual([
+      [-707, "SIGTERM"],
+      [-808, "SIGTERM"],
+    ]);
+    expect(exitTarget.exitCode).toBe(1);
+    closeChild(remainingApplication, null, "SIGTERM");
+    await expect(supervisor.completion).resolves.toBe(1);
+    expect(signals).toEqual([
+      [-707, "SIGTERM"],
+      [-808, "SIGTERM"],
+      [-808, 0],
+    ]);
+  });
+
+  it("allows code 0 only when the caller explicitly requests shutdown", async () => {
+    const child = fakeChild(909);
+    const exitTarget = {};
+    const supervisor = superviseDevelopmentProcesses({
+      children: [{ child, name: "serviço controlado" }],
+      exitTarget,
+      platform: "linux",
+      signalProcessGroup: () => {
+        throw missingProcessGroup();
+      },
+      signalSource: new EventEmitter(),
+      writeError: () => {},
+    });
+
+    supervisor.beginShutdown("SIGTERM", 0);
+    closeChild(child, 0, null);
+
+    await expect(supervisor.completion).resolves.toBe(0);
+    expect(exitTarget.exitCode).toBe(0);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "returns failure and removes the other real POSIX tree after a natural code 0 exit",
+    async () => {
+      const root = mkdtempSync(resolve(tmpdir(), "set-livre-dev-tree-clean-exit-"));
+      temporaryRoots.push(root);
+      const releaseCleanExitPath = resolve(root, "release-clean-exit");
+      const leafPidPath = resolve(root, "leaf.pid");
+      const portPath = resolve(root, "leaf.port");
+      const cleanScriptPath = resolve(root, "clean.cjs");
+      const leafScriptPath = resolve(root, "leaf.cjs");
+      const parentScriptPath = resolve(root, "parent.cjs");
+      writeFileSync(
+        cleanScriptPath,
+        `const fs = require("node:fs"); const gate = ${JSON.stringify(releaseCleanExitPath)}; const timer = setInterval(() => { if (fs.existsSync(gate)) { clearInterval(timer); process.exit(0); } }, 10);\n`,
+      );
+      writeFileSync(
+        leafScriptPath,
+        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port)));\n`,
+      );
+      writeFileSync(
+        parentScriptPath,
+        `const { spawn } = require("node:child_process"); spawn(process.execPath, [${JSON.stringify(leafScriptPath)}], { stdio: "ignore" }); setInterval(() => {}, 1000);\n`,
+      );
+
+      const cleanChild = spawn(process.execPath, [cleanScriptPath], {
+        detached: true,
+        stdio: "ignore",
+      });
+      const remainingChild = spawn(process.execPath, [parentScriptPath], {
+        detached: true,
+        stdio: "ignore",
+      });
+      let leafPid;
+      let leafPort;
+      try {
+        const supervisor = superviseDevelopmentProcesses({
+          children: [
+            { child: cleanChild, name: "aplicação pública" },
+            { child: remainingChild, name: "backoffice" },
+          ],
+          exitTarget: {},
+          forceShutdownMilliseconds: 250,
+          platform: process.platform,
+          signalSource: new EventEmitter(),
+          writeError: () => {},
+        });
+        await waitFor(() => existsSync(leafPidPath) && existsSync(portPath));
+        leafPid = Number(readFileSync(leafPidPath, "utf8"));
+        leafPort = Number(readFileSync(portPath, "utf8"));
+
+        writeFileSync(releaseCleanExitPath, "exit", "utf8");
+
+        await expect(supervisor.completion).resolves.toBe(1);
+        await waitFor(() => !processExists(leafPid));
+        await assertPortCanBeRebound(leafPort);
+      } finally {
+        for (const child of [cleanChild, remainingChild]) {
+          if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              // A árvore já pode ter sido completamente encerrada pelo supervisor.
+            }
+          }
+        }
+        if (leafPid !== undefined && processExists(leafPid)) {
+          process.kill(leafPid, "SIGKILL");
+        }
+      }
+    },
+    10_000,
+  );
 
   it.runIf(process.platform !== "win32")(
     "handles SIGHUP across a detached POSIX process group without orphaning descendants",

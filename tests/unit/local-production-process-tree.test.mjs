@@ -116,7 +116,7 @@ describe("local production preview process flow", () => {
           buildValidated = true;
         },
       }),
-    ).rejects.toThrow("servidor do preview encerrou prematuramente com código 0");
+    ).rejects.toThrow("servidor do preview encerrou prematuramente com código 1");
 
     expect(buildValidated).toBe(true);
     expect(serverStarted).toBe(true);
@@ -144,7 +144,7 @@ describe("local production preview process flow", () => {
         },
         validateBuild: () => {},
       }),
-    ).rejects.toThrow("servidor do preview encerrou prematuramente com código 0");
+    ).rejects.toThrow("servidor do preview encerrou prematuramente com código 1");
 
     expect(terminatedWindowsTrees).toEqual([
       { descendantPid: 711_101, options: { systemRoot: "C:\\Windows" }, pid: 611_101 },

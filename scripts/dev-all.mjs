@@ -17,5 +17,6 @@ const children = launches.map(({ argumentsList, command, name, options }) => ({
   child: spawn(command, argumentsList, options),
   name,
 }));
-const supervisor = superviseDevelopmentProcesses({ children });
-await supervisor.completion;
+const exitTarget = {};
+const supervisor = superviseDevelopmentProcesses({ children, exitTarget });
+process.exitCode = await supervisor.completion;

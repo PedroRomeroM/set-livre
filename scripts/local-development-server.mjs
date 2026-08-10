@@ -499,8 +499,10 @@ async function runLocalServer({
     repositoryRoot,
   });
   const child = spawnProcess(launch.command, launch.argumentsList, launch.options);
+  const exitTarget = {};
   const supervisor = superviseDevelopmentProcesses({
     children: [{ child, name: launch.name }],
+    exitTarget,
   });
   return supervisor.completion;
 }

@@ -14,13 +14,14 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createLocalDevelopmentServerLaunch,
   createLocalProductionPreviewLaunches,
   createLocalProductionServerLaunch,
   resolveTrustedNextCliLaunch,
+  runLocalDevelopmentServer,
   runLocalProductionServer,
 } from "../../scripts/local-development-server.mjs";
 
@@ -127,6 +128,37 @@ async function waitFor(predicate, timeout = 5_000) {
 }
 
 describe("local development server launcher", () => {
+  it("returns failure when its persistent child exits naturally with code 0", async () => {
+    const fixture = temporaryRepository();
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.pid = undefined;
+    child.signalCode = null;
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      const result = runLocalDevelopmentServer({
+        application: "web",
+        inheritedEnvironment: { PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+        spawnProcess: () => {
+          queueMicrotask(() => {
+            child.exitCode = 0;
+            child.emit("close", 0, null);
+          });
+          return child;
+        },
+      });
+
+      await expect(result).resolves.toBe(1);
+      expect(stderrWrite).toHaveBeenCalledWith(
+        "aplicação pública encerrou com código 0; encerrando os demais processos.\n",
+      );
+    } finally {
+      stderrWrite.mockRestore();
+    }
+  });
+
   it("starts the absolute pinned Next CLI with only the physical web environment", () => {
     const fixture = temporaryRepository();
     const resultPath = resolve(fixture.root, "web-result.json");
