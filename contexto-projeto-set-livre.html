@@ -63,6 +63,12 @@
         border-radius: 0.2rem;
       }
 
+      .pipeline:focus-visible,
+      .table-wrap:focus-visible {
+        outline: 0.2rem solid var(--accent);
+        outline-offset: 0.2rem;
+      }
+
       code {
         padding: 0.12em 0.34em;
         border-radius: 0.3rem;
@@ -624,9 +630,9 @@
           construído na plataforma de aluguel de estúdios audiovisuais.
         </p>
         <ul class="meta" aria-label="Fotografia atual do projeto">
-          <li>Atualizado em 10 de agosto de 2026</li>
+          <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>14º ciclo de review em andamento</li>
+          <li>15º ciclo de review validado localmente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -634,7 +640,7 @@
             <strong>0/34</strong><span>features de produto implementadas</span>
           </div>
           <div class="stat">
-            <strong>202</strong><span>testes unitários aprovados no patch atual</span>
+            <strong>231</strong><span>testes unitários na rodada canônica atual</span>
           </div>
           <div class="stat"><strong>148</strong><span>asserts pgTAP no banco local</span></div>
           <div class="stat"><strong>36</strong><span>execuções Playwright/axe</span></div>
@@ -682,11 +688,11 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Publicado no PR</span>
-              <h3>14º ciclo da fundação</h3>
+              <span class="tag done">Validado</span>
+              <h3>15º ciclo da fundação</h3>
               <p>
-                O ciclo reforça a limpeza física de artefatos contra mounts e trocas de árvore. A
-                implementação e os gates completos fazem parte da fotografia publicada para revisão.
+                O ciclo fecha fontes alternativas de ambiente para Next, E2E e PostgreSQL e reforça
+                a rastreabilidade de dependências e a imutabilidade das migrations.
               </p>
             </article>
             <article class="card">
@@ -702,8 +708,9 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada integral atual passou em 202 unitários, 148 asserts pgTAP e 36 execuções
-              Playwright, além de format, lint, TypeScript, docs, dois builds, audit e Knip.
+              A rodada canônica atual passou em 231 unitários, 148 asserts pgTAP e 36 execuções
+              Playwright, além de instalação limpa, format, lint, TypeScript, docs, dois builds,
+              audit e Knip.
             </p>
           </div>
         </section>
@@ -825,7 +832,7 @@
             <div><span>Operação futura</span><strong>workers · providers · Oracle</strong></div>
           </div>
 
-          <div class="pipeline" aria-label="Pipeline normativo de escrita crítica">
+          <div class="pipeline" aria-label="Pipeline normativo de escrita crítica" tabindex="0">
             POST /api/commands → sessão/origem/limites → Zod → registry → DAL server-only → função
             SQL privada → transação/lock → retorno autoritativo → invalidação
           </div>
@@ -859,7 +866,7 @@
             </p>
           </div>
 
-          <div class="table-wrap">
+          <div class="table-wrap" aria-label="Scripts do repositório" tabindex="0">
             <table>
               <thead>
                 <tr>
@@ -905,12 +912,13 @@
                 <tr>
                   <td>Supabase local</td>
                   <td>
-                    <code>supabase:start</code>, <code>stop</code>, <code>status</code>,
-                    <code>reset</code>, <code>local:setup</code>, <code>test:db</code>
+                    <code>supabase:start</code>, <code>supabase:stop</code>,
+                    <code>supabase:status</code>, <code>supabase:reset</code>,
+                    <code>local:setup</code>, <code>test:db</code>
                   </td>
                   <td>
                     Exigem Docker local, prendem a stack ao loopback, recriam banco/Auth/Storage,
-                    normalizam roles e executam pgTAP.
+                    normalizam roles por <code>psql</code> isolado e executam pgTAP.
                   </td>
                 </tr>
                 <tr>
@@ -932,16 +940,18 @@
                     <code>test:e2e:critical</code>, <code>test:a11y</code>
                   </td>
                   <td>
-                    Fazem preflight local antes do browser, iniciam os dois servidores e rodam a
-                    matriz Chromium/Firefox/WebKit, mobile, axe, safe area e reflow.
+                    Leem o ambiente E2E privado com proteção física antes do browser, iniciam os
+                    dois servidores e rodam Chromium/Firefox/WebKit, mobile, axe, safe area e
+                    reflow.
                   </td>
                 </tr>
                 <tr>
                   <td>Documentação</td>
                   <td><code>docs:check</code></td>
                   <td>
-                    Valida Blueprint, ADRs, 34 features, 193 cenários, sequência, links,
-                    dependências, change records e atualização deste resumo executivo.
+                    Valida Blueprint, ADRs, 34 features, 193 cenários, sequência, links, registro de
+                    dependências, migrations imutáveis, change records e atualização deste resumo
+                    executivo.
                   </td>
                 </tr>
                 <tr>
@@ -977,7 +987,7 @@
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">202 aprovados</span>
+              <span class="tag done">231 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1055,9 +1065,9 @@
             <article class="card">
               <h3>Ambiente e supply chain</h3>
               <p>
-                Docker restrito ao loopback, arquivos env <code>0600</code>, subprocessos por
-                allowlist, logs redigidos, versões exatas, lockfile único, lifecycle scripts
-                bloqueados, audit e Knip obrigatórios.
+                Docker e PostgreSQL restritos ao loopback, dotenv por lista fechada, arquivos
+                privados físicos <code>0600</code>, dependências registradas uma a uma, migrations
+                append-only, logs redigidos, audit e Knip obrigatórios.
               </p>
             </article>
           </div>
@@ -1067,6 +1077,7 @@
             <li>nenhum service role no browser</li>
             <li>app público sem admin</li>
             <li>URL DAL local validada</li>
+            <li>E2E privado e psql isolado</li>
             <li>grants explícitos; RLS entra por tabela</li>
             <li>erros públicos seguros</li>
             <li>artefatos E2E só em falha</li>
@@ -1103,7 +1114,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Validado localmente no 14º review</span>
+              <span class="tag done">Validado localmente</span>
               <h3>Cleanup físico de artefatos</h3>
               <p>
                 O patch atual usa <code>/proc/self/mountinfo</code>, inspeção por
@@ -1132,7 +1143,7 @@
             </p>
           </div>
 
-          <div class="table-wrap">
+          <div class="table-wrap" aria-label="Fases das features" tabindex="0">
             <table>
               <thead>
                 <tr>
@@ -1212,15 +1223,9 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>
-                  Resolver somente os comentários efetivamente atendidos no ciclo publicado. O
-                  comentário rejeitado permanece aberto com evidência.
-                </li>
-                <li>
-                  Solicitar novo <code>@codex review</code> e esperar 60 minutos antes de consultar.
-                  A espera de 4 horas foi uma exceção pontual do ciclo instruído.
-                </li>
-                <li>Repetir correção, testes e review até não haver problema acionável.</li>
+                <li>Publicar somente depois dos gates integrais e da auditoria do diff staged.</li>
+                <li>Resolver apenas comentários comprovadamente atendidos no commit publicado.</li>
+                <li>Repetir review, correção e testes enquanto houver problema acionável.</li>
                 <li>Após o merge, abrir uma branch exclusiva para a FEAT-002 (autenticação).</li>
               </ol>
             </article>

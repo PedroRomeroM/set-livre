@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   copyFileSync,
   linkSync,
   mkdirSync,
@@ -8,10 +9,12 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -34,15 +37,42 @@ import {
   readAddedChangeRecord,
   readCanonicalPackageManifests,
   readGitChanges,
+  readGitMigrationPathsAtRevision,
   sha256,
   validateAutomatedQaSpec,
   validateAllowedInstallScripts,
+  validateCanonicalDependencyRegistry,
   validateFeatureSequence,
   validateGovernanceAlignment,
+  validateMigrationGitChanges,
+  validateMigrationRepositoryHistory,
   validateNpmProjectConfiguration,
   validateProgressSummary,
   validateWorkspacePatterns,
 } from "../../scripts/docs-check-core.mjs";
+
+function withProcessEnvironment(overrides, operation) {
+  const previous = new Map(
+    Object.keys(overrides).map((name) => [
+      name,
+      Object.hasOwn(process.env, name) ? process.env[name] : undefined,
+    ]),
+  );
+  try {
+    for (const [name, value] of Object.entries(overrides)) {
+      process.env[name] = value;
+    }
+    return operation();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+  }
+}
 
 describe("docs check core", () => {
   it("finds duplicate identifiers deterministically", () => {
@@ -296,6 +326,229 @@ describe("docs check core", () => {
       expect(() => readCanonicalPackageManifests(repository)).toThrow("npm-shrinkwrap");
     } finally {
       rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("matches every real canonical manifest dependency to one complete registry record", () => {
+    const projectRoot = join(import.meta.dirname, "../..");
+    const manifests = readCanonicalPackageManifests(projectRoot).map(({ packagePath, source }) => ({
+      packageJson: JSON.parse(source),
+      packagePath,
+    }));
+
+    expect(
+      validateCanonicalDependencyRegistry(
+        manifests,
+        readFileSync(join(projectRoot, "docs/dependencias-utilizadas.md"), "utf8"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("detects an unregistered dependency in each physical canonical manifest", () => {
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-dependency-registry-"));
+    const manifests = new Map([
+      [
+        "package.json",
+        {
+          dependencies: { "@set-livre/contracts": "0.0.0", react: "19.2.8" },
+          name: "@set-livre/web",
+          version: "0.0.0",
+          workspaces: ["apps/*", "packages/*"],
+        },
+      ],
+      [
+        "apps/backoffice/package.json",
+        {
+          dependencies: { "@set-livre/contracts": "0.0.0", react: "19.2.8" },
+          name: "@set-livre/backoffice",
+          version: "0.0.0",
+        },
+      ],
+      [
+        "packages/contracts/package.json",
+        {
+          dependencies: { zod: "4.4.3" },
+          name: "@set-livre/contracts",
+          version: "0.0.0",
+        },
+      ],
+      [
+        "packages/ui/package.json",
+        {
+          name: "@set-livre/ui",
+          peerDependencies: { react: "19.2.8" },
+          version: "0.0.0",
+        },
+      ],
+    ]);
+    const registry = `# Registro
+
+## Dependências npm diretas
+
+| Pacote | Versão | Superfície/finalidade | Licença | Justificativa | Avaliação de supply chain |
+| --- | --- | --- | --- | --- | --- |
+| \`react\` | \`19.2.8\` | runtime server/client | MIT | renderer normativo necessário | pacote oficial com lockfile auditado |
+| \`zod\` | \`4.4.3\` | runtime server/client | MIT | valida fronteiras tipadas | pacote maduro com lockfile auditado |
+`;
+    const writeManifests = () => {
+      for (const [packagePath, packageJson] of manifests) {
+        mkdirSync(join(repository, packagePath, ".."), { recursive: true });
+        writeFileSync(join(repository, packagePath), `${JSON.stringify(packageJson)}\n`, "utf8");
+      }
+    };
+    const validatePhysicalRegistry = () =>
+      validateCanonicalDependencyRegistry(
+        readCanonicalPackageManifests(repository).map(({ packagePath, source }) => ({
+          packageJson: JSON.parse(source),
+          packagePath,
+        })),
+        registry,
+      );
+
+    try {
+      writeFileSync(
+        join(repository, ".npmrc"),
+        "engine-strict=true\nfund=false\nsave-exact=true\nstrict-allow-scripts=true\nignore-scripts=true\ndangerously-allow-all-scripts=false\n",
+      );
+      writeManifests();
+      expect(validatePhysicalRegistry()).toEqual([]);
+
+      const targets = [
+        ["package.json", "dependencies"],
+        ["apps/backoffice/package.json", "dependencies"],
+        ["packages/contracts/package.json", "dependencies"],
+        ["packages/ui/package.json", "peerDependencies"],
+      ];
+      for (const [index, [packagePath, field]] of targets.entries()) {
+        const packageJson = manifests.get(packagePath);
+        packageJson[field][`unregistered-${index}`] = "1.0.0";
+        writeManifests();
+        expect(validatePhysicalRegistry()).toContain(
+          `unregistered-${index}@1.0.0 não possui registro de supply chain.`,
+        );
+        delete packageJson[field][`unregistered-${index}`];
+      }
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed for missing, stale, aliased or ambiguous dependency records", () => {
+    const createManifests = () => [
+      {
+        packageJson: {
+          dependencies: { "@set-livre/contracts": "0.0.0", react: "19.2.8" },
+          name: "@set-livre/web",
+          version: "0.0.0",
+        },
+        packagePath: "package.json",
+      },
+      {
+        packageJson: {
+          dependencies: { "@set-livre/contracts": "0.0.0", react: "19.2.8" },
+          name: "@set-livre/backoffice",
+          version: "0.0.0",
+        },
+        packagePath: "apps/backoffice/package.json",
+      },
+      {
+        packageJson: { name: "@set-livre/contracts", version: "0.0.0" },
+        packagePath: "packages/contracts/package.json",
+      },
+      {
+        packageJson: {
+          name: "@set-livre/ui",
+          peerDependencies: { react: "19.2.8" },
+          version: "0.0.0",
+        },
+        packagePath: "packages/ui/package.json",
+      },
+    ];
+    const registry = (...rows) => `# Registro
+
+## Dependências npm diretas
+
+| Pacote | Versão | Superfície/finalidade | Licença | Justificativa | Avaliação de supply chain |
+| --- | --- | --- | --- | --- | --- |
+${rows.join("\n")}
+`;
+    const reactRow =
+      "| `react` | `19.2.8` | runtime server/client | MIT | renderer normativo necessário | pacote oficial com lockfile auditado |";
+    const zodRow =
+      "| `zod` | `4.4.3` | runtime server/client | MIT | valida fronteiras tipadas | pacote maduro com lockfile auditado |";
+
+    expect(validateCanonicalDependencyRegistry(createManifests(), registry(reactRow))).toEqual([]);
+
+    const missingRecord = createManifests();
+    missingRecord[1].packageJson.dependencies.zod = "4.4.3";
+    expect(validateCanonicalDependencyRegistry(missingRecord, registry(reactRow))).toContain(
+      "zod@4.4.3 não possui registro de supply chain.",
+    );
+    expect(
+      validateCanonicalDependencyRegistry(
+        createManifests(),
+        registry(reactRow.replace("`19.2.8`", "`19.2.7`")),
+      ),
+    ).toContain("react registra 19.2.7, mas os manifests canônicos exigem 19.2.8.");
+    expect(
+      validateCanonicalDependencyRegistry(createManifests(), registry(reactRow, zodRow)),
+    ).toContain("zod está registrado, mas não é dependência direta canônica.");
+
+    expect(() =>
+      validateCanonicalDependencyRegistry(createManifests(), registry(reactRow, reactRow)),
+    ).toThrow("mais de um registro");
+    expect(() =>
+      validateCanonicalDependencyRegistry(
+        createManifests(),
+        registry(
+          "| `react` / `react-dom` | `19.2.8` | runtime server/client | MIT | renderer normativo necessário | pacote oficial com lockfile auditado |",
+        ),
+      ),
+    ).toThrow("um único pacote npm");
+    expect(() =>
+      validateCanonicalDependencyRegistry(
+        createManifests(),
+        registry(
+          "| `react` | `19.2.8` | runtime server/client | MIT | renderer normativo necessário | — |",
+        ),
+      ),
+    ).toThrow("avaliação de supply chain");
+
+    const aliased = createManifests();
+    aliased[1].packageJson.dependencies.renderer = "NPM:react@19.2.8";
+    expect(() => validateCanonicalDependencyRegistry(aliased, registry(reactRow))).toThrow(
+      "alias npm",
+    );
+    const ranged = createManifests();
+    ranged[1].packageJson.dependencies.react = "^19.2.8";
+    expect(() => validateCanonicalDependencyRegistry(ranged, registry(reactRow))).toThrow(
+      "versão semver exata",
+    );
+    const divergent = createManifests();
+    divergent[1].packageJson.dependencies.react = "19.2.7";
+    expect(() => validateCanonicalDependencyRegistry(divergent, registry(reactRow))).toThrow(
+      "versões divergentes",
+    );
+    const invalidWorkspaceReference = createManifests();
+    invalidWorkspaceReference[0].packageJson.dependencies["@set-livre/contracts"] = "0.0.1";
+    expect(() =>
+      validateCanonicalDependencyRegistry(invalidWorkspaceReference, registry(reactRow)),
+    ).toThrow("versão interna exata");
+    const ambiguousBundle = createManifests();
+    ambiguousBundle[0].packageJson.bundleDependencies = true;
+    expect(() => validateCanonicalDependencyRegistry(ambiguousBundle, registry(reactRow))).toThrow(
+      "lista explícita",
+    );
+    for (const overrides of [
+      { react: "19.2.7" },
+      { react: "npm:preact@10.27.2" },
+      { "react@19.2.8": { ".": "19.2.7" } },
+    ]) {
+      const overridden = createManifests();
+      overridden[0].packageJson.overrides = overrides;
+      expect(() => validateCanonicalDependencyRegistry(overridden, registry(reactRow))).toThrow(
+        "overrides não vazio",
+      );
     }
   });
 
@@ -604,6 +857,612 @@ describe("docs check core", () => {
       });
     } finally {
       rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("enforces append-only migrations against the real Git comparison base", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-git-"));
+    const baselineName = "20260810000100_baseline.sql";
+    const baselinePath = `supabase/migrations/${baselineName}`;
+    const createRepository = (name) => {
+      const repository = join(testRoot, name);
+      mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
+      const git = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: repository,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      git("config", "diff.renames", "true");
+      writeFileSync(join(repository, baselinePath), "select 1;\n", "utf8");
+      git("add", baselinePath);
+      git("commit", "-m", "database baseline");
+      git("switch", "--create", "feature");
+      return { git, repository };
+    };
+    const migrationGate = (repository) => {
+      const gitState = readGitChanges(repository);
+      const baselineMigrationPaths = readGitMigrationPathsAtRevision(
+        repository,
+        gitState.comparisonBase,
+      );
+      return {
+        errors: validateMigrationGitChanges(gitState.changes, baselineMigrationPaths, {
+          repositoryRoot: repository,
+        }),
+        gitState,
+      };
+    };
+
+    try {
+      const legitimate = createRepository("legitimate");
+      const legitimatePath = "supabase/migrations/20260810000200_legitimate.sql";
+      writeFileSync(join(legitimate.repository, legitimatePath), "select 2;\n", "utf8");
+      expect(migrationGate(legitimate.repository).errors).toEqual([]);
+      legitimate.git("add", legitimatePath);
+      legitimate.git("commit", "-m", "add migration");
+      writeFileSync(join(legitimate.repository, legitimatePath), "select 2;\nselect 3;\n", "utf8");
+      expect(migrationGate(legitimate.repository).errors).toEqual([]);
+
+      const modified = createRepository("modified");
+      writeFileSync(join(modified.repository, baselinePath), "select 99;\n", "utf8");
+      expect(migrationGate(modified.repository).errors).toContain(
+        `Migration aplicada é imutável: ${baselinePath} recebeu status M.`,
+      );
+
+      const deleted = createRepository("deleted");
+      rmSync(join(deleted.repository, baselinePath));
+      expect(migrationGate(deleted.repository).errors).toContain(
+        `Migration aplicada é imutável: ${baselinePath} recebeu status D.`,
+      );
+
+      const renamed = createRepository("renamed");
+      const renamedPath = "supabase/migrations/20260810000200_renamed.sql";
+      renamed.git("mv", baselinePath, renamedPath);
+      const renamedResult = migrationGate(renamed.repository);
+      expect(renamedResult.gitState.changes).toEqual(
+        expect.arrayContaining([
+          { path: baselinePath, status: "R" },
+          { path: renamedPath, status: "R" },
+        ]),
+      );
+      expect(renamedResult.errors).toContain(
+        `Migration aplicada é imutável: ${baselinePath} recebeu status R.`,
+      );
+
+      const typeChanged = createRepository("type-changed");
+      rmSync(join(typeChanged.repository, baselinePath));
+      symlinkSync("external.sql", join(typeChanged.repository, baselinePath));
+      expect(migrationGate(typeChanged.repository).errors).toEqual(
+        expect.arrayContaining([
+          `Migration aplicada é imutável: ${baselinePath} recebeu status T.`,
+          `Migration precisa permanecer arquivo regular: ${baselinePath}.`,
+        ]),
+      );
+
+      const symbolicAddition = createRepository("symbolic-addition");
+      const symbolicAdditionPath = "supabase/migrations/20260810000200_symbolic.sql";
+      symlinkSync(baselineName, join(symbolicAddition.repository, symbolicAdditionPath));
+      expect(migrationGate(symbolicAddition.repository).errors).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${symbolicAdditionPath}`,
+          ),
+        ]),
+      );
+
+      const hardLinkedAddition = createRepository("hard-linked-addition");
+      const hardLinkSource = join(testRoot, "outside-migration.sql");
+      const hardLinkedAdditionPath = "supabase/migrations/20260810000200_hard_linked.sql";
+      writeFileSync(hardLinkSource, "select 2;\n", "utf8");
+      linkSync(hardLinkSource, join(hardLinkedAddition.repository, hardLinkedAdditionPath));
+      expect(migrationGate(hardLinkedAddition.repository).errors).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${hardLinkedAdditionPath}`,
+          ),
+        ]),
+      );
+
+      if (process.platform !== "win32") {
+        const fifoAddition = createRepository("fifo-addition");
+        const fifoAdditionPath = "supabase/migrations/20260810000200_fifo.sql";
+        execFileSync("mkfifo", [join(fifoAddition.repository, fifoAdditionPath)]);
+        expect(migrationGate(fifoAddition.repository).errors).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining(
+              `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${fifoAdditionPath}`,
+            ),
+          ]),
+        );
+      }
+
+      const directoryAddition = createRepository("directory-addition");
+      const directoryAdditionPath = "supabase/migrations/20260810000200_directory.sql";
+      mkdirSync(join(directoryAddition.repository, directoryAdditionPath));
+      writeFileSync(
+        join(directoryAddition.repository, directoryAdditionPath, "payload"),
+        "select 2;\n",
+        "utf8",
+      );
+      expect(migrationGate(directoryAddition.repository).errors).toContain(
+        `Nome de migration alterada inválido: ${directoryAdditionPath}/payload.`,
+      );
+
+      for (const [name, migrationName] of [
+        ["backdated", "20260809000100_backdated.sql"],
+        ["same-head", "20260810000100_same_head.sql"],
+      ]) {
+        const addition = createRepository(name);
+        const migrationPath = `supabase/migrations/${migrationName}`;
+        writeFileSync(join(addition.repository, migrationPath), "select 2;\n", "utf8");
+        expect(migrationGate(addition.repository).errors).toContain(
+          `Migration nova ${migrationPath} precisa avançar estritamente o head 20260810000100 da base Git.`,
+        );
+      }
+
+      const duplicated = createRepository("duplicated-version");
+      const firstDuplicate = "supabase/migrations/20260810000200_first.sql";
+      const secondDuplicate = "supabase/migrations/20260810000200_second.sql";
+      writeFileSync(join(duplicated.repository, firstDuplicate), "select 2;\n", "utf8");
+      writeFileSync(join(duplicated.repository, secondDuplicate), "select 3;\n", "utf8");
+      expect(migrationGate(duplicated.repository).errors).toContain(
+        `Migrations novas repetem a versão 20260810000200: ${firstDuplicate} e ${secondDuplicate}.`,
+      );
+
+      const bootstrap = join(testRoot, "bootstrap");
+      mkdirSync(join(bootstrap, "supabase/migrations"), { recursive: true });
+      const bootstrapGit = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: bootstrap,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      bootstrapGit("init", "--initial-branch", "main");
+      bootstrapGit("config", "user.email", "qa@set-livre.local");
+      bootstrapGit("config", "user.name", "Set Livre QA");
+      writeFileSync(join(bootstrap, baselinePath), "select 1;\n", "utf8");
+      expect(migrationGate(bootstrap).gitState.comparisonBase).toBeNull();
+      expect(migrationGate(bootstrap).errors).toEqual([]);
+      bootstrapGit("add", baselinePath);
+      bootstrapGit("commit", "-m", "root migration");
+      expect(migrationGate(bootstrap).gitState.comparisonBase).toBeNull();
+      expect(migrationGate(bootstrap).errors).toEqual([]);
+
+      const noOrigin = createRepository("no-origin-root-fallback");
+      noOrigin.git("branch", "--delete", "--force", "main");
+      const laterPath = "supabase/migrations/20260810000200_later.sql";
+      writeFileSync(join(noOrigin.repository, laterPath), "select 2;\n", "utf8");
+      noOrigin.git("add", laterPath);
+      noOrigin.git("commit", "-m", "advance feature without main");
+      expect(migrationGate(noOrigin.repository).gitState.comparisonBase).not.toBeNull();
+      const invalidNoOriginPath = "supabase/migrations/20260809000100_invalid.sql";
+      writeFileSync(join(noOrigin.repository, invalidNoOriginPath), "select 0;\n", "utf8");
+      expect(migrationGate(noOrigin.repository).errors).toContain(
+        `Migration nova ${invalidNoOriginPath} precisa avançar estritamente o head 20260810000100 da base Git.`,
+      );
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps committed migration blobs and modes immutable on main, features, index and worktree", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-history-"));
+    const firstPath = "supabase/migrations/20260810000100_first.sql";
+    const secondPath = "supabase/migrations/20260810000200_second.sql";
+    const thirdPath = "supabase/migrations/20260810000300_third.sql";
+    const createRepository = (name, { feature = false } = {}) => {
+      const repository = join(testRoot, name);
+      mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
+      const git = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: repository,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      git("config", "diff.renames", "true");
+      writeFileSync(join(repository, firstPath), "select 1;\n", "utf8");
+      git("add", firstPath);
+      git("commit", "-m", "root migration");
+      if (feature) {
+        git("switch", "--create", "feature");
+      }
+      return { git, repository };
+    };
+    const historyGate = (repository) => {
+      const { comparisonBase } = readGitChanges(repository);
+      return validateMigrationRepositoryHistory(repository, comparisonBase);
+    };
+
+    try {
+      const bootstrap = join(testRoot, "bootstrap");
+      mkdirSync(join(bootstrap, "supabase/migrations"), { recursive: true });
+      const bootstrapGit = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: bootstrap,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      bootstrapGit("init", "--initial-branch", "main");
+      bootstrapGit("config", "user.email", "qa@set-livre.local");
+      bootstrapGit("config", "user.name", "Set Livre QA");
+      writeFileSync(join(bootstrap, firstPath), "select 1;\n", "utf8");
+      expect(historyGate(bootstrap)).toEqual([]);
+      bootstrapGit("add", firstPath);
+      bootstrapGit("commit", "-m", "root migration");
+      expect(historyGate(bootstrap)).toEqual([]);
+
+      const mainHistory = createRepository("main-history");
+      writeFileSync(join(mainHistory.repository, secondPath), "select 2;\n", "utf8");
+      writeFileSync(join(mainHistory.repository, thirdPath), "select 3;\n", "utf8");
+      mainHistory.git("add", secondPath, thirdPath);
+      mainHistory.git("commit", "-m", "two legitimate migrations");
+      expect(historyGate(mainHistory.repository)).toEqual([]);
+      writeFileSync(join(mainHistory.repository, secondPath), "select 999;\n", "utf8");
+      mainHistory.git("add", secondPath);
+      mainHistory.git("commit", "-m", "mutate applied migration");
+      expect(historyGate(mainHistory.repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+
+      const featureHistory = createRepository("feature-history", { feature: true });
+      writeFileSync(join(featureHistory.repository, secondPath), "select 2;\n", "utf8");
+      featureHistory.git("add", secondPath);
+      featureHistory.git("commit", "-m", "add feature migration");
+      expect(historyGate(featureHistory.repository)).toEqual([]);
+      writeFileSync(join(featureHistory.repository, secondPath), "select 22;\n", "utf8");
+      featureHistory.git("add", secondPath);
+      featureHistory.git("commit", "-m", "mutate feature migration later");
+      expect(historyGate(featureHistory.repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+
+      const modeHistory = createRepository("mode-history", { feature: true });
+      writeFileSync(join(modeHistory.repository, secondPath), "select 2;\n", "utf8");
+      modeHistory.git("add", secondPath);
+      modeHistory.git("commit", "-m", "add feature migration");
+      modeHistory.git("update-index", "--chmod=+x", secondPath);
+      modeHistory.git("commit", "-m", "mutate migration mode");
+      expect(historyGate(modeHistory.repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+
+      const worktree = createRepository("worktree", { feature: true });
+      writeFileSync(join(worktree.repository, secondPath), "select 2;\n", "utf8");
+      worktree.git("add", secondPath);
+      worktree.git("commit", "-m", "add feature migration");
+      writeFileSync(join(worktree.repository, secondPath), "select 22;\n", "utf8");
+      expect(historyGate(worktree.repository)).toContain(
+        `worktree: Migration aplicada é imutável: ${secondPath} recebeu status M.`,
+      );
+
+      const staged = createRepository("staged", { feature: true });
+      writeFileSync(join(staged.repository, secondPath), "select 2;\n", "utf8");
+      staged.git("add", secondPath);
+      staged.git("commit", "-m", "add feature migration");
+      writeFileSync(join(staged.repository, secondPath), "select 222;\n", "utf8");
+      staged.git("add", secondPath);
+      writeFileSync(join(staged.repository, secondPath), "select 2;\n", "utf8");
+      expect(historyGate(staged.repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `índice Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+
+      const statCache = createRepository("stat-cache");
+      const statCachedPath = join(statCache.repository, firstPath);
+      const stableTimestamp = new Date("2020-01-01T00:00:00.000Z");
+      utimesSync(statCachedPath, stableTimestamp, stableTimestamp);
+      statCache.git("update-index", "--refresh");
+      statCache.git("config", "core.trustctime", "false");
+      statCache.git("config", "core.checkStat", "minimal");
+      writeFileSync(statCachedPath, "select 9;\n", "utf8");
+      utimesSync(statCachedPath, stableTimestamp, stableTimestamp);
+      expect(statCache.git("status", "--short", "--", firstPath)).toBe("");
+      expect(historyGate(statCache.repository)).toContain(
+        `índice/worktree físico: Migration física diverge do blob ou modo indexado: ${firstPath}.`,
+      );
+
+      if (process.platform !== "win32") {
+        const ignoredMode = createRepository("ignored-mode");
+        ignoredMode.git("config", "core.fileMode", "false");
+        chmodSync(join(ignoredMode.repository, firstPath), 0o755);
+        expect(ignoredMode.git("status", "--short", "--", firstPath)).toBe("");
+        expect(historyGate(ignoredMode.repository)).toContain(
+          `índice/worktree físico: Migration física diverge do blob ou modo indexado: ${firstPath}.`,
+        );
+      }
+
+      const secondParentBase = createRepository("second-parent-base");
+      secondParentBase.git("switch", "--create", "side");
+      writeFileSync(join(secondParentBase.repository, secondPath), "select 2;\n", "utf8");
+      secondParentBase.git("add", secondPath);
+      secondParentBase.git("commit", "-m", "migration on side branch");
+      const sideRevision = secondParentBase.git("rev-parse", "HEAD").trim();
+      secondParentBase.git("switch", "main");
+      writeFileSync(join(secondParentBase.repository, "README.md"), "# Main\n", "utf8");
+      secondParentBase.git("add", "README.md");
+      secondParentBase.git("commit", "-m", "advance first parent");
+      secondParentBase.git("merge", "--no-ff", "side", "-m", "merge side branch");
+      expect(() =>
+        validateMigrationRepositoryHistory(secondParentBase.repository, sideRevision),
+      ).toThrow("não pertence à cadeia first-parent");
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("requires every physical migration to be indexed or canonically visible as untracked", () => {
+    const repository = mkdtempSync(join(tmpdir(), "set-livre-migration-visibility-"));
+    const firstPath = "supabase/migrations/20260810000100_first.sql";
+    const visiblePath = "supabase/migrations/20260810000200_visible.sql";
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    const historyGate = () => {
+      const { comparisonBase } = readGitChanges(repository);
+      return validateMigrationRepositoryHistory(repository, comparisonBase);
+    };
+
+    try {
+      mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      writeFileSync(join(repository, firstPath), "select 1;\n", "utf8");
+      git("add", firstPath);
+      git("commit", "-m", "root migration");
+
+      writeFileSync(join(repository, visiblePath), "select 2;\n", "utf8");
+      expect(
+        git("ls-files", "--others", "--exclude-standard", "--", "supabase/migrations").trim(),
+      ).toBe(visiblePath);
+      expect(historyGate()).toEqual([]);
+
+      writeFileSync(join(repository, ".git/info/exclude"), `/${visiblePath}\n`, "utf8");
+      expect(git("check-ignore", visiblePath).trim()).toBe(visiblePath);
+      expect(historyGate()).toContain(
+        `índice/worktree físico: Migration física não está indexada nem visível como untracked no Git canônico: ${visiblePath}.`,
+      );
+    } finally {
+      rmSync(repository, { force: true, recursive: true });
+    }
+  });
+
+  it("binds every Git migration view to the physical repository root being audited", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-worktree-root-"));
+    const divertedRepository = join(testRoot, "diverted");
+    const alternateWorktree = join(testRoot, "alternate");
+    const linkedRepository = join(testRoot, "linked-source");
+    const linkedWorktree = join(testRoot, "linked-worktree");
+    const firstPath = "supabase/migrations/20260810000100_first.sql";
+    const secondPath = "supabase/migrations/20260810000200_second.sql";
+    const initializeRepository = (repository) => {
+      mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
+      const git = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: repository,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      writeFileSync(join(repository, firstPath), "select 1;\n", "utf8");
+      git("add", firstPath);
+      git("commit", "-m", "root migration");
+      return git;
+    };
+
+    try {
+      const divertedGit = initializeRepository(divertedRepository);
+      writeFileSync(join(divertedRepository, secondPath), "select 2;\n", "utf8");
+      writeFileSync(join(divertedRepository, ".gitignore"), `/${secondPath}\n`, "utf8");
+      expect(divertedGit("check-ignore", secondPath).trim()).toBe(secondPath);
+
+      mkdirSync(join(alternateWorktree, "supabase/migrations"), { recursive: true });
+      writeFileSync(join(alternateWorktree, firstPath), "select 1;\n", "utf8");
+      writeFileSync(join(alternateWorktree, secondPath), "select 2;\n", "utf8");
+      divertedGit("config", "core.worktree", alternateWorktree);
+      expect(divertedGit("rev-parse", "--show-toplevel").trim()).not.toBe(divertedRepository);
+      expect(
+        divertedGit(
+          "ls-files",
+          "--others",
+          "--exclude-standard",
+          "--",
+          "supabase/migrations",
+        ).trim(),
+      ).toBe(secondPath);
+
+      const divertedHead = divertedGit("rev-parse", "HEAD").trim();
+      for (const operation of [
+        () => readGitChanges(divertedRepository),
+        () => readGitMigrationPathsAtRevision(divertedRepository, divertedHead),
+        () => validateMigrationRepositoryHistory(divertedRepository, null),
+      ]) {
+        expect(operation).toThrow(
+          "O worktree Git canônico não corresponde à raiz física auditada.",
+        );
+      }
+
+      const linkedGit = initializeRepository(linkedRepository);
+      const linkedHead = linkedGit("rev-parse", "HEAD").trim();
+      linkedGit("worktree", "add", "--detach", linkedWorktree, linkedHead);
+      const linkedState = readGitChanges(linkedWorktree);
+      expect(readGitMigrationPathsAtRevision(linkedWorktree, linkedHead)).toEqual([firstPath]);
+      expect(
+        validateMigrationRepositoryHistory(linkedWorktree, linkedState.comparisonBase),
+      ).toEqual([]);
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses incomplete or locally rewritten Git migration history", () => {
+    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-history-integrity-"));
+    const repository = join(testRoot, "origin");
+    const shallowClone = join(testRoot, "shallow");
+    const firstPath = "supabase/migrations/20260810000100_first.sql";
+    const secondPath = "supabase/migrations/20260810000200_second.sql";
+    mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
+    const git = (...argumentsList) =>
+      execFileSync("git", argumentsList, {
+        cwd: repository,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    const historyGate = (root) => {
+      const { comparisonBase } = readGitChanges(root);
+      return validateMigrationRepositoryHistory(root, comparisonBase);
+    };
+
+    try {
+      git("init", "--initial-branch", "main");
+      git("config", "user.email", "qa@set-livre.local");
+      git("config", "user.name", "Set Livre QA");
+      writeFileSync(join(repository, firstPath), "select 1;\n", "utf8");
+      git("add", firstPath);
+      git("commit", "-m", "root migration");
+      const rootRevision = git("rev-parse", "HEAD");
+      writeFileSync(join(repository, secondPath), "select 2;\n", "utf8");
+      git("add", secondPath);
+      git("commit", "-m", "add migration");
+      writeFileSync(join(repository, secondPath), "select 999;\n", "utf8");
+      git("add", secondPath);
+      git("commit", "-m", "mutate committed migration");
+      const headRevision = git("rev-parse", "HEAD");
+
+      expect(historyGate(repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+
+      execFileSync("git", ["clone", "--depth=1", pathToFileURL(repository).href, shallowClone], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      expect(
+        execFileSync("git", ["rev-parse", "--is-shallow-repository"], {
+          cwd: shallowClone,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("true");
+      expect(() => historyGate(shallowClone)).toThrow("clones shallow são recusados");
+
+      const replacementTree = git("rev-parse", "HEAD^{tree}");
+      const replacementRevision = git(
+        "commit-tree",
+        replacementTree,
+        "-p",
+        rootRevision,
+        "-m",
+        "hide intermediate migration commit",
+      );
+      git("replace", headRevision, replacementRevision);
+      expect(() => historyGate(repository)).toThrow("não pode usar refs/replace");
+      git("replace", "-d", headRevision);
+
+      const customReplacementNamespace = "refs/custom-replacements/";
+      git("update-ref", `${customReplacementNamespace}${headRevision}`, replacementRevision);
+      expect(
+        execFileSync("git", ["rev-list", "--count", "HEAD"], {
+          cwd: repository,
+          encoding: "utf8",
+          env: { ...process.env, GIT_REPLACE_REF_BASE: customReplacementNamespace },
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim(),
+      ).toBe("2");
+
+      const observedGitEnvironments = [];
+      const executeObservedGit = (command, argumentsList, options) => {
+        observedGitEnvironments.push(options.env);
+        return execFileSync(command, argumentsList, options);
+      };
+      const customGraftPath = join(testRoot, "custom-grafts");
+      const customShallowPath = join(testRoot, "custom-shallow");
+      writeFileSync(customGraftPath, `${headRevision} ${rootRevision}\n`, "utf8");
+      writeFileSync(customShallowPath, `${headRevision}\n`, "utf8");
+      withProcessEnvironment(
+        {
+          GIT_GRAFT_FILE: customGraftPath,
+          GIT_REPLACE_REF_BASE: customReplacementNamespace,
+          GIT_SHALLOW_FILE: customShallowPath,
+          SECRET_LEAK_SENTINEL: "must-not-reach-git",
+        },
+        () => {
+          const { comparisonBase } = readGitChanges(repository, executeObservedGit);
+          expect(
+            readGitMigrationPathsAtRevision(repository, comparisonBase, executeObservedGit),
+          ).toEqual([firstPath]);
+          expect(
+            validateMigrationRepositoryHistory(repository, comparisonBase, executeObservedGit),
+          ).toEqual(
+            expect.arrayContaining([
+              expect.stringContaining(
+                `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+              ),
+            ]),
+          );
+        },
+      );
+      expect(observedGitEnvironments.length).toBeGreaterThan(0);
+      for (const environment of observedGitEnvironments) {
+        expect(environment).toEqual(
+          expect.objectContaining({
+            GIT_NO_REPLACE_OBJECTS: "1",
+            GIT_TERMINAL_PROMPT: "0",
+            LANG: "C",
+            LC_ALL: "C",
+          }),
+        );
+        expect(environment).not.toHaveProperty("GIT_GRAFT_FILE");
+        expect(environment).not.toHaveProperty("GIT_REPLACE_REF_BASE");
+        expect(environment).not.toHaveProperty("GIT_SHALLOW_FILE");
+        expect(environment).not.toHaveProperty("SECRET_LEAK_SENTINEL");
+        expect(JSON.stringify(environment)).not.toContain("must-not-reach-git");
+      }
+      git("update-ref", "-d", `${customReplacementNamespace}${headRevision}`);
+
+      const graftPath = git("rev-parse", "--git-path", "info/grafts");
+      writeFileSync(join(repository, graftPath), `${headRevision} ${rootRevision}\n`, "utf8");
+      expect(() => historyGate(repository)).toThrow("info/grafts legado não vazio");
+      writeFileSync(join(repository, graftPath), "", "utf8");
+      expect(historyGate(repository)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(
+            `histórico Git: Migration commitada é imutável: ${secondPath} mudou blob, tipo ou modo`,
+          ),
+        ]),
+      );
+    } finally {
+      rmSync(testRoot, { force: true, recursive: true });
     }
   });
 

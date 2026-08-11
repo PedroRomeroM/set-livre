@@ -622,6 +622,34 @@ describe("local development server launcher", () => {
     ).toThrow("aceita somente .env.local");
   });
 
+  it("rejects every development dotenv overlay that Next would load", () => {
+    for (const application of ["web", "backoffice"]) {
+      for (const overlayName of [".env", ".env.development", ".env.development.local"]) {
+        const fixture = temporaryRepository();
+        const workingDirectory =
+          application === "web" ? fixture.root : resolve(fixture.root, "apps/backoffice");
+        const overlayPath = resolve(workingDirectory, overlayName);
+        writeFileSync(
+          overlayPath,
+          [
+            "NEXT_PUBLIC_APP_URL=https://cloud.example.com",
+            "SUPABASE_SERVICE_ROLE_KEY=cloud-secret",
+            "",
+          ].join("\n"),
+          { mode: 0o600 },
+        );
+
+        expect(() =>
+          createLocalDevelopmentServerLaunch({
+            application,
+            inheritedEnvironment: { PATH: process.env.PATH },
+            repositoryRoot: fixture.root,
+          }),
+        ).toThrow(`remova ${overlayPath}`);
+      }
+    }
+  });
+
   it("fails closed before launch for invalid app, mode or local runtime", () => {
     const fixture = temporaryRepository();
     expect(() =>

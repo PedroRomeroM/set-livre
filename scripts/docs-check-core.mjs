@@ -8,8 +8,9 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
 } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import ts from "typescript";
 
@@ -38,12 +39,41 @@ const dependencyMapFields = [
   "peerDependencies",
 ];
 const bundledDependencyFields = ["bundleDependencies", "bundledDependencies"];
+const canonicalPackageManifestPaths = [
+  "package.json",
+  "apps/backoffice/package.json",
+  "packages/contracts/package.json",
+  "packages/ui/package.json",
+];
 const canonicalWorkspacePatterns = ["apps/*", "packages/*"];
 const canonicalWorkspacePackagePaths = [
   "apps/backoffice/package.json",
   "packages/contracts/package.json",
   "packages/ui/package.json",
 ];
+const dependencyRegistryColumns = [
+  "Pacote",
+  "Versão",
+  "Superfície/finalidade",
+  "Licença",
+  "Justificativa",
+  "Avaliação de supply chain",
+];
+const exactRegistryVersionPattern =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
+const npmPackageNamePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u;
+const migrationDirectoryPrefix = "supabase/migrations/";
+const migrationFilePattern = /^(\d{14})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/u;
+const controlledGitEnvironment = {
+  GIT_ATTR_NOSYSTEM: "1",
+  GIT_CONFIG_COUNT: "0",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_NO_REPLACE_OBJECTS: "1",
+  GIT_OPTIONAL_LOCKS: "0",
+  GIT_TERMINAL_PROMPT: "0",
+  LANG: "C",
+  LC_ALL: "C",
+};
 const canonicalNpmConfiguration = [
   "engine-strict=true",
   "fund=false",
@@ -234,7 +264,7 @@ export function readCanonicalPackageManifests(repositoryRoot) {
     }
   }
 
-  return ["package.json", ...canonicalWorkspacePackagePaths].map((packagePath) => {
+  return canonicalPackageManifestPaths.map((packagePath) => {
     const packageDirectory = resolve(resolvedRoot, dirname(packagePath));
     if (lstatSync(resolve(packageDirectory, "npm-shrinkwrap.json"), { throwIfNoEntry: false })) {
       throw new Error(`${packagePath} não pode introduzir npm-shrinkwrap.json.`);
@@ -422,6 +452,273 @@ export function findForbiddenInstallDependencies(packageJson) {
   return installDependencyNames(packageJson).filter(isForbiddenInstallDependency);
 }
 
+function parseMarkdownTableRow(line, expectedColumnCount) {
+  if (!line.startsWith("|") || !line.endsWith("|")) {
+    throw new TypeError("A tabela de dependências precisa usar linhas Markdown completas.");
+  }
+
+  const columns = line
+    .slice(1, -1)
+    .split("|")
+    .map((column) => column.trim());
+  if (columns.length !== expectedColumnCount) {
+    throw new TypeError(
+      `A tabela de dependências precisa conter exatamente ${expectedColumnCount} colunas.`,
+    );
+  }
+  return columns;
+}
+
+function assertMeaningfulRegistryField(value, field, packageName) {
+  const normalized = value.trim();
+  if (normalized.length < 3 || /^(?:-|\u2014|n\/?a|none|pendente|tbd)$/iu.test(normalized)) {
+    throw new TypeError(`${packageName} não possui ${field} explícita no registro.`);
+  }
+}
+
+function parseDependencyRegistry(content) {
+  const heading = "## Dependências npm diretas";
+  const headingMatches = [...content.matchAll(/^## Dependências npm diretas\s*$/gmu)];
+  if (headingMatches.length !== 1) {
+    throw new TypeError(`O registro precisa conter exatamente uma seção ${heading}.`);
+  }
+
+  const headingMatch = headingMatches[0];
+  const sectionOffset = (headingMatch.index ?? 0) + headingMatch[0].length;
+  const afterHeading = content.slice(sectionOffset);
+  const nextHeadingOffset = afterHeading.search(/^## /mu);
+  const section =
+    nextHeadingOffset === -1 ? afterHeading : afterHeading.slice(0, nextHeadingOffset);
+  const lines = section.split(/\r?\n/u);
+  while (lines[0]?.trim() === "") {
+    lines.shift();
+  }
+
+  const tableLines = [];
+  while (lines[0]?.startsWith("|")) {
+    tableLines.push(lines.shift());
+  }
+  if (tableLines.length < 3) {
+    throw new TypeError(
+      "A seção de dependências npm precisa conter uma tabela e ao menos um pacote.",
+    );
+  }
+  if (lines.some((line) => line.startsWith("|"))) {
+    throw new TypeError("A seção de dependências npm contém uma tabela adicional ambígua.");
+  }
+
+  const header = parseMarkdownTableRow(tableLines[0], dependencyRegistryColumns.length);
+  if (header.some((column, index) => column !== dependencyRegistryColumns[index])) {
+    throw new TypeError(
+      `A tabela de dependências precisa preservar as colunas: ${dependencyRegistryColumns.join(", ")}.`,
+    );
+  }
+  const separator = parseMarkdownTableRow(tableLines[1], dependencyRegistryColumns.length);
+  if (separator.some((column) => !/^:?-{3,}:?$/u.test(column))) {
+    throw new TypeError("O separador da tabela de dependências é inválido.");
+  }
+
+  const registry = new Map();
+  for (const line of tableLines.slice(2)) {
+    const [packageCell, versionCell, surface, license, justification, supplyChain] =
+      parseMarkdownTableRow(line, dependencyRegistryColumns.length);
+    const packageMatch = packageCell?.match(/^`([^`]+)`$/u);
+    const versionMatch = versionCell?.match(/^`([^`]+)`$/u);
+    const packageName = packageMatch?.[1];
+    const version = versionMatch?.[1];
+    if (
+      packageName === undefined ||
+      packageName !== packageName.toLowerCase() ||
+      !npmPackageNamePattern.test(packageName)
+    ) {
+      throw new TypeError(
+        `A entrada ${packageCell ?? "ausente"} precisa identificar um único pacote npm canônico em code span.`,
+      );
+    }
+    if (version === undefined || !exactRegistryVersionPattern.test(version)) {
+      throw new TypeError(`${packageName} precisa registrar uma versão semver exata em code span.`);
+    }
+    if (registry.has(packageName)) {
+      throw new TypeError(`${packageName} possui mais de um registro de dependência.`);
+    }
+
+    assertMeaningfulRegistryField(surface ?? "", "superfície/finalidade", packageName);
+    assertMeaningfulRegistryField(license ?? "", "licença", packageName);
+    assertMeaningfulRegistryField(justification ?? "", "justificativa", packageName);
+    assertMeaningfulRegistryField(supplyChain ?? "", "avaliação de supply chain", packageName);
+    registry.set(packageName, { version });
+  }
+
+  return registry;
+}
+
+function canonicalExternalManifestDependencies(packageManifests) {
+  if (!Array.isArray(packageManifests)) {
+    throw new TypeError("Os manifests canônicos precisam ser fornecidos como lista.");
+  }
+
+  const manifestsByPath = new Map();
+  for (const manifest of packageManifests) {
+    if (
+      manifest === null ||
+      typeof manifest !== "object" ||
+      typeof manifest.packagePath !== "string" ||
+      manifest.packageJson === null ||
+      typeof manifest.packageJson !== "object" ||
+      Array.isArray(manifest.packageJson)
+    ) {
+      throw new TypeError("Cada manifesto canônico precisa declarar packagePath e packageJson.");
+    }
+    if (manifestsByPath.has(manifest.packagePath)) {
+      throw new TypeError(`O manifesto ${manifest.packagePath} foi informado mais de uma vez.`);
+    }
+    manifestsByPath.set(manifest.packagePath, manifest.packageJson);
+  }
+  if (
+    manifestsByPath.size !== canonicalPackageManifestPaths.length ||
+    canonicalPackageManifestPaths.some((packagePath) => !manifestsByPath.has(packagePath))
+  ) {
+    throw new TypeError(
+      `A avaliação precisa receber exatamente os manifests ${canonicalPackageManifestPaths.join(", ")}.`,
+    );
+  }
+
+  const workspaceVersions = new Map();
+  for (const [packagePath, packageJson] of manifestsByPath) {
+    const { name, version } = packageJson;
+    if (
+      typeof name !== "string" ||
+      name !== name.toLowerCase() ||
+      !npmPackageNamePattern.test(name) ||
+      typeof version !== "string" ||
+      !exactRegistryVersionPattern.test(version)
+    ) {
+      throw new TypeError(`${packagePath} precisa declarar nome canônico e versão semver exata.`);
+    }
+    if (workspaceVersions.has(name)) {
+      throw new TypeError(`O nome de workspace ${name} está duplicado.`);
+    }
+    workspaceVersions.set(name, version);
+  }
+
+  const externalVersions = new Map();
+  for (const [packagePath, packageJson] of manifestsByPath) {
+    if (packageJson.overrides !== undefined) {
+      if (
+        packageJson.overrides === null ||
+        typeof packageJson.overrides !== "object" ||
+        Array.isArray(packageJson.overrides)
+      ) {
+        throw new TypeError(`${packagePath}: overrides precisa ser um objeto vazio ou ausente.`);
+      }
+      if (Object.keys(packageJson.overrides).length > 0) {
+        throw new TypeError(
+          `${packagePath}: overrides não vazio é ambíguo para versão e origem efetivamente instaladas.`,
+        );
+      }
+    }
+
+    const declaredInManifest = new Set();
+    for (const field of dependencyMapFields) {
+      const dependencies = packageJson[field];
+      if (dependencies === undefined) {
+        continue;
+      }
+      if (
+        dependencies === null ||
+        typeof dependencies !== "object" ||
+        Array.isArray(dependencies)
+      ) {
+        throw new TypeError(`${packagePath}: a seção ${field} precisa ser um mapa de specs.`);
+      }
+
+      for (const [dependency, version] of Object.entries(dependencies)) {
+        if (
+          dependency !== dependency.toLowerCase() ||
+          !npmPackageNamePattern.test(dependency) ||
+          typeof version !== "string"
+        ) {
+          throw new TypeError(`${packagePath}: ${field} possui dependência ou spec inválida.`);
+        }
+        declaredInManifest.add(dependency);
+        if (version.slice(0, "npm:".length).toLowerCase() === "npm:") {
+          throw new TypeError(
+            `${packagePath}: alias npm em ${field}.${dependency} é ambíguo para o registro de supply chain.`,
+          );
+        }
+        if (!exactRegistryVersionPattern.test(version)) {
+          throw new TypeError(
+            `${packagePath}: ${field}.${dependency} precisa usar uma versão semver exata.`,
+          );
+        }
+
+        const workspaceVersion = workspaceVersions.get(dependency);
+        if (workspaceVersion !== undefined) {
+          if (workspaceVersion !== version) {
+            throw new TypeError(
+              `${packagePath}: ${dependency} precisa referenciar a versão interna exata ${workspaceVersion}.`,
+            );
+          }
+          continue;
+        }
+
+        const currentVersion = externalVersions.get(dependency);
+        if (currentVersion !== undefined && currentVersion !== version) {
+          throw new TypeError(
+            `${dependency} possui versões divergentes nos manifests canônicos: ${currentVersion} e ${version}.`,
+          );
+        }
+        externalVersions.set(dependency, version);
+      }
+    }
+
+    for (const field of bundledDependencyFields) {
+      const bundledDependencies = packageJson[field];
+      if (bundledDependencies === undefined || bundledDependencies === false) {
+        continue;
+      }
+      if (!Array.isArray(bundledDependencies)) {
+        throw new TypeError(
+          `${packagePath}: ${field} precisa ser uma lista explícita de dependências já declaradas.`,
+        );
+      }
+      for (const dependency of bundledDependencies) {
+        if (typeof dependency !== "string" || !declaredInManifest.has(dependency)) {
+          throw new TypeError(
+            `${packagePath}: ${field} referencia dependência ausente ou ambígua: ${String(dependency)}.`,
+          );
+        }
+      }
+    }
+  }
+
+  return externalVersions;
+}
+
+export function validateCanonicalDependencyRegistry(packageManifests, registryContent) {
+  const canonicalDependencies = canonicalExternalManifestDependencies(packageManifests);
+  const registry = parseDependencyRegistry(registryContent);
+  const errors = [];
+
+  for (const [dependency, version] of canonicalDependencies) {
+    const record = registry.get(dependency);
+    if (record === undefined) {
+      errors.push(`${dependency}@${version} não possui registro de supply chain.`);
+    } else if (record.version !== version) {
+      errors.push(
+        `${dependency} registra ${record.version}, mas os manifests canônicos exigem ${version}.`,
+      );
+    }
+  }
+  for (const dependency of registry.keys()) {
+    if (!canonicalDependencies.has(dependency)) {
+      errors.push(`${dependency} está registrado, mas não é dependência direta canônica.`);
+    }
+  }
+
+  return errors.sort();
+}
+
 export function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
@@ -455,6 +752,125 @@ export function parseFeatureReferences(content) {
   }
 
   return [...featureIds].sort();
+}
+
+function gitEnvironment(inheritedEnvironment = process.env, platform = process.platform) {
+  const environment = { ...controlledGitEnvironment };
+  const preserve = (targetName, ...sourceNames) => {
+    const value = sourceNames
+      .map((name) => inheritedEnvironment[name])
+      .find(
+        (candidate) =>
+          typeof candidate === "string" && candidate !== "" && !candidate.includes("\0"),
+      );
+    if (value !== undefined) {
+      environment[targetName] = value;
+    }
+  };
+
+  if (platform === "win32") {
+    preserve("Path", "Path", "PATH");
+    preserve("PATHEXT", "PATHEXT");
+    preserve("SystemRoot", "SystemRoot", "SYSTEMROOT");
+    preserve("WINDIR", "WINDIR", "SystemRoot", "SYSTEMROOT");
+  } else {
+    preserve("PATH", "PATH");
+  }
+
+  return environment;
+}
+
+function gitExecutionOptions(root) {
+  return {
+    cwd: root,
+    encoding: "utf8",
+    env: gitEnvironment(),
+    stdio: ["ignore", "pipe", "ignore"],
+  };
+}
+
+function assertCanonicalGitWorktreeRoot(runGit, repositoryRoot) {
+  const resolvedRoot = resolve(repositoryRoot);
+  const initialRootInformation = lstatSync(resolvedRoot, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  if (
+    initialRootInformation === undefined ||
+    !initialRootInformation.isDirectory() ||
+    initialRootInformation.isSymbolicLink()
+  ) {
+    throw new Error("A raiz auditada do repositório precisa ser um diretório físico.");
+  }
+
+  let canonicalRoot;
+  try {
+    canonicalRoot = realpathSync.native(resolvedRoot);
+  } catch {
+    throw new Error("Não foi possível resolver a raiz física auditada do repositório.");
+  }
+
+  const topLevelOutput = runGit(["rev-parse", "--show-toplevel"]);
+  const topLevelWithoutLineFeed = topLevelOutput.endsWith("\n")
+    ? topLevelOutput.slice(0, -1)
+    : topLevelOutput;
+  const topLevel = topLevelWithoutLineFeed.endsWith("\r")
+    ? topLevelWithoutLineFeed.slice(0, -1)
+    : topLevelWithoutLineFeed;
+  if (
+    topLevel === "" ||
+    !isAbsolute(topLevel) ||
+    topLevel.includes("\0") ||
+    topLevel.includes("\n") ||
+    topLevel.includes("\r")
+  ) {
+    throw new Error("O Git não informou um worktree canônico absoluto e inequívoco.");
+  }
+
+  const resolvedTopLevel = resolve(topLevel);
+  const topLevelInformation = lstatSync(resolvedTopLevel, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  let canonicalTopLevel;
+  try {
+    canonicalTopLevel = realpathSync.native(resolvedTopLevel);
+  } catch {
+    throw new Error("Não foi possível resolver fisicamente o worktree informado pelo Git.");
+  }
+  const finalRootInformation = lstatSync(resolvedRoot, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  const finalTopLevelInformation = lstatSync(resolvedTopLevel, {
+    bigint: true,
+    throwIfNoEntry: false,
+  });
+  const finalCanonicalRoot = realpathSync.native(resolvedRoot);
+  const finalCanonicalTopLevel = realpathSync.native(resolvedTopLevel);
+  const sameCanonicalPath =
+    relative(canonicalRoot, canonicalTopLevel) === "" &&
+    relative(canonicalTopLevel, canonicalRoot) === "" &&
+    relative(finalCanonicalRoot, finalCanonicalTopLevel) === "" &&
+    relative(finalCanonicalTopLevel, finalCanonicalRoot) === "";
+
+  if (
+    topLevelInformation === undefined ||
+    finalRootInformation === undefined ||
+    finalTopLevelInformation === undefined ||
+    !topLevelInformation.isDirectory() ||
+    !finalRootInformation.isDirectory() ||
+    !finalTopLevelInformation.isDirectory() ||
+    topLevelInformation.isSymbolicLink() ||
+    finalRootInformation.isSymbolicLink() ||
+    finalTopLevelInformation.isSymbolicLink() ||
+    !samePhysicalFile(initialRootInformation, topLevelInformation) ||
+    !samePhysicalFile(initialRootInformation, finalRootInformation) ||
+    !samePhysicalFile(initialRootInformation, finalTopLevelInformation) ||
+    !sameCanonicalPath
+  ) {
+    throw new Error("O worktree Git canônico não corresponde à raiz física auditada.");
+  }
 }
 
 function resolveGitComparisonBase(runGit) {
@@ -580,18 +996,678 @@ export function parseGitChanges(output, implicitStatus) {
 }
 
 export function readGitChanges(root, executeGit = execFileSync) {
-  const runGit = (argumentsList) =>
-    executeGit("git", argumentsList, {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+  const runGit = (argumentsList) => executeGit("git", argumentsList, gitExecutionOptions(root));
+  assertCanonicalGitWorktreeRoot(runGit, root);
   const comparisonBase = resolveGitComparisonBase(runGit);
   const changes = gitChangedFileArgumentLists(comparisonBase).flatMap(
     ({ argumentsList, implicitStatus }) => parseGitChanges(runGit(argumentsList), implicitStatus),
   );
 
   return { changes, comparisonBase };
+}
+
+export function readGitMigrationPathsAtRevision(root, revision, executeGit = execFileSync) {
+  const runGit = (argumentsList) => executeGit("git", argumentsList, gitExecutionOptions(root));
+  assertCanonicalGitWorktreeRoot(runGit, root);
+  if (revision === null) {
+    return [];
+  }
+  if (typeof revision !== "string" || revision.trim() === "") {
+    throw new TypeError("A revisão Git de migrations precisa ser um commit explícito.");
+  }
+
+  const output = runGit([
+    "ls-tree",
+    "-r",
+    "-z",
+    "--name-only",
+    revision,
+    "--",
+    migrationDirectoryPrefix.slice(0, -1),
+  ]);
+  return output.split("\0").filter(Boolean).sort();
+}
+
+function migrationSnapshotLabel(revision) {
+  return revision.length > 12 ? revision.slice(0, 12) : revision;
+}
+
+function parseGitTreeMigrationSnapshot(output, revision) {
+  const entries = new Map();
+  const errors = new Set();
+  const label = migrationSnapshotLabel(revision);
+
+  for (const record of output.split("\0").filter(Boolean)) {
+    const separator = record.indexOf("\t");
+    const metadata = separator === -1 ? "" : record.slice(0, separator);
+    const path = separator === -1 ? "" : record.slice(separator + 1);
+    const match = metadata.match(/^([0-7]{6}) ([a-z]+) ([0-9a-f]+)$/u);
+    if (match === null || path === "" || !path.startsWith(migrationDirectoryPrefix)) {
+      errors.add(`Snapshot Git ${label} contém entrada de migration inválida.`);
+      continue;
+    }
+    if (entries.has(path)) {
+      errors.add(`Snapshot Git ${label} contém migration duplicada: ${path}.`);
+      continue;
+    }
+    entries.set(path, {
+      mode: match[1],
+      objectId: match[3],
+      path,
+      type: match[2],
+    });
+  }
+
+  return { entries, errors: [...errors], label };
+}
+
+function parseGitIndexMigrationSnapshot(output) {
+  const entries = new Map();
+  const errors = new Set();
+
+  for (const record of output.split("\0").filter(Boolean)) {
+    const separator = record.indexOf("\t");
+    const metadata = separator === -1 ? "" : record.slice(0, separator);
+    const path = separator === -1 ? "" : record.slice(separator + 1);
+    const match = metadata.match(/^([0-7]{6}) ([0-9a-f]+) ([0-3])$/u);
+    if (match === null || path === "" || !path.startsWith(migrationDirectoryPrefix)) {
+      errors.add("O índice Git contém entrada de migration inválida.");
+      continue;
+    }
+    if (match[3] !== "0") {
+      errors.add(`O índice Git contém conflito não resolvido na migration ${path}.`);
+      continue;
+    }
+    if (entries.has(path)) {
+      errors.add(`O índice Git contém migration duplicada: ${path}.`);
+      continue;
+    }
+    entries.set(path, {
+      mode: match[1],
+      objectId: match[2],
+      path,
+      type: match[1] === "160000" ? "commit" : "blob",
+    });
+  }
+
+  return { entries, errors: [...errors], label: "índice Git" };
+}
+
+function validateMigrationSnapshot(snapshot, errors) {
+  const versions = new Map();
+
+  for (const entry of snapshot.entries.values()) {
+    const version = migrationPathVersion(entry.path);
+    if (version === undefined || version === null) {
+      errors.add(`${snapshot.label} contém nome de migration inválido: ${entry.path}.`);
+      continue;
+    }
+    if (
+      entry.type !== "blob" ||
+      !/^(?:100644|100755)$/u.test(entry.mode) ||
+      /^0+$/u.test(entry.objectId)
+    ) {
+      errors.add(
+        `${snapshot.label} contém migration que não é blob regular materializado: ${entry.path}.`,
+      );
+    }
+    const previousPath = versions.get(version);
+    if (previousPath !== undefined && previousPath !== entry.path) {
+      errors.add(
+        `${snapshot.label} repete a versão de migration ${version}: ${previousPath} e ${entry.path}.`,
+      );
+    }
+    versions.set(version, entry.path);
+  }
+
+  return [...versions.keys()].sort().at(-1);
+}
+
+function validateMigrationSnapshotTransition(previous, current, previousHead, errors) {
+  for (const [path, previousEntry] of previous.entries) {
+    const currentEntry = current.entries.get(path);
+    if (currentEntry === undefined) {
+      errors.add(
+        `Migration commitada é imutável: ${path} foi removida entre ${previous.label} e ${current.label}.`,
+      );
+      continue;
+    }
+    if (
+      currentEntry.mode !== previousEntry.mode ||
+      currentEntry.type !== previousEntry.type ||
+      currentEntry.objectId !== previousEntry.objectId
+    ) {
+      errors.add(
+        `Migration commitada é imutável: ${path} mudou blob, tipo ou modo entre ${previous.label} e ${current.label}.`,
+      );
+    }
+  }
+
+  for (const entry of current.entries.values()) {
+    if (previous.entries.has(entry.path)) {
+      continue;
+    }
+    const version = migrationPathVersion(entry.path);
+    if (
+      version !== undefined &&
+      version !== null &&
+      previousHead !== undefined &&
+      version <= previousHead
+    ) {
+      errors.add(
+        `Migration nova ${entry.path} em ${current.label} precisa avançar estritamente o head ${previousHead} do snapshot anterior.`,
+      );
+    }
+  }
+}
+
+function validateMigrationSnapshotSequence(snapshots) {
+  const errors = new Set();
+  const heads = snapshots.map((snapshot) => {
+    for (const error of snapshot.errors) {
+      errors.add(error);
+    }
+    return validateMigrationSnapshot(snapshot, errors);
+  });
+
+  for (let index = 1; index < snapshots.length; index += 1) {
+    validateMigrationSnapshotTransition(
+      snapshots[index - 1],
+      snapshots[index],
+      heads[index - 1],
+      errors,
+    );
+  }
+
+  return [...errors].sort();
+}
+
+function assertCompleteCanonicalGitHistory(runGit, root) {
+  const shallowState = runGit(["rev-parse", "--is-shallow-repository"]).trim();
+  if (shallowState !== "false") {
+    throw new Error(
+      "O histórico Git de migrations precisa estar completo; clones shallow são recusados",
+    );
+  }
+
+  const replaceReferences = runGit(["for-each-ref", "--format=%(refname)", "refs/replace"]).trim();
+  if (replaceReferences !== "") {
+    throw new Error("O histórico Git de migrations não pode usar refs/replace");
+  }
+
+  const graftPathOutput = runGit(["rev-parse", "--git-path", "info/grafts"]).trim();
+  if (graftPathOutput === "") {
+    throw new Error("Não foi possível determinar o caminho Git canônico de info/grafts");
+  }
+  const graftPath = resolve(root, graftPathOutput);
+  const graftInformation = lstatSync(graftPath, { bigint: true, throwIfNoEntry: false });
+  if (graftInformation === undefined) {
+    return;
+  }
+  if (!graftInformation.isFile() || graftInformation.isSymbolicLink()) {
+    throw new Error("O legado info/grafts precisa ser um arquivo físico regular quando presente");
+  }
+  if (graftInformation.size !== 0n) {
+    throw new Error("O histórico Git de migrations não pode usar info/grafts legado não vazio");
+  }
+}
+
+function readFirstParentMigrationRevisions(runGit, headRevision, comparisonBase) {
+  const firstParentNewestFirst = runGit(["rev-list", "--first-parent", headRevision])
+    .split(/\s+/u)
+    .filter(Boolean);
+  const completeFirstParentHistory = [...firstParentNewestFirst].reverse();
+  if (comparisonBase === null || comparisonBase === headRevision) {
+    return completeFirstParentHistory;
+  }
+  if (typeof comparisonBase !== "string" || comparisonBase.trim() === "") {
+    throw new TypeError("A base Git do histórico de migrations precisa ser um commit explícito.");
+  }
+
+  let safeBase = comparisonBase;
+  try {
+    runGit(["merge-base", "--is-ancestor", comparisonBase, headRevision]);
+  } catch {
+    safeBase = runGit(["merge-base", comparisonBase, headRevision]).trim();
+    if (safeBase === "") {
+      throw new Error("Não foi possível determinar uma base ancestral segura para migrations.");
+    }
+  }
+  const baseIndex = firstParentNewestFirst.indexOf(safeBase);
+  if (baseIndex === -1) {
+    throw new Error(
+      `A base segura ${migrationSnapshotLabel(safeBase)} não pertence à cadeia first-parent de HEAD.`,
+    );
+  }
+  if (baseIndex === 0) {
+    return completeFirstParentHistory;
+  }
+
+  return [safeBase, ...firstParentNewestFirst.slice(0, baseIndex).reverse()];
+}
+
+function readGitMigrationSnapshot(runGit, revision) {
+  return parseGitTreeMigrationSnapshot(
+    runGit([
+      "ls-tree",
+      "-r",
+      "-z",
+      "--full-tree",
+      revision,
+      "--",
+      migrationDirectoryPrefix.slice(0, -1),
+    ]),
+    revision,
+  );
+}
+
+function readGitIndexMigrationSnapshot(runGit) {
+  return parseGitIndexMigrationSnapshot(
+    runGit(["ls-files", "--stage", "-z", "--", migrationDirectoryPrefix.slice(0, -1)]),
+  );
+}
+
+function readGitIndexMigrationFlagErrors(runGit) {
+  const errors = [];
+  for (const record of runGit(["ls-files", "-v", "-z", "--", migrationDirectoryPrefix.slice(0, -1)])
+    .split("\0")
+    .filter(Boolean)) {
+    const match = record.match(/^([^ ]) (.+)$/su);
+    if (match === null) {
+      errors.push("Não foi possível interpretar as flags Git das migrations.");
+    } else if (match[1] !== "H") {
+      errors.push(
+        `A migration ${match[2]} usa flag Git não canônica ${match[1]} (assume-unchanged, skip-worktree ou conflito).`,
+      );
+    }
+  }
+  return errors;
+}
+
+function readGitVisibleUntrackedMigrationChanges(runGit) {
+  return parseGitChanges(
+    runGit([
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      migrationDirectoryPrefix.slice(0, -1),
+    ]),
+    "A",
+  );
+}
+
+function readGitWorktreeMigrationChanges(runGit, headRevision, visibleUntrackedChanges) {
+  const trackedChanges =
+    headRevision === null
+      ? []
+      : parseGitChanges(
+          runGit([
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            "-z",
+            "--diff-filter=ACMRTD",
+            headRevision,
+            "--",
+            migrationDirectoryPrefix.slice(0, -1),
+          ]),
+        );
+  return [...trackedChanges, ...visibleUntrackedChanges];
+}
+
+function physicalGitBlobMode(information) {
+  return (information.mode & 0o111n) === 0n ? "100644" : "100755";
+}
+
+function validateGitMigrationViewAgainstPhysicalTree(
+  root,
+  indexSnapshot,
+  visibleUntrackedChanges,
+  runGit,
+) {
+  const errors = new Set();
+  let physicalEntries;
+  try {
+    physicalEntries = new Map(
+      inspectPhysicalMigrationDirectory(root).map((entry) => [entry.repositoryPath, entry]),
+    );
+  } catch (error) {
+    return [
+      `Não foi possível comparar o índice Git com as migrations físicas: ${error instanceof Error ? error.message : "erro desconhecido"}.`,
+    ];
+  }
+
+  const visibleUntrackedPaths = new Set();
+  for (const change of visibleUntrackedChanges) {
+    if (visibleUntrackedPaths.has(change.path)) {
+      errors.add(`O Git listou mais de uma vez a migration untracked: ${change.path}.`);
+    }
+    visibleUntrackedPaths.add(change.path);
+  }
+
+  for (const path of physicalEntries.keys()) {
+    if (!indexSnapshot.entries.has(path) && !visibleUntrackedPaths.has(path)) {
+      errors.add(
+        `Migration física não está indexada nem visível como untracked no Git canônico: ${path}.`,
+      );
+    }
+  }
+  for (const path of visibleUntrackedPaths) {
+    if (!physicalEntries.has(path)) {
+      errors.add(`Migration untracked visível no Git não está presente na árvore física: ${path}.`);
+    }
+  }
+
+  for (const [path, indexEntry] of indexSnapshot.entries) {
+    const physicalEntry = physicalEntries.get(path);
+    if (physicalEntry === undefined) {
+      errors.add(`Migration indexada não está presente na árvore física: ${path}.`);
+      continue;
+    }
+    if (
+      indexEntry.type !== "blob" ||
+      !/^(?:100644|100755)$/u.test(indexEntry.mode) ||
+      /^0+$/u.test(indexEntry.objectId)
+    ) {
+      continue;
+    }
+
+    try {
+      const contents = readPhysicalRepositoryFile(root, path, {
+        readBuffer: true,
+        requireExclusive: true,
+      });
+      const physicalObjectId = runGit(["hash-object", "--no-filters", "--stdin"], {
+        input: contents,
+      }).trim();
+      if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(physicalObjectId)) {
+        throw new Error("git hash-object não retornou um blob canônico");
+      }
+      const finalInformation = lstatSync(physicalEntry.path, {
+        bigint: true,
+        throwIfNoEntry: false,
+      });
+      if (
+        finalInformation === undefined ||
+        !sameStableFileSnapshot(physicalEntry.information, finalInformation)
+      ) {
+        throw new Error("a migration mudou durante a comparação direta");
+      }
+      if (
+        physicalObjectId !== indexEntry.objectId ||
+        physicalGitBlobMode(finalInformation) !== indexEntry.mode
+      ) {
+        errors.add(`Migration física diverge do blob ou modo indexado: ${path}.`);
+      }
+    } catch (error) {
+      errors.add(
+        `Migration indexada não pôde ser comparada com a árvore física: ${path} (${error instanceof Error ? error.message : "erro desconhecido"}).`,
+      );
+    }
+  }
+
+  return [...errors].sort();
+}
+
+export function validateMigrationRepositoryHistory(
+  root,
+  comparisonBase,
+  executeGit = execFileSync,
+) {
+  const runGit = (argumentsList, { input } = {}) =>
+    executeGit("git", argumentsList, {
+      ...gitExecutionOptions(root),
+      ...(input === undefined ? {} : { input, stdio: ["pipe", "pipe", "ignore"] }),
+    });
+  assertCanonicalGitWorktreeRoot(runGit, root);
+  let headRevision = null;
+  try {
+    headRevision = runGit(["rev-parse", "--verify", "HEAD^{commit}"]).trim() || null;
+  } catch {
+    // Um repositório bootstrap sem HEAD ainda precisa validar índice e árvore física.
+  }
+
+  if (headRevision !== null) {
+    assertCompleteCanonicalGitHistory(runGit, root);
+  }
+
+  const errors = new Set();
+  const historySnapshots =
+    headRevision === null
+      ? []
+      : readFirstParentMigrationRevisions(runGit, headRevision, comparisonBase).map((revision) =>
+          readGitMigrationSnapshot(runGit, revision),
+        );
+  for (const error of validateMigrationSnapshotSequence(historySnapshots)) {
+    errors.add(`histórico Git: ${error}`);
+  }
+
+  const headSnapshot =
+    headRevision === null
+      ? { entries: new Map(), errors: [], label: "bootstrap sem HEAD" }
+      : readGitMigrationSnapshot(runGit, headRevision);
+  const indexSnapshot = readGitIndexMigrationSnapshot(runGit);
+  for (const error of validateMigrationSnapshotSequence([headSnapshot, indexSnapshot])) {
+    errors.add(`índice Git: ${error}`);
+  }
+  for (const error of readGitIndexMigrationFlagErrors(runGit)) {
+    errors.add(`índice Git: ${error}`);
+  }
+  const visibleUntrackedChanges = readGitVisibleUntrackedMigrationChanges(runGit);
+  for (const error of validateGitMigrationViewAgainstPhysicalTree(
+    root,
+    indexSnapshot,
+    visibleUntrackedChanges,
+    runGit,
+  )) {
+    errors.add(`índice/worktree físico: ${error}`);
+  }
+
+  const worktreeChanges = readGitWorktreeMigrationChanges(
+    runGit,
+    headRevision,
+    visibleUntrackedChanges,
+  );
+  for (const error of validateMigrationGitChanges(
+    worktreeChanges,
+    [...headSnapshot.entries.keys()],
+    {
+      repositoryRoot: root,
+      requireBaselinePresent: headRevision !== null,
+    },
+  )) {
+    errors.add(`worktree: ${error}`);
+  }
+
+  return [...errors].sort();
+}
+
+function migrationPathVersion(path) {
+  if (!path.startsWith(migrationDirectoryPrefix)) {
+    return null;
+  }
+  const fileName = path.slice(migrationDirectoryPrefix.length);
+  const match = fileName.match(migrationFilePattern);
+  return match?.[1] ?? undefined;
+}
+
+function inspectPhysicalMigrationDirectory(repositoryRoot) {
+  const resolvedRoot = resolve(repositoryRoot);
+  const migrationDirectory = resolve(resolvedRoot, migrationDirectoryPrefix.slice(0, -1));
+  const normalizedDirectory = relative(resolvedRoot, migrationDirectory).split(sep).join("/");
+  if (normalizedDirectory !== migrationDirectoryPrefix.slice(0, -1)) {
+    throw new Error("O diretório de migrations precisa permanecer dentro do repositório.");
+  }
+
+  const ancestry = [];
+  for (const path of [resolvedRoot, resolve(resolvedRoot, "supabase"), migrationDirectory]) {
+    const information = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+    if (information === undefined || !information.isDirectory() || information.isSymbolicLink()) {
+      throw new Error("A árvore de migrations precisa usar diretórios físicos.");
+    }
+    ancestry.push({ information, path });
+  }
+
+  const entries = readdirSync(migrationDirectory)
+    .sort()
+    .map((name) => {
+      const path = resolve(migrationDirectory, name);
+      const information = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+      if (information === undefined) {
+        throw new Error("Uma entrada de migration desapareceu durante a inspeção.");
+      }
+      return {
+        information,
+        path,
+        repositoryPath: `${migrationDirectoryPrefix}${name}`,
+      };
+    });
+  assertStablePhysicalAncestry(ancestry);
+  return entries;
+}
+
+export function validateMigrationGitChanges(
+  changes,
+  baselineMigrationPaths,
+  { repositoryRoot, requireBaselinePresent = false } = {},
+) {
+  if (!Array.isArray(changes) || !Array.isArray(baselineMigrationPaths)) {
+    throw new TypeError("As mudanças e a baseline de migrations precisam ser listas.");
+  }
+
+  const errors = new Set();
+  const baselinePaths = new Set();
+  const baselineVersions = new Map();
+  for (const path of baselineMigrationPaths) {
+    if (typeof path !== "string") {
+      throw new TypeError("A baseline Git de migrations contém caminho inválido.");
+    }
+    const version = migrationPathVersion(path);
+    if (version === null) {
+      continue;
+    }
+    if (version === undefined) {
+      errors.add(`A baseline Git contém nome de migration inválido: ${path}.`);
+      baselinePaths.add(path);
+      continue;
+    }
+    const previousPath = baselineVersions.get(version);
+    if (previousPath !== undefined && previousPath !== path) {
+      errors.add(`A baseline Git possui versão de migration duplicada ${version}.`);
+    }
+    baselineVersions.set(version, path);
+    baselinePaths.add(path);
+  }
+  const baselineHead = [...baselineVersions.keys()].sort().at(-1);
+
+  const candidateVersions = new Map();
+  const addedMigrationPaths = new Set();
+  const registerCandidate = (path, version) => {
+    const previousPath = candidateVersions.get(version);
+    if (previousPath !== undefined && previousPath !== path) {
+      errors.add(`Migrations novas repetem a versão ${version}: ${previousPath} e ${path}.`);
+    }
+    candidateVersions.set(version, path);
+    if (baselineHead !== undefined && version <= baselineHead) {
+      errors.add(
+        `Migration nova ${path} precisa avançar estritamente o head ${baselineHead} da base Git.`,
+      );
+    }
+  };
+  for (const change of changes) {
+    if (
+      change === null ||
+      typeof change !== "object" ||
+      typeof change.path !== "string" ||
+      typeof change.status !== "string"
+    ) {
+      throw new TypeError("O status Git de migrations possui formato inválido.");
+    }
+    const version = migrationPathVersion(change.path);
+    if (version === null) {
+      continue;
+    }
+    if (version === undefined) {
+      errors.add(`Nome de migration alterada inválido: ${change.path}.`);
+      continue;
+    }
+
+    if (change.status.at(0) === "A") {
+      addedMigrationPaths.add(change.path);
+    }
+
+    if (baselinePaths.has(change.path) && /[DMRT]/u.test(change.status.at(0) ?? "")) {
+      errors.add(
+        `Migration aplicada é imutável: ${change.path} recebeu status ${change.status.at(0)}.`,
+      );
+    }
+    if (!baselinePaths.has(change.path) && change.status.at(0) !== "D") {
+      registerCandidate(change.path, version);
+    }
+    if (change.status.at(0) === "T") {
+      errors.add(`Migration precisa permanecer arquivo regular: ${change.path}.`);
+    }
+  }
+
+  if (typeof repositoryRoot !== "string" || repositoryRoot.trim() === "") {
+    if (addedMigrationPaths.size > 0) {
+      throw new TypeError("A raiz física do repositório é obrigatória para migration adicionada.");
+    }
+  } else {
+    try {
+      const inspectedEntries = inspectPhysicalMigrationDirectory(repositoryRoot);
+      const physicalPaths = new Set(inspectedEntries.map(({ repositoryPath }) => repositoryPath));
+      for (const { information, path, repositoryPath } of inspectedEntries) {
+        const isExclusiveRegularFile =
+          information.isFile() && !information.isSymbolicLink() && information.nlink === 1n;
+        if (!isExclusiveRegularFile) {
+          const qualifier = baselinePaths.has(repositoryPath) ? "Migration" : "Migration nova";
+          errors.add(
+            `${qualifier} precisa ser arquivo físico regular exclusivo e estável: ${repositoryPath}.`,
+          );
+        } else {
+          try {
+            readPhysicalRepositoryFile(repositoryRoot, repositoryPath, { requireExclusive: true });
+          } catch (error) {
+            errors.add(
+              `Migration precisa permanecer física e estável: ${repositoryPath} (${error instanceof Error ? error.message : "erro desconhecido"}).`,
+            );
+          }
+        }
+
+        const currentInformation = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+        if (
+          currentInformation === undefined ||
+          !sameStableFileSnapshot(information, currentInformation)
+        ) {
+          errors.add(`Migration mudou durante a inspeção física: ${repositoryPath}.`);
+        }
+        if (migrationPathVersion(repositoryPath) === undefined) {
+          errors.add(`Nome de migration no diretório físico é inválido: ${repositoryPath}.`);
+        } else if (!baselinePaths.has(repositoryPath)) {
+          registerCandidate(repositoryPath, migrationPathVersion(repositoryPath));
+        }
+      }
+      if (requireBaselinePresent) {
+        for (const baselinePath of baselinePaths) {
+          if (!physicalPaths.has(baselinePath)) {
+            errors.add(
+              `Migration commitada é imutável: ${baselinePath} não está presente no worktree físico.`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      errors.add(
+        `Não foi possível inspecionar fisicamente as migrations: ${error instanceof Error ? error.message : "erro desconhecido"}.`,
+      );
+    }
+  }
+
+  return [...errors].sort();
 }
 
 export function isAddedChangeRecord(change) {
@@ -938,10 +2014,7 @@ function assertStablePhysicalAncestry(ancestry) {
 function readPhysicalRepositoryFile(
   repositoryRoot,
   repositoryPath,
-  {
-    readDescriptor = (descriptor) => readFileSync(descriptor, "utf8"),
-    requireExclusive = false,
-  } = {},
+  { readBuffer = false, readDescriptor, requireExclusive = false } = {},
 ) {
   const resolvedRoot = resolve(repositoryRoot);
   const absolutePath = resolve(resolvedRoot, repositoryPath);
@@ -1001,9 +2074,12 @@ function readPhysicalRepositoryFile(
       throw new Error("O arquivo mudou durante a abertura.");
     }
 
-    const source = readDescriptor(descriptor);
-    if (typeof source !== "string") {
-      throw new Error("A leitura do arquivo não retornou texto.");
+    const source =
+      readDescriptor === undefined
+        ? readFileSync(descriptor, readBuffer ? undefined : "utf8")
+        : readDescriptor(descriptor);
+    if (readBuffer ? !Buffer.isBuffer(source) : typeof source !== "string") {
+      throw new Error(`A leitura do arquivo não retornou ${readBuffer ? "bytes" : "texto"}.`);
     }
     const finalDescriptorInformation = fstatSync(descriptor, { bigint: true });
     const finalInformation = lstatSync(absolutePath, {

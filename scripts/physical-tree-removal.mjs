@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 
 const linuxMountEscapes = new Map([
@@ -97,6 +108,155 @@ function parseLinuxMountPoints(source) {
 
 export function readCurrentLinuxMountInformation() {
   return readFileSync("/proc/self/mountinfo", "utf8");
+}
+
+function sameStablePhysicalFileSnapshot(left, right) {
+  return (
+    samePhysicalNode(left, right) &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function privateFileMessages(description) {
+  return {
+    ancestryChanged: `${description} mudou de caminho durante a leitura segura.`,
+    ancestryRequired: `${description} precisa permanecer sob ancestrais físicos.`,
+    fileChanged: `${description} mudou durante a leitura segura.`,
+    fileRequired: `${description} precisa ser um arquivo físico regular exclusivo.`,
+    invalidPath: `${description} precisa usar um caminho absoluto canônico.`,
+    ownershipRequired: `${description} precisa pertencer ao usuário efetivo em sistemas POSIX.`,
+    privateModeRequired: `${description} precisa usar modo 0600 em sistemas POSIX.`,
+    textRequired: `${description} precisa ser lido como texto.`,
+  };
+}
+
+function captureStablePhysicalAncestry(filePath, messages) {
+  const pathRoot = parse(filePath).root;
+  let current = pathRoot;
+  const ancestry = [];
+
+  for (const component of [
+    "",
+    ...relative(pathRoot, dirname(filePath)).split(sep).filter(Boolean),
+  ]) {
+    if (component !== "") {
+      current = resolve(current, component);
+    }
+    const information = lstatSync(current, { bigint: true, throwIfNoEntry: false });
+    if (information === undefined || !information.isDirectory() || information.isSymbolicLink()) {
+      throw new Error(messages.ancestryRequired);
+    }
+    ancestry.push({ information, path: current });
+  }
+
+  return ancestry;
+}
+
+function assertStablePhysicalAncestry(ancestry, messages) {
+  for (const { information, path } of ancestry) {
+    const currentInformation = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+    if (
+      currentInformation === undefined ||
+      !currentInformation.isDirectory() ||
+      currentInformation.isSymbolicLink() ||
+      !samePhysicalNode(information, currentInformation)
+    ) {
+      throw new Error(messages.ancestryChanged);
+    }
+  }
+}
+
+function assertPrivatePhysicalFile(information, messages, platform, expectedPosixUserId) {
+  if (
+    information === undefined ||
+    !information.isFile() ||
+    information.isSymbolicLink() ||
+    information.nlink !== 1n
+  ) {
+    throw new Error(messages.fileRequired);
+  }
+  if (platform !== "win32" && (information.mode & 0o7777n) !== 0o600n) {
+    throw new Error(messages.privateModeRequired);
+  }
+  if (
+    platform !== "win32" &&
+    (!Number.isSafeInteger(expectedPosixUserId) ||
+      expectedPosixUserId < 0 ||
+      information.uid !== BigInt(expectedPosixUserId))
+  ) {
+    throw new Error(messages.ownershipRequired);
+  }
+}
+
+export function readPrivatePhysicalFile(
+  filePath,
+  {
+    allowMissing = false,
+    description = "O arquivo privado",
+    expectedPosixUserId = process.geteuid?.(),
+    platform = process.platform,
+    readDescriptor = (descriptor) => readFileSync(descriptor, "utf8"),
+  } = {},
+) {
+  const messages = privateFileMessages(description);
+  if (
+    typeof filePath !== "string" ||
+    filePath === "" ||
+    filePath.includes("\0") ||
+    !isAbsolute(filePath) ||
+    resolve(filePath) !== filePath ||
+    dirname(filePath) === filePath
+  ) {
+    throw new Error(messages.invalidPath);
+  }
+
+  const ancestry = captureStablePhysicalAncestry(filePath, messages);
+  const pathInformation = lstatSync(filePath, { bigint: true, throwIfNoEntry: false });
+  if (pathInformation === undefined && allowMissing) {
+    assertStablePhysicalAncestry(ancestry, messages);
+    return undefined;
+  }
+  assertPrivatePhysicalFile(pathInformation, messages, platform, expectedPosixUserId);
+
+  let descriptor;
+  try {
+    descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedInformation = fstatSync(descriptor, { bigint: true });
+    assertPrivatePhysicalFile(openedInformation, messages, platform, expectedPosixUserId);
+    if (!sameStablePhysicalFileSnapshot(pathInformation, openedInformation)) {
+      throw new Error(messages.fileChanged);
+    }
+    assertStablePhysicalAncestry(ancestry, messages);
+
+    const source = readDescriptor(descriptor);
+    if (typeof source !== "string") {
+      throw new Error(messages.textRequired);
+    }
+
+    const finalDescriptorInformation = fstatSync(descriptor, { bigint: true });
+    const finalPathInformation = lstatSync(filePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
+    assertPrivatePhysicalFile(finalDescriptorInformation, messages, platform, expectedPosixUserId);
+    assertPrivatePhysicalFile(finalPathInformation, messages, platform, expectedPosixUserId);
+    if (
+      !sameStablePhysicalFileSnapshot(openedInformation, finalDescriptorInformation) ||
+      !sameStablePhysicalFileSnapshot(openedInformation, finalPathInformation)
+    ) {
+      throw new Error(messages.fileChanged);
+    }
+    assertStablePhysicalAncestry(ancestry, messages);
+    return source;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
 }
 
 function assertPhysicalAncestry(path, { ancestryMessage, ancestryRootMessage }) {

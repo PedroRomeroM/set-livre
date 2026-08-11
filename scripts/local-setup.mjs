@@ -6,6 +6,11 @@ import { databaseMigrationHead } from "../packages/contracts/src/database-contra
 
 import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
 import {
+  redactLocalPsqlDiagnostics,
+  resolveTrustedLocalPsql,
+  spawnLocalPsql,
+} from "./local-psql-command.mjs";
+import {
   assertSafeEnvironmentFileDestination,
   writeEnvironmentFileAtomic,
 } from "./safe-environment-file.mjs";
@@ -32,6 +37,22 @@ for (const [path] of applicationEnvironmentDestinations) {
 assertSafeEnvironmentFileDestination(e2eEnvironmentPath);
 
 const localDockerEnvironment = assertLocalDockerDaemon();
+const trustedPsqlLaunch = resolveTrustedLocalPsql({
+  inheritedEnvironment: localDockerEnvironment,
+});
+
+function successfulCommandOutput(command, argumentsList, result, options = {}) {
+  if (result.status !== 0) {
+    const diagnostics = options.safeStderr
+      ? redactLocalPsqlDiagnostics(result.stderr, options.redactions)
+      : "";
+    throw new Error(
+      `${command} ${argumentsList.join(" ")} falhou.${diagnostics === "" ? "" : `\n${diagnostics}`}`,
+    );
+  }
+
+  return result.stdout ?? "";
+}
 
 function run(command, argumentsList, options = {}) {
   const commandEnvironment = {
@@ -52,28 +73,16 @@ function run(command, argumentsList, options = {}) {
         ? "inherit"
         : ["pipe", "inherit", "inherit"],
   });
+  return successfulCommandOutput(command, argumentsList, result, options);
+}
 
-  if (result.status !== 0) {
-    const diagnostics = options.safeStderr
-      ? (result.stderr ?? "")
-          .replace(/(postgres(?:ql)?:\/\/[^:\s/]+:)[^@\s]+@/giu, "$1[REDACTED]@")
-          .split("\n")
-          .map((line) =>
-            (options.redactions ?? []).reduce(
-              (redacted, secret) => redacted.split(secret).join("[REDACTED]"),
-              line,
-            ),
-          )
-          .filter(Boolean)
-          .slice(-12)
-          .join("\n")
-      : "";
-    throw new Error(
-      `${command} ${argumentsList.join(" ")} falhou.${diagnostics === "" ? "" : `\n${diagnostics}`}`,
-    );
-  }
-
-  return result.stdout ?? "";
+function runPsql(databaseUrl, options = {}) {
+  const { argumentsList, result } = spawnLocalPsql(trustedPsqlLaunch, databaseUrl, {
+    assumeDalRole: options.assumeDalRole,
+    command: options.command,
+    input: options.input,
+  });
+  return successfulCommandOutput(trustedPsqlLaunch.command, argumentsList, result, options);
 }
 
 function stopScopedSupabaseStack() {
@@ -149,23 +158,6 @@ function assertLocalEndpoint(value, label, protocol, port) {
 
 assertLocalEndpoint(values.API_URL, "API_URL", "http:", "54321");
 assertLocalEndpoint(values.DB_URL, "DB_URL", "postgresql:", "54322");
-
-function psqlArguments(databaseUrl) {
-  const parsed = new URL(databaseUrl);
-  return [
-    "--host",
-    parsed.hostname,
-    "--port",
-    parsed.port,
-    "--username",
-    decodeURIComponent(parsed.username),
-    "--dbname",
-    decodeURIComponent(parsed.pathname.slice(1)),
-    "--no-psqlrc",
-    "--set",
-    "ON_ERROR_STOP=1",
-  ];
-}
 
 const runtimeRole = "app_runtime_local";
 const runtimePassword = randomBytes(32).toString("base64url");
@@ -405,9 +397,7 @@ grant app_dal to postgres with admin true, inherit false, set false;
 
 commit;
 `;
-run("psql", psqlArguments(supabaseAdminDatabaseUrl.toString()), {
-  capture: true,
-  environment: { PGPASSWORD: decodeURIComponent(supabaseAdminDatabaseUrl.password) },
+runPsql(supabaseAdminDatabaseUrl.toString(), {
   input: managedSchemaSql,
   redactions: [decodeURIComponent(supabaseAdminDatabaseUrl.password)],
   safeStderr: true,
@@ -695,11 +685,9 @@ $block$;
 
 commit;
 `;
-run("psql", psqlArguments(values.DB_URL), {
-  capture: true,
-  environment: { PGPASSWORD: decodeURIComponent(adminDatabaseUrl.password) },
+runPsql(values.DB_URL, {
   input: runtimeSql,
-  redactions: [runtimePassword, decodeURIComponent(adminDatabaseUrl.password)],
+  redactions: [runtimePassword, e2eDatabaseMarker, decodeURIComponent(adminDatabaseUrl.password)],
   safeStderr: true,
 });
 
@@ -707,25 +695,14 @@ const dalDatabaseUrl = new URL(values.DB_URL);
 dalDatabaseUrl.username = runtimeRole;
 dalDatabaseUrl.password = runtimePassword;
 dalDatabaseUrl.searchParams.set("options", "-c role=app_dal");
-const identity = run(
-  "psql",
-  [
-    ...psqlArguments(dalDatabaseUrl.toString()),
-    "--tuples-only",
-    "--no-align",
-    "--command",
-    `select current_user || ':' || session_user || ':'
-      || private.check_readiness('${databaseMigrationHead}') || ':'
-      || private.check_runtime_readiness('${runtimeRole}')`,
-  ],
-  {
-    capture: true,
-    environment: {
-      PGOPTIONS: "-c role=app_dal",
-      PGPASSWORD: runtimePassword,
-    },
-  },
-).trim();
+const identity = runPsql(dalDatabaseUrl.toString(), {
+  assumeDalRole: true,
+  command: `select current_user || ':' || session_user || ':'
+    || private.check_readiness('${databaseMigrationHead}') || ':'
+    || private.check_runtime_readiness('${runtimeRole}')`,
+  redactions: [runtimePassword],
+  safeStderr: true,
+}).trim();
 if (identity !== "app_dal:app_runtime_local:true:true") {
   throw new Error("A conexão DAL local não satisfez o manifesto restrito esperado.");
 }

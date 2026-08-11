@@ -1,14 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseEnv } from "node:util";
 
+import { readOptionalE2EEnvironmentFile } from "./e2e-environment-file";
 import { assertSafeE2EEnvironment } from "./e2e-safety";
 
 const repositoryRoot = resolve(import.meta.dirname, "../..");
-const localEnvironmentPath = resolve(repositoryRoot, ".env.e2e.local");
-const localEnvironment = existsSync(localEnvironmentPath)
-  ? parseEnv(readFileSync(localEnvironmentPath, "utf8"))
-  : {};
+const localEnvironment = readOptionalE2EEnvironmentFile(repositoryRoot);
 const environmentValue = (name: string) => process.env[name] ?? localEnvironment[name];
 
 export const safeE2EEnvironment = assertSafeE2EEnvironment({

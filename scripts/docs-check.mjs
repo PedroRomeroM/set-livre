@@ -16,11 +16,15 @@ import {
   readAddedChangeRecord,
   readCanonicalPackageManifests,
   readGitChanges,
+  readGitMigrationPathsAtRevision,
   sha256,
   validateAutomatedQaSpec,
   validateAllowedInstallScripts,
+  validateCanonicalDependencyRegistry,
   validateFeatureSequence,
   validateGovernanceAlignment,
+  validateMigrationGitChanges,
+  validateMigrationRepositoryHistory,
   validateProgressSummary,
   validateWorkspacePatterns,
 } from "./docs-check-core.mjs";
@@ -209,6 +213,18 @@ for (const { packageJson, packagePath } of packageManifests) {
     );
   }
 }
+try {
+  for (const registryError of validateCanonicalDependencyRegistry(
+    packageManifests,
+    read("docs/dependencias-utilizadas.md"),
+  )) {
+    errors.push(`docs/dependencias-utilizadas.md: ${registryError}`);
+  }
+} catch (error) {
+  errors.push(
+    `docs/dependencias-utilizadas.md não corresponde aos manifests canônicos: ${error instanceof Error ? error.message : "formato desconhecido"}`,
+  );
+}
 
 const implementationFiles = ["src", "apps", "packages", "scripts", "supabase", "tests"]
   .filter((directory) => existsSync(resolve(root, directory)))
@@ -236,9 +252,21 @@ for (const file of playwrightFiles) {
 
 let gitChanges = [];
 try {
-  gitChanges = readGitChanges(root).changes;
-} catch {
-  errors.push("Não foi possível ler o status Git para validar o registro de mudança.");
+  const gitState = readGitChanges(root);
+  gitChanges = gitState.changes;
+  const baselineMigrationPaths = readGitMigrationPathsAtRevision(root, gitState.comparisonBase);
+  for (const migrationError of validateMigrationGitChanges(gitChanges, baselineMigrationPaths, {
+    repositoryRoot: root,
+  })) {
+    errors.push(`migrations append-only: ${migrationError}`);
+  }
+  for (const migrationError of validateMigrationRepositoryHistory(root, gitState.comparisonBase)) {
+    errors.push(`migrations append-only: ${migrationError}`);
+  }
+} catch (error) {
+  errors.push(
+    `Não foi possível ler o status Git para validar documentação e migrations: ${error instanceof Error ? error.message : "erro desconhecido"}.`,
+  );
 }
 
 const technicalChange = gitChanges.some((change) => isTechnicalChangePath(change.path));

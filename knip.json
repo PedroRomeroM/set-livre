@@ -3,7 +3,7 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/dev-all.mjs", "scripts/release-manifest.mjs", "tests/fixtures/*.mjs"],
-      "ignoreBinaries": ["flock"]
+      "ignoreBinaries": ["flock", "mkfifo"]
     },
     "apps/backoffice": {},
     "packages/contracts": {},

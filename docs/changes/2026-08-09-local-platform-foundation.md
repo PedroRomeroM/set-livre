@@ -2,7 +2,7 @@
 
 - Data: 2026-08-09
 - Autor/agente: Codex
-- Issue/PR: branch `agent/foundation-local-platform`; PR criado após o commit desta mudança
+- Issue/PR: branch `agent/foundation-local-platform`; [PR #1](https://github.com/PedroRomeroM/set-livre/pull/1)
 - Features: fundação transversal
 - ADRs: ADR-017, ADR-018
 - Risco: médio
@@ -78,7 +78,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 202 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
+- 231 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
 - 148 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -181,6 +181,14 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - a remoção recursiva de `release` e candidatos de verificação compartilha o guard físico do preview: mountinfo Linux fail-closed, inspeção sem seguir links, retiro atômico e revalidação de identidade, forma e mounts antes de apagar; plataformas sem prova equivalente exigem cleanup manual.
 - `contexto-projeto-set-livre.html` passa a ser o resumo executivo vivo e conciso do que já foi implementado; o gate documental exige sua atualização em toda mudança técnica e valida estrutura, idioma e ausência de dependências externas de apresentação.
 
+## Correções do décimo-quinto Codex review
+
+- cada `psql` do bootstrap usa o mesmo caminho POSIX absoluto e fisicamente protegido, comprova PostgreSQL `18.4` antes do start/reset ou acesso a credenciais, recebe somente locale e senha local controlados, ignora por construção `PATH`, `PGHOSTADDR`, services, passfiles, TLS/GSS e demais overrides libpq herdados e redige todos os segredos interpolados antes de expor diagnóstico seguro;
+- `.env.e2e.local` é lido apenas como arquivo privado físico, exclusivo, pertencente ao usuário efetivo, `0600` em POSIX e estável em caminho, descriptor e ancestrais, sem conteúdo ou caminho dinâmico em erros;
+- os launchers `next dev` recusam `.env`, `.env.development` e `.env.development.local` nos dois apps, preservando `.env.local` como única fonte runtime aceita;
+- o gate de supply chain exige uma linha canônica e completa em `docs/dependencias-utilizadas.md` para cada dependência externa direta dos quatro manifests e falha fechado para specs ou overrides ambíguos;
+- migrations presentes na base Git permanecem byte a byte imutáveis em cada snapshot `first-parent`; o gate recusa histórico shallow ou reescrito, neutraliza ambiente/configuração Git hostil e compara diretamente bytes e modo do arquivo físico com o blob indexado, sem confiar no stat cache. Toda entrada física precisa estar indexada ou visível canonicamente como untracked — nunca ocultada por uma regra de ignore — e toda adição precisa avançar estritamente o head da base.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -213,7 +221,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 202 aprovados;
+- `npm run test:unit`: 231 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 148 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
@@ -222,4 +230,4 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 - `npm run audit`: zero vulnerabilidades;
 - `npm run knip`: aprovado sem hint.
 
-`node scripts/release-manifest.mjs` exige um commit limpo por desenho e será a primeira validação pós-commit, antes do PR. O PR e seus ciclos de review registrarão a evidência remota.
+`node scripts/release-manifest.mjs` permanece um gate pós-commit porque exige checkout limpo e vincula o pacote ao SHA. A evidência exata de cada publicação e dos ciclos de review fica registrada no PR.

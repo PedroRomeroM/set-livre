@@ -150,6 +150,8 @@ O fato de `.artifacts` ser ignorado pelo Git não o torna uma fronteira confiáv
 
 Os processos Chromium, Firefox e WebKit também partem de allowlist própria e mínima. Nenhuma variável de banco, SSH, npm, Node, loader dinâmico, Snap ou secret conhecido é encaminhada pelo Playwright; valores operacionais ligados a caminhos Snap são descartados e o `PATH` não aceita entradas vazias.
 
+O arquivo opcional `.env.e2e.local` também é uma fronteira privada: antes do parse, sua raiz e todos os ancestrais precisam ser diretórios físicos estáveis, e o alvo precisa ser arquivo regular exclusivo (`nlink = 1`), aberto com `O_NOFOLLOW` e revalidado pelo descriptor e pelo caminho antes e depois da leitura. Em sistemas POSIX, o owner precisa coincidir com o usuário efetivo e o modo precisa ser exatamente `0600` em todas essas observações; no Windows, não se simulam owner ou permissão POSIX inexistentes. Symlinks, hardlinks e trocas concorrentes falham fechado, e os diagnósticos nunca incluem o conteúdo lido.
+
 ## 10. Supply chain
 
 - npm lock;

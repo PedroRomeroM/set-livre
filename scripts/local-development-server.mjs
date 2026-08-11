@@ -149,12 +149,17 @@ function applicationContract(application, repositoryRoot) {
   };
 }
 
-function assertNoUnexpectedProductionEnvironmentFiles(workingDirectory) {
-  for (const name of [".env", ".env.production", ".env.production.local"]) {
+function assertNoUnexpectedNextEnvironmentFiles(workingDirectory, nextCommand) {
+  const names =
+    nextCommand === "dev"
+      ? [".env", ".env.development", ".env.development.local"]
+      : [".env", ".env.production", ".env.production.local"];
+
+  for (const name of names) {
     const environmentPath = resolve(workingDirectory, name);
     if (lstatSync(environmentPath, { throwIfNoEntry: false }) !== undefined) {
       throw new Error(
-        `O preview local de produção aceita somente .env.local; remova ${environmentPath}.`,
+        `O servidor Next local aceita somente .env.local; remova ${environmentPath}.`,
       );
     }
   }
@@ -230,11 +235,10 @@ function createLocalApplicationServerLaunch({
   }
 
   const contract = applicationContract(application, repositoryRoot);
-  if (nextCommand === "start") {
-    assertNoUnexpectedProductionEnvironmentFiles(contract.workingDirectory);
-  } else if (nextCommand !== "dev") {
+  if (nextCommand !== "dev" && nextCommand !== "start") {
     throw new Error("O comando do servidor local é inválido.");
   }
+  assertNoUnexpectedNextEnvironmentFiles(contract.workingDirectory, nextCommand);
   const environment = {
     ...readLocalDevelopmentEnvironmentFile(
       contract.environmentPath,

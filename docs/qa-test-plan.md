@@ -48,6 +48,8 @@ E2E destrutivo somente local:
 
 O runner deve abortar antes de abrir browser se detectar production/acceptance host ou DB.
 
+Quando `.env.e2e.local` existir, o preflight somente o lê como arquivo regular exclusivo sob ancestrais físicos, com identidade estável e, em POSIX, owner igual ao usuário efetivo e modo `0600`. A suíte unitária prova ausência opcional, ramo Windows, rejeição anterior à leitura para modo amplo, owner divergente, symlink, hardlink e ancestral simbólico, além de trocas concorrentes do arquivo e do ancestral sem expor o conteúdo em erros.
+
 ## 5. Projetos Playwright
 
 - Chromium desktop;
