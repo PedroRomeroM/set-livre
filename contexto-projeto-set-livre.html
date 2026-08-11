@@ -5,26 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Resumo executivo do produto, das features e do contexto de implementação da plataforma Set Livre."
+      content="Resumo executivo vivo do que já foi implementado e do que ainda falta na plataforma Set Livre."
     />
-    <title>Set Livre — Contexto resumido do projeto</title>
+    <title>Set Livre — Progresso da implementação</title>
     <style>
       :root {
         color-scheme: light;
         --ink: #17211d;
         --muted: #58645e;
-        --paper: #f6f7f3;
+        --canvas: #f3f5f1;
         --surface: #ffffff;
-        --line: #d9ded8;
+        --line: #d7ddd7;
         --brand: #176b53;
-        --brand-dark: #0c4938;
-        --brand-soft: #e3f1eb;
-        --accent: #ef9e42;
-        --accent-soft: #fff1dc;
-        --danger: #9b3b2e;
-        --danger-soft: #fbe8e4;
-        --shadow: 0 14px 34px rgb(22 46 36 / 8%);
-        --radius: 18px;
+        --brand-strong: #0c4938;
+        --brand-soft: #e2f1ea;
+        --accent: #d97820;
+        --accent-soft: #fff0da;
+        --info: #185b8d;
+        --info-soft: #e6f2fa;
+        --planned: #675b82;
+        --planned-soft: #f0edf7;
+        --radius: 1rem;
+        --shadow: 0 0.8rem 2.2rem rgb(23 55 43 / 8%);
       }
 
       * {
@@ -37,44 +39,45 @@
 
       body {
         margin: 0;
-        background: var(--paper);
+        background: var(--canvas);
         color: var(--ink);
         font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
         font-size: 1rem;
-        line-height: 1.6;
+        line-height: 1.58;
       }
 
       a {
-        color: var(--brand-dark);
+        color: var(--brand-strong);
         text-underline-offset: 0.18em;
       }
 
-      a:hover {
-        color: var(--brand);
-      }
-
       a:focus-visible {
-        outline: 3px solid var(--accent);
-        outline-offset: 4px;
-        border-radius: 4px;
+        outline: 0.2rem solid var(--accent);
+        outline-offset: 0.2rem;
+        border-radius: 0.2rem;
       }
 
       code {
-        padding: 0.12em 0.35em;
-        border-radius: 5px;
-        background: #edf0ec;
+        padding: 0.12em 0.34em;
+        border-radius: 0.3rem;
+        background: #e9ede9;
         font-size: 0.9em;
+        overflow-wrap: anywhere;
       }
 
       .skip-link {
         position: absolute;
-        z-index: 10;
+        z-index: 20;
         top: 0.75rem;
         left: 0.75rem;
         padding: 0.65rem 0.9rem;
-        border-radius: 8px;
+        border-radius: 0.5rem;
         background: var(--surface);
         transform: translateY(-180%);
       }
@@ -83,146 +86,123 @@
         transform: translateY(0);
       }
 
+      .wrap {
+        width: min(72rem, 100%);
+        margin-inline: auto;
+      }
+
       .hero {
-        overflow: hidden;
-        position: relative;
-        padding: 4.5rem 1.25rem 3.5rem;
+        padding: 3.8rem 1.25rem 3rem;
         background:
-          radial-gradient(circle at 85% 15%, rgb(239 158 66 / 22%), transparent 25rem),
-          linear-gradient(145deg, #0c4938, #176b53 58%, #208266);
+          radial-gradient(circle at 82% 16%, rgb(239 158 66 / 24%), transparent 24rem),
+          linear-gradient(145deg, #0c4938, #176b53 62%, #208266);
         color: #fff;
       }
 
-      .hero::after {
-        position: absolute;
-        right: -8rem;
-        bottom: -12rem;
-        width: 28rem;
-        height: 28rem;
-        border: 1px solid rgb(255 255 255 / 18%);
-        border-radius: 50%;
-        content: "";
-      }
-
-      .wrap {
-        width: min(1100px, 100%);
-        margin: 0 auto;
-      }
-
-      .hero-content {
-        position: relative;
-        z-index: 1;
-      }
-
       .eyebrow {
-        margin: 0 0 0.85rem;
-        color: #cde8de;
-        font-size: 0.78rem;
+        margin: 0 0 0.65rem;
+        color: #cce9de;
+        font-size: 0.76rem;
         font-weight: 800;
-        letter-spacing: 0.13em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
       }
 
       h1,
       h2,
       h3 {
-        line-height: 1.18;
+        line-height: 1.2;
         text-wrap: balance;
       }
 
       h1 {
-        max-width: 850px;
+        max-width: 52rem;
         margin: 0;
-        font-size: clamp(2.35rem, 7vw, 5rem);
-        letter-spacing: -0.055em;
+        font-size: clamp(2.35rem, 7vw, 4.8rem);
+        letter-spacing: -0.05em;
       }
 
       .lead {
-        max-width: 780px;
-        margin: 1.35rem 0 0;
-        color: #e7f4ef;
-        font-size: clamp(1.05rem, 2.3vw, 1.3rem);
+        max-width: 48rem;
+        margin: 1.1rem 0 0;
+        color: #e8f5f0;
+        font-size: clamp(1.05rem, 2.2vw, 1.25rem);
       }
 
-      .meta-row,
-      .chip-list {
+      .meta,
+      .tags {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.55rem;
+        gap: 0.5rem;
+        margin: 1.35rem 0 0;
         padding: 0;
         list-style: none;
       }
 
-      .meta-row {
-        margin: 1.6rem 0 0;
-      }
-
-      .meta-row li {
-        padding: 0.42rem 0.72rem;
-        border: 1px solid rgb(255 255 255 / 28%);
+      .meta li {
+        padding: 0.38rem 0.68rem;
+        border: 1px solid rgb(255 255 255 / 30%);
         border-radius: 999px;
         background: rgb(255 255 255 / 9%);
-        color: #fff;
-        font-size: 0.88rem;
+        font-size: 0.86rem;
       }
 
       .stats {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.85rem;
-        margin-top: 2.3rem;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 0.65rem;
+        margin-top: 2rem;
       }
 
       .stat {
-        padding: 1rem;
+        min-width: 0;
+        padding: 0.9rem;
         border: 1px solid rgb(255 255 255 / 20%);
-        border-radius: 14px;
-        background: rgb(8 51 39 / 32%);
-        backdrop-filter: blur(6px);
+        border-radius: 0.8rem;
+        background: rgb(7 50 38 / 32%);
       }
 
       .stat strong {
         display: block;
-        font-size: 1.65rem;
+        font-size: 1.5rem;
         line-height: 1.1;
       }
 
       .stat span {
         display: block;
-        margin-top: 0.32rem;
+        margin-top: 0.3rem;
         color: #d9eee6;
-        font-size: 0.86rem;
+        font-size: 0.78rem;
       }
 
       .quick-nav {
         position: sticky;
-        z-index: 5;
+        z-index: 10;
         top: 0;
         border-bottom: 1px solid var(--line);
-        background: rgb(246 247 243 / 94%);
-        backdrop-filter: blur(10px);
+        background: rgb(243 245 241 / 96%);
       }
 
       .quick-nav ul {
         display: flex;
-        gap: 1.1rem;
+        gap: 1rem;
         overflow-x: auto;
         margin: 0;
-        padding: 0.9rem 0;
+        padding: 0.8rem 1.25rem;
         list-style: none;
         scrollbar-width: thin;
       }
 
       .quick-nav a {
         color: var(--muted);
-        font-size: 0.88rem;
-        font-weight: 700;
+        font-size: 0.84rem;
+        font-weight: 750;
         text-decoration: none;
         white-space: nowrap;
       }
 
       main {
-        padding: 1.5rem 1.25rem 5rem;
+        padding: 0 1.25rem 4.5rem;
       }
 
       section {
@@ -232,368 +212,342 @@
 
       .section-head {
         display: grid;
-        grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
-        gap: 2rem;
+        grid-template-columns: minmax(13rem, 0.7fr) minmax(0, 1.3fr);
+        gap: 1.8rem;
         align-items: start;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.35rem;
       }
 
       .section-head h2 {
         margin: 0;
-        color: var(--brand-dark);
-        font-size: clamp(1.65rem, 3.4vw, 2.45rem);
+        color: var(--brand-strong);
+        font-size: clamp(1.65rem, 3vw, 2.35rem);
         letter-spacing: -0.03em;
       }
 
       .section-head p {
         margin: 0.15rem 0 0;
         color: var(--muted);
-        font-size: 1.05rem;
+        font-size: 1.03rem;
       }
 
-      .notice {
-        padding: 1.15rem 1.25rem;
-        border: 1px solid #ebd09d;
-        border-left: 5px solid var(--accent);
-        border-radius: 12px;
-        background: var(--accent-soft);
-      }
-
-      .notice strong {
-        color: #74440f;
-      }
-
-      .notice.danger {
-        border-color: #e8b7af;
-        border-left-color: var(--danger);
-        background: var(--danger-soft);
-      }
-
-      .notice.danger strong {
-        color: var(--danger);
-      }
-
-      .card-grid {
+      .grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1rem;
+        gap: 0.85rem;
       }
 
-      .card-grid.three {
+      .grid.three {
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
-      .card {
-        padding: 1.25rem;
+      .card,
+      .callout {
+        min-width: 0;
+        padding: 1.15rem;
         border: 1px solid var(--line);
         border-radius: var(--radius);
         background: var(--surface);
+      }
+
+      .card {
         box-shadow: var(--shadow);
       }
 
       .card h3 {
-        margin: 0 0 0.55rem;
-        font-size: 1.05rem;
+        margin: 0 0 0.45rem;
+        font-size: 1.03rem;
       }
 
-      .card p {
-        margin: 0;
+      .card p,
+      .card ul,
+      .callout p {
+        margin-top: 0.45rem;
+        margin-bottom: 0;
         color: var(--muted);
       }
 
-      .card ul {
-        margin: 0.65rem 0 0;
+      .card ul,
+      .compact-list {
         padding-left: 1.15rem;
       }
 
       .card li + li,
-      .tight-list li + li {
-        margin-top: 0.4rem;
-      }
-
-      .journey {
-        display: grid;
-        grid-template-columns: repeat(6, minmax(0, 1fr));
-        gap: 0.65rem;
-        margin: 1.25rem 0 0;
-        padding: 0;
-        counter-reset: journey;
-        list-style: none;
-      }
-
-      .journey li {
-        position: relative;
-        min-height: 7.5rem;
-        padding: 2.55rem 0.8rem 0.8rem;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: var(--surface);
-        color: var(--muted);
-        font-size: 0.88rem;
-        counter-increment: journey;
-      }
-
-      .journey li::before {
-        position: absolute;
-        top: 0.75rem;
-        left: 0.75rem;
-        display: grid;
-        width: 1.35rem;
-        height: 1.35rem;
-        border-radius: 50%;
-        background: var(--brand-soft);
-        color: var(--brand-dark);
-        content: counter(journey);
-        font-size: 0.72rem;
-        font-weight: 800;
-        place-items: center;
-      }
-
-      .feature-card {
-        display: grid;
-        grid-template-columns: auto 1fr;
-        gap: 0.8rem;
-        align-items: start;
-      }
-
-      .feature-number {
-        min-width: 2.6rem;
-        padding: 0.25rem 0.4rem;
-        border-radius: 8px;
-        background: var(--brand-soft);
-        color: var(--brand-dark);
-        font-size: 0.75rem;
-        font-weight: 850;
-        text-align: center;
-      }
-
-      .feature-card h3 {
-        margin-bottom: 0.35rem;
-      }
-
-      .feature-card p {
-        font-size: 0.92rem;
-      }
-
-      .feature-card p + p {
-        margin-top: 0.3rem;
-      }
-
-      .feature-list {
-        margin: 0;
-        padding: 0;
-        color: var(--muted);
-        font-size: 0.9rem;
-        list-style: none;
-      }
-
-      .feature-list li + li {
+      .compact-list li + li {
         margin-top: 0.32rem;
       }
 
-      .feature-list strong {
-        color: var(--ink);
-        font-size: 0.78rem;
+      .callout {
+        border-left: 0.35rem solid var(--accent);
+        background: var(--accent-soft);
       }
 
-      .rule-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.75rem;
+      .callout strong {
+        color: #75410f;
       }
 
-      .rule {
-        padding: 1rem 1.1rem;
-        border-left: 4px solid var(--brand);
-        border-radius: 0 12px 12px 0;
-        background: var(--surface);
+      .callout.info {
+        border-left-color: var(--info);
+        background: var(--info-soft);
       }
 
-      .rule strong {
-        display: block;
-        margin-bottom: 0.25rem;
+      .callout.info strong {
+        color: #174d73;
       }
 
-      .rule span {
-        color: var(--muted);
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        min-height: 1.7rem;
+        padding: 0.18rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.76rem;
+        font-weight: 800;
       }
 
-      .architecture {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.65rem;
-        align-items: stretch;
-        margin: 1.2rem 0;
+      .tag.done {
+        background: var(--brand-soft);
+        color: var(--brand-strong);
       }
 
-      .architecture div {
-        position: relative;
-        display: grid;
-        min-height: 7.2rem;
-        padding: 1rem;
-        border: 1px solid var(--line);
-        border-radius: 13px;
-        background: var(--surface);
-        font-size: 0.9rem;
-        text-align: center;
-        place-items: center;
+      .tag.review {
+        background: var(--accent-soft);
+        color: #75410f;
       }
 
-      .architecture div:not(:last-child)::after {
-        position: absolute;
-        z-index: 1;
-        right: -0.8rem;
-        color: var(--brand);
-        content: "→";
-        font-size: 1.35rem;
-        font-weight: 900;
+      .tag.planned {
+        background: var(--planned-soft);
+        color: var(--planned);
       }
 
-      .architecture strong {
-        display: block;
+      .tag.external {
+        background: var(--info-soft);
+        color: var(--info);
       }
 
-      .architecture span {
-        display: block;
-        color: var(--muted);
-        font-size: 0.82rem;
-      }
-
-      .chip-list {
-        margin: 1rem 0 0;
-      }
-
-      .chip-list li {
-        padding: 0.4rem 0.65rem;
+      .tags li {
+        padding: 0.35rem 0.58rem;
         border: 1px solid var(--line);
         border-radius: 999px;
         background: var(--surface);
         color: var(--muted);
-        font-size: 0.85rem;
+        font-size: 0.82rem;
       }
 
-      .pipeline {
-        margin: 1.2rem 0 0;
-        padding: 1rem 1.2rem;
-        overflow-x: auto;
-        border-radius: 12px;
-        background: #15251e;
-        color: #def1e9;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 0.85rem;
-        white-space: nowrap;
-      }
-
-      .phase-list {
+      .snapshot {
         display: grid;
-        gap: 0;
-        margin: 0;
-        padding: 0;
-        list-style: none;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.7rem;
+        margin-top: 0.85rem;
       }
 
-      .phase-list li {
-        display: grid;
-        grid-template-columns: 8rem 1fr;
-        gap: 1.1rem;
-        padding: 1rem 0;
-        border-bottom: 1px solid var(--line);
+      .snapshot div {
+        padding: 0.8rem;
+        border-radius: 0.7rem;
+        background: #f7f9f6;
       }
 
-      .phase-list li:last-child {
-        border-bottom: 0;
+      .snapshot strong,
+      .snapshot span {
+        display: block;
       }
 
-      .phase-list strong {
-        color: var(--brand-dark);
+      .snapshot strong {
+        color: var(--brand-strong);
+        font-size: 1.28rem;
       }
 
-      .phase-list span {
+      .snapshot span {
         color: var(--muted);
+        font-size: 0.78rem;
       }
 
-      .top-gap {
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.55rem;
         margin-top: 1rem;
       }
 
-      .top-gap-large {
-        margin-top: 1.25rem;
+      .flow div {
+        position: relative;
+        display: grid;
+        min-height: 6.5rem;
+        padding: 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 0.75rem;
+        background: var(--surface);
+        text-align: center;
+        place-items: center;
       }
 
-      .source-list {
+      .flow div:not(:last-child)::after {
+        position: absolute;
+        z-index: 1;
+        right: -0.72rem;
+        color: var(--brand);
+        content: "→";
+        font-size: 1.2rem;
+        font-weight: 900;
+      }
+
+      .flow strong,
+      .flow span {
+        display: block;
+      }
+
+      .flow span {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+
+      th,
+      td {
+        padding: 0.78rem 0.85rem;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #edf2ee;
+        color: var(--brand-strong);
+        font-size: 0.76rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .pipeline {
+        margin: 1rem 0 0;
+        padding: 0.9rem 1rem;
+        overflow-x: auto;
+        border-radius: 0.75rem;
+        background: #14241d;
+        color: #dff1e9;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.8rem;
+        white-space: nowrap;
+      }
+
+      .step-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: steps;
+      }
+
+      .step-list li {
+        position: relative;
+        min-height: 2.8rem;
+        padding: 0.55rem 0 0.75rem 2.45rem;
+        border-bottom: 1px solid var(--line);
+        counter-increment: steps;
+      }
+
+      .step-list li::before {
+        position: absolute;
+        top: 0.45rem;
+        left: 0;
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.65rem 1rem;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: var(--brand-soft);
+        color: var(--brand-strong);
+        content: counter(steps);
+        font-size: 0.78rem;
+        font-weight: 850;
+        place-items: center;
+      }
+
+      .step-list li:last-child {
+        border-bottom: 0;
+      }
+
+      .sources {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 1rem;
+        margin: 1rem 0 0;
         padding: 0;
         list-style: none;
       }
 
-      .source-list li {
-        padding: 0.8rem 0;
-        border-bottom: 1px solid var(--line);
-      }
-
       footer {
-        padding: 2rem 1.25rem;
+        padding: 1.8rem 1.25rem;
         border-top: 1px solid var(--line);
         color: var(--muted);
-        font-size: 0.86rem;
+        font-size: 0.84rem;
       }
 
-      @media (max-width: 900px) {
-        .stats,
-        .card-grid.three {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-
-        .journey {
+      @media (max-width: 62rem) {
+        .stats {
           grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
-        .architecture {
+        .grid.three {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .flow {
           grid-template-columns: 1fr;
         }
 
-        .architecture div {
+        .flow div {
           min-height: auto;
         }
 
-        .architecture div:not(:last-child)::after {
+        .flow div:not(:last-child)::after {
           right: auto;
-          bottom: -1.15rem;
+          bottom: -1rem;
           content: "↓";
         }
       }
 
-      @media (max-width: 680px) {
+      @media (max-width: 44rem) {
         .hero {
-          padding-top: 3.5rem;
+          padding-top: 3rem;
         }
 
-        .stats,
-        .card-grid,
-        .card-grid.three,
-        .rule-grid,
         .section-head,
-        .source-list {
+        .grid,
+        .grid.three,
+        .snapshot {
           grid-template-columns: 1fr;
-        }
-
-        .journey {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
         .section-head {
-          gap: 0.65rem;
+          gap: 0.5rem;
         }
 
-        .phase-list li {
-          grid-template-columns: 1fr;
-          gap: 0.25rem;
+        th,
+        td {
+          min-width: 9rem;
         }
       }
 
-      @media (max-width: 390px) {
+      @media (max-width: 23rem) {
+        .stats {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
         main,
         .hero,
         footer {
@@ -601,12 +555,8 @@
           padding-left: 1rem;
         }
 
-        .journey {
-          grid-template-columns: 1fr;
-        }
-
-        .journey li {
-          min-height: auto;
+        .quick-nav ul {
+          padding-inline: 1rem;
         }
       }
 
@@ -618,7 +568,7 @@
 
       @media print {
         :root {
-          --paper: #fff;
+          --canvas: #fff;
           --shadow: none;
         }
 
@@ -628,13 +578,9 @@
         }
 
         .hero {
-          padding: 1.5rem 0;
+          padding: 1.2rem 0;
           background: #fff;
           color: #000;
-        }
-
-        .hero::after {
-          display: none;
         }
 
         .lead,
@@ -643,7 +589,7 @@
           color: #333;
         }
 
-        .meta-row li,
+        .meta li,
         .stat {
           border-color: #bbb;
           background: #fff;
@@ -655,12 +601,13 @@
         }
 
         section {
-          padding-top: 1.6rem;
-          break-inside: avoid;
+          padding-top: 1.4rem;
         }
 
-        a {
-          color: #000;
+        .card,
+        .callout,
+        .table-wrap {
+          break-inside: avoid;
         }
       }
     </style>
@@ -669,509 +616,672 @@
     <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
 
     <header class="hero">
-      <div class="wrap hero-content">
-        <p class="eyebrow">Set Livre · contexto executivo · baseline 1.1</p>
-        <h1>Marketplace completo para aluguel de estúdios audiovisuais</h1>
+      <div class="wrap">
+        <p class="eyebrow">Set Livre · resumo executivo vivo</p>
+        <h1>Progresso da implementação</h1>
         <p class="lead">
-          A Set Livre conecta quem precisa produzir foto, vídeo, podcast ou live
-          com donos de estúdios. A proposta é operar o ciclo comercial inteiro:
-          descoberta, agenda, reserva, pagamento, repasse e suporte.
+          Visão direta do que já existe no repositório, do que está em revisão e do que ainda será
+          construído na plataforma de aluguel de estúdios audiovisuais.
         </p>
-        <ul class="meta-row" aria-label="Contexto do lançamento">
-          <li>Curitiba / PR</li>
-          <li>PT-BR</li>
-          <li>BRL</li>
-          <li>America/Sao_Paulo</li>
-          <li>MVP completo comercializável</li>
+        <ul class="meta" aria-label="Fotografia atual do projeto">
+          <li>Atualizado em 10 de agosto de 2026</li>
+          <li>Fundação local</li>
+          <li>14º ciclo de review em andamento</li>
+          <li>Sem integração cloud nesta etapa</li>
         </ul>
-
-        <div class="stats" aria-label="Números do pacote documental">
-          <div class="stat"><strong>34</strong><span>features especificadas</span></div>
-          <div class="stat"><strong>193</strong><span>cenários E2E planejados</span></div>
-          <div class="stat"><strong>16</strong><span>decisões arquiteturais</span></div>
-          <div class="stat"><strong>0</strong><span>código implementado aqui</span></div>
+        <div class="stats" aria-label="Indicadores atuais">
+          <div class="stat">
+            <strong>0/34</strong><span>features de produto implementadas</span>
+          </div>
+          <div class="stat">
+            <strong>202</strong><span>testes unitários aprovados no patch atual</span>
+          </div>
+          <div class="stat"><strong>148</strong><span>asserts pgTAP no banco local</span></div>
+          <div class="stat"><strong>36</strong><span>execuções Playwright/axe</span></div>
+          <div class="stat"><strong>7</strong><span>migrations de fundação</span></div>
+          <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
     </header>
 
-    <nav class="quick-nav" aria-label="Navegação deste resumo">
+    <nav class="quick-nav" aria-label="Seções deste resumo">
       <div class="wrap">
         <ul>
-          <li><a href="#visao">Visão</a></li>
-          <li><a href="#jornada">Pessoas e jornada</a></li>
-          <li><a href="#features">Features</a></li>
-          <li><a href="#ideias">Ideias centrais</a></li>
+          <li><a href="#status">Status</a></li>
+          <li><a href="#produto">Produto</a></li>
+          <li><a href="#aplicacoes">Aplicações</a></li>
           <li><a href="#arquitetura">Arquitetura</a></li>
-          <li><a href="#implementacao">Implementação</a></li>
-          <li><a href="#pendencias">Pendências</a></li>
-          <li><a href="#fora">Fora de escopo</a></li>
+          <li><a href="#scripts">Scripts</a></li>
+          <li><a href="#testes">Testes</a></li>
+          <li><a href="#seguranca">Segurança</a></li>
+          <li><a href="#release">Release</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#proximos-passos">Próximos passos</a></li>
         </ul>
       </div>
     </nav>
 
     <main id="conteudo">
       <div class="wrap">
-        <section id="visao">
+        <section id="status">
           <div class="section-head">
-            <h2>O projeto, em uma frase</h2>
+            <h2>Estado atual</h2>
             <p>
-              Uma plataforma web de locação de estúdios com catálogo aprovado,
-              disponibilidade confiável e operação financeira rastreável — não
-              apenas uma vitrine ou protótipo.
+              A fundação técnica está executável e passou pelo último ciclo integral de gates. O PR
+              ainda está em review; nenhuma das 34 features de negócio foi iniciada ou simulada.
             </p>
           </div>
 
-          <div class="notice">
-            <strong>Estado real deste diretório:</strong> é um pacote documental.
-            Antes da criação deste resumo, havia 110 arquivos Markdown e nenhum
-            <code>.git</code>, <code>package.json</code>, aplicação, migration,
-            teste ou pipeline de CI. As 34 features e os 193 cenários estão
-            planejados, não implementados.
+          <div class="grid three">
+            <article class="card">
+              <span class="tag done">Validado localmente</span>
+              <h3>Fundação executável</h3>
+              <p>
+                Workspaces npm, dois apps Next.js, pacotes compartilhados, Supabase local, health,
+                readiness, CSP, gates, testes e empacotamento local.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag review">Publicado no PR</span>
+              <h3>14º ciclo da fundação</h3>
+              <p>
+                O ciclo reforça a limpeza física de artefatos contra mounts e trocas de árvore. A
+                implementação e os gates completos fazem parte da fotografia publicada para revisão.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag planned">Planejado</span>
+              <h3>Produto: 0 de 34</h3>
+              <p>
+                Autenticação, estúdios, calendário, reserva, pagamentos e backoffice operacional
+                continuam especificados, mas ainda não implementados.
+              </p>
+            </article>
+          </div>
+
+          <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Base numérica deste documento:</strong>
+            <p>
+              A rodada integral atual passou em 202 unitários, 148 asserts pgTAP e 36 execuções
+              Playwright, além de format, lint, TypeScript, docs, dois builds, audit e Knip.
+            </p>
           </div>
         </section>
 
-        <section id="jornada">
+        <section id="produto">
           <div class="section-head">
-            <h2>Pessoas e jornada principal</h2>
+            <h2>Produto e escopo</h2>
             <p>
-              Visitantes descobrem; locatários reservam; donos publicam e operam;
-              a equipe Set Livre revisa, atende e controla o financeiro.
+              O alvo é um marketplace comercializável para aluguel de estúdios audiovisuais em
+              Curitiba/PR, em PT-BR, BRL e fuso <code>America/Sao_Paulo</code>.
             </p>
           </div>
 
-          <div class="card-grid">
+          <div class="grid">
             <article class="card">
-              <h3>Visitante e locatário PF/PJ</h3>
+              <h3>Jornada prevista</h3>
               <p>
-                Pesquisa estúdios, consulta preço e disponibilidade, cria conta,
-                paga, acompanha ou cancela reservas elegíveis e exerce direitos
-                de dados.
+                Descoberta do estúdio → disponibilidade e preço → autenticação → pagamento e hold →
+                reserva confirmada → uso → repasse e suporte.
+              </p>
+              <p>
+                Visitantes e locatários usam o app público; donos cadastram e operam estúdios; a
+                equipe Set Livre revisa e administra pelo backoffice.
               </p>
             </article>
             <article class="card">
-              <h3>Dono do estúdio</h3>
+              <h3>Incluído na versão 1.1</h3>
               <p>
-                Mantém vários estúdios, conteúdo, mídia, calendário, preços e
-                adicionais; envia para aprovação e acompanha reservas e repasses.
-                Cada estúdio tem apenas um dono nesta versão.
-              </p>
-            </article>
-            <article class="card">
-              <h3>Operação Set Livre</h3>
-              <p>
-                Reviewer, suporte, financeiro e admin operam em backoffice
-                separado, com papéis server-side e auditoria de ações sensíveis.
-              </p>
-            </article>
-            <article class="card">
-              <h3>Workers</h3>
-              <p>
-                Expiram holds, reconciliam pagamentos, enviam e-mails, encerram
-                reservas, processam repasses e executam manutenção de forma
-                idempotente.
+                Catálogo aprovado, calendário próprio, disponibilidade, preço, adicionais, reserva,
+                cartão, PIX, split 80/20, reembolso, repasse, e-mails, LGPD, SEO, acessibilidade e
+                operação administrativa.
               </p>
             </article>
           </div>
 
-          <ol class="journey" aria-label="Jornada de reserva e repasse">
-            <li>Home e filtros</li>
-            <li>Listagem e detalhe</li>
-            <li>Configuração e cotação</li>
-            <li>Login e revalidação</li>
-            <li>Pagamento e hold</li>
-            <li>Reserva confirmada</li>
-            <li>Uso do estúdio</li>
-            <li>Repasse ao dono</li>
-            <li>Painéis e suporte</li>
-            <li>Cancelamento ou refund</li>
-            <li>Reconciliação</li>
-            <li>Auditoria</li>
-          </ol>
+          <ul class="tags" aria-label="Itens fora de escopo">
+            <li>mini fórum</li>
+            <li>app nativo</li>
+            <li>chat e avaliações</li>
+            <li>mapa e busca textual</li>
+            <li>assinaturas e cupons</li>
+            <li>carrinho multiestúdio</li>
+            <li>Google Calendar automático</li>
+            <li>NFS-e automática</li>
+            <li>multi-região</li>
+            <li>BI avançado</li>
+          </ul>
         </section>
 
-        <section id="features">
+        <section id="aplicacoes">
           <div class="section-head">
-            <h2>Features, agrupadas</h2>
+            <h2>Aplicações e pacotes</h2>
             <p>
-              O catálogo possui 34 features: 33 P0 e apenas a agenda/iCal
-              (FEAT-015) como P1.
+              A separação entre público e administração já existe de verdade. Neste momento, ambos
+              mostram apenas uma superfície técnica de fundação — não telas falsas de produto.
             </p>
           </div>
 
-          <div class="card-grid three">
-            <article class="card feature-card">
-              <span class="feature-number">001 · 010–011</span>
-              <div>
-                <h3>Descoberta pública</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-001</strong> — shell e home sem cards de estúdio.</li>
-                  <li><strong>FEAT-010</strong> — listagem, filtros, preço e cursor.</li>
-                  <li><strong>FEAT-011</strong> — detalhe, galeria, disponibilidade e SEO.</li>
-                </ul>
-              </div>
+          <div class="grid">
+            <article class="card">
+              <span class="tag done">Implementado</span>
+              <h3>Web público · raiz · porta 3000</h3>
+              <p>
+                Next.js App Router com página de status da fundação, layout responsivo, tokens
+                compartilhados, CSP por request e endpoints <code>/api/health/live</code> e
+                <code>/api/health/ready</code>.
+              </p>
+              <p>
+                Rotas de catálogo, autenticação, conta, dono, checkout e comandos ainda não existem.
+              </p>
             </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">002–003 · 034</span>
-              <div>
-                <h3>Identidade e privacidade</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-002</strong> — cadastro, confirmação, login e recuperação.</li>
-                  <li><strong>FEAT-003</strong> — perfil, conta e dados PF/PJ.</li>
-                  <li><strong>FEAT-034</strong> — termos, LGPD, exportação e exclusão.</li>
-                </ul>
-              </div>
+            <article class="card">
+              <span class="tag done">Implementado</span>
+              <h3>Backoffice · apps/backoffice · porta 3001</h3>
+              <p>
+                Aplicação Next.js independente, <code>noindex</code>, build e runtime próprios, CSP
+                e health/readiness separados. O app público não expõe <code>/admin</code>.
+              </p>
+              <p>
+                Revisão, usuários, taxonomias, financeiro, fiscal, jobs e auditoria chegam nas
+                FEAT-030 a FEAT-033; ainda não há acesso administrativo funcional.
+              </p>
             </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">004–005</span>
-              <div>
-                <h3>Entrada do dono</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-004</strong> — ativação e onboarding do recebedor.</li>
-                  <li><strong>FEAT-005</strong> — dashboard e portfólio de estúdios.</li>
-                </ul>
-              </div>
+            <article class="card">
+              <span class="tag done">Implementado</span>
+              <h3>packages/contracts</h3>
+              <p>
+                Contratos Zod de health, release e URL DAL; readiness server-only; tipos gerados do
+                banco. O schema público permanece vazio porque nenhuma entidade de negócio foi
+                antecipada.
+              </p>
             </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">006–009</span>
-              <div>
-                <h3>Estúdios e publicação</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-006</strong> — estúdio e dados centrais versionados.</li>
-                  <li><strong>FEAT-007</strong> — taxonomias, regras, FAQ e YouTube.</li>
-                  <li><strong>FEAT-008</strong> — fotos, capa, upload e ordenação.</li>
-                  <li><strong>FEAT-009</strong> — revisão, publicação, edição e pausa.</li>
-                </ul>
-              </div>
+            <article class="card">
+              <span class="tag done">Implementado</span>
+              <h3>packages/ui</h3>
+              <p>
+                Tokens claro/escuro e o componente técnico <code>FoundationStatus</code>, com
+                reflow, safe areas e redução de movimento. Primitives de produto entram apenas
+                quando houver consumidor real.
+              </p>
             </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">012–015</span>
-              <div>
-                <h3>Calendário</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-012</strong> — disponibilidade semanal.</li>
-                  <li><strong>FEAT-013</strong> — exceções, bloqueios, buffer e duração.</li>
-                  <li><strong>FEAT-014</strong> — calendário avançado e drag-and-drop.</li>
-                  <li><strong>FEAT-015</strong> — agenda consolidada e iCal manual.</li>
-                </ul>
-              </div>
-            </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">016–017</span>
-              <div>
-                <h3>Preço e adicionais</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-016</strong> — preço por hora e multiplicadores.</li>
-                  <li><strong>FEAT-017</strong> — adicionais por unidade.</li>
-                </ul>
-              </div>
-            </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">018–023</span>
-              <div>
-                <h3>Reserva e checkout</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-018</strong> — configurador e cotação autoritativa.</li>
-                  <li><strong>FEAT-019</strong> — retorno pós-login e restauração.</li>
-                  <li><strong>FEAT-020</strong> — início, hold e concorrência.</li>
-                  <li><strong>FEAT-021</strong> — pagamento com cartão.</li>
-                  <li><strong>FEAT-022</strong> — pagamento com PIX.</li>
-                  <li><strong>FEAT-023</strong> — webhooks, reconciliação e retry.</li>
-                </ul>
-              </div>
-            </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">024–029</span>
-              <div>
-                <h3>Pós-reserva e financeiro</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-024</strong> — confirmação e ciclo da reserva.</li>
-                  <li><strong>FEAT-025</strong> — cancelamento e reembolso total.</li>
-                  <li><strong>FEAT-026</strong> — split 80/20 e repasse.</li>
-                  <li><strong>FEAT-027</strong> — área de reservas do locatário.</li>
-                  <li><strong>FEAT-028</strong> — reservas e financeiro do dono.</li>
-                  <li><strong>FEAT-029</strong> — e-mails, outbox e lembretes.</li>
-                </ul>
-              </div>
-            </article>
-
-            <article class="card feature-card">
-              <span class="feature-number">030–033</span>
-              <div>
-                <h3>Backoffice</h3>
-                <ul class="feature-list">
-                  <li><strong>FEAT-030</strong> — revisão e moderação de estúdios.</li>
-                  <li><strong>FEAT-031</strong> — usuários, papéis e taxonomias.</li>
-                  <li><strong>FEAT-032</strong> — financeiro, reembolso, repasse e fiscal.</li>
-                  <li><strong>FEAT-033</strong> — operação, jobs, incidentes e auditoria.</li>
-                </ul>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section id="ideias">
-          <div class="section-head">
-            <h2>Ideias centrais do produto</h2>
-            <p>
-              Estes contratos sustentam o projeto e não devem ser reduzidos a
-              comportamento apenas visual no frontend.
-            </p>
-          </div>
-
-          <div class="rule-grid">
-            <div class="rule">
-              <strong>Conteúdo aprovado e versionado</strong>
-              <span>Editar um anúncio publicado cria nova revisão; a versão atual continua pública até nova aprovação.</span>
-            </div>
-            <div class="rule">
-              <strong>Calendário interno canônico</strong>
-              <span>Disponibilidade deriva de regras, exceções e alocações. iCal é manual; Google Calendar não integra a baseline.</span>
-            </div>
-            <div class="rule">
-              <strong>Concorrência garantida no banco</strong>
-              <span>Slots são de 1h e uma constraint de exclusão impede alocações sobrepostas; o frontend não é lock.</span>
-            </div>
-            <div class="rule">
-              <strong>Cotação não reserva</strong>
-              <span>A cotação vale 5 minutos. A intenção pós-login dura 2h, mas preço e vaga sempre são recalculados.</span>
-            </div>
-            <div class="rule">
-              <strong>Reserva nasce após pagamento</strong>
-              <span>O provider inicia o pagamento; depois o sistema tenta adquirir hold. Confirmação depende de evento autoritativo e idempotente.</span>
-            </div>
-            <div class="rule">
-              <strong>Histórico financeiro é imutável</strong>
-              <span>Valores ficam em centavos e snapshots. Correções usam eventos, reembolso e compensação — nunca apagamento.</span>
-            </div>
-            <div class="rule">
-              <strong>Split e repasse explícitos</strong>
-              <span>80% do bruto para o dono, 20% para a plataforma; taxas são da plataforma. Repasse padrão em fim + 24h.</span>
-            </div>
-            <div class="rule">
-              <strong>Falha não vira sucesso falso</strong>
-              <span>Refund, payout, e-mail e jobs mantêm estados recuperáveis, retry, reconciliação, alerta e auditoria.</span>
-            </div>
           </div>
         </section>
 
         <section id="arquitetura">
           <div class="section-head">
-            <h2>Arquitetura em alto nível</h2>
+            <h2>Arquitetura</h2>
             <p>
-              Duas aplicações Next.js, processos de background e Supabase, com
-              leitura e escrita deliberadamente separadas.
+              Monorepo npm com fronteiras explícitas: interface, contratos, leitura, comandos, banco
+              e operação têm responsabilidades separadas.
             </p>
           </div>
 
-          <div class="architecture" aria-label="Fluxo arquitetural resumido">
-            <div><span>Usuários</span><strong>Visitante · locatário · dono · operador</strong></div>
-            <div><span>Entrada</span><strong>Nginx + TLS + rede admin restrita</strong></div>
-            <div><span>Apps</span><strong>Web público/autenticado + backoffice separado</strong></div>
-            <div><span>Contratos</span><strong>Read models + POST /api/commands + workers</strong></div>
-            <div><span>Dados</span><strong>Supabase Auth · Postgres · Storage + providers</strong></div>
+          <div class="flow" aria-label="Arquitetura de alto nível">
+            <div><span>Pessoas</span><strong>visitante · locatário · dono · operador</strong></div>
+            <div><span>Apps</span><strong>web e backoffice independentes</strong></div>
+            <div><span>Contratos</span><strong>read models e comandos server-side</strong></div>
+            <div><span>Dados</span><strong>Supabase Auth · Postgres · Storage</strong></div>
+            <div><span>Operação futura</span><strong>workers · providers · Oracle</strong></div>
           </div>
 
-          <div class="pipeline" aria-label="Pipeline obrigatório de escrita crítica">
-            POST /api/commands → sessão/origem/limites → Zod → registry → DAL server-only → função SQL privada → transação/lock → retorno autoritativo → invalidação
+          <div class="pipeline" aria-label="Pipeline normativo de escrita crítica">
+            POST /api/commands → sessão/origem/limites → Zod → registry → DAL server-only → função
+            SQL privada → transação/lock → retorno autoritativo → invalidação
           </div>
 
-          <ul class="chip-list" aria-label="Stack obrigatória">
-            <li>npm workspaces</li>
-            <li>Next.js 16 App Router</li>
-            <li>React 19</li>
-            <li>TypeScript strict</li>
-            <li>CSS Modules + variables</li>
-            <li>TanStack Query</li>
-            <li>Zod</li>
-            <li>Supabase Cloud/local</li>
-            <li>pg server-only</li>
-            <li>Vitest</li>
-            <li>Playwright + axe</li>
-            <li>Oracle ARM64</li>
-            <li>systemd + Nginx</li>
-            <li>releases imutáveis por SHA</li>
+          <div class="grid" style="margin-top: 0.9rem">
+            <article class="card">
+              <h3>Stack já instalada</h3>
+              <p>
+                Node 24.18, npm 11.19, Next.js 16.3, React 19.2, TypeScript estrito, CSS Modules,
+                CSS variables, Zod, <code>pg</code>, Vitest, Playwright, axe, ESLint, Prettier e
+                Knip.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Contratos futuros, sem antecipação</h3>
+              <p>
+                TanStack Query, clientes Supabase e adapters de pagamento/e-mail só entram no PR do
+                primeiro consumidor. A rota de comandos, domínio, workers e entidades de negócio
+                ainda não foram criados.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="scripts">
+          <div class="section-head">
+            <h2>Scripts do repositório</h2>
+            <p>
+              Os comandos estão agrupados por intenção. Os módulos em <code>scripts/</code> também
+              protegem ambiente, processo, arquivos gerados e fronteiras locais.
+            </p>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Grupo</th>
+                  <th>Comandos principais</th>
+                  <th>O que fazem</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Apps locais</td>
+                  <td>
+                    <code>dev</code>, <code>dev:backoffice</code>, <code>start</code>,
+                    <code>start:backoffice</code>, <code>node scripts/dev-all.mjs</code>
+                  </td>
+                  <td>
+                    Validam Node/npm/Next e arquivos de ambiente, isolam variáveis e supervisionam
+                    as árvores de processo dos dois apps.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Build e tipos</td>
+                  <td>
+                    <code>build</code>, <code>build:web</code>, <code>build:backoffice</code>,
+                    <code>typecheck</code>
+                  </td>
+                  <td>
+                    Geram tipos do App Router, compilam TypeScript estrito e produzem os dois builds
+                    standalone.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Qualidade</td>
+                  <td>
+                    <code>format</code>, <code>format:check</code>, <code>lint</code>,
+                    <code>test:unit</code>, <code>audit</code>, <code>knip</code>
+                  </td>
+                  <td>
+                    Formatação determinística, análise estática, testes Vitest, vulnerabilidades e
+                    código/dependências/exports sem uso.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Supabase local</td>
+                  <td>
+                    <code>supabase:start</code>, <code>stop</code>, <code>status</code>,
+                    <code>reset</code>, <code>local:setup</code>, <code>test:db</code>
+                  </td>
+                  <td>
+                    Exigem Docker local, prendem a stack ao loopback, recriam banco/Auth/Storage,
+                    normalizam roles e executam pgTAP.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Contratos gerados</td>
+                  <td>
+                    <code>supabase:schema</code>, <code>supabase:types</code>,
+                    <code>supabase:generate</code>
+                  </td>
+                  <td>
+                    Geram snapshot SQL e tipos TypeScript por temporários físicos, validação e
+                    rename atômico; <code>test:db</code> detecta drift sem sobrescrever a versão
+                    rastreada.
+                  </td>
+                </tr>
+                <tr>
+                  <td>E2E e acessibilidade</td>
+                  <td>
+                    <code>test:e2e</code>, <code>test:e2e:affected</code>,
+                    <code>test:e2e:critical</code>, <code>test:a11y</code>
+                  </td>
+                  <td>
+                    Fazem preflight local antes do browser, iniciam os dois servidores e rodam a
+                    matriz Chromium/Firefox/WebKit, mobile, axe, safe area e reflow.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Documentação</td>
+                  <td><code>docs:check</code></td>
+                  <td>
+                    Valida Blueprint, ADRs, 34 features, 193 cenários, sequência, links,
+                    dependências, change records e atualização deste resumo executivo.
+                  </td>
+                </tr>
+                <tr>
+                  <td>Release local</td>
+                  <td><code>node scripts/release-manifest.mjs</code></td>
+                  <td>
+                    Recompila checkout limpo, monta artefato dos dois apps, faz smoke empacotado,
+                    verifica secrets e publica tar/checksum determinísticos por SHA.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout" style="margin-top: 0.9rem">
+            <strong>Guardrails internos:</strong>
+            <p>
+              Módulos auxiliares cuidam de CLI npm confiável, ambientes mínimos, Docker/Supabase
+              local, geração atômica, encerramento de processos POSIX/Windows e remoção física de
+              árvores. Eles são infraestrutura de segurança, não features do usuário.
+            </p>
+          </div>
+        </section>
+
+        <section id="testes">
+          <div class="section-head">
+            <h2>Testes e gates</h2>
+            <p>
+              A rodada canônica do patch atual está verde. Ela protege a fundação; os 193 cenários
+              das features seguem planejados para seus próprios PRs.
+            </p>
+          </div>
+
+          <div class="grid three">
+            <article class="card">
+              <span class="tag done">202 aprovados</span>
+              <h3>Vitest</h3>
+              <p>
+                Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
+                tipos, docs, preflight E2E e remoção física protegida contra mounts.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag done">148 aprovados</span>
+              <h3>pgTAP</h3>
+              <p>
+                Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
+                <code>pg_catalog</code>, <code>pg_net</code>, readiness e recuperação após drift
+                transacional.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag done">36 aprovadas</span>
+              <h3>Playwright + axe</h3>
+              <p>
+                11 cenários técnicos executados em matriz: 16 smoke, 3 critical, 1 backoffice, 12
+                acessibilidade, 1 safe area e 3 reflow/zoom.
+              </p>
+            </article>
+          </div>
+
+          <div class="snapshot" aria-label="Cobertura Playwright atual">
+            <div>
+              <strong>3 engines</strong
+              ><span>Chromium, Firefox e WebKit nos fluxos críticos/reflow</span>
+            </div>
+            <div>
+              <strong>320 px</strong><span>telefone estreito, além de 390 px e desktop</span>
+            </div>
+            <div>
+              <strong>200%</strong><span>texto ampliado e reflow em viewport reduzido</span>
+            </div>
+          </div>
+
+          <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Gates canônicos:</strong>
+            <p>
+              <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
+              → docs → Playwright completo → builds → audit → Knip. No último ciclo concluído, todos
+              ficaram verdes e o audit registrou zero vulnerabilidades.
+            </p>
+          </div>
+        </section>
+
+        <section id="seguranca">
+          <div class="section-head">
+            <h2>Segurança e local-first</h2>
+            <p>
+              A etapa atual usa somente a máquina local e Supabase via Docker. A fundação nasce
+              fechada e só ampliará acesso junto com cada feature real.
+            </p>
+          </div>
+
+          <div class="grid three">
+            <article class="card">
+              <h3>Banco e readiness</h3>
+              <p>
+                Sete migrations append-only criam os schemas internos, a role <code>app_dal</code> e
+                probes de readiness. Não há tabela de negócio. Grants, owners, memberships e ACLs
+                públicas são comparados com allowlists exatas.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Runtime web</h3>
+              <p>
+                CSP com nonce novo por request, headers seguros, fallback sem JavaScript, health sem
+                cache e readiness que falha fechado sem expor SQL, credencial ou diagnóstico
+                interno.
+              </p>
+            </article>
+            <article class="card">
+              <h3>Ambiente e supply chain</h3>
+              <p>
+                Docker restrito ao loopback, arquivos env <code>0600</code>, subprocessos por
+                allowlist, logs redigidos, versões exatas, lockfile único, lifecycle scripts
+                bloqueados, audit e Knip obrigatórios.
+              </p>
+            </article>
+          </div>
+
+          <ul class="tags" aria-label="Garantias de segurança implementadas">
+            <li>nenhum secret público</li>
+            <li>nenhum service role no browser</li>
+            <li>app público sem admin</li>
+            <li>URL DAL local validada</li>
+            <li>grants explícitos; RLS entra por tabela</li>
+            <li>erros públicos seguros</li>
+            <li>artefatos E2E só em falha</li>
+            <li>sem API externa</li>
           </ul>
+        </section>
 
-          <div class="card-grid top-gap">
+        <section id="release">
+          <div class="section-head">
+            <h2>Release e deploy</h2>
+            <p>
+              Já existe um caminho local reproduzível para o artefato. Infraestrutura real e go-live
+              permanecem deliberadamente bloqueados pelo ADR-018.
+            </p>
+          </div>
+
+          <div class="grid">
             <article class="card">
-              <h3>Leituras</h3>
+              <span class="tag done">Implementado localmente</span>
+              <h3>Artefato por SHA</h3>
               <p>
-                Read models pequenos, tipados, filtrados no servidor e paginados
-                por keyset: <code>{ items, nextCursor }</code>. Nada de
-                <code>select('*')</code> ou tabelas inteiras no browser.
+                O gerador exige checkout limpo, recompila web/backoffice com ambientes separados,
+                usa <code>BUILD_ID</code> do commit, inclui migrations e lockfile, faz smoke nos
+                entrypoints standalone e revalida a árvore.
               </p>
             </article>
             <article class="card">
-              <h3>Segurança</h3>
+              <span class="tag done">Implementado localmente</span>
+              <h3>Reprodutibilidade e falha segura</h3>
               <p>
-                Grants mínimos, RLS, ownership, constraints, rate limit, funções
-                privadas, webhook assinado e auditoria são camadas independentes.
+                Lock exclusivo, tar com ordem/tempo/ownership/modos normalizados, checksum, extração
+                de verificação, recusa de sobrescrita divergente, varredura de secrets e limpeza de
+                processos em interrupção.
               </p>
             </article>
             <article class="card">
-              <h3>Interface</h3>
+              <span class="tag review">Validado localmente no 14º review</span>
+              <h3>Cleanup físico de artefatos</h3>
               <p>
-                Server Components por padrão; mobile desde 320px, WCAG 2.2 AA,
-                zoom de 200%, toque de 44px e estados de loading, vazio, erro,
-                conflito, sucesso e recuperação.
+                O patch atual usa <code>/proc/self/mountinfo</code>, inspeção por
+                <code>lstat</code>, rename atômico e revalidação antes de remover árvores; falha
+                fechado quando não pode provar a topologia.
               </p>
             </article>
             <article class="card">
-              <h3>Entrega</h3>
+              <span class="tag external">Fase 5 / externo</span>
+              <h3>Produção ainda não realizada</h3>
               <p>
-                Cada fatia inclui banco, RLS, comando, read model, UI, testes,
-                observabilidade, documentação e rollback. Sem mocks de produção
-                ou botões falsos.
+                Faltam build/smoke ARM64 real, Oracle, Nginx, systemd, TLS, Supabase Cloud, CI/CD,
+                backup/restore e rollback ensaiados. O artefato local não é apresentado como release
+                de produção.
               </p>
             </article>
           </div>
         </section>
 
-        <section id="implementacao">
+        <section id="features">
           <div class="section-head">
-            <h2>Contexto para começar a implementação</h2>
+            <h2>Features e roadmap</h2>
             <p>
-              A engenharia começa na Fase 0 e avança por fatias verticais com
-              resultado demonstrável, não por camadas horizontais incompletas.
+              As 34 features estão especificadas com 193 cenários de produto. Todas continuam
+              planejadas; a ordem abaixo é a sequência executável do ADR-017.
             </p>
           </div>
 
-          <ol class="phase-list">
-            <li><strong>Fase 0 · Fundação</strong><span>Definir o repositório real; npm workspaces; app público e backoffice; Supabase local; migrations; lint, testes, CI, primitives e observabilidade base.</span></li>
-            <li><strong>Fase 1 · Oferta</strong><span>Identidade e dono; estúdio/revisão/mídia; aprovação; home, listagem e detalhe. Resultado: catálogo público aprovado.</span></li>
-            <li><strong>Fase 2 · Agenda</strong><span>Horários, exceções, bloqueios, calendário, iCal, preço, adicionais e cotação. Resultado: disponibilidade e preço reais.</span></li>
-            <li><strong>Fase 3 · Transação</strong><span>Retorno pós-login, hold, cartão, PIX, webhooks, reserva, reembolso e repasse. Resultado: primeira reserva paga segura.</span></li>
-            <li><strong>Fase 4 · Operação</strong><span>Áreas do locatário/dono, e-mails, backoffice, fiscal, privacidade, jobs e auditoria.</span></li>
-            <li><strong>Fase 5 · Produção</strong><span>Oracle, TLS, systemd, release/rollback, backup/restore, smoke, carga, segurança e acessibilidade.</span></li>
-          </ol>
-
-          <div class="notice danger top-gap-large">
-            <strong>Pré-condição antes de codificar:</strong> normalizar a ordem de
-            implementação. Os documentos contêm ciclos explícitos, como
-            FEAT-002 ↔ FEAT-034, FEAT-007 ↔ FEAT-031, FEAT-008/009 ↔ FEAT-030,
-            FEAT-017 ↔ FEAT-018 e FEAT-024 ↔ FEAT-026/029. O handoff e
-            <code>docs/implementation-order.md</code> também distribuem algumas
-            features de formas diferentes. É preciso registrar formalmente se
-            “dependência” significa contrato para concluir ou pré-requisito para
-            iniciar, e decompor capacidades bootstrap. Não resolver por suposição.
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fase</th>
+                  <th>Features</th>
+                  <th>Resultado esperado</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Fundação</td>
+                  <td>Transversal, sem FEAT de negócio</td>
+                  <td>Apps, dados locais, segurança, qualidade e release local</td>
+                  <td><span class="tag review">PR em review</span></td>
+                </tr>
+                <tr>
+                  <td>Fase 1 · Identidade e oferta</td>
+                  <td>002, 003, 004, 006, 007, 031, 008, 009, 030</td>
+                  <td>
+                    Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
+                    publicação pelo backoffice
+                  </td>
+                  <td><span class="tag planned">0/9</span></td>
+                </tr>
+                <tr>
+                  <td>Fase 2 · Disponibilidade e descoberta</td>
+                  <td>012, 013, 016, 017, 010, 011, 001</td>
+                  <td>
+                    Agenda semanal, exceções, preço, adicionais, listagem, detalhe público, SEO e
+                    home com destinos reais
+                  </td>
+                  <td><span class="tag planned">0/7</span></td>
+                </tr>
+                <tr>
+                  <td>Fase 3 · Reserva e pagamento</td>
+                  <td>018, 019, 020, 021, 022, 023, 024</td>
+                  <td>
+                    Cotação, retorno pós-login, hold concorrente, cartão, PIX, webhooks e reserva
+                    autoritativa
+                  </td>
+                  <td><span class="tag planned">0/7</span></td>
+                </tr>
+                <tr>
+                  <td>Fase 4 · Operação completa</td>
+                  <td>014, 015, 025, 026, 029, 005, 027, 028, 032, 033, 034</td>
+                  <td>
+                    Calendário avançado/iCal, cancelamento, refund, payout, e-mail, áreas privadas,
+                    financeiro, operações, auditoria e LGPD
+                  </td>
+                  <td><span class="tag planned">0/11</span></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <div class="card-grid top-gap">
+          <div class="callout" style="margin-top: 0.9rem">
+            <strong>Regra de verdade:</strong>
+            <p>
+              Uma feature só muda para concluída quando banco, contratos, UI desktop/mobile,
+              acessibilidade, Playwright, documentação, observabilidade e rollback aplicáveis estão
+              verdes. Interface isolada ou mock não conta como feature implementada.
+            </p>
+          </div>
+        </section>
+
+        <section id="proximos-passos">
+          <div class="section-head">
+            <h2>Próximos passos e pendências</h2>
+            <p>
+              Primeiro termina a fundação; depois as features avançam uma por vez, em branches e PRs
+              independentes, sem antecipar tela, schema ou integração de outra feature.
+            </p>
+          </div>
+
+          <div class="grid">
             <article class="card">
-              <h3>Primeiro corte vertical sugerido pelos documentos</h3>
+              <h3>Próxima execução</h3>
+              <ol class="step-list">
+                <li>
+                  Resolver somente os comentários efetivamente atendidos no ciclo publicado. O
+                  comentário rejeitado permanece aberto com evidência.
+                </li>
+                <li>
+                  Solicitar novo <code>@codex review</code> e esperar 60 minutos antes de consultar.
+                  A espera de 4 horas foi uma exceção pontual do ciclo instruído.
+                </li>
+                <li>Repetir correção, testes e review até não haver problema acionável.</li>
+                <li>Após o merge, abrir uma branch exclusiva para a FEAT-002 (autenticação).</li>
+              </ol>
+            </article>
+            <article class="card">
+              <h3>Fluxo obrigatório por feature</h3>
+              <ol class="step-list">
+                <li>Ler contratos e criar o registro em <code>docs/changes/</code>.</li>
+                <li>Entregar uma fatia vertical completa com correção e estados de UX.</li>
+                <li>Atualizar este HTML, docs da feature, banco e QA no mesmo PR.</li>
+                <li>Rodar todos os gates e a suíte Playwright completa.</li>
+                <li>
+                  Fazer review, corrigir, publicar e resolver threads atendidas antes do merge.
+                </li>
+              </ol>
+            </article>
+          </div>
+
+          <div class="grid three" style="margin-top: 0.9rem">
+            <article class="card">
+              <span class="tag external">Pendência externa</span>
+              <h3>Cloud e entrega</h3>
+              <p>CI/CD, proteção de branch, Supabase Cloud, Oracle ARM64, domínio, DNS e TLS.</p>
+            </article>
+            <article class="card">
+              <span class="tag external">Pendência externa</span>
+              <h3>Providers e operação</h3>
+              <p>Gateway/contrato de marketplace, e-mail transacional e observabilidade externa.</p>
+            </article>
+            <article class="card">
+              <span class="tag external">Pendência externa</span>
+              <h3>Conteúdo</h3>
               <p>
-                Dono cria estúdio em rascunho → envia revisão → operador aprova →
-                visitante vê o conteúdo publicado, com isolamento entre usuários,
-                RLS, comando, read model, UI e Playwright.
+                Termos jurídicos finais, política de cancelamento, contrato do dono e identidade
+                visual.
               </p>
             </article>
-            <article class="card">
-              <h3>Gates mínimos</h3>
-              <p>
-                npm ci; format; lint; typecheck; unit; reset Supabase; testes DB/RLS;
-                docs check; E2E afetado; build; audit; Knip. Release exige suíte
-                completa, ARM64, smoke, rollback e restore ensaiados.
-              </p>
-            </article>
           </div>
-        </section>
 
-        <section id="pendencias">
-          <div class="section-head">
-            <h2>Decisões e riscos pendentes</h2>
+          <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Limite local-first:</strong>
             <p>
-              A fundação pode avançar com adapters e defaults documentados, mas
-              produção/publicação dependem das decisões abaixo.
+              As pendências externas não bloqueiam o que pode ser comprovado localmente, mas impedem
+              go-live. Adapters locais nunca serão apresentados como provider real ou prontidão de
+              produção.
             </p>
           </div>
 
-          <div class="card-grid three">
-            <article class="card">
-              <h3>Bloqueiam produção/publicação</h3>
-              <ul class="tight-list">
-                <li>Gateway e contrato comercial de marketplace.</li>
-                <li>Capacidade real de split e repasse diferido.</li>
-                <li>Termos, privacidade e cancelamento finais.</li>
-                <li>Domínio, DNS, SMTP e credenciais reais.</li>
-              </ul>
-            </article>
-            <article class="card">
-              <h3>Defaults reversíveis</h3>
-              <ul class="tight-list">
-                <li>Pagar.me apenas como adapter de sandbox.</li>
-                <li>Tokens visuais neutros até a marca final.</li>
-                <li>1–20 fotos, 15 MB por arquivo.</li>
-                <li>Repasse 24h após o fim; lembrete 24h antes.</li>
-              </ul>
-            </article>
-            <article class="card">
-              <h3>Riscos prioritários</h3>
-              <ul class="tight-list">
-                <li>Dupla reserva e pagamento sem hold.</li>
-                <li>Refund/payout fora de ordem.</li>
-                <li>RLS/grants incorretos ou backoffice exposto.</li>
-                <li>Limites Supabase, VM única e capacidade ARM64.</li>
-              </ul>
-            </article>
-          </div>
-        </section>
-
-        <section id="fora">
-          <div class="section-head">
-            <h2>Fora de escopo</h2>
-            <p>
-              Não criar telas, schemas, botões ou dependências “para o futuro” sem
-              novo escopo e ADR aprovado.
-            </p>
-          </div>
-
-          <ul class="chip-list">
-            <li>mini fórum/comunidade</li>
-            <li>app nativo</li>
-            <li>chat/WhatsApp</li>
-            <li>avaliações</li>
-            <li>busca textual</li>
-            <li>mapa/geolocalização</li>
-            <li>assinaturas</li>
-            <li>seguros</li>
-            <li>cupons/caução</li>
-            <li>múltiplos gestores</li>
-            <li>carrinho multiestúdio</li>
-            <li>upload de vídeo</li>
-            <li>Google Calendar automático</li>
-            <li>NFS-e automática</li>
-            <li>multi-idioma/fuso/região</li>
-            <li>BI/recomendação avançada</li>
-          </ul>
-        </section>
-
-        <section id="fontes">
-          <div class="section-head">
-            <h2>Fontes para aprofundar</h2>
-            <p>
-              Este HTML é um mapa executivo. Em caso de divergência, a cadeia
-              normativa do repositório continua sendo a autoridade.
-            </p>
-          </div>
-
-          <ul class="source-list">
-            <li><a href="AGENTS.md">Contrato operacional — AGENTS.md</a></li>
-            <li><a href="docs/reference/architecture-blueprint.md">Blueprint arquitetural</a></li>
-            <li><a href="docs/specification.md">Especificação canônica</a></li>
-            <li><a href="docs/feature-catalog.md">Catálogo das 34 features</a></li>
-            <li><a href="docs/implementation-order.md">Ordem de implementação</a></li>
-            <li><a href="docs/architecture.md">Arquitetura end-to-end</a></li>
-            <li><a href="docs/domain-model.md">Modelo de domínio</a></li>
-            <li><a href="docs/open-decisions.md">Decisões abertas</a></li>
-            <li><a href="docs/qa-traceability.md">Rastreabilidade dos 193 cenários</a></li>
-            <li><a href="CODEX_HANDOFF.md">Handoff de implementação</a></li>
+          <ul class="sources" aria-label="Fontes canônicas para aprofundamento">
+            <li><a href="README.md">README</a></li>
+            <li><a href="docs/context.md">Contexto técnico vivo</a></li>
+            <li><a href="docs/reference/architecture-blueprint.md">Blueprint</a></li>
+            <li><a href="docs/specification.md">Especificação</a></li>
+            <li><a href="docs/implementation-order.md">Ordem das features</a></li>
+            <li><a href="docs/feature-catalog.md">Catálogo</a></li>
+            <li><a href="docs/qa-traceability.md">QA</a></li>
+            <li>
+              <a href="docs/changes/2026-08-09-local-platform-foundation.md"
+                >Registro da fundação</a
+              >
+            </li>
+            <li><a href="pendencias.md">Pendências externas</a></li>
           </ul>
         </section>
       </div>
@@ -1179,8 +1289,8 @@
 
     <footer>
       <div class="wrap">
-        Resumo gerado a partir da baseline documental 1.1 em 09/08/2026.
-        Autoridade: Blueprint → ADRs → especificação → documentos vivos → testes/migrations → código.
+        Resumo executivo derivado e mantido com a implementação. Não substitui a cadeia normativa:
+        Blueprint → ADRs → especificação → documentos vivos → migrations/contratos/testes → código.
       </div>
     </footer>
   </body>

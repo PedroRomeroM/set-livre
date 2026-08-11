@@ -598,6 +598,55 @@ export function isAddedChangeRecord(change) {
   return change.status === "A" && /^docs\/changes\/\d{4}-\d{2}-\d{2}-.+\.md$/.test(change.path);
 }
 
+export function isProgressSummaryChange(change) {
+  return (
+    change.path === "contexto-projeto-set-livre.html" &&
+    (change.status === "A" || change.status === "M")
+  );
+}
+
+export function validateProgressSummary(content) {
+  const errors = [];
+  const requiredSectionIds = [
+    "status",
+    "produto",
+    "aplicacoes",
+    "arquitetura",
+    "scripts",
+    "testes",
+    "seguranca",
+    "release",
+    "features",
+    "proximos-passos",
+  ];
+
+  if (!/^<!doctype html>/iu.test(content.trimStart())) {
+    errors.push("o resumo precisa declarar HTML5");
+  }
+  if (!/<html\s[^>]*lang=["']pt-BR["'][^>]*>/iu.test(content)) {
+    errors.push("o resumo precisa declarar lang=pt-BR");
+  }
+  if ((content.match(/<h1(?:\s|>)/giu) ?? []).length !== 1) {
+    errors.push("o resumo precisa conter exatamente um h1");
+  }
+  if (!/<main(?:\s|>)/iu.test(content) || !/<\/main>/iu.test(content)) {
+    errors.push("o resumo precisa conter um main");
+  }
+  for (const sectionId of requiredSectionIds) {
+    if (!new RegExp(`<section\\s[^>]*id=["']${sectionId}["'][^>]*>`, "iu").test(content)) {
+      errors.push(`o resumo não contém a seção #${sectionId}`);
+    }
+  }
+  if (/<script(?:\s|>)/iu.test(content)) {
+    errors.push("o resumo executivo não pode depender de JavaScript");
+  }
+  if (/<link\s[^>]*rel=["']stylesheet["'][^>]*>/iu.test(content)) {
+    errors.push("o resumo executivo precisa manter o CSS incorporado");
+  }
+
+  return errors;
+}
+
 export function isTechnicalChangePath(path) {
   if (/^(?:src|apps|packages|scripts|supabase|tests)\//.test(path)) {
     return true;

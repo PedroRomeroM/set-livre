@@ -7,6 +7,7 @@ import {
   findDuplicates,
   findForbiddenInstallDependencies,
   isAddedChangeRecord,
+  isProgressSummaryChange,
   isTechnicalChangePath,
   parseNormativeIntegrationPairs,
   parseOpenPendingFeaturePairs,
@@ -20,6 +21,7 @@ import {
   validateAllowedInstallScripts,
   validateFeatureSequence,
   validateGovernanceAlignment,
+  validateProgressSummary,
   validateWorkspacePatterns,
 } from "./docs-check-core.mjs";
 
@@ -240,6 +242,7 @@ try {
 }
 
 const technicalChange = gitChanges.some((change) => isTechnicalChangePath(change.path));
+const progressSummaryChanges = gitChanges.filter(isProgressSummaryChange);
 let changeRecord = false;
 const addedChangeRecords = new Map(
   gitChanges.filter(isAddedChangeRecord).map((change) => [change.path, change]),
@@ -255,6 +258,13 @@ for (const change of addedChangeRecords.values()) {
   }
 }
 check(!technicalChange || changeRecord, "Mudança técnica sem novo registro em docs/changes/.");
+check(
+  !technicalChange || progressSummaryChanges.length > 0,
+  "Mudança técnica sem atualização de contexto-projeto-set-livre.html.",
+);
+for (const summaryError of validateProgressSummary(read("contexto-projeto-set-livre.html"))) {
+  errors.push(`contexto-projeto-set-livre.html inválido: ${summaryError}.`);
+}
 
 if (errors.length > 0) {
   process.stderr.write(

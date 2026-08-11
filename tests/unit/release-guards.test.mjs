@@ -1,10 +1,12 @@
 import {
   chmodSync,
+  existsSync,
   linkSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -16,6 +18,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  collectCleanupFailures,
   ensurePhysicalArtifactsRoot,
   environmentWithoutSecrets,
   isSensitiveEnvironmentName,
@@ -25,8 +28,10 @@ import {
   releaseBuildEnvironment,
   releaseRuntimeEnvironment,
   releaseSmokeEnvironment,
+  throwIfPrimaryOrCleanupFailed,
   withExclusiveReleaseLock,
 } from "../../scripts/release-guards.mjs";
+import { removePhysicalTree } from "../../scripts/physical-tree-removal.mjs";
 
 const temporaryRoots = [];
 
@@ -51,6 +56,11 @@ function localRuntimeEnvironment(applicationUrl) {
   ].join("\n");
 }
 
+function linuxMountInformation(mountPath) {
+  const encodedMountPath = mountPath.replaceAll("\\", "\\134").replaceAll(" ", "\\040");
+  return `1 0 0:1 / ${encodedMountPath} rw - tmpfs tmpfs rw\n`;
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
@@ -63,6 +73,13 @@ describe("release artifact root guard", () => {
     const artifacts = resolve(repository, ".artifacts");
 
     expect(ensurePhysicalArtifactsRoot(repository, artifacts)).toBe(artifacts);
+    expect(() =>
+      ensurePhysicalArtifactsRoot(repository, artifacts, {
+        platform: "linux",
+        readLinuxMountInformation: () =>
+          "1 0 0:1 / / rw - tmpfs tmpfs rw\n2 0 0:5 net:[4026531833] /run/docker/netns/default rw - nsfs nsfs rw\n",
+      }),
+    ).not.toThrow();
     const information = lstatSync(artifacts);
     expect(information.isDirectory()).toBe(true);
     expect(information.isSymbolicLink()).toBe(false);
@@ -98,6 +115,65 @@ describe("release artifact root guard", () => {
     ).toThrow("filha direta");
   });
 
+  it("rejects root and descendant mounts before changing artifact permissions", () => {
+    for (const mountedRelativePath of ["", "nested/mounted", "nested with space/mounted\\path"]) {
+      const repository = temporaryRoot();
+      const artifacts = resolve(repository, ".artifacts");
+      const mountedPath = resolve(artifacts, mountedRelativePath);
+      mkdirSync(mountedPath, { recursive: true });
+      const marker = resolve(mountedPath, "must-remain");
+      writeFileSync(marker, "mounted-content", "utf8");
+      chmodSync(artifacts, 0o777);
+
+      expect(() =>
+        ensurePhysicalArtifactsRoot(repository, artifacts, {
+          platform: "linux",
+          readLinuxMountInformation: () => linuxMountInformation(mountedPath),
+        }),
+      ).toThrow("não pode ser um mount nem conter mounts");
+
+      expect(lstatSync(artifacts).mode & 0o777).toBe(0o777);
+      expect(readFileSync(marker, "utf8")).toBe("mounted-content");
+    }
+  });
+
+  it("fails closed on malformed mountinfo and a symbolic repository ancestor", () => {
+    const repository = temporaryRoot();
+    const artifacts = resolve(repository, ".artifacts");
+    mkdirSync(artifacts);
+    chmodSync(artifacts, 0o777);
+
+    for (const mountInformation of [
+      "",
+      "mountinfo-malformado\n",
+      "1 0 0:1 / caminho-relativo rw - tmpfs tmpfs rw\n",
+      "1 0 0:1 raiz-relativa /tmp rw - tmpfs tmpfs rw\n",
+      "1 0 0:1 /tmp/../raiz /tmp rw - tmpfs tmpfs rw\n",
+      "1 0 0:1 / /tmp\\777 rw - tmpfs tmpfs rw\n",
+      "1 0 0:1 / /tmp rw - tmpfs - rw\n",
+    ]) {
+      expect(() =>
+        ensurePhysicalArtifactsRoot(repository, artifacts, {
+          platform: "linux",
+          readLinuxMountInformation: () => mountInformation,
+        }),
+      ).toThrow("Não foi possível comprovar");
+      expect(lstatSync(artifacts).mode & 0o777).toBe(0o777);
+    }
+
+    if (process.platform !== "win32") {
+      const base = temporaryRoot();
+      const physicalRepository = resolve(base, "physical-repository");
+      const symbolicRepository = resolve(base, "symbolic-repository");
+      mkdirSync(physicalRepository);
+      symlinkSync(physicalRepository, symbolicRepository, "dir");
+      expect(() =>
+        ensurePhysicalArtifactsRoot(symbolicRepository, resolve(symbolicRepository, ".artifacts")),
+      ).toThrow("ancestralidade física válida");
+      expect(existsSync(resolve(physicalRepository, ".artifacts"))).toBe(false);
+    }
+  });
+
   it("rejects a symbolic release lock without touching its target", async () => {
     const base = temporaryRoot();
     const repository = resolve(base, "repository");
@@ -112,6 +188,176 @@ describe("release artifact root guard", () => {
       "lock físico",
     );
     expect(readFileSync(externalLock, "utf8")).toBe("preserve");
+  });
+
+  it("rechecks the artifact mount boundary before opening the release lock", async () => {
+    const repository = temporaryRoot();
+    const artifacts = resolve(repository, ".artifacts");
+    ensurePhysicalArtifactsRoot(repository, artifacts);
+    let operationStarted = false;
+
+    await expect(
+      withExclusiveReleaseLock(
+        artifacts,
+        async () => {
+          operationStarted = true;
+        },
+        {
+          platform: "linux",
+          readLinuxMountInformation: () => linuxMountInformation(artifacts),
+        },
+      ),
+    ).rejects.toThrow("recusa uma raiz de artefatos montada");
+    expect(operationStarted).toBe(false);
+    expect(existsSync(resolve(artifacts, "release.lock"))).toBe(false);
+  });
+});
+
+describe("physical tree removal", () => {
+  it("unlinks an exact regular file on any platform and treats an absent path as a no-op", () => {
+    const root = temporaryRoot();
+    const generatedFile = resolve(root, "manifest.incoming");
+    writeFileSync(generatedFile, "generated", "utf8");
+
+    removePhysicalTree(generatedFile, {
+      allowRegularFile: true,
+      description: "O arquivo gerado",
+      platform: "darwin",
+    });
+    expect(existsSync(generatedFile)).toBe(false);
+    expect(() =>
+      removePhysicalTree(generatedFile, {
+        allowRegularFile: true,
+        platform: "win32",
+      }),
+    ).not.toThrow();
+  });
+
+  it("fails closed for an existing directory outside Linux", () => {
+    const root = temporaryRoot();
+    const generatedTree = resolve(root, "generated-tree");
+    const marker = resolve(generatedTree, "must-remain");
+    mkdirSync(generatedTree);
+    writeFileSync(marker, "preserve", "utf8");
+
+    expect(() =>
+      removePhysicalTree(generatedTree, {
+        allowRegularFile: true,
+        description: "A árvore gerada",
+        platform: "darwin",
+      }),
+    ).toThrow("removido manualmente nesta plataforma");
+    expect(readFileSync(marker, "utf8")).toBe("preserve");
+  });
+
+  it("revalidates mountinfo and shape after the sibling UUID rename", () => {
+    const mountRoot = temporaryRoot();
+    const mountedTree = resolve(mountRoot, "mounted-tree");
+    const mountedRetired = resolve(mountRoot, ".mounted-tree.retired-fixed-mount");
+    mkdirSync(mountedTree);
+    writeFileSync(resolve(mountedTree, "marker"), "preserve", "utf8");
+    let mountReads = 0;
+
+    expect(() =>
+      removePhysicalTree(mountedTree, {
+        description: "A árvore montada",
+        platform: "linux",
+        readLinuxMountInformation: () => {
+          mountReads += 1;
+          return linuxMountInformation(mountReads === 1 ? "/" : mountedRetired);
+        },
+        uuid: () => "fixed-mount",
+      }),
+    ).toThrow("não pode ser um mount nem conter mounts");
+    expect(existsSync(mountedTree)).toBe(false);
+    expect(readFileSync(resolve(mountedRetired, "marker"), "utf8")).toBe("preserve");
+
+    const lateMountRoot = temporaryRoot();
+    const lateMountTree = resolve(lateMountRoot, "late-mount-tree");
+    const lateMountRetired = resolve(lateMountRoot, ".late-mount-tree.retired-fixed-late-mount");
+    mkdirSync(lateMountTree);
+    writeFileSync(resolve(lateMountTree, "marker"), "preserve", "utf8");
+    let lateMountReads = 0;
+
+    expect(() =>
+      removePhysicalTree(lateMountTree, {
+        description: "A árvore montada tardiamente",
+        platform: "linux",
+        readLinuxMountInformation: () => {
+          lateMountReads += 1;
+          return linuxMountInformation(lateMountReads < 3 ? "/" : lateMountRetired);
+        },
+        uuid: () => "fixed-late-mount",
+      }),
+    ).toThrow("não pode ser um mount nem conter mounts");
+    expect(existsSync(lateMountTree)).toBe(false);
+    expect(readFileSync(resolve(lateMountRetired, "marker"), "utf8")).toBe("preserve");
+
+    const shapeRoot = temporaryRoot();
+    const shapeTree = resolve(shapeRoot, "shape-tree");
+    const shapeRetired = resolve(shapeRoot, ".shape-tree.retired-fixed-shape");
+    mkdirSync(shapeTree);
+    writeFileSync(resolve(shapeTree, "marker"), "preserve", "utf8");
+    let shapeReads = 0;
+
+    expect(() =>
+      removePhysicalTree(shapeTree, {
+        description: "A árvore mutável",
+        platform: "linux",
+        readLinuxMountInformation: () => {
+          shapeReads += 1;
+          if (shapeReads === 2) {
+            writeFileSync(resolve(shapeRetired, "adversarial-extra"), "changed", "utf8");
+          }
+          return linuxMountInformation("/");
+        },
+        uuid: () => "fixed-shape",
+      }),
+    ).toThrow("mudou durante o retiro atômico");
+    expect(existsSync(shapeTree)).toBe(false);
+    expect(readdirSync(shapeRetired).sort()).toEqual(["adversarial-extra", "marker"]);
+  });
+});
+
+describe("release cleanup failure preservation", () => {
+  it("preserves the primary failure and every cleanup failure without masking either", () => {
+    const primary = new Error("primary-failure");
+    const firstCleanup = new Error("first-cleanup-failure");
+    const secondCleanup = new Error("second-cleanup-failure");
+
+    let combinedFailure;
+    try {
+      throwIfPrimaryOrCleanupFailed(primary, [firstCleanup, secondCleanup], {
+        combinedMessage: "combined-failure",
+      });
+    } catch (error) {
+      combinedFailure = error;
+    }
+    expect(combinedFailure).toBeInstanceOf(AggregateError);
+    expect(combinedFailure.message).toBe("combined-failure");
+    expect(combinedFailure.cause).toBe(primary);
+    expect(combinedFailure.errors).toEqual([primary, firstCleanup, secondCleanup]);
+
+    expect(() => throwIfPrimaryOrCleanupFailed(primary, [])).toThrow(primary);
+    expect(() => throwIfPrimaryOrCleanupFailed(undefined, [firstCleanup])).toThrow(firstCleanup);
+    expect(() => throwIfPrimaryOrCleanupFailed(undefined, [])).not.toThrow();
+
+    const probedPaths = [];
+    const collectedFailures = collectCleanupFailures(
+      ["probe-failure", "remove-failure", "absent"],
+      (path) => {
+        probedPaths.push(path);
+        if (path === "probe-failure") {
+          throw firstCleanup;
+        }
+        return path !== "absent";
+      },
+      () => {
+        throw secondCleanup;
+      },
+    );
+    expect(probedPaths).toEqual(["probe-failure", "remove-failure", "absent"]);
+    expect(collectedFailures).toEqual([firstCleanup, secondCleanup]);
   });
 });
 

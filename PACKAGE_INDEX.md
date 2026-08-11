@@ -16,7 +16,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 8. `docs/qa-traceability.md` — catálogo dos 193 cenários.
 9. `docs/validation-report.md` — validação estrutural da baseline.
 10. `MANIFEST_SHA256.md` — hashes de integridade do pacote.
-11. `contexto-projeto-set-livre.html` — resumo derivado para leitura humana; não é fonte canônica.
+11. `contexto-projeto-set-livre.html` — resumo executivo vivo para acompanhar o progresso e apresentar o estado implementado; não substitui as fontes canônicas.
 
 ## Indicadores da especificação de produto
 
@@ -29,7 +29,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | Cenários P1         |         59 |
 | Runbooks            |          6 |
 
-Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 11 IDs técnicos estáveis, 36 execuções Playwright na matriz atual, 194 testes unitários, 148 asserts pgTAP e 7 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
+Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 11 IDs técnicos estáveis, 36 execuções Playwright na matriz atual, 202 testes unitários, 148 asserts pgTAP e 7 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
 
 ## Garantias documentais
 

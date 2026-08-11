@@ -400,6 +400,12 @@ describe("local development server launcher", () => {
     for (const readLinuxMountInformation of [
       () => "",
       () => "mountinfo-malformado\n",
+      () => "1 0 0:1 / caminho-relativo rw - tmpfs tmpfs rw\n",
+      () => "1 0 0:1 raiz-relativa /tmp rw - tmpfs tmpfs rw\n",
+      () => "1 0 0:1 /tmp/../raiz /tmp rw - tmpfs tmpfs rw\n",
+      () => "1 0 0:1 / /tmp\\777 rw - tmpfs tmpfs rw\n",
+      () => "1 0 0:1 / /tmp rw - tmpfs - rw\n",
+      () => "1 0 0:1 / /tmp/../escape rw - tmpfs tmpfs rw\n",
       () => {
         throw new Error("mountinfo-indisponível");
       },

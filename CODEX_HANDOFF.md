@@ -61,7 +61,8 @@ Não reescreva a baseline. Push, PR e merge seguem a autorização operacional d
 - suporte a 320 px, safe areas, alvo de toque de 44 px e zoom de 200%;
 - WCAG 2.2 AA e axe;
 - Playwright para toda feature;
-- documentação viva atualizada no mesmo PR.
+- documentação viva atualizada no mesmo PR;
+- resumo executivo `contexto-projeto-set-livre.html` atualizado no mesmo PR, em linguagem direta e sem afirmar trabalho ainda não implementado.
 
 ## Estratégia de execução
 
@@ -75,8 +76,9 @@ Implemente por fatia vertical, nunca por camadas horizontais incompletas. Para c
 6. implementar correção, erro, vazio, loading, conflito e recuperação;
 7. adicionar unitários, banco/RLS, integração e Playwright;
 8. atualizar docs e rastreabilidade;
-9. executar gates;
-10. fazer commit pequeno, coerente e reversível.
+9. atualizar o resumo executivo `contexto-projeto-set-livre.html`;
+10. executar gates;
+11. fazer commit pequeno, coerente e reversível.
 
 Não declare uma feature pronta com mocks visuais, dados fixos, botão sem ação real ou integração falsa.
 

@@ -11,7 +11,6 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -20,6 +19,7 @@ import { createServer } from "node:net";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
+  collectCleanupFailures,
   deterministicReleaseTarArguments,
   ensurePhysicalArtifactsRoot,
   operationalEnvironment,
@@ -28,9 +28,11 @@ import {
   releaseBuildEnvironment,
   releaseSmokeEnvironment,
   secretEnvironmentEntries,
+  throwIfPrimaryOrCleanupFailed,
   withExclusiveReleaseLock,
 } from "./release-guards.mjs";
 import { runPackagedReleaseSmokeWithProcessCleanup } from "./release-process-tree.mjs";
+import { removePhysicalTree } from "./physical-tree-removal.mjs";
 import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -337,7 +339,17 @@ function removeGeneratedPath(path, allowedPaths) {
   if (!allowedPaths.has(path) || !isInside(artifactsRoot, path)) {
     throw new Error(`Recusa de remoção fora do artefato exato autorizado: ${path}`);
   }
-  rmSync(path, { force: true, recursive: true });
+  removePhysicalTree(path, {
+    allowRegularFile: true,
+    description: `O caminho gerado de release ${path}`,
+    messages: {
+      directoryRequiredMessage: `O caminho gerado de release não é removível com segurança: ${path}`,
+      mountDetectedMessage: `O caminho gerado de release não pode conter mounts: ${path}`,
+      mountUnverifiedMessage: `Não foi possível comprovar que o caminho gerado de release não contém mounts: ${path}`,
+      unsupportedPlatformMessage: `O diretório gerado de release precisa ser removido manualmente nesta plataforma: ${path}`,
+    },
+    retiredNamePrefix: `.${basename(path)}.release-retired-`,
+  });
 }
 
 function sha256Buffer(value) {
@@ -1186,6 +1198,7 @@ async function generateRelease(commit) {
   await verifyEntries(releaseRoot, releaseArtifactsBeforeSmoke, "Release completa após smoke");
 
   let archive;
+  let archiveFailure;
   try {
     ensurePhysicalArtifactsRoot(root, artifactsRoot);
     archive = await createArchive(
@@ -1199,13 +1212,20 @@ async function generateRelease(commit) {
       releaseArtifactsBeforeSmoke,
       releaseShapeBeforeSmoke,
     );
-  } finally {
-    for (const path of [incomingArchivePath, incomingChecksumPath, archiveVerificationRoot]) {
-      if (pathExists(path)) {
-        removeGeneratedPath(path, generatedPaths);
-      }
-    }
+  } catch (error) {
+    archiveFailure = error;
   }
+
+  const cleanupFailures = collectCleanupFailures(
+    [incomingArchivePath, incomingChecksumPath, archiveVerificationRoot],
+    pathExists,
+    (path) => removeGeneratedPath(path, generatedPaths),
+  );
+  throwIfPrimaryOrCleanupFailed(archiveFailure, cleanupFailures, {
+    combinedMessage:
+      "A criação do arquivo global falhou e o cleanup físico também foi interrompido.",
+    multipleCleanupMessage: "O cleanup físico de múltiplos caminhos gerados foi interrompido.",
+  });
   assertSameCommit(commit, "durante o empacotamento");
   assertCleanWorktree("após o empacotamento");
 

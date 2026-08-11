@@ -23,6 +23,7 @@ import {
   hasPlaywrightTestWithId,
   installDependencyNames,
   isAddedChangeRecord,
+  isProgressSummaryChange,
   isTechnicalChangePath,
   parseGitChanges,
   parseNormativeIntegrationPairs,
@@ -39,6 +40,7 @@ import {
   validateFeatureSequence,
   validateGovernanceAlignment,
   validateNpmProjectConfiguration,
+  validateProgressSummary,
   validateWorkspacePatterns,
 } from "../../scripts/docs-check-core.mjs";
 
@@ -470,6 +472,17 @@ describe("docs check core", () => {
         isAddedChangeRecord({ path: "docs/changes/2026-08-09-reused.md", status }),
       ),
     ).toBe(false);
+    expect(
+      ["A", "M"].every((status) =>
+        isProgressSummaryChange({ path: "contexto-projeto-set-livre.html", status }),
+      ),
+    ).toBe(true);
+    expect(
+      ["D", "R", "T"].some((status) =>
+        isProgressSummaryChange({ path: "contexto-projeto-set-livre.html", status }),
+      ),
+    ).toBe(false);
+    expect(isProgressSummaryChange({ path: "docs/context.md", status: "M" })).toBe(false);
 
     for (const path of [
       ".editorconfig",
@@ -592,6 +605,38 @@ describe("docs check core", () => {
     } finally {
       rmSync(repository, { force: true, recursive: true });
     }
+  });
+
+  it("keeps the living project summary standalone and structurally complete", () => {
+    const sections = [
+      "status",
+      "produto",
+      "aplicacoes",
+      "arquitetura",
+      "scripts",
+      "testes",
+      "seguranca",
+      "release",
+      "features",
+      "proximos-passos",
+    ]
+      .map((id) => `<section id="${id}"></section>`)
+      .join("");
+    const validSummary = `<!doctype html><html lang="pt-BR"><head><style></style></head><body><main><h1>Set Livre</h1>${sections}</main></body></html>`;
+
+    expect(validateProgressSummary(validSummary)).toEqual([]);
+    expect(
+      validateProgressSummary(
+        validSummary
+          .replace('<html lang="pt-BR">', "<html>")
+          .replace('<section id="scripts"></section>', "")
+          .replace("</main>", '<script src="remote.js"></script></main>'),
+      ),
+    ).toEqual([
+      "o resumo precisa declarar lang=pt-BR",
+      "o resumo não contém a seção #scripts",
+      "o resumo executivo não pode depender de JavaScript",
+    ]);
   });
 
   it("accepts only a stable physical added change record", () => {

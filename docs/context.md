@@ -11,6 +11,7 @@
 - A fundação executável é desenvolvida isoladamente em `agent/foundation-local-platform`.
 - O commit `d755c9f`, citado no pacote recebido, não pertence ao histórico efetivamente encontrado.
 - O fluxo autorizado é branch separada, PR para `main`, suíte completa e ciclos de `@codex review` antes de merge.
+- O progresso resumido para acompanhamento e apresentação fica em `contexto-projeto-set-livre.html`; toda mudança técnica precisa mantê-lo sincronizado sem substituir as fontes canônicas.
 - Nenhum arquivo do projeto Spenses foi alterado.
 
 ## Estado desta documentação
@@ -41,6 +42,7 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 - Toda feature possui Playwright.
 - Dependências de feature são classificadas pelo ADR-017; `docs/implementation-order.md` é a única sequência executável das 34 features.
 - A etapa atual é local-first conforme ADR-018; CI/CD, Supabase Cloud, Oracle e APIs externas permanecem dependências de release.
+- A release local falha fechada antes de cleanup quando `.artifacts` ou uma árvore gerada é/contém mount; no Linux a prova usa o `mountinfo` do namespace, inspeção física e retiro atômico, sem atravessar volumes externos.
 
 ## Baseline técnica
 

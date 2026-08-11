@@ -1,9 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
-  chmodSync,
   closeSync,
   constants,
-  existsSync,
   fchmodSync,
   fstatSync,
   lstatSync,
@@ -19,6 +17,10 @@ import {
   createLocalDevelopmentEnvironment,
   validateLocalDalDatabaseUrl,
 } from "./local-development-environment.mjs";
+import {
+  assertPhysicalDirectoryTree,
+  readCurrentLinuxMountInformation,
+} from "./physical-tree-removal.mjs";
 
 const alwaysSensitiveEnvironmentNames = [
   "CURSOR_SIGNING_SECRET",
@@ -270,12 +272,26 @@ export function deterministicReleaseTarArguments({
   ];
 }
 
-function openReleaseLock(artifactsRoot) {
+function openReleaseLock(
+  artifactsRoot,
+  {
+    platform = process.platform,
+    readLinuxMountInformation = readCurrentLinuxMountInformation,
+  } = {},
+) {
   const resolvedArtifactsRoot = resolve(artifactsRoot);
-  const rootInformation = lstatSync(resolvedArtifactsRoot);
-  if (!rootInformation.isDirectory() || rootInformation.isSymbolicLink()) {
-    throw new Error("O lock de release exige uma raiz de artefatos física.");
-  }
+  const { information: rootInformation } = assertPhysicalDirectoryTree(resolvedArtifactsRoot, {
+    description: "A raiz de artefatos do lock de release",
+    messages: {
+      directoryRequiredMessage: "O lock de release exige uma raiz de artefatos física.",
+      mountDetectedMessage:
+        "O lock de release recusa uma raiz de artefatos montada ou com mounts internos.",
+      mountUnverifiedMessage:
+        "Não foi possível comprovar que a raiz de artefatos do lock não contém mounts.",
+    },
+    platform,
+    readLinuxMountInformation,
+  });
 
   const lockPath = resolve(resolvedArtifactsRoot, "release.lock");
   let descriptor;
@@ -287,13 +303,18 @@ function openReleaseLock(artifactsRoot) {
     );
     const openedInformation = fstatSync(descriptor);
     const pathInformation = lstatSync(lockPath);
+    const finalRootInformation = lstatSync(resolvedArtifactsRoot, { throwIfNoEntry: false });
     if (
       !openedInformation.isFile() ||
       !pathInformation.isFile() ||
       pathInformation.isSymbolicLink() ||
       openedInformation.nlink !== 1 ||
       openedInformation.dev !== pathInformation.dev ||
-      openedInformation.ino !== pathInformation.ino
+      openedInformation.ino !== pathInformation.ino ||
+      finalRootInformation === undefined ||
+      !finalRootInformation.isDirectory() ||
+      finalRootInformation.isSymbolicLink() ||
+      !samePhysicalFile(rootInformation, finalRootInformation)
     ) {
       throw new Error("O lock de release precisa ser um arquivo físico exclusivo.");
     }
@@ -312,8 +333,8 @@ function openReleaseLock(artifactsRoot) {
   }
 }
 
-export async function withExclusiveReleaseLock(artifactsRoot, operation) {
-  const descriptor = openReleaseLock(artifactsRoot);
+export async function withExclusiveReleaseLock(artifactsRoot, operation, options) {
+  const descriptor = openReleaseLock(artifactsRoot, options);
   try {
     try {
       // O filho trava a mesma open-file description; o descritor do pai mantém o lock após o exit.
@@ -360,29 +381,126 @@ export function redactEnvironmentSecrets(value, environment) {
     .replace(/((?:set-)?cookie\s*:\s*)[^\r\n]+/giu, "$1[REDACTED]");
 }
 
-export function ensurePhysicalArtifactsRoot(repositoryRoot, artifactsRoot) {
+export function throwIfPrimaryOrCleanupFailed(
+  primaryFailure,
+  cleanupFailures,
+  {
+    combinedMessage = "A operação principal e o cleanup físico falharam.",
+    multipleCleanupMessage = "O cleanup físico falhou em múltiplos caminhos.",
+  } = {},
+) {
+  if (primaryFailure !== undefined && cleanupFailures.length > 0) {
+    throw new AggregateError([primaryFailure, ...cleanupFailures], combinedMessage, {
+      cause: primaryFailure,
+    });
+  }
+  if (primaryFailure !== undefined) {
+    throw primaryFailure;
+  }
+  if (cleanupFailures.length === 1) {
+    throw cleanupFailures[0];
+  }
+  if (cleanupFailures.length > 1) {
+    throw new AggregateError(cleanupFailures, multipleCleanupMessage);
+  }
+}
+
+export function collectCleanupFailures(paths, pathExists, removePath) {
+  const failures = [];
+  for (const path of paths) {
+    try {
+      if (pathExists(path)) {
+        removePath(path);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+
+export function ensurePhysicalArtifactsRoot(
+  repositoryRoot,
+  artifactsRoot,
+  {
+    platform = process.platform,
+    readLinuxMountInformation = readCurrentLinuxMountInformation,
+  } = {},
+) {
   const resolvedRepositoryRoot = resolve(repositoryRoot);
   const resolvedArtifactsRoot = resolve(artifactsRoot);
   if (dirname(resolvedArtifactsRoot) !== resolvedRepositoryRoot) {
     throw new Error("A raiz de artefatos precisa ser filha direta do repositório.");
   }
 
-  if (!existsSync(resolvedArtifactsRoot)) {
+  const repositoryInformation = lstatSync(resolvedRepositoryRoot, { throwIfNoEntry: false });
+  let physicalRepositoryRoot;
+  try {
+    physicalRepositoryRoot = realpathSync(resolvedRepositoryRoot);
+  } catch {
+    throw new Error("O repositório da release precisa ter ancestralidade física válida.");
+  }
+  if (
+    repositoryInformation === undefined ||
+    !repositoryInformation.isDirectory() ||
+    repositoryInformation.isSymbolicLink() ||
+    physicalRepositoryRoot !== resolvedRepositoryRoot
+  ) {
+    throw new Error("O repositório da release precisa ter ancestralidade física válida.");
+  }
+
+  if (lstatSync(resolvedArtifactsRoot, { throwIfNoEntry: false }) === undefined) {
     mkdirSync(resolvedArtifactsRoot, { mode: 0o700 });
   }
 
-  const information = lstatSync(resolvedArtifactsRoot);
-  if (!information.isDirectory() || information.isSymbolicLink()) {
-    throw new Error("A raiz de artefatos precisa ser um diretório físico regular.");
-  }
-  if (process.platform !== "win32") {
-    chmodSync(resolvedArtifactsRoot, 0o700);
-    if ((lstatSync(resolvedArtifactsRoot).mode & 0o077) !== 0) {
-      throw new Error("A raiz de artefatos não pôde ser restringida ao usuário atual.");
+  const { information } = assertPhysicalDirectoryTree(resolvedArtifactsRoot, {
+    description: "A raiz de artefatos",
+    messages: {
+      directoryRequiredMessage: "A raiz de artefatos precisa ser um diretório físico regular.",
+      mountDetectedMessage: "A raiz de artefatos não pode ser um mount nem conter mounts.",
+      mountUnverifiedMessage:
+        "Não foi possível comprovar que a raiz de artefatos não contém mounts.",
+    },
+    platform,
+    readLinuxMountInformation,
+  });
+
+  let descriptor;
+  try {
+    descriptor = openSync(
+      resolvedArtifactsRoot,
+      constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+    );
+    const openedInformation = fstatSync(descriptor);
+    if (
+      !openedInformation.isDirectory() ||
+      openedInformation.isSymbolicLink() ||
+      !samePhysicalFile(information, openedInformation)
+    ) {
+      throw new Error("A raiz de artefatos mudou antes da restrição de acesso.");
+    }
+    if (platform !== "win32") {
+      fchmodSync(descriptor, 0o700);
+    }
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
     }
   }
 
-  const physicalRepositoryRoot = realpathSync(resolvedRepositoryRoot);
+  const finalInformation = lstatSync(resolvedArtifactsRoot, { throwIfNoEntry: false });
+  if (
+    finalInformation === undefined ||
+    !finalInformation.isDirectory() ||
+    finalInformation.isSymbolicLink() ||
+    !samePhysicalFile(information, finalInformation)
+  ) {
+    throw new Error("A raiz de artefatos mudou durante a restrição de acesso.");
+  }
+  if (platform !== "win32" && (finalInformation.mode & 0o077) !== 0) {
+    throw new Error("A raiz de artefatos não pôde ser restringida ao usuário atual.");
+  }
+
   const physicalArtifactsRoot = realpathSync(resolvedArtifactsRoot);
   const expectedPhysicalRoot = resolve(
     physicalRepositoryRoot,
