@@ -4,7 +4,7 @@
 
 | Campo            | Valor                                                                                                                                                                |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status           | Em validação local das correções do quarto review                                                                                                                    |
+| Status           | Concluída e incorporada a `main` pelo PR #2                                                                                                                          |
 | Prioridade       | P0                                                                                                                                                                   |
 | Domínio          | `identity`                                                                                                                                                           |
 | Specs Playwright | `tests/e2e/critical/feat-002-authentication.spec.ts`<br>`tests/e2e/regression/feat-002-authentication.spec.ts`<br>`tests/e2e/reflow/feat-002-authentication.spec.ts` |

@@ -2,7 +2,7 @@
 
 - Data: 2026-08-11
 - Autor/agente: Codex
-- Issue/PR: branch `feat/feat-002-auth-legal-core`; rastreio pelo PR deste ciclo
+- Issue/PR: [PR #2](https://github.com/PedroRomeroM/set-livre/pull/2), incorporado a `main` no merge `d272657`
 - Features: FEAT-002
 - ADRs: ADR-001, ADR-002, ADR-003, ADR-004, ADR-005, ADR-013, ADR-015, ADR-016, ADR-017 e ADR-018
 - Risco: alto — identidade, sessão, aceite legal e fronteiras de autorização
@@ -10,7 +10,7 @@
 
 ## Resumo
 
-Implementar a primeira fatia vertical de produto: cadastro por e-mail e senha, confirmação, login, logout, recuperação, sessão SSR e o bootstrap `legal-core` com versões jurídicas locais e aceites autoritativos.
+Implementa a primeira fatia vertical de produto: cadastro por e-mail e senha, confirmação, login, logout, recuperação, sessão SSR e o bootstrap `legal-core` com versões jurídicas locais e aceites autoritativos.
 
 ## Motivo
 
@@ -81,7 +81,7 @@ Este registro acompanha a mudança junto de feature, API, banco, segurança, UX,
 
 ## Rollback/correção
 
-Antes de qualquer consumidor mergeado, o código pode ser revertido junto da branch. Depois de aplicada a migration, correções de schema, grants, trigger ou readiness usam exclusivamente nova migration append-only. A `00400` invalida grants antigos sem `session_id`, que exigem novo link; essa transição é segura porque `00200`/`00300` nunca foram aplicadas fora da branch e o primeiro deploy executará a cadeia completa antes de liberar tráfego. Fixtures locais podem ser substituídas por reset; nenhum recurso cloud será criado neste ciclo.
+Enquanto nenhuma feature consumidora tiver iniciado, o merge `d272657` pode ser revertido como unidade. Depois de aplicada a migration, correções de schema, grants, trigger ou readiness usam exclusivamente nova migration append-only. A `00400` invalida grants antigos sem `session_id`, que exigem novo link; essa transição é segura porque `00200`/`00300` nunca foram aplicadas em ambiente remoto e o primeiro deploy executará a cadeia completa antes de liberar tráfego. Fixtures locais podem ser substituídas por reset; nenhum recurso cloud foi criado neste ciclo.
 
 ## Evidência histórica — terceiro review
 
@@ -107,4 +107,4 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - as três threads do quarto review receberam respostas ancoradas nos commits técnico/de evidência, foram resolvidas individualmente e o fetch thread-aware confirmou 12 threads totais e zero abertas.
 - o Codex revisou o snapshot final `656a5dc1c04a33e3246edd389c5c0d877cbe37ae` e registrou que não encontrou problema relevante, sem criar thread adicional.
 
-A implementação segue fora da contagem de features concluídas somente até o merge do PR.
+O PR #2 foi integrado a `main` no merge `d27265728b7c675d373c1bc8425f227aa3e3641e`; a FEAT-002 passa a ser a primeira das 34 features concluídas no repositório. PEND-002, PEND-003, PEND-005 e PEND-006 continuam bloqueando go-live, sem reabrir a conclusão local.
