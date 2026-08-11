@@ -127,7 +127,7 @@ Regras:
 - banco: checks e RLS A/B
 - unitário: DTO redaction
 
-Evidência corrente: 538/538 testes unitários, 284/284 asserts pgTAP e 91/91 execuções Playwright/axe integrais passaram. As 32 execuções próprias da FEAT-003 cobrem os nove IDs nos projetos previstos. Builds e smokes standalone dos dois apps também passaram; o status permanece `Em implementação` até auditoria do snapshot, release por SHA, review e merge.
+Evidência corrente: 538/538 testes unitários, 284/284 asserts pgTAP e 91/91 execuções Playwright/axe integrais passaram. As 32 execuções próprias da FEAT-003 cobrem os nove IDs nos projetos previstos. Builds e smokes standalone dos dois apps também passaram; o índice de 85 paths foi auditado, o commit funcional é `727eecd` e sua release imutável contém 2.801 artefatos. O status permanece `Em implementação` até publicação, review e merge.
 
 ## Documentação viva afetada
 

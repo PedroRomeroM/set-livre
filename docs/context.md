@@ -67,4 +67,4 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 
 ## Próxima ação operacional
 
-A FEAT-003 é a fatia ativa e ainda não está concluída. Matriz Playwright, documentação viva e gates integrais estão verdes; o trabalho corrente deve congelar/auditar o snapshot, publicar commit e release por SHA e concluir PR/review/merge sem antecipar a FEAT-004. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.
+A FEAT-003 é a fatia ativa e ainda não está concluída. Matriz Playwright, documentação viva e gates integrais estão verdes; o snapshot foi auditado, commitado em `727eecd` e empacotado por SHA. O trabalho corrente deve publicar a branch, abrir o PR e concluir review/merge sem antecipar a FEAT-004. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.

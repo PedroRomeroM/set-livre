@@ -10,12 +10,12 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 
 - fundação local executável incorporada a `main`, sem feature de produto simulada;
 - FEAT-002 incorporada a `main` pelo [PR #2](https://github.com/PedroRomeroM/set-livre/pull/2), no merge `d272657`; é a primeira das 34 features concluídas no repositório. Uma revisão posterior ao merge apontou dois hardenings P2, já corrigidos e validados integralmente na branch da FEAT-003;
-- FEAT-003 em implementação na branch própria, com perfil PF/PJ, `/conta`, segurança e preferência visual integrados localmente; a implementação e os gates funcionais estão verdes, mas a conclusão continua condicionada à auditoria do snapshot, release por SHA, review e merge;
+- FEAT-003 em implementação na branch própria, com perfil PF/PJ, `/conta`, segurança e preferência visual integrados localmente; a implementação foi congelada no commit `727eecd`, auditada e empacotada por SHA, mas a conclusão continua condicionada à publicação, review e merge;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 12 migrations append-only, head `20260811000500` e 284 asserts pgTAP verdes;
 - snapshot funcional corrente com 538/538 unitários, 284/284 asserts pgTAP e 91/91 execuções Playwright/axe verdes; o relatório não contém sentinelas, tokens, documentos, cookies Auth, Bearer, erros finais/de execução ou anexos, e mantém somente fixtures locais `qa_f002|qa_f003_*@example.test` nos títulos automáticos allowlisted dos steps;
-- formatação, lint, TypeScript estrito, documentação, Knip, audit, builds e smokes standalone dos dois apps passaram na branch; o release por SHA da FEAT-003 ainda depende do commit congelado. Historicamente, o commit `da34f46` da FEAT-002 gerou release local imutável com 2.756 artefatos e SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
+- formatação, lint, TypeScript estrito, documentação, Knip, audit, builds e smokes standalone dos dois apps passaram na branch; o commit `727eecd` gerou release local imutável com 2.801 artefatos e SHA-256 `2f1dafc636b6ea1552961d3177033dad1ac30e850fc96b710db26c992accf490`. Historicamente, o commit `da34f46` da FEAT-002 gerou release equivalente com 2.756 artefatos e SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
 - 1 de 34 features está concluída; as demais seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 

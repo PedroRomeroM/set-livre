@@ -711,8 +711,9 @@
                 Perfil PF/PJ completo, telefone brasileiro sem truncar prefixos estrangeiros, conta,
                 segurança e preferência visual já atravessam contratos, banco, DAL, comandos, read
                 model e interface. O snapshot passou em 538/538 unitários, 284/284 asserts pgTAP,
-                91/91 execuções Playwright/axe, builds e smokes dos dois apps. Auditoria do índice,
-                release por SHA, review e merge ainda precisam fechar antes de qualquer conclusão.
+                91/91 execuções Playwright/axe, builds e smokes dos dois apps. O índice foi
+                auditado, o commit funcional é <code>727eecd</code> e a release por SHA foi emitida;
+                publicação, review e merge ainda precisam fechar antes de qualquer conclusão.
               </p>
             </article>
             <article class="card">
@@ -752,8 +753,9 @@
               geração determinística, 538/538 unitários, 284/284 asserts pgTAP e 91/91 execuções
               Playwright/axe passaram. A auditoria dos artefatos encontrou somente fixtures locais
               <code>qa_f002|qa_f003_*@example.test</code> nos títulos automáticos allowlisted dos
-              steps; sentinelas, tokens, documentos, cookies Auth, Bearer, erros e anexos ficaram
-              ausentes.
+              steps; sentinelas, tokens, documentos, cookies Auth, Bearer, erros finais/de execução
+              e anexos ficaram ausentes. O commit <code>727eecd</code> originou uma release imutável
+              com 2.801 artefatos e SHA-256 <code>2f1dafc6…f490</code>.
             </p>
           </div>
         </section>
@@ -1084,8 +1086,9 @@
               A FEAT-002 conserva 236/236 asserts pgTAP, 458/458 unitários e 59/59 execuções browser
               verdes no histórico incorporado. O snapshot corrente da FEAT-003 passou em 538/538
               unitários, 284/284 asserts pgTAP e 91/91 execuções browser, com schema/tipos gerados,
-              builds e smokes standalone conferidos. Falta congelar/auditar o índice, emitir o
-              release por SHA e concluir review/merge.
+              builds e smokes standalone conferidos. O índice de 85 paths foi auditado, o commit
+              funcional <code>727eecd</code> foi criado e sua release por SHA foi verificada. Falta
+              publicar a branch e concluir review/merge.
             </p>
           </div>
 
@@ -1095,11 +1098,11 @@
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
               → docs → Playwright completo → builds → audit → Knip. No snapshot corrente, format,
               lint, typecheck, 538 unitários, reset/284 pgTAP, docs, 91 execuções browser, builds,
-              smokes, audit e Knip ficaram verdes. A release imutável da FEAT-003 ainda não foi
-              emitida porque depende do commit congelado. Historicamente, o índice técnico da
+              smokes, audit e Knip ficaram verdes. A release imutável do commit
+              <code>727eecd</code> foi verificada por manifesto/archive, contém 2.801 artefatos e
+              possui SHA-256 <code>2f1dafc6…f490</code>. Historicamente, o índice técnico da
               FEAT-002 foi auditado, os standalones passaram nos smokes e a release do commit
-              <code>da34f46</code> foi verificada por manifesto/archive antes do merge
-              <code>d272657</code>.
+              <code>da34f46</code> foi verificada antes do merge <code>d272657</code>.
             </p>
           </div>
         </section>
@@ -1308,9 +1311,8 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Congelar e auditar o snapshot já verde da FEAT-003, emitir a release local por
-                  SHA, publicar a branch e concluir review/merge, sem antecipar a FEAT-004 ou
-                  qualquer feature posterior.
+                  Publicar a branch já auditada da FEAT-003, abrir o PR e concluir review/merge, sem
+                  antecipar a FEAT-004 ou qualquer feature posterior.
                 </li>
               </ol>
             </article>
