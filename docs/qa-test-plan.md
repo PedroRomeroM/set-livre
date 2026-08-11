@@ -39,7 +39,7 @@ Suítes:
 
 E2E destrutivo somente local:
 
-- host localhost;
+- host IPv4 literal `127.0.0.1`;
 - Supabase local;
 - provider fake/sandbox isolado;
 - e-mail sink;
@@ -85,6 +85,7 @@ SQL/integration deve provar:
 
 - migration from zero;
 - grants manifest;
+- `TEMPORARY` ausente efetivamente para `PUBLIC`, `app_dal` e login runtime, sem remover grants explícitos administrados pela stack;
 - RLS A/B;
 - private functions inaccessible;
 - status checks;

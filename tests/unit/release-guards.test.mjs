@@ -385,6 +385,26 @@ describe("release environment isolation", () => {
     ).toThrow("arquivo físico regular exclusivo");
   });
 
+  it("rejects a non-literal local host before a release consumes the runtime file", () => {
+    const root = temporaryRoot();
+    const environmentPath = resolve(root, ".env.local");
+
+    for (const host of ["localhost", "[::1]", "127.1", "2130706433", "127.0.0.1."]) {
+      writeFileSync(
+        environmentPath,
+        localRuntimeEnvironment("http://127.0.0.1:3000").replace(
+          "http://127.0.0.1:54321",
+          `http://${host}:54321`,
+        ),
+        { mode: 0o600 },
+      );
+
+      expect(() =>
+        readReleaseRuntimeEnvironmentFile(environmentPath, "http://127.0.0.1:3000"),
+      ).toThrow("host IPv4 literal 127.0.0.1");
+    }
+  });
+
   it.runIf(process.platform !== "win32")(
     "rejects a readable mode before the release can read the runtime secret",
     () => {
@@ -569,7 +589,7 @@ describe("release environment isolation", () => {
         },
         { APP_RELEASE_SHA: "d".repeat(40), PORT: "4100" },
       ),
-    ).toThrow("instância Supabase local");
+    ).toThrow("host IPv4 literal 127.0.0.1");
   });
 
   it("does not fall back to an inherited DAL URL when the app-local file omits it", () => {

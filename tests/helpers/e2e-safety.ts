@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const localHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+import { parseLiteralLocalIpv4Url } from "../../scripts/local-network-contract";
 
 const safeEnvironmentSchema = z.object({
   adminDatabaseUrl: z.url(),
@@ -28,11 +28,7 @@ function assertLocalUrl(
   expectedPort: string,
   allowedProtocols: ReadonlySet<string>,
 ) {
-  const parsed = new URL(value);
-
-  if (!localHostnames.has(parsed.hostname)) {
-    throw new Error(`${label} precisa apontar para localhost; recebido ${parsed.hostname}.`);
-  }
+  const parsed = parseLiteralLocalIpv4Url(value, label);
 
   if (!allowedProtocols.has(parsed.protocol)) {
     throw new Error(`${label} usa protocolo não permitido: ${parsed.protocol}.`);

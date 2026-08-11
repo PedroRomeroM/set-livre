@@ -5,13 +5,14 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -21,9 +22,18 @@ import {
 } from "../../scripts/safe-environment-file.mjs";
 
 const temporaryRoots = [];
+const repositoryRoot = resolve(import.meta.dirname, "../..");
+const testTemporaryDirectory = resolve(repositoryRoot, "node_modules/.cache");
 
 function temporaryRoot() {
-  const root = mkdtempSync(join(tmpdir(), "set-livre-env-test-"));
+  mkdirSync(testTemporaryDirectory, { recursive: true });
+  const root = mkdtempSync(join(testTemporaryDirectory, "set-livre-env-test-"));
+  temporaryRoots.push(root);
+  return root;
+}
+
+function externalTemporaryRoot() {
+  const root = mkdtempSync(join(tmpdir(), "set-livre-env-external-test-"));
   temporaryRoots.push(root);
   return root;
 }
@@ -104,5 +114,82 @@ describe("safe local environment files", () => {
       writeEnvironmentFileAtomic(join(linkedParent, ".env.local"), "DATABASE_PASSWORD=secret\n"),
     ).toThrow("não é um diretório físico");
     expect(readdirSync(physicalParent)).toEqual([]);
+  });
+
+  it("rejects a symlinked ancestor above an otherwise physical immediate parent", () => {
+    const root = temporaryRoot();
+    const physicalAncestor = join(root, "outside");
+    const physicalParent = join(physicalAncestor, "backoffice");
+    const linkedAncestor = join(root, "apps");
+    mkdirSync(physicalParent, { recursive: true });
+    symlinkSync(physicalAncestor, linkedAncestor);
+
+    expect(() =>
+      assertSafeEnvironmentFileDestination(join(linkedAncestor, "backoffice/.env.local")),
+    ).toThrow("ancestrais físicos");
+    expect(() =>
+      writeEnvironmentFileAtomic(
+        join(linkedAncestor, "backoffice/.env.local"),
+        "DATABASE_PASSWORD=secret\n",
+      ),
+    ).toThrow("ancestrais físicos");
+    expect(readdirSync(physicalParent)).toEqual([]);
+  });
+
+  it("keeps a nested physical destination inside the declared repository root", () => {
+    const root = temporaryRoot();
+    const parent = join(root, "apps/backoffice");
+    const destination = join(parent, ".env.local");
+    mkdirSync(parent, { recursive: true });
+
+    writeEnvironmentFileAtomic(destination, "APP_ENV=local\n");
+
+    expect(readFileSync(destination, "utf8")).toBe("APP_ENV=local\n");
+    expect(readdirSync(parent)).toEqual([".env.local"]);
+  });
+
+  it("rejects a destination outside the repository root", () => {
+    const outside = externalTemporaryRoot();
+    const destination = join(outside, ".env.local");
+    writeFileSync(destination, "DO_NOT_TOUCH\n", "utf8");
+
+    expect(() => writeEnvironmentFileAtomic(destination, "DATABASE_PASSWORD=secret\n")).toThrow(
+      "sob a raiz do repositório",
+    );
+    expect(readFileSync(destination, "utf8")).toBe("DO_NOT_TOUCH\n");
+  });
+
+  it("revalidates every physical ancestor before opening the temporary file", () => {
+    const root = temporaryRoot();
+    const originalAncestor = join(root, "apps");
+    const originalParent = join(originalAncestor, "backoffice");
+    const retiredAncestor = join(root, "apps-original");
+    const replacementAncestor = join(root, "replacement");
+    const replacementParent = join(replacementAncestor, "backoffice");
+    const destination = join(originalParent, ".env.local");
+    mkdirSync(originalParent, { recursive: true });
+    mkdirSync(replacementParent, { recursive: true });
+
+    const originalByteLength = Buffer.byteLength;
+    let swapped = false;
+    try {
+      Buffer.byteLength = (...argumentsList) => {
+        if (!swapped) {
+          swapped = true;
+          renameSync(originalAncestor, retiredAncestor);
+          symlinkSync(replacementAncestor, originalAncestor);
+        }
+        return originalByteLength(...argumentsList);
+      };
+
+      expect(() => writeEnvironmentFileAtomic(destination, "DATABASE_PASSWORD=secret\n")).toThrow(
+        "mudaram durante a operação",
+      );
+    } finally {
+      Buffer.byteLength = originalByteLength;
+    }
+
+    expect(readdirSync(join(retiredAncestor, "backoffice"))).toEqual([]);
+    expect(readdirSync(replacementParent)).toEqual([]);
   });
 });

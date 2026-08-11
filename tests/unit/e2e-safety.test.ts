@@ -12,6 +12,19 @@ const safeInput = {
   publicBaseUrl: "http://127.0.0.1:3000",
   supabaseUrl: "http://127.0.0.1:54321",
 };
+const nonLiteralLocalHosts = [
+  "localhost",
+  "[::1]",
+  "[::ffff:127.0.0.1]",
+  "127.1",
+  "0177.0.0.1",
+  "0x7f000001",
+  "2130706433",
+  "127.000.000.001",
+  "127.0.0.1.",
+  "127%2e0%2e0%2e1",
+  "127。0。0。1",
+] as const;
 
 describe("E2E safety guard", () => {
   it("accepts an explicitly local environment", () => {
@@ -26,9 +39,28 @@ describe("E2E safety guard", () => {
     ["dalDatabaseUrl", "postgresql://user:pass@db.example/setlivre"],
   ] as const)("rejects a remote %s", (key, value) => {
     expect(() => assertSafeE2EEnvironment({ ...safeInput, [key]: value })).toThrow(
-      "precisa apontar para localhost",
+      "host IPv4 literal 127.0.0.1",
     );
   });
+
+  it.each(nonLiteralLocalHosts)(
+    "rejects the non-literal local host representation %s in every E2E URL",
+    (host) => {
+      const values = {
+        adminDatabaseUrl: `postgresql://postgres:postgres@${host}:54322/postgres`,
+        backofficeBaseUrl: `http://${host}:3001`,
+        dalDatabaseUrl: `postgresql://app_runtime_local:local-secret@${host}:54322/postgres?options=-c%20role%3Dapp_dal`,
+        publicBaseUrl: `http://${host}:3000`,
+        supabaseUrl: `http://${host}:54321`,
+      } as const;
+
+      for (const [key, value] of Object.entries(values)) {
+        expect(() => assertSafeE2EEnvironment({ ...safeInput, [key]: value })).toThrow(
+          "host IPv4 literal 127.0.0.1",
+        );
+      }
+    },
+  );
 
   it.each([
     ["publicBaseUrl", "http://127.0.0.1:3999"],

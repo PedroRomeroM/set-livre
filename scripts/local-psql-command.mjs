@@ -3,19 +3,15 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readlinkSync } fr
 import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-const localDatabaseHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+import { localIpv4Host, parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
+
 const dalRoleOptions = "-c role=app_dal";
 const expectedPsqlVersion = "18.4";
 const maximumSymbolicLinkDepth = 40;
 const trustedLaunchMarker = Symbol("trusted-local-psql-launch");
 
 function parseLocalDatabaseUrl(databaseUrl, assumeDalRole) {
-  let parsed;
-  try {
-    parsed = new URL(databaseUrl);
-  } catch {
-    throw new Error("A URL destinada ao psql local é inválida.");
-  }
+  const parsed = parseLiteralLocalIpv4Url(databaseUrl, "A URL destinada ao psql local");
 
   let username;
   let password;
@@ -32,7 +28,6 @@ function parseLocalDatabaseUrl(databaseUrl, assumeDalRole) {
     parsed.searchParams.size === 1 && parsed.searchParams.get("options") === dalRoleOptions;
   if (
     parsed.protocol !== "postgresql:" ||
-    !localDatabaseHostnames.has(parsed.hostname) ||
     parsed.port !== "54322" ||
     username === "" ||
     username.includes("\0") ||
@@ -399,7 +394,7 @@ export function localPsqlArguments(databaseUrl, { assumeDalRole = false } = {}) 
   const { databaseName, username } = parseLocalDatabaseUrl(databaseUrl, assumeDalRole);
   return [
     "--host",
-    "127.0.0.1",
+    localIpv4Host,
     "--port",
     "54322",
     "--username",

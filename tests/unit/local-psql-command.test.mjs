@@ -22,7 +22,7 @@ import {
   spawnLocalPsql,
 } from "../../scripts/local-psql-command.mjs";
 
-const adminDatabaseUrl = "postgresql://postgres:local-admin-password@localhost:54322/postgres";
+const adminDatabaseUrl = "postgresql://postgres:local-admin-password@127.0.0.1:54322/postgres";
 const dalDatabaseUrl =
   "postgresql://app_runtime_local:local-runtime-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
 const trustedOwnerId = process.geteuid?.();
@@ -190,6 +190,17 @@ describe("local psql command boundary", () => {
 
     for (const [databaseUrl, options] of [
       ["postgresql://postgres:secret@db.example.com:54322/postgres", undefined],
+      ["postgresql://postgres:secret@localhost:54322/postgres", undefined],
+      ["postgresql://postgres:secret@[::1]:54322/postgres", undefined],
+      ["postgresql://postgres:secret@[::ffff:127.0.0.1]:54322/postgres", undefined],
+      ["postgresql://postgres:secret@127.1:54322/postgres", undefined],
+      ["postgresql://postgres:secret@0177.0.0.1:54322/postgres", undefined],
+      ["postgresql://postgres:secret@0x7f000001:54322/postgres", undefined],
+      ["postgresql://postgres:secret@2130706433:54322/postgres", undefined],
+      ["postgresql://postgres:secret@127.000.000.001:54322/postgres", undefined],
+      ["postgresql://postgres:secret@127.0.0.1.:54322/postgres", undefined],
+      ["postgresql://postgres:secret@127%2e0%2e0%2e1:54322/postgres", undefined],
+      ["postgresql://postgres:secret@127。0。0。1:54322/postgres", undefined],
       ["postgresql://postgres:secret@127.0.0.1:6543/postgres", undefined],
       ["postgresql://postgres:secret@127.0.0.1:54322/production", undefined],
       ["postgresql://postgres@127.0.0.1:54322/postgres", undefined],

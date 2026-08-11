@@ -53,8 +53,9 @@ Sem entidade de feature antecipada. Foram adicionadas as migrations imutáveis:
 - `20260810000200_pg_catalog_public_acl_hardening.sql`: baseline canônica das ACLs públicas de relações e colunas de `pg_catalog`, recusando expansões como acesso a `pg_authid.rolpassword`.
 - `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: containment por OID/overload das ACLs públicas de rotinas de `pg_catalog`, incluindo grantor e grant option, sem promover defaults de rotinas normais posteriores a baseline.
 - `20260810000400_pg_catalog_implicit_routine_owner_hardening.sql`: owner canônico independente de `proowner` para baselines implícitas de rotinas initdb ou membros reais de extensão.
+- `20260811000100_database_temporary_privilege_hardening.sql`: remove `TEMPORARY` da baseline pública e faz readiness recusar essa capacidade efetiva na DAL e no login runtime.
 
-O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 148 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
+O bootstrap cria fora das migrations um login local efêmero com atributos, memberships, parâmetros e manifesto direto exato, que assume `app_dal` explicitamente. Como objetos gerenciados de `pg_net` e catálogos sensíveis pertencem a `supabase_admin`, o bootstrap autentica exclusivamente no loopback como esse superuser local, fecha schema/objetos/defaults de `net`, normaliza `pg_roles`/`pg_user`/`pg_db_role_setting`, preserva somente os acessos administrativos necessários e reconcilia quem pode assumir tanto o login quanto `app_dal`. O segredo JWT global da stack é mascarado para o login local e sua leitura direta é negada; a garantia Cloud equivalente permanece em PEND-002. O snapshot SQL e os tipos são regeneráveis; 156 asserts pgTAP comprovam roles, deny-by-default, ACLs efetivas, ownership, parâmetros, extensões, as duas funções privadas e a rejeição/restauração de drifts de autorização.
 
 ## Segurança e privacidade
 
@@ -78,8 +79,8 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 231 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
-- 148 asserts pgTAP;
+- 259 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
+- 156 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
 - caminho feliz e negativo (`/admin` público retorna 404), readiness real e propagação segura de request ID;
@@ -189,6 +190,12 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - o gate de supply chain exige uma linha canônica e completa em `docs/dependencias-utilizadas.md` para cada dependência externa direta dos quatro manifests e falha fechado para specs ou overrides ambíguos;
 - migrations presentes na base Git permanecem byte a byte imutáveis em cada snapshot `first-parent`; o gate recusa histórico shallow ou reescrito, neutraliza ambiente/configuração Git hostil e compara diretamente bytes e modo do arquivo físico com o blob indexado, sem confiar no stat cache. Toda entrada física precisa estar indexada ou visível canonicamente como untracked — nunca ocultada por uma regra de ignore — e toda adição precisa avançar estritamente o head da base.
 
+## Correções do décimo-sexto Codex review
+
+- a publicação atômica dos três arquivos locais mantém toda a ancestralidade física sob a raiz do repositório aberta e a revalida imediatamente antes e depois da publicação, recusando symlink preexistente acima do diretório-pai, escape da raiz e mudanças observadas entre os checks; um writer concorrente com permissão sobre o checkout permanece fora da fronteira portátil;
+- um contrato de rede único exige o host textual e parseado exatamente `127.0.0.1` em runtime, E2E, bootstrap e `psql`, sem aceitar `localhost`, IPv6 ou representações IPv4 alternativas que o parser normalizaria;
+- a migration append-only `20260811000100` revoga `TEMPORARY` de `PUBLIC`, preserva somente grants administrativos já explícitos da stack e faz os dois entrypoints de readiness recusarem a capacidade efetiva para `app_dal` e `app_runtime_local`.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -221,9 +228,9 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 231 aprovados;
+- `npm run test:unit`: 259 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
-- `npm run test:db`: 148 aprovados e snapshot SQL/tipos conferidos byte a byte;
+- `npm run test:db`: 156 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;
 - `npm run test:e2e:affected`: 36 aprovados;
 - `npm run build`: aplicações pública e backoffice aprovadas;

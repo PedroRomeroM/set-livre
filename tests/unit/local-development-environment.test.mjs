@@ -20,6 +20,19 @@ import {
 
 const localDatabaseUrl =
   "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+const nonLiteralLocalHosts = [
+  "localhost",
+  "[::1]",
+  "[::ffff:127.0.0.1]",
+  "127.1",
+  "0177.0.0.1",
+  "0x7f000001",
+  "2130706433",
+  "127.000.000.001",
+  "127.0.0.1.",
+  "127%2e0%2e0%2e1",
+  "127。0。0。1",
+];
 const temporaryRoots = [];
 
 function localEnvironment(overrides = {}) {
@@ -145,8 +158,13 @@ describe("local development child environment", () => {
   });
 
   it("rejects every tested deviation from the local DAL identity contract", () => {
+    expect(() =>
+      validateLocalDalDatabaseUrl(
+        "postgresql://app_runtime_local:secret@database.example.com:54322/postgres?options=-c%20role%3Dapp_dal",
+      ),
+    ).toThrow("host IPv4 literal 127.0.0.1");
+
     for (const value of [
-      "postgresql://app_runtime_local:secret@database.example.com:54322/postgres?options=-c%20role%3Dapp_dal",
       "postgresql://app_runtime_local:secret@127.0.0.1:5432/postgres?options=-c%20role%3Dapp_dal",
       "postgresql://postgres:secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
       "postgresql://app_runtime_local@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
@@ -158,6 +176,31 @@ describe("local development child environment", () => {
     }
     expect(validateLocalDalDatabaseUrl(localDatabaseUrl)).toBe(localDatabaseUrl);
   });
+
+  it.each(nonLiteralLocalHosts)(
+    "rejects the non-literal local host representation %s in every runtime URL",
+    (host) => {
+      const databaseUrl = `postgresql://app_runtime_local:secret@${host}:54322/postgres?options=-c%20role%3Dapp_dal`;
+      const applicationUrl = `http://${host}:3000`;
+      const supabaseUrl = `http://${host}:54321`;
+
+      expect(() => validateLocalDalDatabaseUrl(databaseUrl)).toThrow("host IPv4 literal 127.0.0.1");
+      expect(() =>
+        createLocalDevelopmentEnvironment(
+          { PATH: "/usr/bin" },
+          localEnvironment({ NEXT_PUBLIC_APP_URL: applicationUrl }),
+          "http://127.0.0.1:3000",
+        ),
+      ).toThrow("host IPv4 literal 127.0.0.1");
+      expect(() =>
+        createLocalDevelopmentEnvironment(
+          { PATH: "/usr/bin" },
+          localEnvironment({ NEXT_PUBLIC_SUPABASE_URL: supabaseUrl }),
+          "http://127.0.0.1:3000",
+        ),
+      ).toThrow("host IPv4 literal 127.0.0.1");
+    },
+  );
 
   it("rejects non-local app, release and Supabase contracts before spawn", () => {
     for (const [local, expectedApplicationUrl] of [

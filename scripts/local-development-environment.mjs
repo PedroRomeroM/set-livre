@@ -1,6 +1,8 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
+import { parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
+
 const localRuntimeEnvironmentNames = [
   "APP_ENV",
   "APP_RELEASE_SHA",
@@ -44,7 +46,6 @@ const inheritedOperationalEnvironmentNames = [
   "WINDIR",
 ];
 const pathEnvironmentNames = new Set(["PATH", "Path"]);
-const localDatabaseHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const localDatabaseProtocols = new Set(["postgres:", "postgresql:"]);
 
 function sanitizeOperationalValue(name, value) {
@@ -154,16 +155,10 @@ export function validateLocalDalDatabaseUrl(value) {
     throw new Error("DATABASE_URL_APP_DAL local é obrigatória.");
   }
 
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("DATABASE_URL_APP_DAL local é inválida.");
-  }
+  const parsed = parseLiteralLocalIpv4Url(value, "DATABASE_URL_APP_DAL local");
 
   if (
     !localDatabaseProtocols.has(parsed.protocol) ||
-    !localDatabaseHostnames.has(parsed.hostname) ||
     parsed.port !== "54322" ||
     parsed.username !== "app_runtime_local" ||
     parsed.password === "" ||
@@ -181,16 +176,10 @@ export function validateLocalDalDatabaseUrl(value) {
 }
 
 function validateLocalHttpOrigin(value, label, expectedOrigin) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(`${label} local é inválida.`);
-  }
+  const parsed = parseLiteralLocalIpv4Url(value, `${label} local`);
 
   if (
     parsed.protocol !== "http:" ||
-    !localDatabaseHostnames.has(parsed.hostname) ||
     parsed.origin !== expectedOrigin ||
     parsed.username !== "" ||
     parsed.password !== "" ||
@@ -205,16 +194,10 @@ function validateLocalHttpOrigin(value, label, expectedOrigin) {
 }
 
 function validateLocalSupabaseUrl(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL local é inválida.");
-  }
+  const parsed = parseLiteralLocalIpv4Url(value, "NEXT_PUBLIC_SUPABASE_URL local");
 
   if (
     parsed.protocol !== "http:" ||
-    !localDatabaseHostnames.has(parsed.hostname) ||
     parsed.port !== "54321" ||
     parsed.username !== "" ||
     parsed.password !== "" ||
@@ -222,7 +205,9 @@ function validateLocalSupabaseUrl(value) {
     parsed.search !== "" ||
     parsed.hash !== ""
   ) {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL local precisa usar HTTP em loopback na porta 54321.");
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL local precisa usar HTTP no host 127.0.0.1 e na porta 54321.",
+    );
   }
 
   return parsed.origin;
@@ -236,7 +221,10 @@ function validateLocalRuntimeEnvironment(localEnvironment, expectedApplicationUr
 
   let expectedApplicationOrigin;
   try {
-    expectedApplicationOrigin = new URL(expectedApplicationUrl).origin;
+    expectedApplicationOrigin = parseLiteralLocalIpv4Url(
+      expectedApplicationUrl,
+      "A origem esperada do app local",
+    ).origin;
   } catch {
     throw new Error("A origem esperada do app local é inválida.");
   }

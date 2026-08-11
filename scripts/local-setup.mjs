@@ -10,6 +10,7 @@ import {
   resolveTrustedLocalPsql,
   spawnLocalPsql,
 } from "./local-psql-command.mjs";
+import { localIpv4Host, parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
 import {
   assertSafeEnvironmentFileDestination,
   writeEnvironmentFileAtomic,
@@ -24,10 +25,9 @@ import {
 } from "./supabase-local-network.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const localHostnames = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const applicationEnvironmentDestinations = [
-  [resolve(root, ".env.local"), "http://127.0.0.1:3000"],
-  [resolve(root, "apps/backoffice/.env.local"), "http://127.0.0.1:3001"],
+  [resolve(root, ".env.local"), `http://${localIpv4Host}:3000`],
+  [resolve(root, "apps/backoffice/.env.local"), `http://${localIpv4Host}:3001`],
 ];
 const e2eEnvironmentPath = resolve(root, ".env.e2e.local");
 
@@ -146,12 +146,8 @@ for (const key of required) {
 }
 
 function assertLocalEndpoint(value, label, protocol, port) {
-  const parsed = new URL(value);
-  if (
-    !localHostnames.has(parsed.hostname) ||
-    parsed.protocol !== protocol ||
-    parsed.port !== port
-  ) {
+  const parsed = parseLiteralLocalIpv4Url(value, label);
+  if (parsed.protocol !== protocol || parsed.port !== port) {
     throw new Error(`${label} não corresponde ao endpoint local esperado.`);
   }
 }
@@ -720,8 +716,8 @@ function applicationEnvironment(applicationUrl) {
 }
 const e2eEnvironment = [
   "E2E_ALLOW_LOCAL=1",
-  "E2E_BASE_URL=http://127.0.0.1:3000",
-  "E2E_BACKOFFICE_URL=http://127.0.0.1:3001",
+  `E2E_BASE_URL=http://${localIpv4Host}:3000`,
+  `E2E_BACKOFFICE_URL=http://${localIpv4Host}:3001`,
   `E2E_DATABASE_MARKER=${e2eDatabaseMarker}`,
   `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
   `DATABASE_URL_APP_DAL=${dalDatabaseUrl.toString()}`,
@@ -735,5 +731,5 @@ for (const [path, applicationUrl] of applicationEnvironmentDestinations) {
 writeEnvironmentFileAtomic(e2eEnvironmentPath, e2eEnvironment);
 
 process.stdout.write(
-  "Supabase local pronto em http://127.0.0.1:54321. Runtime e E2E foram gravados separadamente em arquivos ignorados.\n",
+  `Supabase local pronto em http://${localIpv4Host}:54321. Runtime e E2E foram gravados separadamente em arquivos ignorados.\n`,
 );

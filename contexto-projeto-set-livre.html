@@ -103,6 +103,7 @@
           radial-gradient(circle at 82% 16%, rgb(239 158 66 / 24%), transparent 24rem),
           linear-gradient(145deg, #0c4938, #176b53 62%, #208266);
         color: #fff;
+        overflow-wrap: anywhere;
       }
 
       .eyebrow {
@@ -209,6 +210,7 @@
 
       main {
         padding: 0 1.25rem 4.5rem;
+        overflow-wrap: anywhere;
       }
 
       section {
@@ -501,6 +503,7 @@
         border-top: 1px solid var(--line);
         color: var(--muted);
         font-size: 0.84rem;
+        overflow-wrap: anywhere;
       }
 
       @media (max-width: 62rem) {
@@ -563,6 +566,12 @@
 
         .quick-nav ul {
           padding-inline: 1rem;
+        }
+      }
+
+      @media (max-width: 12rem) {
+        .stats {
+          grid-template-columns: 1fr;
         }
       }
 
@@ -632,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>15º ciclo de review validado localmente</li>
+          <li>16º ciclo de review validado localmente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -640,11 +649,11 @@
             <strong>0/34</strong><span>features de produto implementadas</span>
           </div>
           <div class="stat">
-            <strong>231</strong><span>testes unitários na rodada canônica atual</span>
+            <strong>259</strong><span>testes unitários na rodada canônica atual</span>
           </div>
-          <div class="stat"><strong>148</strong><span>asserts pgTAP no banco local</span></div>
+          <div class="stat"><strong>156</strong><span>asserts pgTAP no banco local</span></div>
           <div class="stat"><strong>36</strong><span>execuções Playwright/axe</span></div>
-          <div class="stat"><strong>7</strong><span>migrations de fundação</span></div>
+          <div class="stat"><strong>8</strong><span>migrations de fundação</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -689,10 +698,10 @@
             </article>
             <article class="card">
               <span class="tag done">Validado</span>
-              <h3>15º ciclo da fundação</h3>
+              <h3>16º ciclo da fundação</h3>
               <p>
-                O ciclo fecha fontes alternativas de ambiente para Next, E2E e PostgreSQL e reforça
-                a rastreabilidade de dependências e a imutabilidade das migrations.
+                O ciclo ancora a escrita de ambientes em ancestrais físicos, fixa toda URL local em
+                <code>127.0.0.1</code> e remove criação de tabelas temporárias da DAL.
               </p>
             </article>
             <article class="card">
@@ -708,7 +717,7 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada canônica atual passou em 231 unitários, 148 asserts pgTAP e 36 execuções
+              A rodada canônica atual passou em 259 unitários, 156 asserts pgTAP e 36 execuções
               Playwright, além de instalação limpa, format, lint, TypeScript, docs, dois builds,
               audit e Knip.
             </p>
@@ -987,7 +996,7 @@
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">231 aprovados</span>
+              <span class="tag done">259 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -995,7 +1004,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">148 aprovados</span>
+              <span class="tag done">156 aprovados</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
@@ -1049,9 +1058,10 @@
             <article class="card">
               <h3>Banco e readiness</h3>
               <p>
-                Sete migrations append-only criam os schemas internos, a role <code>app_dal</code> e
-                probes de readiness. Não há tabela de negócio. Grants, owners, memberships e ACLs
-                públicas são comparados com allowlists exatas.
+                Oito migrations append-only criam os schemas internos, a role <code>app_dal</code> e
+                probes de readiness. Não há tabela de negócio. A DAL não recebe
+                <code>TEMPORARY</code>; grants, owners, memberships e ACLs públicas usam allowlists
+                exatas.
               </p>
             </article>
             <article class="card">
@@ -1065,9 +1075,10 @@
             <article class="card">
               <h3>Ambiente e supply chain</h3>
               <p>
-                Docker e PostgreSQL restritos ao loopback, dotenv por lista fechada, arquivos
-                privados físicos <code>0600</code>, dependências registradas uma a uma, migrations
-                append-only, logs redigidos, audit e Knip obrigatórios.
+                Docker e PostgreSQL restritos ao host literal <code>127.0.0.1</code>, dotenv por
+                lista fechada, arquivos privados <code>0600</code> sob ancestrais físicos,
+                dependências registradas uma a uma, migrations append-only, logs redigidos, audit e
+                Knip.
               </p>
             </article>
           </div>

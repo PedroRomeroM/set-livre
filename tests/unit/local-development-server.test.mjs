@@ -581,7 +581,7 @@ describe("local development server launcher", () => {
         inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
         repositoryRoot: fixture.root,
       }),
-    ).toThrow("Supabase local");
+    ).toThrow("host IPv4 literal 127.0.0.1");
 
     rmSync(environmentPath);
     expect(() =>
@@ -680,7 +680,34 @@ describe("local development server launcher", () => {
         inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
         repositoryRoot: fixture.root,
       }),
-    ).toThrow("Supabase local");
+    ).toThrow("host IPv4 literal 127.0.0.1");
+  });
+
+  it("rejects a URL alias that normalizes to IPv4 before any local launcher starts", () => {
+    const fixture = temporaryRepository();
+    writeFileSync(
+      resolve(fixture.root, ".env.local"),
+      localEnvironment("http://127.0.0.1:3000", "web-anon").replace(
+        "http://127.0.0.1:54321",
+        "http://127.1:54321",
+      ),
+      { mode: 0o600 },
+    );
+
+    expect(() =>
+      createLocalDevelopmentServerLaunch({
+        application: "web",
+        inheritedEnvironment: { PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("host IPv4 literal 127.0.0.1");
+    expect(() =>
+      createLocalProductionServerLaunch({
+        application: "web",
+        inheritedEnvironment: { PATH: process.env.PATH },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("host IPv4 literal 127.0.0.1");
   });
 
   it("accepts only the physical Next package pinned by the root manifest", () => {
