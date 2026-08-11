@@ -9,7 +9,7 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 ## Estado atual
 
 - fundação local executável incorporada a `main`, sem feature de produto simulada;
-- FEAT-002 na branch `feat/feat-002-auth-legal-core`, com as correções do quarto ciclo de review em validação e ainda fora da contagem de features concluídas;
+- FEAT-002 na branch `feat/feat-002-auth-legal-core`, com as três correções do quarto review publicadas, threads resolvidas e novo review pendente; a feature ainda está fora da contagem de concluídas;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 11 migrations append-only, head `20260811000400` e 236 asserts pgTAP verdes;
