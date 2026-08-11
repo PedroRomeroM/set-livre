@@ -178,6 +178,23 @@ COMMENT ON FUNCTION "private"."bootstrap_signup_identity"() IS 'Apaga a intenç�
 
 
 
+CREATE OR REPLACE FUNCTION "private"."bootstrap_user_preferences"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  insert into public.user_preferences (user_id)
+  values (new.id)
+  on conflict (user_id) do nothing;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."bootstrap_user_preferences"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -211,7 +228,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_acl_dependencies as (
     select
-      pg_catalog.count(*) = 10
+      pg_catalog.count(*) = 13
       and pg_catalog.bool_and(
         (
           dependency.dbid = (
@@ -329,6 +346,42 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.objsubid = 0
         )
+        or (
+          dependency.dbid = (
+            select database.oid
+            from pg_catalog.pg_database as database
+            where database.datname = pg_catalog.current_database()
+          )
+          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          and dependency.objid = pg_catalog.to_regprocedure(
+            'private.complete_profile(uuid,bigint,text,text,text,text,text)'
+          )
+          and dependency.objsubid = 0
+        )
+        or (
+          dependency.dbid = (
+            select database.oid
+            from pg_catalog.pg_database as database
+            where database.datname = pg_catalog.current_database()
+          )
+          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          and dependency.objid = pg_catalog.to_regprocedure(
+            'private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'
+          )
+          and dependency.objsubid = 0
+        )
+        or (
+          dependency.dbid = (
+            select database.oid
+            from pg_catalog.pg_database as database
+            where database.datname = pg_catalog.current_database()
+          )
+          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          and dependency.objid = pg_catalog.to_regprocedure(
+            'private.update_profile_appearance(uuid,bigint,text)'
+          )
+          and dependency.objsubid = 0
+        )
       ) as restricted
     from pg_catalog.pg_shdepend as dependency
     join runtime_role on runtime_role.oid = dependency.refobjid
@@ -352,7 +405,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_routine_privilege as (
     select
-      pg_catalog.count(*) = 9
+      pg_catalog.count(*) = 12
       and pg_catalog.bool_and(
         privilege.grantee = runtime_role.oid
         and privilege.grantor <> runtime_role.oid
@@ -385,6 +438,15 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         ),
         pg_catalog.to_regprocedure(
           'private.close_identity_recovery_session(uuid,uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.complete_profile(uuid,bigint,text,text,text,text,text)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.update_profile_appearance(uuid,bigint,text)'
         )
       )
       and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
@@ -1288,6 +1350,113 @@ COMMENT ON FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uui
 
 
 
+CREATE OR REPLACE FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_person_type" "text", "p_name" "text", "p_phone_e164" "text", "p_tax_id" "text", "p_additional_document" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  current_profile public.profiles%rowtype;
+begin
+  if p_user_id is null
+    or p_expected_profile_version is null
+    or p_expected_profile_version < 0
+    or p_person_type is null
+    or p_person_type not in ('individual', 'company')
+    or p_name is null
+    or pg_catalog.char_length(p_name) not between 2 and 160
+    or p_name <> pg_catalog.btrim(p_name)
+    or p_name ~ '[[:cntrl:]]'
+    or p_phone_e164 is null
+    or p_phone_e164 !~ '^\+55[1-9][0-9]([2-5][0-9]{7}|9[0-9]{8})$'
+    or p_tax_id is null
+    or (
+      p_person_type = 'individual'
+      and not private.is_valid_cpf(p_tax_id)
+    )
+    or (
+      p_person_type = 'company'
+      and not private.is_valid_cnpj(p_tax_id)
+    )
+    or (
+      p_additional_document is not null
+      and (
+        pg_catalog.char_length(p_additional_document) not between 3 and 40
+        or p_additional_document !~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'
+      )
+    )
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_profile_input';
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  if current_profile.status <> 'active' then
+    raise exception using errcode = '42501', message = 'profile_inactive';
+  end if;
+
+  if current_profile.completed_at is not null then
+    if current_profile.person_type = p_person_type
+      and current_profile.name = p_name
+      and current_profile.phone_e164 = p_phone_e164
+      and current_profile.tax_id = p_tax_id
+      and current_profile.additional_document is not distinct from p_additional_document
+    then
+      return query select * from private.profile_command_result(p_user_id);
+      return;
+    end if;
+
+    raise exception using errcode = '40001', message = 'profile_already_completed';
+  end if;
+
+  if current_profile.profile_version <> p_expected_profile_version then
+    raise exception using errcode = '40001', message = 'profile_version_conflict';
+  end if;
+
+  if (
+    select pg_catalog.count(distinct legal_version.kind)
+    from public.terms_acceptances as acceptance
+    join public.terms_versions as legal_version
+      on legal_version.id = acceptance.terms_version_id
+    where acceptance.user_id = p_user_id
+      and legal_version.kind in ('terms', 'privacy')
+  ) <> 2 then
+    raise exception using
+      errcode = 'P0001',
+      message = 'profile_legal_acceptances_missing';
+  end if;
+
+  update public.profiles as profile
+  set
+    person_type = p_person_type,
+    name = p_name,
+    phone_e164 = p_phone_e164,
+    tax_id = p_tax_id,
+    additional_document = p_additional_document,
+    completed_at = pg_catalog.clock_timestamp()
+  where profile.id = p_user_id;
+
+  return query select * from private.profile_command_result(p_user_id);
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_person_type" "text", "p_name" "text", "p_phone_e164" "text", "p_tax_id" "text", "p_additional_document" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_person_type" "text", "p_name" "text", "p_phone_e164" "text", "p_tax_id" "text", "p_additional_document" "text") IS 'Completa uma única vez o perfil ativo, valida aceites preexistentes e permite a correção final de PF/PJ.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -1521,6 +1690,35 @@ COMMENT ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_versi
 
 
 
+CREATE OR REPLACE FUNCTION "private"."enforce_profile_lifecycle"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if old.completed_at is not null
+    and new.completed_at is distinct from old.completed_at
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'profile_completion_is_immutable';
+  end if;
+
+  if new.person_type is distinct from old.person_type
+    and not (old.completed_at is null and new.completed_at is not null)
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'profile_person_type_change_requires_completion';
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."enforce_profile_lifecycle"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -1661,6 +1859,123 @@ ALTER FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid",
 
 
 COMMENT ON FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") IS 'Classifica binding/tombstone pelo session_id assinado, estende retenção ao JWT observado e só autoriza grant/escopo ativos correspondentes.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."is_valid_cnpj"("candidate" "text") RETURNS boolean
+    LANGUAGE "plpgsql" IMMUTABLE STRICT
+    SET "search_path" TO ''
+    AS $_$
+declare
+  first_weights constant integer[] := array[5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  second_weights constant integer[] := array[6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  position_index integer;
+  character_value integer;
+  digit_sum integer := 0;
+  remainder integer;
+  first_check_digit integer;
+  second_check_digit integer;
+begin
+  if candidate !~ '^[0-9A-Z]{12}[0-9]{2}$'
+    or candidate ~ '^([0-9A-Z])\1{11}'
+  then
+    return false;
+  end if;
+
+  for position_index in 1..12 loop
+    character_value :=
+      pg_catalog.ascii(pg_catalog.substr(candidate, position_index, 1)) - 48;
+    digit_sum := digit_sum + character_value * first_weights[position_index];
+  end loop;
+
+  remainder := digit_sum % 11;
+  first_check_digit := case when remainder < 2 then 0 else 11 - remainder end;
+
+  if first_check_digit <>
+    pg_catalog.ascii(pg_catalog.substr(candidate, 13, 1)) - 48
+  then
+    return false;
+  end if;
+
+  digit_sum := 0;
+  for position_index in 1..13 loop
+    character_value :=
+      pg_catalog.ascii(pg_catalog.substr(candidate, position_index, 1)) - 48;
+    digit_sum := digit_sum + character_value * second_weights[position_index];
+  end loop;
+
+  remainder := digit_sum % 11;
+  second_check_digit := case when remainder < 2 then 0 else 11 - remainder end;
+
+  return second_check_digit =
+    pg_catalog.ascii(pg_catalog.substr(candidate, 14, 1)) - 48;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."is_valid_cnpj"("candidate" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."is_valid_cnpj"("candidate" "text") IS 'Valida CNPJ canônico numérico ou alfanumérico uppercase pelo valor ASCII menos 48 e DVs módulo 11; não comprova existência ou titularidade.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."is_valid_cpf"("candidate" "text") RETURNS boolean
+    LANGUAGE "plpgsql" IMMUTABLE STRICT
+    SET "search_path" TO ''
+    AS $_$
+declare
+  position_index integer;
+  digit integer;
+  digit_sum integer := 0;
+  first_check_digit integer;
+  second_check_digit integer;
+begin
+  if candidate !~ '^[0-9]{11}$'
+    or candidate ~ '^([0-9])\1{10}$'
+  then
+    return false;
+  end if;
+
+  for position_index in 1..9 loop
+    digit := pg_catalog.ascii(pg_catalog.substr(candidate, position_index, 1)) - 48;
+    digit_sum := digit_sum + digit * (11 - position_index);
+  end loop;
+
+  first_check_digit := digit_sum % 11;
+  first_check_digit := case
+    when first_check_digit < 2 then 0
+    else 11 - first_check_digit
+  end;
+
+  if first_check_digit <>
+    pg_catalog.ascii(pg_catalog.substr(candidate, 10, 1)) - 48
+  then
+    return false;
+  end if;
+
+  digit_sum := 0;
+  for position_index in 1..10 loop
+    digit := pg_catalog.ascii(pg_catalog.substr(candidate, position_index, 1)) - 48;
+    digit_sum := digit_sum + digit * (12 - position_index);
+  end loop;
+
+  second_check_digit := digit_sum % 11;
+  second_check_digit := case
+    when second_check_digit < 2 then 0
+    else 11 - second_check_digit
+  end;
+
+  return second_check_digit =
+    pg_catalog.ascii(pg_catalog.substr(candidate, 11, 1)) - 48;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."is_valid_cpf"("candidate" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."is_valid_cpf"("candidate" "text") IS 'Valida o formato canônico de onze dígitos e os dois DVs módulo 11 do CPF; não comprova existência ou titularidade.';
 
 
 
@@ -1818,6 +2133,37 @@ ALTER FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") OWN
 
 
 COMMENT ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") IS 'Purga grants expirados e emite token opaco vinculado ao usuário por 15 minutos.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."profile_command_result"("p_user_id" "uuid") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select
+    profile.id,
+    profile.person_type,
+    profile.status,
+    profile.name,
+    profile.phone_e164,
+    profile.tax_id_masked,
+    profile.additional_document_masked,
+    profile.completed_at is not null,
+    profile.profile_version,
+    preference.color_scheme,
+    preference.preferences_version
+  from public.profiles as profile
+  join public.user_preferences as preference
+    on preference.user_id = profile.id
+  where profile.id = p_user_id
+    and p_user_id is not null;
+$$;
+
+
+ALTER FUNCTION "private"."profile_command_result"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."profile_command_result"("p_user_id" "uuid") IS 'Helper interno sem grant runtime que projeta o retorno autoritativo dos comandos de perfil.';
 
 
 
@@ -2005,13 +2351,212 @@ CREATE OR REPLACE FUNCTION "private"."set_profile_updated_at"() RETURNS "trigger
     SET "search_path" TO ''
     AS $$
 begin
-  new.updated_at := pg_catalog.now();
+  new.profile_version := old.profile_version + 1;
+  new.updated_at := pg_catalog.clock_timestamp();
   return new;
 end;
 $$;
 
 
 ALTER FUNCTION "private"."set_profile_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."set_user_preferences_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if new.user_id is distinct from old.user_id then
+    raise exception using
+      errcode = 'P0001',
+      message = 'user_preferences_owner_is_immutable';
+  end if;
+
+  new.preferences_version := old.preferences_version + 1;
+  new.updated_at := pg_catalog.clock_timestamp();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."set_user_preferences_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  current_profile public.profiles%rowtype;
+  current_preference public.user_preferences%rowtype;
+begin
+  if p_user_id is null
+    or p_expected_preferences_version is null
+    or p_expected_preferences_version < 0
+    or p_color_scheme is null
+    or p_color_scheme not in ('system', 'light', 'dark')
+  then
+    raise exception using errcode = '22023', message = 'invalid_profile_input';
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  if current_profile.status <> 'active' then
+    raise exception using errcode = '42501', message = 'profile_inactive';
+  end if;
+
+  select preference.*
+  into current_preference
+  from public.user_preferences as preference
+  where preference.user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'P0001',
+      message = 'profile_preferences_missing';
+  end if;
+
+  if current_preference.color_scheme = p_color_scheme then
+    return query select * from private.profile_command_result(p_user_id);
+    return;
+  end if;
+
+  if current_preference.preferences_version <>
+    p_expected_preferences_version
+  then
+    raise exception using
+      errcode = '40001',
+      message = 'preferences_version_conflict';
+  end if;
+
+  update public.user_preferences as preference
+  set color_scheme = p_color_scheme
+  where preference.user_id = p_user_id;
+
+  return query select * from private.profile_command_result(p_user_id);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") IS 'Atualiza a allowlist visual com versão independente da identidade.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  current_profile public.profiles%rowtype;
+  target_tax_id text;
+  target_additional_document text;
+begin
+  if p_user_id is null
+    or p_expected_profile_version is null
+    or p_expected_profile_version < 0
+    or p_name is null
+    or pg_catalog.char_length(p_name) not between 2 and 160
+    or p_name <> pg_catalog.btrim(p_name)
+    or p_name ~ '[[:cntrl:]]'
+    or p_phone_e164 is null
+    or p_phone_e164 !~ '^\+55[1-9][0-9]([2-5][0-9]{7}|9[0-9]{8})$'
+    or p_replace_tax_id is null
+    or p_replace_additional_document is null
+    or (not p_replace_tax_id and p_tax_id is not null)
+    or (p_replace_tax_id and p_tax_id is null)
+    or (not p_replace_additional_document and p_additional_document is not null)
+    or (
+      p_replace_additional_document
+      and p_additional_document is not null
+      and (
+        pg_catalog.char_length(p_additional_document) not between 3 and 40
+        or p_additional_document !~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'
+      )
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_profile_input';
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'profile_not_found';
+  end if;
+
+  if current_profile.status <> 'active' then
+    raise exception using errcode = '42501', message = 'profile_inactive';
+  end if;
+
+  if current_profile.completed_at is null then
+    raise exception using errcode = 'P0001', message = 'profile_incomplete';
+  end if;
+
+  target_tax_id := case
+    when p_replace_tax_id then p_tax_id
+    else current_profile.tax_id
+  end;
+  target_additional_document := case
+    when p_replace_additional_document then p_additional_document
+    else current_profile.additional_document
+  end;
+
+  if (
+    current_profile.person_type = 'individual'
+    and not private.is_valid_cpf(target_tax_id)
+  ) or (
+    current_profile.person_type = 'company'
+    and not private.is_valid_cnpj(target_tax_id)
+  ) then
+    raise exception using errcode = '22023', message = 'invalid_profile_input';
+  end if;
+
+  if current_profile.name = p_name
+    and current_profile.phone_e164 = p_phone_e164
+    and current_profile.tax_id = target_tax_id
+    and current_profile.additional_document is not distinct from target_additional_document
+  then
+    return query select * from private.profile_command_result(p_user_id);
+    return;
+  end if;
+
+  if current_profile.profile_version <> p_expected_profile_version then
+    raise exception using errcode = '40001', message = 'profile_version_conflict';
+  end if;
+
+  update public.profiles as profile
+  set
+    name = p_name,
+    phone_e164 = p_phone_e164,
+    tax_id = target_tax_id,
+    additional_document = target_additional_document
+  where profile.id = p_user_id;
+
+  return query select * from private.profile_command_result(p_user_id);
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") IS 'Atualiza identidade concluída com versão otimista e substituição documental explícita sem reexpor PII.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."validate_terms_acceptance_snapshot"() RETURNS "trigger"
@@ -2080,6 +2625,36 @@ $$;
 
 
 ALTER FUNCTION "public"."get_current_legal_terms"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_my_profile"() RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
+    AS $$
+  select
+    profile.id,
+    profile.person_type,
+    profile.status,
+    profile.name,
+    profile.phone_e164,
+    profile.tax_id_masked,
+    profile.additional_document_masked,
+    profile.completed_at is not null,
+    profile.profile_version,
+    preference.color_scheme,
+    preference.preferences_version
+  from public.profiles as profile
+  join public.user_preferences as preference
+    on preference.user_id = profile.id
+  where profile.id = (select auth.uid());
+$$;
+
+
+ALTER FUNCTION "public"."get_my_profile"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_my_profile"() IS 'Read model próprio security invoker filtrado por auth.uid(), com projeção segura e mascarada.';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."get_own_identity_context"() RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "is_complete" boolean)
@@ -2198,10 +2773,32 @@ CREATE TABLE IF NOT EXISTS "public"."profiles" (
     "completed_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "name" "text",
+    "phone_e164" "text",
+    "tax_id" "text",
+    "additional_document" "text",
+    "tax_id_masked" "text" GENERATED ALWAYS AS (
+CASE
+    WHEN ("tax_id" IS NULL) THEN NULL::"text"
+    WHEN ("person_type" = 'individual'::"text") THEN ('***.***.***-'::"text" || "right"("tax_id", 2))
+    ELSE ('**.***.***/****-'::"text" || "right"("tax_id", 2))
+END) STORED,
+    "additional_document_masked" "text" GENERATED ALWAYS AS (
+CASE
+    WHEN ("additional_document" IS NULL) THEN NULL::"text"
+    ELSE ("repeat"('*'::"text", ("char_length"("additional_document") - 2)) || "right"("additional_document", 2))
+END) STORED,
+    "profile_version" bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT "profiles_additional_document_shape_check" CHECK ((("additional_document" IS NULL) OR ((("char_length"("additional_document") >= 3) AND ("char_length"("additional_document") <= 40)) AND ("additional_document" ~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'::"text")))),
     CONSTRAINT "profiles_check" CHECK ((("completed_at" IS NULL) OR ("completed_at" >= "created_at"))),
     CONSTRAINT "profiles_check1" CHECK (("updated_at" >= "created_at")),
+    CONSTRAINT "profiles_completion_data_check" CHECK (((("completed_at" IS NULL) AND ("name" IS NULL) AND ("phone_e164" IS NULL) AND ("tax_id" IS NULL) AND ("additional_document" IS NULL)) OR (("completed_at" IS NOT NULL) AND ("name" IS NOT NULL) AND ("phone_e164" IS NOT NULL) AND ("tax_id" IS NOT NULL)))),
+    CONSTRAINT "profiles_name_shape_check" CHECK ((("name" IS NULL) OR ((("char_length"("name") >= 2) AND ("char_length"("name") <= 160)) AND ("name" = "btrim"("name")) AND ("name" !~ '[[:cntrl:]]'::"text")))),
     CONSTRAINT "profiles_person_type_check" CHECK (("person_type" = ANY (ARRAY['individual'::"text", 'company'::"text"]))),
-    CONSTRAINT "profiles_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'suspended'::"text"])))
+    CONSTRAINT "profiles_phone_e164_shape_check" CHECK ((("phone_e164" IS NULL) OR ("phone_e164" ~ '^\+55[1-9][0-9]([2-5][0-9]{7}|9[0-9]{8})$'::"text"))),
+    CONSTRAINT "profiles_profile_version_check" CHECK (("profile_version" >= 0)),
+    CONSTRAINT "profiles_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'suspended'::"text"]))),
+    CONSTRAINT "profiles_tax_id_person_type_check" CHECK ((("tax_id" IS NULL) OR (("person_type" = 'individual'::"text") AND "private"."is_valid_cpf"("tax_id")) OR (("person_type" = 'company'::"text") AND "private"."is_valid_cnpj"("tax_id"))))
 );
 
 
@@ -2213,6 +2810,34 @@ COMMENT ON TABLE "public"."profiles" IS 'Identidade mínima criada atomicamente 
 
 
 COMMENT ON COLUMN "public"."profiles"."completed_at" IS 'Permanece nulo até o comando de conclusão pertencente à FEAT-003.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."name" IS 'Nome da pessoa ou razão social atual; obrigatório somente após a conclusão do perfil.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."phone_e164" IS 'Telefone brasileiro canônico em E.164; validação estrutural não confirma titularidade.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."tax_id" IS 'CPF ou CNPJ canônico atual; PII sem grant de leitura direta para roles runtime.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."additional_document" IS 'Identificador textual opcional uppercase; tipo, emissor e titularidade não são inferidos.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."tax_id_masked" IS 'Projeção derivada que revela somente os dois dígitos verificadores.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."additional_document_masked" IS 'Projeção derivada que revela somente os dois últimos caracteres.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."profile_version" IS 'Versão otimista monotônica da identidade, independente da aparência.';
 
 
 
@@ -2270,6 +2895,33 @@ COMMENT ON TABLE "public"."terms_versions" IS 'Versões jurídicas append-only; 
 
 
 COMMENT ON COLUMN "public"."terms_versions"."source" IS 'local_fixture identifica conteúdo exclusivo do ambiente local; approved exige aprovação humana externa.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_preferences" (
+    "user_id" "uuid" NOT NULL,
+    "color_scheme" "text" DEFAULT 'system'::"text" NOT NULL,
+    "preferences_version" bigint DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "user_preferences_check" CHECK (("updated_at" >= "created_at")),
+    CONSTRAINT "user_preferences_color_scheme_check" CHECK (("color_scheme" = ANY (ARRAY['system'::"text", 'light'::"text", 'dark'::"text"]))),
+    CONSTRAINT "user_preferences_preferences_version_check" CHECK (("preferences_version" >= 0))
+);
+
+
+ALTER TABLE "public"."user_preferences" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."user_preferences" IS 'Preferência visual mínima 1:1 do perfil, versionada sem criar conflito com a identidade.';
+
+
+
+COMMENT ON COLUMN "public"."user_preferences"."color_scheme" IS 'Allowlist de aparência: system, light ou dark.';
+
+
+
+COMMENT ON COLUMN "public"."user_preferences"."preferences_version" IS 'Versão otimista monotônica da aparência, independente da identidade.';
 
 
 
@@ -2338,6 +2990,11 @@ ALTER TABLE ONLY "public"."terms_versions"
 
 
 
+ALTER TABLE ONLY "public"."user_preferences"
+    ADD CONSTRAINT "user_preferences_pkey" PRIMARY KEY ("user_id");
+
+
+
 CREATE INDEX "identity_recovery_grants_expires_at_idx" ON "private"."identity_recovery_grants" USING "btree" ("expires_at");
 
 
@@ -2347,6 +3004,14 @@ CREATE INDEX "identity_recovery_sessions_retain_until_idx" ON "private"."identit
 
 
 CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_intents" USING "btree" ("expires_at");
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_bootstrap_user_preferences" AFTER INSERT ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "private"."bootstrap_user_preferences"();
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_enforce_lifecycle" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_profile_lifecycle"();
 
 
 
@@ -2367,6 +3032,10 @@ CREATE OR REPLACE TRIGGER "terms_acceptances_validate_snapshot" BEFORE INSERT ON
 
 
 CREATE OR REPLACE TRIGGER "terms_versions_protect_immutability" BEFORE DELETE OR UPDATE ON "public"."terms_versions" FOR EACH ROW EXECUTE FUNCTION "private"."protect_terms_version"();
+
+
+
+CREATE OR REPLACE TRIGGER "user_preferences_set_updated_at" BEFORE UPDATE ON "public"."user_preferences" FOR EACH ROW EXECUTE FUNCTION "private"."set_user_preferences_updated_at"();
 
 
 
@@ -2410,6 +3079,11 @@ ALTER TABLE ONLY "public"."terms_acceptances"
 
 
 
+ALTER TABLE ONLY "public"."user_preferences"
+    ADD CONSTRAINT "user_preferences_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE "private"."identity_recovery_grants" ENABLE ROW LEVEL SECURITY;
 
 
@@ -2440,6 +3114,13 @@ CREATE POLICY "terms_versions_select_current" ON "public"."terms_versions" FOR S
 
 
 
+ALTER TABLE "public"."user_preferences" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "user_preferences_select_own" ON "public"."user_preferences" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
 GRANT USAGE ON SCHEMA "private" TO "app_dal";
 
 
@@ -2453,6 +3134,10 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 REVOKE ALL ON FUNCTION "private"."bootstrap_signup_identity"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."bootstrap_user_preferences"() FROM PUBLIC;
 
 
 
@@ -2480,6 +3165,11 @@ GRANT ALL ON FUNCTION "private"."close_identity_recovery_session"("p_user_id" "u
 
 
 
+REVOKE ALL ON FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_person_type" "text", "p_name" "text", "p_phone_e164" "text", "p_tax_id" "text", "p_additional_document" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_person_type" "text", "p_name" "text", "p_phone_e164" "text", "p_tax_id" "text", "p_additional_document" "text") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
@@ -2494,6 +3184,10 @@ GRANT ALL ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_ver
 
 
 
+REVOKE ALL ON FUNCTION "private"."enforce_profile_lifecycle"() FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") FROM PUBLIC;
 
 
@@ -2503,12 +3197,24 @@ GRANT ALL ON FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" 
 
 
 
+REVOKE ALL ON FUNCTION "private"."is_valid_cnpj"("candidate" "text") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."is_valid_cpf"("candidate" "text") FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) TO "app_dal";
 
 
 
 REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."profile_command_result"("p_user_id" "uuid") FROM PUBLIC;
 
 
 
@@ -2537,6 +3243,20 @@ REVOKE ALL ON FUNCTION "private"."set_profile_updated_at"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."set_user_preferences_updated_at"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."validate_terms_acceptance_snapshot"() FROM PUBLIC;
 
 
@@ -2544,6 +3264,11 @@ REVOKE ALL ON FUNCTION "private"."validate_terms_acceptance_snapshot"() FROM PUB
 REVOKE ALL ON FUNCTION "public"."get_current_legal_terms"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."get_current_legal_terms"() TO "anon";
 GRANT ALL ON FUNCTION "public"."get_current_legal_terms"() TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_my_profile"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_my_profile"() TO "authenticated";
 
 
 
@@ -2565,6 +3290,26 @@ GRANT SELECT("status") ON TABLE "public"."profiles" TO "authenticated";
 
 
 GRANT SELECT("completed_at") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("name") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("phone_e164") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("tax_id_masked") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("additional_document_masked") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("profile_version") ON TABLE "public"."profiles" TO "authenticated";
 
 
 
@@ -2626,6 +3371,18 @@ GRANT SELECT("retired_at") ON TABLE "public"."terms_versions" TO "authenticated"
 
 GRANT SELECT("content_hash") ON TABLE "public"."terms_versions" TO "anon";
 GRANT SELECT("content_hash") ON TABLE "public"."terms_versions" TO "authenticated";
+
+
+
+GRANT SELECT("user_id") ON TABLE "public"."user_preferences" TO "authenticated";
+
+
+
+GRANT SELECT("color_scheme") ON TABLE "public"."user_preferences" TO "authenticated";
+
+
+
+GRANT SELECT("preferences_version") ON TABLE "public"."user_preferences" TO "authenticated";
 
 
 

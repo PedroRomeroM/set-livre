@@ -13,9 +13,9 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot é gerado.
 
-### 1.1 Estado implementado até a FEAT-002
+### 1.1 Estado implementado até a FEAT-003
 
-A migration head atual é `20260811000400`. A fundação continua intacta e a FEAT-002 adiciona somente a identidade mínima, o `legal-core` e a fronteira de sessão necessária ao recovery:
+A migration head atual é `20260811000500`. A fundação continua intacta; a FEAT-002 fornece identidade mínima, `legal-core` e recovery, e a FEAT-003 completa o perfil:
 
 - `20260809000100_security_baseline.sql`: extensões estruturais, schemas `private`/`audit`, role `app_dal NOLOGIN NOINHERIT`, revogações e default privileges fechados;
 - `20260809000200_readiness_contract.sql`: `private.check_readiness(text)` como `security definer`, `search_path = ''` e `execute` exclusivo para `app_dal`;
@@ -25,22 +25,23 @@ A migration head atual é `20260811000400`. A fundação continua intacta e a FE
 - `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: estende o mesmo containment às rotinas de `pg_catalog`, por OID de cada overload, e recusa grantor, privilégio ou grant option público além da ACL inicial canônica;
 - `20260810000400_pg_catalog_implicit_routine_owner_hardening.sql`: elimina `proowner` mutável da derivação das baselines implícitas de rotinas `pg_catalog`; objetos initdb sem membership usam o owner bootstrap OID `10`, membros de extensão usam `pg_extension.extowner`, e qualquer owner divergente falha mesmo sem `EXECUTE` público;
 - `20260811000100_database_temporary_privilege_hardening.sql`: revoga `TEMPORARY` de `PUBLIC` no banco atual, preserva sem ampliar os grants explícitos administrados pela stack e faz os dois entrypoints de readiness recusarem a capacidade efetiva para `app_dal` e para o login restrito;
-- `20260811000200_authentication_legal_core.sql`: cria `profiles`, versões e aceites jurídicos, intenções privadas de cadastro e grants de recovery persistidos no banco, expiráveis e one-shot, trigger atômico em `auth.users`, read models vigentes/próprios, RLS e grants mínimos; nenhum campo pessoal pertencente à FEAT-003 é antecipado;
+- `20260811000200_authentication_legal_core.sql`: cria a base mínima de `profiles`, versões e aceites jurídicos, intenções privadas de cadastro e grants de recovery persistidos no banco, expiráveis e one-shot, trigger atômico em `auth.users`, read models vigentes/próprios, RLS e grants mínimos;
 - `20260811000300_authentication_review_hardening.sql`: habilita RLS sem policy em `private.signup_legal_intents` e impede que `release_identity_recovery_grant` reabra uma claim depois da expiração, sem alterar grants ou a allowlist da DAL;
 - `20260811000400_recovery_session_binding.sql`: invalida grants antigos sem contexto de sessão, vincula cada novo recovery ao `session_id` assinado e à linha canônica de `auth.sessions`, cria a binding/tombstone privada retida depois do grant/cookies, exige `app.settings.jwt_exp=3600` e substitui as cinco operações antigas por seis comandos escopados ao contexto;
+- `20260811000500_profile_account.sql`: adiciona nome, telefone E.164, CPF/CNPJ, documento adicional, máscaras generated e versão otimista a `profiles`; cria `user_preferences` 1:1 com versão independente; valida CPF e CNPJ numérico/alfanumérico no banco; materializa um read model público invoker, três comandos privados e amplia o readiness sem alterar migrations anteriores;
 - login `app_runtime_local` criado e rotacionado fora das migrations pelo bootstrap local, com atributos, memberships, parâmetros, ownership e grants diretos reconciliados antes de assumir `app_dal` explicitamente. Seu manifesto permite somente `CONNECT` direto no banco atual, a membership de saída para `app_dal`, a referência administrativa de `postgres` sem `SET/INHERIT` e uma máscara vazia para o GUC local de assinatura JWT; qualquer ACL, ownership, parâmetro ou membro adicional falha fechado. O mesmo bootstrap usa somente o superuser da stack local para fechar schema, tabelas, sequências, funções e defaults de `net`, preservando exclusivamente os privilégios administrativos exigidos pelo worker `pg_net` sob `postgres`;
 - readiness consulta as duas funções de saúde por um subpath compartilhado `server-only` e falha se o login ou a role efetiva `app_dal` possuir login, herança, criação, replicação, superuser, `BYPASSRLS` ou `TEMPORARY` no banco; `app_dal` também deve permanecer sem qualquer membership de saída, pois `NOINHERIT` não impede `SET ROLE`;
-- o manifesto mínimo de `app_dal` permite diretamente apenas `USAGE` no schema `private` e `EXECUTE` nas nove rotinas autorizadas: os dois checks de readiness, a criação da intenção legal e seis operações de recovery (`issue context`, `inspect session`, `claim`, `release`, `consume`, `close`). Todos ficam sem grant option. A allowlist exige exatamente essas dez dependências ACL em `pg_shdepend` e inspeciona seus `aclitem`; assim também rejeita referências da role como grantor e grants adicionais de banco, schema, relação, coluna, função, tipo, objeto grande, linguagem, foreign data wrapper/server, tablespace, parâmetro e default privilege sem depender de uma enumeração fechada no readiness. Como `USAGE private` torna grants de `PUBLIC` efetivos para a DAL, o guard expande ACLs atuais ou padrão (`acldefault`) de relações, colunas, sequências, rotinas e tipos autônomos desse schema e recusa qualquer entrada pública. Row types de relações, arrays e multiranges implícitos seguem seus objetos canônicos e não são tratados como tipos autônomos; composites explícitos continuam monitorados. Ownership é recusado pelo catálogo compartilhado. O pgTAP introduz cada drift transacionalmente, comprova a falha fechada, restaura o catálogo e exige readiness verde antes do cenário seguinte;
+- o manifesto mínimo de `app_dal` permite diretamente apenas `USAGE` no schema `private` e `EXECUTE` nas doze rotinas autorizadas: os dois checks de readiness, a criação da intenção legal, seis operações de recovery (`issue context`, `inspect session`, `claim`, `release`, `consume`, `close`) e três comandos de perfil (`complete`, `update identity`, `update appearance`). Todos ficam sem grant option. A allowlist exige exatamente essas treze dependências ACL em `pg_shdepend` e inspeciona seus `aclitem`; assim também rejeita referências da role como grantor e grants adicionais de banco, schema, relação, coluna, função, tipo, objeto grande, linguagem, foreign data wrapper/server, tablespace, parâmetro e default privilege sem depender de uma enumeração fechada no readiness. Como `USAGE private` torna grants de `PUBLIC` efetivos para a DAL, o guard expande ACLs atuais ou padrão (`acldefault`) de relações, colunas, sequências, rotinas e tipos autônomos desse schema e recusa qualquer entrada pública. Row types de relações, arrays e multiranges implícitos seguem seus objetos canônicos e não são tratados como tipos autônomos; composites explícitos continuam monitorados. Ownership é recusado pelo catálogo compartilhado. O pgTAP introduz cada drift transacionalmente, comprova a falha fechada, restaura o catálogo e exige readiness verde antes do cenário seguinte;
 - `app_dal` não pode assumir nenhuma role. Em sentido inverso, o manifesto permite exatamente o login da sessão com `SET=true`, sem `ADMIN/INHERIT`, e a membership administrativa de `postgres` criada pelo PostgreSQL 17 com `ADMIN=true`, sem `SET/INHERIT`; o login também só pode ser administrado por essa referência `postgres` sem `SET/INHERIT`, portanto uma cadeia intermediária até `app_dal` derruba readiness;
 - a baseline pública permite exatamente `USAGE` em `pg_catalog`/`information_schema`, `CONNECT` no banco e `USAGE` nas quatro linguagens internas, sem grant option. `TEMPORARY` fica restrito aos grants explícitos que a própria stack administra, como o da dashboard local; a migration não cria uma allowlist paralela nem amplia nenhuma role. Ela recusa ACL pública em outros schemas, defaults, objetos grandes, parâmetros, FDW/servers e tablespaces. Em toda relação ou coluna de `pg_catalog`, um privilégio efetivo de `PUBLIC` precisa já existir nos privilégios iniciais `i`/`e` de `pg_init_privs`; privilégios por coluna podem ser cobertos pelo grant inicial da própria coluna ou da relação. Nas rotinas desse schema, cada entrada pública atual precisa estar contida, com grantor e grant option, na ACL `i`/`e` do OID exato. Sem esse registro, a baseline implícita nunca deriva de `proowner`: membros de extensão usam `acldefault('f', pg_extension.extowner)`, exigindo o mesmo owner no objeto, e demais rotinas initdb (`OID < 16384`) usam `acldefault('f', 10)`, com owner bootstrap OID `10` obrigatório. Uma rotina normal posterior sem `pg_init_privs` tem baseline pública vazia. A checagem de owner é independente da presença de `EXECUTE` público, portanto revogar a ACL não mascara ownership adulterado. Isso preserva, por exemplo, o `EXECUTE` built-in de `current_database()` e uma extensão canônica sem init row, sem aceitar um grant em `pg_read_file(text)`, uma função normal nova ou grantor recalculado a partir de owner mutável. `pg_roles`, `pg_user` e `pg_db_role_setting` conservam ainda a baseline mais estrita de somente owner administrativo e `SELECT` de `postgres`, sem ACL por coluna; roles web/DAL também não podem alcançar esses três catálogos por membership transitiva. O contrato não classifica a segurança semântica de cada rotina, não cobre por si só grants a roles nomeadas nem afirma que todo catálogo built-in seja confidencial. Enquanto o ADR-018 suspender APIs externas, `app_dal`, `anon`, `authenticated`, `service_role` e `PUBLIC` não usam nem leem/escrevem/executam o schema `net`; o worker administrativo local conserva apenas o acesso necessário;
-- 236 asserts pgTAP: 158 da baseline de segurança e 78 do `legal-core`, incluindo binding/tombstone, pin do JWT, refresh T1→T2, ausência canônica, retenção em duas fases, isolamento, concorrência, cascata e as seis operações de recovery;
+- 284 asserts pgTAP: 158 da baseline de segurança, 78 do `legal-core` e 48 do perfil, incluindo ACL/RLS A/B, documentos, máscaras, lifecycle, idempotência, conflitos, suspensão, versões independentes, cascata, concorrência e drift de readiness;
 - snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
 
 `npm run supabase:schema` direciona o dump a um temporário exclusivo e irmão de `schema.generated.sql`; após a CLI terminar com sucesso, comprova que o arquivo físico não mudou, exige declarações dos schemas `audit`, `private` e `public`, normaliza a quebra de linha final, sincroniza em disco e publica por substituição atômica. `npm run supabase:types` usa o mesmo padrão para os tipos, valida os exports e a sintaxe TypeScript e aplica a configuração Prettier versionada antes da publicação. Uma falha da stack local, CLI, leitura, normalização, validação ou formatação preserva o artefato rastreado anterior e não deixa saída parcial.
 
 `npm run test:db` executa o pgTAP e, ainda contra a instância local, torna obrigatória a conferência dos dois artefatos. O gate valida a raiz e cada diretório ancestral físico, gera snapshot e tipos em destinos irmãos exclusivos, nunca nos arquivos rastreados, e preserva as extensões `.sql`/`.ts` para aplicar a mesma normalização e formatação dos comandos de publicação. As leituras usam `O_NOFOLLOW`; identidade e bytes dos quatro arquivos são revalidados depois dos dois geradores e então comparados. Qualquer diferença ou troca detectada pelas revalidações falha e exige correção; o cleanup tenta ambos os nomes temporários exatos, preserva a causa original se uma remoção também falhar e nunca recorre a remoção recursiva ou publica nos contratos versionados.
 
-As migrations aplicadas são imutáveis. Fora das três tabelas públicas e dos dois estados privados expiráveis usados diretamente pela FEAT-002, tabelas, RLS e comandos dos demais domínios entram apenas na respectiva fatia vertical.
+As migrations aplicadas são imutáveis. Fora das quatro tabelas públicas e dos estados privados usados diretamente por FEAT-002/003, tabelas, RLS e comandos dos demais domínios entram apenas na respectiva fatia vertical.
 Quando uma feature autorizar nova função para `app_dal`, a mesma migration append-only deve atualizar o manifesto de readiness; conceder `EXECUTE` sem ampliar explicitamente a allowlist mantém os apps em `unready`.
 
 O gate Git usa a mesma base segura escolhida pelos checks documentais e percorre cada snapshot da cadeia `first-parent` até `HEAD`. Antes de confiar em histórico, índice ou untracked, `git rev-parse --show-toplevel` precisa resolver para o mesmo caminho canônico e o mesmo diretório físico, por dispositivo e inode, da raiz auditada; ambos são revalidados depois da consulta. Um `core.worktree` que desvie o Git para outra árvore falha, enquanto um linked worktree legítimo continua válido quando a raiz informada é o próprio worktree. Todo checkout com `HEAD` precisa expor histórico completo: clone shallow, qualquer referência em `refs/replace` e `info/grafts` legado não vazio falham antes da leitura da cadeia. Depois que uma migration aparece em um commit, caminho, blob e modo tornam-se imutáveis nos commits seguintes; remoção e rename também falham. A base precisa pertencer à cadeia `first-parent`, e uma referência apenas ancestral por outro parent falha fechado em vez de formar uma transição falsa. Cada grupo de migrations introduzido no mesmo commit pode conter vários arquivos, mas todas as versões precisam ser únicas e avançar estritamente o head do snapshot anterior.
@@ -72,16 +73,36 @@ create schema if not exists audit;
 
 ### 4.1 `profiles`
 
-| Coluna         | Tipo        | Regra                                       |
-| -------------- | ----------- | ------------------------------------------- |
-| `id`           | uuid        | PK/FK `auth.users`, cascade controlada      |
-| `person_type`  | text        | `individual/company`                        |
-| `status`       | text        | `active/suspended`                          |
-| `completed_at` | timestamptz | nulo até a conclusão pertencente à FEAT-003 |
-| `created_at`   | timestamptz | UTC                                         |
-| `updated_at`   | timestamptz | UTC, mantido por trigger                    |
+| Coluna                       | Tipo        | Regra                                                                  |
+| ---------------------------- | ----------- | ---------------------------------------------------------------------- |
+| `id`                         | uuid        | PK/FK `auth.users`, cascade controlada                                 |
+| `person_type`                | text        | `individual/company`; só muda junto da primeira conclusão              |
+| `status`                     | text        | `active/suspended`; comandos de perfil não o aceitam                   |
+| `name`                       | text        | 2–160, trim, sem caracteres de controle                                |
+| `phone_e164`                 | text        | telefone brasileiro canônico `+55`; validação estrutural               |
+| `tax_id`                     | text        | CPF de 11 dígitos ou CNPJ `[0-9A-Z]{12}[0-9]{2}` com DVs válidos       |
+| `additional_document`        | text        | opcional, 3–40, uppercase ASCII com separadores internos controlados   |
+| `tax_id_masked`              | text        | generated; revela somente os dois DVs                                  |
+| `additional_document_masked` | text        | generated; revela somente os dois últimos caracteres                   |
+| `profile_version`            | bigint      | versão otimista monotônica, inicia em zero                             |
+| `completed_at`               | timestamptz | nulo enquanto os dados pessoais crus são nulos; imutável após concluir |
+| `created_at`                 | timestamptz | UTC                                                                    |
+| `updated_at`                 | timestamptz | UTC, mantido por trigger                                               |
 
-O e-mail canônico permanece no Auth. A criação vem exclusivamente do trigger que consome a intenção legal. Exclusão direta do perfil falha enquanto `auth.users` existir; a cascata do Auth remove perfil e aceites na mesma transação. Campos pessoais, anonimização e conclusão entram nas features proprietárias.
+O e-mail canônico permanece no Auth. Antes da conclusão, todos os campos pessoais crus permanecem nulos; depois dela, nome, telefone e CPF/CNPJ são obrigatórios. Não há unicidade em `tax_id`: formato/DV não comprova existência, situação cadastral ou titularidade. PF/PJ e `completed_at` ficam imutáveis após concluir.
+
+`public.get_my_profile()` é `security invoker`, usa `search_path = ''`, não recebe UUID e filtra obrigatoriamente por `auth.uid()`. Somente `authenticated` o executa, com `SELECT` apenas nas colunas seguras necessárias sob RLS; CPF/CNPJ e documento adicional crus continuam sem grant. Os três comandos `complete_profile(...)`, `update_profile_identity(...)` e `update_profile_appearance(...)` são `security definer` e recebem o usuário validado pelo servidor. Um helper `private.profile_command_result(uuid)` produz o mesmo retorno mascarado para os comandos, mas não possui grant runtime e não é read model. `complete` verifica os aceites preexistentes. Retries com o mesmo alvo são no-op; divergência versionada usa SQLSTATE `40001`. Perfis não ativos são bloqueados e `app_dal` recebe `EXECUTE` somente nos três comandos.
+
+#### `user_preferences`
+
+| Coluna                  | Tipo        | Regra                                   |
+| ----------------------- | ----------- | --------------------------------------- |
+| `user_id`               | uuid        | PK/FK `profiles`, uma linha por perfil  |
+| `color_scheme`          | text        | `system/light/dark`, default `system`   |
+| `preferences_version`   | bigint      | versão otimista própria, inicia em zero |
+| `created_at/updated_at` | timestamptz | UTC; trigger controla atualização       |
+
+A migration faz backfill dos perfis existentes e o trigger de perfil cria a preferência futura na mesma transação. RLS limita leitura ao próprio `auth.uid()`; `authenticated` recebe `SELECT` somente em `user_id`, `color_scheme` e `preferences_version` para o read model invoker. Não há escrita direta. Aparência e identidade mantêm versões independentes.
 
 ### 4.2 `owner_profiles`
 
@@ -570,11 +591,12 @@ Snapshot:
 
 ## 5. Read models
 
-Implementados na FEAT-002:
+Implementados nas FEAT-002/003:
 
 - `public.get_current_legal_terms()`: retorna somente `id`, tipo, versão, título, Markdown, hash, origem e vigência atuais; `anon` e `authenticated` podem executar;
 - `public.get_own_identity_context()`: retorna 0/1 linha com usuário, tipo de pessoa, status e conclusão derivada; somente `authenticated` pode executar;
 - leitura direta de `terms_acceptances` é limitada por coluna e RLS aos fatos do próprio usuário.
+- `public.get_my_profile()`: read model `security invoker` que retorna 0/1 linha segura com identidade, máscaras, conclusão e versões de perfil/aparência; não recebe UUID, filtra `auth.uid()` e somente `authenticated` pode executar.
 
 ### Públicos planejados
 
@@ -586,7 +608,6 @@ Implementados na FEAT-002:
 
 ### Autenticados planejados
 
-- `public.get_my_profile()`;
 - `public.list_my_reservations(...)`;
 - `public.get_my_reservation(uuid)`;
 - `public.list_owner_studios(...)`;
@@ -610,7 +631,7 @@ Listas crescentes usam paginação **keyset** e retornam `items + nextCursor`. O
 
 ## 6. Comandos privados principais
 
-Implementados na FEAT-002:
+Implementados nas FEAT-002/003:
 
 - `private.create_signup_legal_intent(uuid, uuid, text, uuid, jsonb)`: retorna o token opaco usado somente como metadata transitória do signup; SQLSTATE `23514` identifica versão jurídica stale;
 - `private.issue_identity_recovery_context(uuid, uuid, timestamptz)`: valida `auth.sessions` e cria atomicamente binding, scope opaco e grant de 15 minutos;
@@ -619,10 +640,12 @@ Implementados na FEAT-002:
 - `private.release_identity_recovery_context(uuid, uuid, uuid, uuid, uuid)`: libera a mesma tentativa ainda vigente após rejeição externa comprovadamente sem efeito;
 - `private.consume_identity_recovery_context(uuid, uuid, uuid, uuid, uuid)`: apaga o grant consumido sem remover o tombstone;
 - `private.close_identity_recovery_session(uuid, uuid)`: fecha a binding e remove seu grant, preservando a classificação contra replay.
+- `private.complete_profile(uuid, bigint, text, text, text, text, text)`: conclui uma vez, permite a correção final de PF/PJ, exige os aceites existentes e retorna a projeção mascarada;
+- `private.update_profile_identity(uuid, bigint, text, text, boolean, text, boolean, text)`: corrige perfil concluído, preserva documentos não reenviados e usa substituição explícita para PII;
+- `private.update_profile_appearance(uuid, bigint, text)`: altera somente `system/light/dark` com versão própria.
 
 Planejados por suas features proprietárias:
 
-- profile/account;
 - owner activation/recipient;
 - studio/revision/media;
 - review;
@@ -666,7 +689,7 @@ Conceder somente:
 
 ### 8.1 Perfis
 
-Usuário lê somente `id`, tipo, status e conclusão do próprio perfil. Não há grant de escrita. Aceites usam policy própria pelo mesmo `auth.uid()`; termos expõem apenas versões vigentes para visitante/autenticado. Os testes materializam usuários A/B e comprovam que perfis e aceites não atravessam ownership. `private.signup_legal_intents`, `private.identity_recovery_grants` e `private.identity_recovery_sessions` mantêm RLS habilitada sem policy e zero grants para as roles runtime; o pgTAP falha se essa fronteira for ampliada.
+Usuário lê somente as colunas seguras necessárias aos read models invoker do próprio perfil; `tax_id` e `additional_document` crus permanecem sem grant. Não há grant de escrita. Aceites e preferências usam policy própria pelo mesmo `auth.uid()`; termos expõem apenas versões vigentes para visitante/autenticado. Os testes materializam usuários A/B e comprovam que perfil, preferências e aceites não atravessam ownership. `private.signup_legal_intents`, `private.identity_recovery_grants` e `private.identity_recovery_sessions` mantêm RLS habilitada sem policy e zero grants para as roles runtime; o pgTAP falha se essa fronteira for ampliada.
 
 ### 8.2 Estúdios
 
@@ -686,7 +709,7 @@ Upload permitido somente por URL assinada. Leitura pública de mídia passa por 
 
 ## 9. Índices estruturais iniciais
 
-Implementados até a FEAT-002: PKs, FKs, uniques de `(kind, version)`, `(request_id, terms_version_id)` e `request_id` da intenção, GiST de vigência jurídica e B-trees de `signup_legal_intents.expires_at`, `identity_recovery_grants.expires_at` e `identity_recovery_sessions.retain_until` usadas pelos purges obrigatórios. Nenhum índice alheio aos caminhos implementados foi criado por antecipação.
+Implementados até a FEAT-003: PKs, FKs, uniques de `(kind, version)`, `(request_id, terms_version_id)` e `request_id` da intenção, GiST de vigência jurídica e B-trees de `signup_legal_intents.expires_at`, `identity_recovery_grants.expires_at` e `identity_recovery_sessions.retain_until` usadas pelos purges obrigatórios. `user_preferences` usa somente a PK/FK 1:1; CPF/CNPJ não recebe índice ou unique. Nenhum índice alheio aos caminhos implementados foi criado por antecipação.
 
 Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor definido:
 

@@ -70,7 +70,7 @@ describe("identity contracts", () => {
   it.each([
     "https://attacker.example/account",
     "//attacker.example/account",
-    "/conta",
+    "/conta?userId=11111111-1111-4111-8111-111111111111",
     "/entrar?sessao=ativa&next=https://attacker.example",
     "/entrar%3Fsessao%3Dativa",
     "\\\\attacker.example\\account",
@@ -79,9 +79,12 @@ describe("identity contracts", () => {
     expect(resolveAuthenticatedReturnTo(candidate)).toBe("/entrar?sessao=ativa");
   });
 
-  it("preserves the one currently allowlisted authenticated surface", () => {
-    expect(resolveAuthenticatedReturnTo("/entrar?sessao=ativa")).toBe("/entrar?sessao=ativa");
-  });
+  it.each(["/entrar?sessao=ativa", "/conta", "/conta/seguranca"])(
+    "preserves the exact authenticated surface: %s",
+    (destination) => {
+      expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);
+    },
+  );
 
   it("limits callback types and token length", () => {
     const base = {

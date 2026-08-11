@@ -46,6 +46,12 @@ import {
   handleRegistrationProviderError,
   isPasswordUpdateProviderErrorSafeToRetry,
 } from "./identity-provider-errors";
+import {
+  profilePreferenceCookieName,
+  writeProfilePreferenceCookie,
+  type ProfilePreferenceCookieWriter,
+} from "./profile-preference-cookie";
+import { readOwnProfile } from "./profile-read-model";
 import { readIdentitySessionWithClient } from "./identity-read-model";
 import {
   recoveryGrantCookieName,
@@ -95,6 +101,18 @@ async function closeCurrentRecoveryBindingBestEffort(auth: IdentitySupabaseAuth)
     }
   } catch {
     // O tombstone continua detectável; as credenciais locais ainda serão substituídas/removidas.
+  }
+}
+
+async function syncAuthenticatedProfilePreferenceBestEffort(
+  cookieStore: ProfilePreferenceCookieWriter,
+  userId: string,
+) {
+  try {
+    const profile = await readOwnProfile(userId);
+    writeProfilePreferenceCookie(cookieStore, profile.profile.colorScheme);
+  } catch {
+    // A sessão continua canônica; sem projeção confiável, o layout usa o tema system.
   }
 }
 
@@ -219,6 +237,7 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
   await closeCurrentRecoveryBindingBestEffort(route.client.auth);
   deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
   deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
+  deleteCookieBestEffort(cookieStore, profilePreferenceCookieName);
   let publishError: unknown = null;
   try {
     const publishResult = await route.client.auth.setSession({
@@ -240,8 +259,13 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
     } catch {
       // A sessão nunca foi aceita como publicada; o erro público permanece genérico.
     }
-    handleLoginProviderError(publishError);
+    throw new ApiRouteError(
+      503,
+      "AUTH_SESSION_RECHECK_REQUIRED",
+      "Não foi possível confirmar a entrada. Verifique sua sessão.",
+    );
   }
+  await syncAuthenticatedProfilePreferenceBestEffort(cookieStore, session.userId);
   return {
     data: identityLoginResultSchema.parse({
       redirectTo: resolveAuthenticatedReturnTo(payload.returnTo),
@@ -257,6 +281,7 @@ export async function logoutIdentity() {
   await closeCurrentRecoveryBindingBestEffort(route.client.auth);
   deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
   deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
+  deleteCookieBestEffort(cookieStore, profilePreferenceCookieName);
   await signOutLocalOrProveAbsent(route.client.auth);
   return { data: { signedOut: true as const }, responseHeaders: route.responseHeaders };
 }
@@ -354,6 +379,7 @@ export async function verifyIdentityCallback(input: {
     } else {
       deleteCookieBestEffort(callbackContext.cookieStore, recoveryGrantCookieName);
       deleteCookieBestEffort(callbackContext.cookieStore, recoverySessionCookieName);
+      deleteCookieBestEffort(callbackContext.cookieStore, profilePreferenceCookieName);
     }
 
     const redirectTo =

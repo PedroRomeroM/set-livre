@@ -45,33 +45,36 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - erro desconhecido, throw, sessão incompleta ou falha posterior ao início de `verifyOtp` retornam `AUTH_RESTART_REQUIRED` no signup e `RECOVERY_RESTART_REQUIRED` no recovery, limpam somente a sessão/cookies Auth conhecidos e exigem novo link sem afirmar o estado da conta; rejeição explícita de OTP inválido/expirado preserva sua classificação segura;
 - o callback de recovery valida `sub`, `session_id` e `exp` do JWT assinado contra `auth.sessions` antes de emitir atomicamente a binding/tombstone e o grant de 15 minutos. O UUID público `session_scope` é somente um marcador opaco de UI/cache; ele não autoriza nenhuma operação;
 - a troca de senha reserva o grant e a binding correspondentes no banco antes do provedor; somente rejeições explícitas sem efeito liberam retry, enquanto resultado ambíguo encerra a autorização e exige novo link;
+- uma rejeição pública retryable da troca de senha permanece fora da mutation desmontável como `{ message, fieldErrors, scope }`, com campos limitados a `password | confirmPassword` e o mesmo scope UUID público já usado pela query; o refetch do status não a apaga se esse scope continuar autorizado e o próximo submit sempre a descarta antes de reler o `FormData`;
 - publicação parcial no login e descarte da sessão pós-recovery apagam exatamente o cookie Supabase Auth base e seus chunks numéricos observados, preservando cookies de prefixo semelhante e cookies alheios mesmo quando `signOut` ou uma deleção falha. Recovery final só conclui após `signOut` ou prova local de ausência; estado presente/ambíguo falha fechado depois do fallback exato;
+- depois que `setSession` começa, qualquer erro/throw de publicação retorna `AUTH_SESSION_RECHECK_REQUIRED`, inclusive se o cleanup exato também falhar; o cliente trata esse código como desfecho ambíguo, apaga controles/refs/cache e força `/entrar?entrada=verificar` para leitura SSR. Falha de rede, timeout ou envelope inválido depois do `POST` segue a mesma transição. O parâmetro é aceito somente por igualdade literal e não carrega identidade ou credencial;
 - uma sessão Auth vinculada a recovery nunca é publicada como login comum. Expiração/consumo do grant, binding fechada, marcador ausente/divergente ou navegação fora das superfícies autorizadas fecham a binding, removem o grant e encerram a sessão local; a tombstone persiste para classificar replay pelo `session_id` mesmo sem cookies auxiliares;
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - logout só aceita erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe;
-- `returnTo` possui allowlist literal; nesta fatia o único destino autenticado é `/entrar?sessao=ativa`.
+- `returnTo` possui allowlist literal: `/entrar?sessao=ativa`, `/conta` e `/conta/seguranca`. Qualquer outro valor é descartado no Server Component antes de alcançar o payload efêmero de login.
 
 ## 3. Códigos de erro
 
-| Código                         | HTTP | Uso                        |
-| ------------------------------ | ---: | -------------------------- |
-| `AUTH_REQUIRED`                |  401 | sem sessão                 |
-| `AUTH_RESTART_REQUIRED`        |  503 | signup OTP ambíguo         |
-| `FORBIDDEN`                    |  403 | papel/ownership            |
-| `ACCOUNT_SUSPENDED`            |  403 | conta suspensa             |
-| `VALIDATION_FAILED`            |  422 | campos                     |
-| `NOT_FOUND`                    |  404 | recurso não visível        |
-| `CONFLICT`                     |  409 | estado concorrente         |
-| `SLOT_UNAVAILABLE`             |  409 | calendário                 |
-| `QUOTE_EXPIRED`                |  409 | cotação                    |
-| `PAYMENT_PROVIDER_UNAVAILABLE` |  503 | integração                 |
-| `PAYMENT_NOT_STARTED`          |  409 | provider não confirmou     |
-| `PAYMENT_MISMATCH`             |  409 | valor/moeda                |
-| `RATE_LIMITED`                 |  429 | abuso                      |
-| `PAYLOAD_TOO_LARGE`            |  413 | limite                     |
-| `RECOVERY_INVALID`             |  403 | recovery inválido/expirado |
-| `RECOVERY_RESTART_REQUIRED`    |  503 | OTP ambíguo ou consumido   |
-| `INTERNAL_ERROR`               |  500 | inesperado com requestId   |
+| Código                          | HTTP | Uso                         |
+| ------------------------------- | ---: | --------------------------- |
+| `AUTH_REQUIRED`                 |  401 | sem sessão                  |
+| `AUTH_RESTART_REQUIRED`         |  503 | signup OTP ambíguo          |
+| `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua |
+| `FORBIDDEN`                     |  403 | papel/ownership             |
+| `ACCOUNT_SUSPENDED`             |  403 | conta suspensa              |
+| `VALIDATION_FAILED`             |  422 | campos                      |
+| `NOT_FOUND`                     |  404 | recurso não visível         |
+| `CONFLICT`                      |  409 | estado concorrente          |
+| `SLOT_UNAVAILABLE`              |  409 | calendário                  |
+| `QUOTE_EXPIRED`                 |  409 | cotação                     |
+| `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                  |
+| `PAYMENT_NOT_STARTED`           |  409 | provider não confirmou      |
+| `PAYMENT_MISMATCH`              |  409 | valor/moeda                 |
+| `RATE_LIMITED`                  |  429 | abuso                       |
+| `PAYLOAD_TOO_LARGE`             |  413 | limite                      |
+| `RECOVERY_INVALID`              |  403 | recovery inválido/expirado  |
+| `RECOVERY_RESTART_REQUIRED`     |  503 | OTP ambíguo ou consumido    |
+| `INTERNAL_ERROR`                |  500 | inesperado com requestId    |
 
 Mensagens de usuário são traduzidas por código. Não usar mensagem SQL.
 
@@ -95,13 +98,13 @@ Registry não contém lógica de domínio. Cada handler vive no domínio.
 | Action                     | Autorização                    | Efeito                                                                                                         |
 | -------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `identity.register`        | visitante com origem confiável | cria intenção jurídica opaca e inicia signup Auth; perfil mínimo e dois aceites nascem atomicamente no trigger |
-| `profile.complete`         | authenticated                  | cria/completa perfil e aceita termos                                                                           |
-| `profile.update`           | owner                          | altera campos permitidos                                                                                       |
+| `profile.complete`         | authenticated                  | completa o perfil mínimo já criado no cadastro, sem reescrever os aceites jurídicos                            |
+| `profile.update`           | titular da própria linha       | altera somente identidade editável ou preferência visual allowlisted                                           |
 | `account.export.request`   | owner                          | agenda exportação                                                                                              |
 | `account.deletion.request` | owner                          | inicia exclusão/análise                                                                                        |
 | `account.deletion.cancel`  | owner                          | cancela se ainda possível                                                                                      |
 
-Campos de CPF/CNPJ nunca são aceitos como ownership. Normalizar e validar dígitos.
+Campos de CPF/CNPJ nunca são aceitos como ownership. CPF é normalizado em onze dígitos; CNPJ aceita a forma numérica legada e a forma alfanumérica oficial de quatorze posições definida na OPEN-009.
 
 ### 5.2 Dono/recebedor
 
@@ -301,7 +304,7 @@ Saída:
 
 Cada um retorna somente campos de tela:
 
-- `get_my_profile`;
+- `get_my_profile()` público, `security invoker`, sem argumento de usuário e filtrado por `auth.uid()` + RLS;
 - `list_my_reservations`;
 - `get_my_reservation`;
 - `list_owner_studios`;
@@ -379,7 +382,7 @@ Documento/código devem manter mapa único. Regras:
 
 Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação e `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada. Recovery usa o prefixo `identityQueryKeys.recoveryStatuses = ["identity", "recovery", "status"]` e a factory `identityQueryKeys.recoveryStatus(scope)`, em que `scope` é o UUID público/opaco recebido pelo Server Component ou `anonymous`. O normalizer rejeita uma resposta cujo scope não corresponda antes de publicá-la no cache. O formulário de nova senha só monta com `allowed=true`, scope correspondente e `fetchStatus="idle"`; `fetching` ou `paused` mantém a verificação fechada, e uma troca de scope remove as famílias recovery/session e recompõe a rota no servidor.
 
-Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; logout e recovery removem a família privada. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
+Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; recovery remove a família privada e logout limpa integralmente o `QueryClient` antes da navegação SSR. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
 
 ## 10. Rate limits iniciais
 

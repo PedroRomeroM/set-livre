@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const personTypeSchema = z.enum(["individual", "company"]);
+import {
+  personTypeSchema,
+  profileCompleteCommandSchema,
+  profileUpdateCommandSchema,
+  type PersonType,
+} from "./profile";
+
+export { personTypeSchema };
 export const legalDocumentKindSchema = z.enum(["terms", "privacy"]);
 
 export const identityEmailSchema = z
@@ -42,8 +49,16 @@ export const identityRegisterCommandSchema = z.strictObject({
   payload: identityRegistrationPayloadSchema,
 });
 
+export const identityCommandActionSchema = z.enum([
+  "identity.register",
+  "profile.complete",
+  "profile.update",
+]);
+
 export const identityCommandSchema = z.discriminatedUnion("action", [
   identityRegisterCommandSchema,
+  profileCompleteCommandSchema,
+  profileUpdateCommandSchema,
 ]);
 
 export const identityLoginPayloadSchema = z.strictObject({
@@ -143,7 +158,11 @@ export function apiSuccessSchema<TData extends z.ZodType>(data: TData) {
 }
 
 const defaultAuthenticatedReturnTo = "/entrar?sessao=ativa" as const;
-const allowedAuthenticatedReturnTos = new Set<string>([defaultAuthenticatedReturnTo]);
+const allowedAuthenticatedReturnTos = new Set<string>([
+  defaultAuthenticatedReturnTo,
+  "/conta",
+  "/conta/seguranca",
+]);
 
 export function resolveAuthenticatedReturnTo(candidate: unknown) {
   return typeof candidate === "string" && allowedAuthenticatedReturnTos.has(candidate)
@@ -154,9 +173,10 @@ export function resolveAuthenticatedReturnTo(candidate: unknown) {
 export type ApiError = z.infer<typeof apiErrorSchema>;
 export type CurrentLegalDocuments = z.infer<typeof currentLegalDocumentsSchema>;
 export type IdentityCommand = z.infer<typeof identityCommandSchema>;
+export type IdentityCommandAction = z.infer<typeof identityCommandActionSchema>;
 export type IdentityLoginPayload = z.infer<typeof identityLoginPayloadSchema>;
 export type IdentityRecoverySessionScope = z.infer<typeof identityRecoverySessionScopeSchema>;
 export type IdentityRecoveryStatusResult = z.infer<typeof identityRecoveryStatusResultSchema>;
 export type IdentityRegistrationPayload = z.infer<typeof identityRegistrationPayloadSchema>;
 export type IdentitySession = z.infer<typeof identitySessionSchema>;
-export type PersonType = z.infer<typeof personTypeSchema>;
+export type { PersonType };

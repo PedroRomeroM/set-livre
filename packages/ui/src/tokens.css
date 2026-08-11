@@ -38,8 +38,35 @@
   --sl-content-wide: 72rem;
 }
 
+:root[data-color-scheme="light"] {
+  color-scheme: light;
+}
+
+:root[data-color-scheme="dark"] {
+  color-scheme: dark;
+  --sl-color-ink-strong: #f2f7f4;
+  --sl-color-ink: #dce8e1;
+  --sl-color-ink-muted: #aebdb5;
+  --sl-color-surface: #15231d;
+  --sl-color-surface-soft: #1a2b23;
+  --sl-color-canvas: #0e1914;
+  --sl-color-line: #33483e;
+  --sl-color-control-border: #aebdb5;
+  --sl-color-panel-border: #aebdb5;
+  --sl-color-brand: #64c6a4;
+  --sl-color-brand-strong: #8ad7bc;
+  --sl-color-brand-soft: #183c2f;
+  --sl-color-accent: #f1a65f;
+  --sl-color-focus: #72b8ff;
+  --sl-color-danger: #ff9287;
+  --sl-color-danger-soft: #41201e;
+  --sl-color-status: #64c6a4;
+  --sl-color-status-soft: #183c2f;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-color-scheme]),
+  :root[data-color-scheme="system"] {
     color-scheme: dark;
     --sl-color-ink-strong: #f2f7f4;
     --sl-color-ink: #dce8e1;

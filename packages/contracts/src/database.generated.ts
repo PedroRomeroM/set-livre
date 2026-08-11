@@ -5,27 +5,48 @@ export type Database = {
     Tables: {
       profiles: {
         Row: {
+          additional_document: string | null;
+          additional_document_masked: string | null;
           completed_at: string | null;
           created_at: string;
           id: string;
+          name: string | null;
           person_type: string;
+          phone_e164: string | null;
+          profile_version: number;
           status: string;
+          tax_id: string | null;
+          tax_id_masked: string | null;
           updated_at: string;
         };
         Insert: {
+          additional_document?: string | null;
+          additional_document_masked?: string | null;
           completed_at?: string | null;
           created_at?: string;
           id: string;
+          name?: string | null;
           person_type: string;
+          phone_e164?: string | null;
+          profile_version?: number;
           status?: string;
+          tax_id?: string | null;
+          tax_id_masked?: string | null;
           updated_at?: string;
         };
         Update: {
+          additional_document?: string | null;
+          additional_document_masked?: string | null;
           completed_at?: string | null;
           created_at?: string;
           id?: string;
+          name?: string | null;
           person_type?: string;
+          phone_e164?: string | null;
+          profile_version?: number;
           status?: string;
+          tax_id?: string | null;
+          tax_id_masked?: string | null;
           updated_at?: string;
         };
         Relationships: [];
@@ -114,6 +135,38 @@ export type Database = {
         };
         Relationships: [];
       };
+      user_preferences: {
+        Row: {
+          color_scheme: string;
+          created_at: string;
+          preferences_version: number;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          color_scheme?: string;
+          created_at?: string;
+          preferences_version?: number;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          color_scheme?: string;
+          created_at?: string;
+          preferences_version?: number;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "user_preferences_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -130,6 +183,22 @@ export type Database = {
           source: string;
           title: string;
           version: string;
+        }[];
+      };
+      get_my_profile: {
+        Args: never;
+        Returns: {
+          additional_document_masked: string;
+          color_scheme: string;
+          name: string;
+          person_type: string;
+          phone_e164: string;
+          preferences_version: number;
+          profile_completed: boolean;
+          profile_version: number;
+          status: string;
+          tax_id_masked: string;
+          user_id: string;
         }[];
       };
       get_own_identity_context: {

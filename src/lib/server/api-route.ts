@@ -14,6 +14,8 @@ const trustedEnvironmentSchema = z.object({
 export type ApiRouteErrorCode =
   | "AUTH_INVALID"
   | "AUTH_RESTART_REQUIRED"
+  | "AUTH_SESSION_RECHECK_REQUIRED"
+  | "ACCOUNT_SUSPENDED"
   | "BODY_TOO_LARGE"
   | "CONFLICT"
   | "CONTENT_TYPE_INVALID"
@@ -25,7 +27,8 @@ export type ApiRouteErrorCode =
   | "RECOVERY_INVALID"
   | "RECOVERY_RESTART_REQUIRED"
   | "SERVICE_UNAVAILABLE"
-  | "UNAUTHENTICATED";
+  | "UNAUTHENTICATED"
+  | "VALIDATION_FAILED";
 
 export class ApiRouteError extends Error {
   readonly code: ApiRouteErrorCode;
@@ -145,10 +148,14 @@ export async function readLimitedJson(request: Request, maximumBytes = 16 * 1024
 function zodFieldErrors(error: z.ZodError) {
   const fieldErrors: Record<string, string> = {};
   for (const issue of error.issues) {
-    const field = issue.path.findLast(
-      (candidate): candidate is number | string =>
-        typeof candidate === "string" || typeof candidate === "number",
-    );
+    const field = issue.path.includes("taxIdChange")
+      ? "taxId"
+      : issue.path.includes("documentChange")
+        ? "additionalDocument"
+        : issue.path.findLast(
+            (candidate): candidate is number | string =>
+              typeof candidate === "string" || typeof candidate === "number",
+          );
     if (
       (typeof field === "string" || typeof field === "number") &&
       fieldErrors[field] === undefined
@@ -159,12 +166,19 @@ function zodFieldErrors(error: z.ZodError) {
   return fieldErrors;
 }
 
-export function parseOrInputError<T>(schema: z.ZodType<T>, value: unknown): T {
+export function parseOrInputError<T>(
+  schema: z.ZodType<T>,
+  value: unknown,
+  options: Readonly<{
+    code?: "INPUT_INVALID" | "VALIDATION_FAILED";
+    status?: 400 | 422;
+  }> = {},
+): T {
   const result = schema.safeParse(value);
   if (!result.success) {
     throw new ApiRouteError(
-      400,
-      "INPUT_INVALID",
+      options.status ?? 400,
+      options.code ?? "INPUT_INVALID",
       "Revise os campos destacados.",
       zodFieldErrors(result.error),
     );
@@ -243,6 +257,7 @@ export function apiErrorResponse(
 }
 
 const observableActionSchema = z.enum([
+  "identity.command",
   "identity.callback",
   "identity.login",
   "identity.logout",
@@ -251,6 +266,9 @@ const observableActionSchema = z.enum([
   "identity.recovery.update",
   "identity.register",
   "identity.session",
+  "profile.complete",
+  "profile.read",
+  "profile.update",
 ]);
 const observableOutcomeSchema = z.enum(["accepted", "rejected", "unavailable"]);
 

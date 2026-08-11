@@ -81,8 +81,20 @@ Default: 24 horas antes do início. Configurável em ambiente, não por usuário
 
 **Resolução:** a FEAT-002 cria somente uma identidade mínima (`person_type`, status e conclusão nula) e o `legal-core`. O comando convidado `identity.register` cria no DAL uma intenção jurídica opaca, temporária e de uso único; o trigger de `auth.users` consome essa intenção na mesma transação que cria o perfil mínimo e os dois fatos de aceite. O navegador nunca escreve perfil ou aceite diretamente. Os documentos ficam versionados no banco; o seed local é marcado como `local_fixture` e não vale como conteúdo jurídico aprovado.
 
-**Superfícies atuais:** `/cadastro`, `/entrar`, `/recuperar-senha`, `/auth/callback`, `/termos` e `/privacidade`. O único retorno autenticado permitido nesta fatia é a própria superfície de sessão de `/entrar`; `/conta`, `/reservar` e restauração de draft não são antecipados.
+**Superfícies entregues pela FEAT-002:** `/cadastro`, `/entrar`, `/recuperar-senha`, `/auth/callback`, `/termos` e `/privacidade`. O único retorno autenticado permitido naquela fatia era a própria superfície de sessão de `/entrar`; `/conta`, `/reservar` e restauração de draft não foram antecipados.
 
 **Fronteira de sessão:** Auth usa cliente SSR por request, validação autoritativa server-side e cookies `HttpOnly`/`SameSite`; `Secure` é obrigatório em produção e fica desativado apenas no HTTP loopback local. Confirmação e recovery usam `TokenHash` exclusivamente no fragmento de templates locais; o fragmento não entra na request inicial e é removido antes da chamada JSON ao servidor. A sessão criada por recovery recebe binding/tombstone privada pelo `session_id` assinado e nunca é aceita como login comum. Seu `session_scope` UUID é público, opaco e serve apenas ao cache; a autorização exige JWT validado, linha canônica de Auth, binding e grant vigente de 15 minutos. A expiração JWT fica pinada em `3600` segundos, e ausência em `auth.sessions` inicia retenção conservadora antes de qualquer purge da tombstone.
 
 **Critério de reabertura:** somente uma necessidade comprovada da FEAT-003, FEAT-019 ou FEAT-034 que não caiba nos contratos extensíveis acima, ou aprovação dos textos reais que encerre o bloqueio jurídico.
+
+## OPEN-009 — CPF e CNPJ alfanumérico no perfil
+
+**Status:** resolvida em 2026-08-11 para a FEAT-003, dentro dos ADRs 003, 005, 015 e 017.
+
+**Conflito registrado:** o documento original da FEAT-003 dizia que CPF e CNPJ teriam valor canônico composto somente por dígitos. Esse contrato deixou de representar o cadastro oficial brasileiro: desde julho de 2026, novas inscrições de CNPJ podem combinar letras de `A` a `Z` e números nas doze primeiras posições, enquanto as duas últimas continuam sendo dígitos verificadores. CNPJs numéricos existentes permanecem válidos e os dois formatos coexistem.
+
+**Resolução:** CPF continua normalizado em onze dígitos. CNPJ passa a ser normalizado em quatorze caracteres maiúsculos, com `A-Z`/`0-9` nas doze primeiras posições e dois dígitos ao final. Ambos validam os dígitos verificadores no contrato TypeScript e no PostgreSQL. Pontuação é somente apresentação; o banco guarda a forma canônica sem separadores. A referência normativa e técnica é o [programa CNPJ Alfanumérico da Receita Federal](https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/acoes-e-programas/programas-e-atividades/cnpj-alfanumerico) e seu [manual de cálculo do DV](https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/publicacoes/documentos-tecnicos/cnpj).
+
+**Defaults reversíveis da FEAT-003:** o documento adicional é texto opaco opcional de até quarenta caracteres, nunca arquivo nem prova de identidade; a única preferência visual inicial é `system | light | dark`; PF/PJ pode ser corrigido durante a conclusão, mas fica imutável depois dela. Nome, telefone e substituição ou remoção explícita dos documentos permanecem editáveis pelo próprio titular sem reescrever fatos históricos.
+
+**Critério de reabertura:** alteração normativa da Receita Federal, necessidade comprovada de um tipo documental canônico ou exigência de verificação documental. Upload, verificação e direitos LGPD completos continuam fora da FEAT-003.

@@ -56,11 +56,13 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - Recuperação retorna resposta genérica.
 - Logout invalida caches privados.
 - Se a resposta de logout for perdida ou ambígua, a UI oculta imediatamente os dados privados e recarrega a rota SSR; a tela então informa se a sessão continua ativa ou se a ausência local foi confirmada.
+- Se o cliente perder ou não conseguir validar a resposta do login, e portanto não puder saber se cookies já foram publicados, a UI apaga a referência efêmera e o formulário de credenciais, limpa o cache privado e recarrega `/entrar` para uma decisão SSR autoritativa. Falha/throw depois de iniciar `setSession` recebe `AUTH_SESSION_RECHECK_REQUIRED` e segue a mesma transição, mesmo se o cleanup exato falhar; somente rejeições API comprovadamente anteriores à publicação permanecem recuperáveis no formulário.
 - Token inválido/expirado não mostra formulário funcional.
 - Em callbacks de signup e recovery, somente uma resposta API válida `SERVICE_UNAVAILABLE` emitida antes de iniciar `verifyOtp` permite retry. Depois do envio, falha de rede, timeout, resposta inválida, erro desconhecido do provider ou publicação ambígua encerram a tentativa com `AUTH_RESTART_REQUIRED`/`RECOVERY_RESTART_REQUIRED`, limpam cookies e sessão Auth exatos e orientam solicitar novo link sem reutilizar o OTP possivelmente consumido.
 - Cada callback de recovery cria uma binding/tombstone privada pelo `session_id` do JWT assinado e pela linha canônica de `auth.sessions`; a sessão nunca pode ser promovida a login comum. O grant adicional fica vinculado à mesma binding, expira em 15 minutos e é one-shot: uma claim exclusiva precede o provider; somente rejeição explicitamente sem efeito e ocorrida antes da expiração permite release e retry.
 - O cookie `sl-recovery-session` carrega somente um UUID público, opaco e não autoritativo para escopar SSR/cache. Perda, expiração ou remoção desse marker não remove a classificação durável da sessão Auth.
 - O formulário de nova senha não é montado durante `fetching` nem `paused`; somente `allowed=true`, scope correspondente e `fetchStatus=idle` autorizam a interface. Após consumo, expiração, ausência canônica ou saída da superfície de recovery, a binding é fechada, o grant é invalidado e a sessão/cookies Auth exatos são encerrados.
+- Uma rejeição pública e retryable da troca de senha é copiada somente como mensagem, scope público de origem e erros dos campos `password | confirmPassword` para o boundary de recovery. Esse feedback sobrevive ao refetch autoritativo que desmonta o formulário, reaparece apenas no mesmo scope ainda autorizado e é descartado em nova submissão, sucesso, negação ou troca de scope.
 - Um refetch de sessão valida o usuário/escopo antes de publicar o payload no TanStack; uma troca autoritativa limpa a família e recarrega SSR sem gravar B sob a key de A.
 - Uma conta suspensa pode autenticar no provider, mas não acessa o produto.
 
@@ -91,6 +93,7 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - PasswordInput com mostrar/ocultar e requisitos.
 - Os callbacks de signup e recovery apresentam carregamento e falha recuperável somente quando a repetição é comprovadamente segura; qualquer resultado ambíguo após o envio encerra o payload one-shot e exige novo link.
 - A verificação inicial e todo refetch de recovery apresentam somente loading durante `fetching` ou `paused`; um estado `allowed` em cache não mantém o formulário no DOM.
+- Um login com desfecho de transporte ambíguo apresenta somente o boundary de verificação até o hard reload; a composição SSR seguinte mostra a sessão autenticada caso os cookies tenham sido publicados ou uma cópia explícita de entrada não confirmada caso permaneça anônima.
 - Toda request interativa expira em dez segundos e reabilita uma recuperação acionável.
 - ReturnTo não permite URL externa.
 - O título canônico da página permanece como único `h1`; um `#` inicial igual ao título do documento é omitido e os demais headings preservam a hierarquia a partir de `h2`.

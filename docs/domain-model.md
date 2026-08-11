@@ -85,6 +85,7 @@
 | Conceito                   | Fonte                                        |
 | -------------------------- | -------------------------------------------- |
 | Conta                      | Supabase Auth + `profiles`                   |
+| Preferência visual         | `user_preferences`                           |
 | Versão jurídica            | `terms_versions`                             |
 | Aceite jurídico            | `terms_acceptances`                          |
 | Papel administrativo       | `platform_roles`                             |
@@ -113,7 +114,15 @@
 
 `profiles.id = auth.users.id`.
 
-Na FEAT-002, `profiles` contém somente `person_type`, `status` e `completed_at`; nome, telefone, CPF/CNPJ e documento pertencem à FEAT-003. O perfil mínimo e os dois aceites nascem atomicamente no trigger de `auth.users` após consumo de uma intenção privada válida. A intenção não é fato de negócio e pode expirar; o aceite preserva para sempre versão, hash, instante, `requestId` e evidência minimizada.
+O perfil mínimo e os dois aceites nascem atomicamente no trigger de `auth.users` após consumo de uma intenção privada válida. A intenção não é fato de negócio e pode expirar; o aceite preserva para sempre versão, hash, instante, `requestId` e evidência minimizada.
+
+A FEAT-003 completa `profiles` com nome, telefone E.164, CPF/CNPJ, documento adicional opcional, máscaras derivadas e `profile_version`. Antes da conclusão os dados pessoais permanecem todos nulos. CPF usa onze dígitos; CNPJ preserva os registros numéricos e aceita o formato alfanumérico uppercase de doze caracteres mais dois DVs numéricos. A validação local prova somente formato e DV, nunca existência ou titularidade, e o CPF/CNPJ não é unique.
+
+`person_type` pode ser corrigido somente no comando atômico de primeira conclusão e torna-se imutável depois. Nome, telefone e documentos atuais podem ser corrigidos sem reescrever snapshots históricos futuros. Retries idênticos convergem sem nova versão; mudanças concorrentes divergentes usam a versão otimista e retornam conflito.
+
+`user_preferences` é configuração 1:1 criada com o perfil, limitada a `system/light/dark` e versionada separadamente. Aparência e identidade não incrementam a versão uma da outra.
+
+A leitura da conta usa `public.get_my_profile()` como read model `security invoker`, sem argumento de usuário e sempre filtrado por `auth.uid()`. Os comandos privados usam uma projeção interna sem grant runtime para devolver o mesmo estado mascarado; essa projeção não transfere autoridade nem constitui read model.
 
 ### 4.2 Estúdio
 

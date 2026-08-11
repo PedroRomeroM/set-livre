@@ -13,7 +13,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 5. `docs/specification.md` — escopo canônico do produto;
 6. `docs/implementation-order.md` — sequência de construção;
 7. `docs/feature-catalog.md` — catálogo das 34 features;
-8. `docs/qa-traceability.md` — catálogo vivo dos 194 cenários.
+8. `docs/qa-traceability.md` — catálogo vivo dos 198 cenários.
 9. `docs/validation-report.md` — validação estrutural da baseline.
 10. `MANIFEST_SHA256.md` — hashes de integridade do pacote.
 11. `contexto-projeto-set-livre.html` — resumo executivo vivo para acompanhar o progresso e apresentar o estado implementado; não substitui as fontes canônicas.
@@ -24,12 +24,12 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | ------------------- | ---------: |
 | Features            |         34 |
 | ADRs                |         18 |
-| Cenários Playwright |        194 |
+| Cenários Playwright |        198 |
 | Cenários P0         |        134 |
-| Cenários P1         |         60 |
+| Cenários P1         |         64 |
 | Runbooks            |          6 |
 
-A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 194: a FEAT-002 acrescenta o contrato de reflow `SL-F002-E2E-007` e possui sete IDs automatizados, mapeados para 23 execuções verdes nos browsers. Somadas às 36 execuções técnicas da fundação, a matriz integral passou em 59/59. A rodada atual também soma 458 testes unitários e 236 asserts pgTAP. A árvore possui 11 migrations, head `20260811000400`. A FEAT-002 foi incorporada a `main` pelo PR #2 e inaugura a contagem em 1/34 features concluídas.
+A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 198: a FEAT-002 acrescentou um contrato de reflow e a FEAT-003 acrescenta quatro IDs para acessibilidade, reflow, tema/hidratação e estados adversos. Há 16 IDs automatizados; a suíte integral corrente passou em 91/91 execuções browser — 59 da fundação + FEAT-002 e 32 da FEAT-003. A árvore possui 12 migrations, head `20260811000500`, e passou em 284/284 asserts pgTAP e 538/538 unitários. A FEAT-002 permanece a primeira das 34 features concluídas; a FEAT-003 segue em implementação até auditoria do snapshot, release, review e merge.
 
 ## Garantias documentais
 

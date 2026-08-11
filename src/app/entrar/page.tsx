@@ -14,10 +14,16 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saida?: string | string[] | undefined }>;
+  searchParams: Promise<{
+    entrada?: string | string[] | undefined;
+    retorno?: string | string[] | undefined;
+    saida?: string | string[] | undefined;
+  }>;
 }) {
   const query = await searchParams;
   const initialSession = await readComponentIdentitySession();
+  const returnTo =
+    query.retorno === "/conta" || query.retorno === "/conta/seguranca" ? query.retorno : undefined;
 
   return (
     <AuthFrame
@@ -27,7 +33,9 @@ export default async function LoginPage({
     >
       <LoginPanel
         initialSession={initialSession}
+        loginNeedsVerification={query.entrada === "verificar"}
         logoutNeedsVerification={query.saida === "verificar"}
+        returnTo={returnTo}
       />
     </AuthFrame>
   );

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   inspectIdentityRecoverySession: vi.fn(),
   issueIdentityRecoveryContext: vi.fn(),
+  readOwnProfile: vi.fn(),
   readIdentitySessionWithClient: vi.fn(),
   releaseIdentityRecoveryContext: vi.fn(),
   resetPasswordForEmail: vi.fn(),
@@ -74,6 +75,10 @@ vi.mock("../../src/domains/identity/server/identity-dal", () => ({
 
 vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
   readIdentitySessionWithClient: mocks.readIdentitySessionWithClient,
+}));
+
+vi.mock("../../src/domains/identity/server/profile-read-model", () => ({
+  readOwnProfile: mocks.readOwnProfile,
 }));
 
 vi.mock("next/headers", () => ({
@@ -161,6 +166,10 @@ describe("identity recovery service", () => {
       error: null,
     });
     mocks.readIdentitySessionWithClient.mockResolvedValue(authenticatedSession);
+    mocks.readOwnProfile.mockResolvedValue({
+      profile: { colorScheme: "dark" },
+      scope: recoveryUserId,
+    });
     mocks.setSession.mockResolvedValue({ data: { session: providerSession }, error: null });
     mocks.verifyOtp.mockResolvedValue({
       data: { session: providerSession, user: { id: recoveryUserId } },
@@ -190,10 +199,33 @@ describe("identity recovery service", () => {
     expect(mocks.readIdentitySessionWithClient).toHaveBeenCalledOnce();
     expect(mocks.createRouteSupabaseClient).toHaveBeenCalledOnce();
     expect(mocks.setSession).toHaveBeenCalledWith(providerSession);
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "sl-color-scheme",
+      "dark",
+      expect.objectContaining({ httpOnly: true, sameSite: "lax" }),
+    );
     expect(result.data).toEqual({
       redirectTo: "/entrar?sessao=ativa",
       session: authenticatedSession,
     });
+  });
+
+  it("keeps login available when the visual preference projection cannot be read", async () => {
+    mocks.readOwnProfile.mockRejectedValueOnce(new Error("private-profile-read-failure"));
+
+    await expect(
+      loginIdentity({
+        email: "qa-login@example.test",
+        password: "ValidPassword9",
+      }),
+    ).resolves.toMatchObject({ data: { session: authenticatedSession } });
+
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-color-scheme");
+    expect(mocks.cookieSet).not.toHaveBeenCalledWith(
+      "sl-color-scheme",
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("does not publish cookies when identity context validation fails", async () => {
@@ -228,7 +260,10 @@ describe("identity recovery service", () => {
       password: "ValidPassword9",
     }).catch((error: unknown) => error);
 
-    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_SESSION_RECHECK_REQUIRED",
+      status: 503,
+    });
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });
@@ -256,7 +291,10 @@ describe("identity recovery service", () => {
       password: "ValidPassword9",
     }).catch((error: unknown) => error);
 
-    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_SESSION_RECHECK_REQUIRED",
+      status: 503,
+    });
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });

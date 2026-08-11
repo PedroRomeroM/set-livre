@@ -40,6 +40,7 @@ Os dois apps possuem somente a superfície técnica da fundação. Não existem 
 - o segundo review encerra recovery ambíguo depois do envio do OTP sem oferecer retry e isola o cache de sessão por identidade, substituindo inclusive uma Query fresca da mesma identidade pelo snapshot SSR atual antes de liberar PII.
 - o terceiro review torna também o signup ambíguo terminal, fecha cookies parcialmente publicados em login/recovery, habilita RLS na intenção privada e impede release de grant já expirado;
 - o quarto review elimina a evicção de buckets vivos do limiter, escopa e bloqueia o cache de recovery até uma resposta autoritativa idle e vincula toda sessão Auth de recovery a uma binding/tombstone durável, impedindo que abandono, expiração ou remoção de cookies a transformem em login comum.
+- fora do PR #2 já incorporado, a branch da FEAT-003 absorve uma revisão pós-merge com dois P2 adicionais: desfecho de transporte ambíguo do login redige credenciais/cache e força revalidação SSR, enquanto feedback público da troca de senha pertence ao boundary externo e sobrevive somente ao refetch do mesmo scope autorizado.
 
 ## Arquivos/componentes
 
@@ -61,6 +62,8 @@ O comando de cadastro aplica origem e host da request, limite de corpo, rate lim
 - sessão usa key por `userId`/anônimo; Query preexistente, refetch ativo/pausado, observer antigo ou troca de usuário bloqueiam PII até remover a família, semear o SSR atual ou recarregar a rota;
 - logout limpa integralmente o cache privado do TanStack Query e força nova renderização server-side;
 - status de recovery usa key `recoveryStatus(scope)`; resposta com outro scope é rejeitada antes do cache e `fetching`/`paused` exibem somente verificação, sem montar o formulário;
+- no hardening pós-merge mantido na branch da FEAT-003, erros retryable da troca de senha mantêm apenas mensagem, scope UUID público e erros allowlisted acima do formulário desmontável; troca de scope, negação, nova tentativa ou sucesso descartam o snapshot;
+- no mesmo hardening posterior ao PR #2, login cuja resposta de transporte não pode ser validada oculta e reseta os controles, limpa integralmente o `QueryClient`, semeia somente a sessão anônima e recarrega a rota SSR antes de voltar a expor credenciais ou sessão;
 - a troca de senha marca o grant como consumido no cache, remove a família de sessão e encerra binding, grant e sessão Auth antes do próximo login.
 
 ## UX, mobile e acessibilidade
@@ -69,7 +72,7 @@ Formulários em PT-BR usam labels persistentes, `PasswordInput`, erros associado
 
 ## Testes e IDs QA
 
-Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas. O quarto review acrescenta unidades adversariais para churn/overflow, cache de recovery online/offline e binding/tombstone; `SL-F002-E2E-003` foi ampliado, sem novo ID, para provar cache pausado sem formulário, sucesso nominal, expiração real e encerramento de binding, grant, sessão Auth e cookies. A rodada atual passou em 458/458 unitários, 236/236 asserts pgTAP e 59/59 execuções Playwright, com sentinela e `token_hash` ausentes dos artefatos e cleanup Auth/Mailpit em zero.
+Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas. O quarto review acrescenta unidades adversariais para churn/overflow, cache de recovery online/offline e binding/tombstone; `SL-F002-E2E-003` foi ampliado, sem novo ID, para provar cache pausado sem formulário, sucesso nominal, expiração real e encerramento de binding, grant, sessão Auth e cookies. A evidência incorporada do quarto review passou em 458/458 unitários, 236/236 asserts pgTAP e 59/59 execuções Playwright, com sentinela e `token_hash` ausentes dos artefatos e cleanup Auth/Mailpit em zero. A prova focada posterior ao merge estende `SL-F002-E2E-002/003` para login ambíguo, feedback retryable e navegação de scope idempotente; a consolidação integral pertence ao ciclo da FEAT-003.
 
 ## Observabilidade e operação
 

@@ -44,6 +44,7 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 - A release local falha fechada antes de cleanup quando `.artifacts` ou uma árvore gerada é/contém mount; no Linux a prova usa o `mountinfo` do namespace, inspeção física e retiro atômico, sem atravessar volumes externos.
 - A baseline do banco revoga `TEMPORARY` de `PUBLIC`; DAL e login runtime não podem criar tabelas temporárias, enquanto grants explícitos administrados pela stack permanecem intactos.
 - A FEAT-002 implementa Auth e `legal-core` sem antecipar `/conta`, dados pessoais completos ou retorno de reserva: uma intenção opaca no DAL é consumida pelo trigger de `auth.users` para criar perfil mínimo e aceites na mesma transação; a metadata transitória é removida e os callbacks mantêm o token somente no fragmento até o POST server-side.
+- A FEAT-003 está em implementação na branch `feat/feat-003-profile-account`: completa o perfil PF/PJ, introduz `/conta` e `/conta/seguranca`, mantém CPF/CNPJ e documento adicional somente no DAL privado e projeta apenas máscaras e a preferência visual autoritativa para a interface.
 
 ## Baseline técnica
 
@@ -66,4 +67,4 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 
 ## Próxima ação operacional
 
-A FEAT-002 está concluída e incorporada a `main`. A próxima feature deve seguir estritamente `docs/implementation-order.md`, em nova branch e PR, sem antecipar escopo. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.
+A FEAT-003 é a fatia ativa e ainda não está concluída. Matriz Playwright, documentação viva e gates integrais estão verdes; o trabalho corrente deve congelar/auditar o snapshot, publicar commit e release por SHA e concluir PR/review/merge sem antecipar a FEAT-004. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.
