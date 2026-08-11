@@ -63,7 +63,7 @@ Os launchers diretos `scripts/dev-all.mjs`/`scripts/release-manifest.mjs` e os w
 - `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `useUnknownInCatchVariables` e `verbatimModuleSyntax`;
 - cada app executa `next typegen` antes de `tsc --noEmit`;
 - packages possuem tsconfig próprio;
-- `tsconfig.tests.json` cobre Playwright, Vitest, configs e helpers;
+- `tsconfig.tests.json` cobre Playwright, Vitest, configs e helpers e resolve `@/` para o mesmo `src/` do app; o Vitest declara a mesma resolução para testar módulos reais sem substituir a fronteira de imports;
 - `server-only` e `pg` já protegem o contrato de readiness; comandos de negócio continuarão restritos a módulos DAL server-only.
 
 ## 5. ESLint

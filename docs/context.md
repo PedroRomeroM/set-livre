@@ -7,8 +7,7 @@
 - Mercado inicial: Curitiba/PR.
 - Equipe informada: três desenvolvedores com disponibilidade média de duas horas produtivas por dia cada.
 - Repositório remoto: `PedroRomeroM/set-livre`.
-- A baseline documental e o HTML derivado estão publicados em `main` no commit `e0cca5a`.
-- A fundação executável é desenvolvida isoladamente em `agent/foundation-local-platform`.
+- A fundação executável foi incorporada a `main`; a FEAT-002 é desenvolvida isoladamente em `feat/feat-002-auth-legal-core`.
 - O commit `d755c9f`, citado no pacote recebido, não pertence ao histórico efetivamente encontrado.
 - O fluxo autorizado é branch separada, PR para `main`, suíte completa e ciclos de `@codex review` antes de merge.
 - O progresso resumido para acompanhamento e apresentação fica em `contexto-projeto-set-livre.html`; toda mudança técnica precisa mantê-lo sincronizado sem substituir as fontes canônicas.
@@ -44,6 +43,7 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 - A etapa atual é local-first conforme ADR-018; CI/CD, Supabase Cloud, Oracle e APIs externas permanecem dependências de release.
 - A release local falha fechada antes de cleanup quando `.artifacts` ou uma árvore gerada é/contém mount; no Linux a prova usa o `mountinfo` do namespace, inspeção física e retiro atômico, sem atravessar volumes externos.
 - A baseline do banco revoga `TEMPORARY` de `PUBLIC`; DAL e login runtime não podem criar tabelas temporárias, enquanto grants explícitos administrados pela stack permanecem intactos.
+- A FEAT-002 implementa Auth e `legal-core` sem antecipar `/conta`, dados pessoais completos ou retorno de reserva: uma intenção opaca no DAL é consumida pelo trigger de `auth.users` para criar perfil mínimo e aceites na mesma transação; a metadata transitória é removida e os callbacks mantêm o token somente no fragmento até o POST server-side.
 
 ## Baseline técnica
 
@@ -66,4 +66,4 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 
 ## Próxima ação operacional
 
-Concluir o PR da fundação local sem entidade de negócio antecipada e submetê-lo ao ciclo de revisão. Depois do merge, iniciar a FEAT-002 e seguir estritamente `docs/implementation-order.md`, uma feature por branch/PR. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.
+Concluir a fatia vertical da FEAT-002, executar todos os gates, publicar seu PR e cumprir o ciclo integral de revisão antes do merge. Depois, seguir estritamente `docs/implementation-order.md`, uma feature por branch/PR. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.

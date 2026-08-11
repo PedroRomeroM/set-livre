@@ -6,6 +6,8 @@ Um único módulo exporta factories. Nenhuma key literal espalhada.
 
 Famílias:
 
+- `identityQueryKeys.session = ["identity", "session", "current-user"]`;
+- `identityQueryKeys.recoveryStatus = ["identity", "recovery", "current-session"]`;
 - `public.homeTaxonomies`;
 - `public.studioList(filters,cursor)`;
 - `public.studioDetail(id,date)`;
@@ -45,24 +47,28 @@ Medir; não usar Infinity em dado operacional.
 
 ## 4. Mutation map
 
-| Command prefix | Invalida |
-|---|---|
-| `profile.*` | account/profile, owner overview |
-| `recipient.*` | recipient, owner overview, public eligibility |
-| `studio.revision.*` | editor, owner studios, review queue |
-| `studio.media.*` | editor/media |
-| `studio.pause/resume` | owner, public list/detail, availability |
-| `admin.studio.*` | review, owner, public |
-| `calendar.*` | owner calendar, public availability, quotes |
-| `pricing.*` | editor, public detail, quotes |
-| `addon.*` | editor, quotes |
-| `booking.quote.*` | quote only |
-| `booking.payment.*` | attempt/payment, availability |
-| payment webhook | attempt, reservation, calendar, owner/renter, finance |
-| `reservation.cancel` | reservation, calendar, payment, payout |
-| payout/refund | finance, owner/renter detail |
-| taxonomy admin | public taxonomy/list filters, editors |
-| account deletion | session/all private |
+| Command prefix        | Invalida                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `identity.register`   | nenhuma key privada; sucesso aguarda confirmação Auth                                               |
+| login/callback        | publica/refaz `identityQueryKeys.session` após retorno autoritativo; foco da aba revalida           |
+| logout                | limpa integralmente o `QueryClient` antes da navegação SSR                                          |
+| recovery              | consulta o grant da sessão atual; revalida após update e foco; senha/token/e-mail ficam fora da key |
+| `profile.*`           | account/profile, owner overview                                                                     |
+| `recipient.*`         | recipient, owner overview, public eligibility                                                       |
+| `studio.revision.*`   | editor, owner studios, review queue                                                                 |
+| `studio.media.*`      | editor/media                                                                                        |
+| `studio.pause/resume` | owner, public list/detail, availability                                                             |
+| `admin.studio.*`      | review, owner, public                                                                               |
+| `calendar.*`          | owner calendar, public availability, quotes                                                         |
+| `pricing.*`           | editor, public detail, quotes                                                                       |
+| `addon.*`             | editor, quotes                                                                                      |
+| `booking.quote.*`     | quote only                                                                                          |
+| `booking.payment.*`   | attempt/payment, availability                                                                       |
+| payment webhook       | attempt, reservation, calendar, owner/renter, finance                                               |
+| `reservation.cancel`  | reservation, calendar, payment, payout                                                              |
+| payout/refund         | finance, owner/renter detail                                                                        |
+| taxonomy admin        | public taxonomy/list filters, editors                                                               |
+| account deletion      | session/all private                                                                                 |
 
 ## 5. UX
 

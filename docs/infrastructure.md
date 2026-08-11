@@ -160,6 +160,8 @@ Responsabilidades:
 - logs;
 - rate limiting de borda quando útil.
 
+Para liberar as rotas Auth em produção, o bloco Nginx precisa preservar o `Host` público exato e substituir — nunca anexar — `X-Forwarded-Host`, `X-Forwarded-Proto=https` e `X-Forwarded-For` pelo host, protocolo e endereço remoto canônicos recebidos na borda. O app recusa qualquer divergência e aplica o bucket pré-Zod por ação/IP; o limiter Nginx continua obrigatório para impedir que tráfego hostil alcance o processo Node. Essa prova integra o critério externo de PEND-003 e não é simulada pelo loopback local.
+
 Rotas:
 
 - `www/setlivre` → 3000;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260811000100" as const;
+export const databaseMigrationHead = "20260811000200" as const;
 
 const privilegedRoleNames = new Set(["postgres", "service_role", "supabase_admin"]);
 const authorityOverrideParameters = new Set([

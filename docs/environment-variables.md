@@ -64,6 +64,8 @@ Os três previews de produção locais — `npm start`, `npm run start:backoffic
 
 `DATABASE_URL_APP_DAL` nunca aponta para `postgres`, `service_role` ou usuário proprietário. O parser exige protocolo PostgreSQL, login/senha/banco explícitos e exatamente um `options=-c role=app_dal`, permitindo parâmetros TLS sem aceitar overrides de identidade. Readiness também prova `current_user=app_dal` sem atributos privilegiados nem memberships de saída, além do manifesto exato do `session_user`: somente `CONNECT`, membership DAL, referência administrativa `postgres` sem `SET/INHERIT`, limite de dez conexões, validade infinita, ausência de ACL/ownership residual e a máscara vazia do GUC JWT local. Em produção, a credencial e a garantia de que nenhum material de assinatura seja legível por GUC/current_setting ou diretamente em `pg_roles`, `pg_user`/`pg_db_role_setting` permanecem bloqueadas por PEND-002.
 
+A FEAT-002 reutiliza os seis nomes do runtime local já documentados: `APP_ENV`, `APP_RELEASE_SHA`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` e `DATABASE_URL_APP_DAL`; não introduz service role no app, SMTP de produção ou segredo browser. Apesar do prefixo público exigido pelo SDK, a anon key não é autoridade: RLS/grants e o trigger protegido continuam obrigatórios. `local`/`test` aceitam apenas os dois endpoints HTTP `127.0.0.1` exatos; `development`/`production` exigem HTTPS tanto para a aplicação quanto para o Supabase e mantêm `Secure` nos cookies.
+
 ## 4. Backoffice
 
 - `NEXT_PUBLIC_APP_URL` apontando para a origem do backoffice;

@@ -8,14 +8,15 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 
 ## Estado atual
 
-- fundação local executável implementada e validada na branch técnica, sem feature de produto simulada;
+- fundação local executável incorporada a `main`, sem feature de produto simulada;
+- FEAT-002 em implementação na branch `feat/feat-002-auth-legal-core`, ainda fora da contagem de features concluídas;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
-- Supabase local via Docker, migrations de segurança e pgTAP;
-- 270 unitários, 156 asserts pgTAP e 36 execuções Playwright/axe nos três engines;
-- lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações;
+- Supabase local via Docker com 9 migrations append-only, head `20260811000200` e 224 asserts pgTAP verdes na FEAT-002;
+- rodada atual com 380 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
+- lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações comprovados na fundação e obrigatórios novamente para a feature;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
-- 34 features ainda seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
+- 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 
 CI/CD, Supabase Cloud, Oracle Cloud e providers externos estão temporariamente diferidos pelo ADR-018 e rastreados em `pendencias.md`; isso bloqueia go-live, não a implementação local possível.
 

@@ -150,6 +150,7 @@
     { "feature": "FEAT-001", "pending": "PEND-003" },
     { "feature": "FEAT-001", "pending": "PEND-007" },
     { "feature": "FEAT-002", "pending": "PEND-002" },
+    { "feature": "FEAT-002", "pending": "PEND-003" },
     { "feature": "FEAT-002", "pending": "PEND-005" },
     { "feature": "FEAT-002", "pending": "PEND-006" },
     { "feature": "FEAT-004", "pending": "PEND-004" },

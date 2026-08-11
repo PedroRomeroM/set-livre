@@ -72,3 +72,17 @@ Default: 24 horas antes do início. Configurável em ambiente, não por usuário
 **Guardrail:** uma feature por branch/PR, nenhuma ação ou schema antecipado sem consumidor real e validação documental de unicidade, ordem e ausência de ciclos nas dependências fortes.
 
 **Critério de reabertura:** reabrir somente se uma nova dependência forte tornar a sequência acíclica impossível ou se uma integração posterior ficar sem proprietário e cenário QA.
+
+## OPEN-008 — Bootstrap de identidade e núcleo legal
+
+**Status:** resolvida em 2026-08-11 para a FEAT-002, dentro dos ADRs 004, 005, 016, 017 e 018.
+
+**Conflito registrado:** a FEAT-002 exigia cadastro PF/PJ, perfil parcial e aceite legal, mas seu texto citava `profile.complete`, cuja conclusão e dados pessoais pertencem à FEAT-003. A FEAT-019 é proprietária do retorno a uma reserva, enquanto a FEAT-034 é proprietária dos direitos LGPD completos e dos textos jurídicos aprovados.
+
+**Resolução:** a FEAT-002 cria somente uma identidade mínima (`person_type`, status e conclusão nula) e o `legal-core`. O comando convidado `identity.register` cria no DAL uma intenção jurídica opaca, temporária e de uso único; o trigger de `auth.users` consome essa intenção na mesma transação que cria o perfil mínimo e os dois fatos de aceite. O navegador nunca escreve perfil ou aceite diretamente. Os documentos ficam versionados no banco; o seed local é marcado como `local_fixture` e não vale como conteúdo jurídico aprovado.
+
+**Superfícies atuais:** `/cadastro`, `/entrar`, `/recuperar-senha`, `/auth/callback`, `/termos` e `/privacidade`. O único retorno autenticado permitido nesta fatia é a própria superfície de sessão de `/entrar`; `/conta`, `/reservar` e restauração de draft não são antecipados.
+
+**Fronteira de sessão:** Auth usa cliente SSR por request, validação autoritativa server-side e cookies `HttpOnly`/`SameSite`; `Secure` é obrigatório em produção e fica desativado apenas no HTTP loopback local. Confirmação e recovery usam `TokenHash` exclusivamente no fragmento de templates locais; o fragmento não entra na request inicial e é removido antes da chamada JSON ao servidor.
+
+**Critério de reabertura:** somente uma necessidade comprovada da FEAT-003, FEAT-019 ou FEAT-034 que não caiba nos contratos extensíveis acima, ou aprovação dos textos reais que encerre o bloqueio jurídico.

@@ -1,0 +1,302 @@
+"use client";
+
+import {
+  identityRecoveryRequestPayloadSchema,
+  identityRecoveryUpdatePayloadSchema,
+} from "@set-livre/contracts";
+import { Alert, Button, Field, Input, PasswordInput, Stack } from "@set-livre/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { useRef, useState, type FormEvent } from "react";
+
+import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
+import {
+  IdentityApiError,
+  readPasswordRecoveryStatus,
+  requestPasswordRecovery,
+  updateRecoveredPassword,
+} from "./identity-api";
+import { identityQueryKeys } from "./identity-query-keys";
+import styles from "./identity.module.css";
+import { passwordRequirements } from "./password-requirements";
+
+function RecoveryRequestForm() {
+  const pendingRecoveryEmail = useRef<string | undefined>(undefined);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const mutation = useMutation({
+    mutationFn: () => {
+      const email = pendingRecoveryEmail.current;
+      if (email === undefined) {
+        throw new Error("A solicitação de recovery não possui um e-mail validado.");
+      }
+      return requestPasswordRecovery(email);
+    },
+    onSettled: () => {
+      pendingRecoveryEmail.current = undefined;
+    },
+  });
+
+  function submitRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    mutation.reset();
+    setFieldErrors({});
+    const form = new FormData(event.currentTarget);
+    const parsed = identityRecoveryRequestPayloadSchema.safeParse({
+      email: formValue(form, "email"),
+    });
+    if (!parsed.success) {
+      setFieldErrors(firstFieldErrors(parsed.error));
+      return;
+    }
+    pendingRecoveryEmail.current = parsed.data.email;
+    mutation.mutate();
+  }
+
+  if (mutation.isSuccess) {
+    return (
+      <Stack space={5}>
+        <Alert title="Confira seu e-mail">
+          Se existir uma conta para o endereço informado, enviaremos as instruções de recuperação.
+        </Alert>
+        <p className={styles.supportingText}>
+          Aguarde alguns minutos e confira também a pasta de spam. A resposta é a mesma para todos
+          os endereços.
+        </p>
+        <div className={styles.actions}>
+          <Button onClick={() => mutation.reset()} variant="secondary">
+            Informar outro e-mail
+          </Button>
+          <Link className={styles.textLink} href="/entrar">
+            Voltar ao login
+          </Link>
+        </div>
+      </Stack>
+    );
+  }
+
+  const apiError = mutation.error instanceof IdentityApiError ? mutation.error : undefined;
+  const visibleFieldErrors = apiError?.fieldErrors ?? fieldErrors;
+
+  return (
+    <form className={styles.form} noValidate onSubmit={submitRequest}>
+      <p className={styles.formIntro}>
+        Informe seu e-mail. Por segurança, não confirmamos se ele está cadastrado.
+      </p>
+
+      {apiError === undefined ? null : (
+        <Alert title="Não foi possível solicitar agora" variant="error">
+          {apiError.message}
+        </Alert>
+      )}
+
+      <Field {...fieldErrorProp(visibleFieldErrors, "email")} label="E-mail" required>
+        <Input
+          autoComplete="email"
+          disabled={mutation.isPending}
+          inputMode="email"
+          maxLength={254}
+          name="email"
+          spellCheck={false}
+          type="email"
+        />
+      </Field>
+
+      <div className={styles.actions}>
+        <Button loading={mutation.isPending} loadingLabel="Enviando instruções" type="submit">
+          Enviar instruções
+        </Button>
+        <Link className={styles.textLink} href="/entrar">
+          Voltar ao login
+        </Link>
+      </div>
+    </form>
+  );
+}
+
+function RecoveryUpdateSuccess() {
+  return (
+    <Stack space={5}>
+      <Alert title="Senha atualizada">
+        Sua nova senha foi salva. Use-a para entrar novamente com segurança.
+      </Alert>
+      <Link className={styles.textLink} href="/entrar">
+        Entrar com a nova senha
+      </Link>
+    </Stack>
+  );
+}
+
+function NewPasswordForm({
+  onCompleted,
+  statusRefreshing,
+}: {
+  onCompleted: () => void;
+  statusRefreshing: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const pendingRecoveryPassword = useRef<{ confirmPassword: string; password: string } | undefined>(
+    undefined,
+  );
+  const [passwordRequirementState, setPasswordRequirementState] = useState(() =>
+    passwordRequirements(""),
+  );
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const mutation = useMutation({
+    mutationFn: () => {
+      const value = pendingRecoveryPassword.current;
+      if (value === undefined) {
+        throw new Error("A atualização de recovery não possui senhas validadas.");
+      }
+      return updateRecoveredPassword(value.password, value.confirmPassword);
+    },
+    onSuccess: async () => {
+      await queryClient.cancelQueries({
+        exact: true,
+        queryKey: identityQueryKeys.recoveryStatus,
+      });
+      queryClient.setQueryData(identityQueryKeys.recoveryStatus, { allowed: false });
+      queryClient.removeQueries({ exact: true, queryKey: identityQueryKeys.session });
+      onCompleted();
+    },
+    onSettled: async () => {
+      pendingRecoveryPassword.current = undefined;
+      await queryClient.invalidateQueries({
+        exact: true,
+        queryKey: identityQueryKeys.recoveryStatus,
+        refetchType: "active",
+      });
+    },
+  });
+
+  function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    mutation.reset();
+    setFieldErrors({});
+    const form = new FormData(event.currentTarget);
+    const parsed = identityRecoveryUpdatePayloadSchema.safeParse({
+      confirmPassword: formValue(form, "confirmPassword"),
+      password: formValue(form, "password"),
+    });
+    if (!parsed.success) {
+      setFieldErrors(firstFieldErrors(parsed.error));
+      return;
+    }
+    pendingRecoveryPassword.current = parsed.data;
+    mutation.mutate();
+  }
+
+  const apiError = mutation.error instanceof IdentityApiError ? mutation.error : undefined;
+  const visibleFieldErrors = apiError?.fieldErrors ?? fieldErrors;
+
+  return (
+    <form
+      aria-busy={mutation.isPending || statusRefreshing}
+      className={styles.form}
+      noValidate
+      onSubmit={submitPassword}
+    >
+      <p className={styles.formIntro}>Crie uma senha nova para concluir a recuperação.</p>
+
+      {statusRefreshing ? <Alert>Revalidando a autorização de recuperação…</Alert> : null}
+
+      {apiError === undefined ? null : (
+        <Alert title="Não foi possível atualizar a senha" variant="error">
+          {apiError.message}
+        </Alert>
+      )}
+
+      <Field {...fieldErrorProp(visibleFieldErrors, "password")} label="Nova senha" required>
+        <PasswordInput
+          autoComplete="new-password"
+          disabled={mutation.isPending || statusRefreshing}
+          maxLength={128}
+          name="password"
+          onChange={(event) =>
+            setPasswordRequirementState(passwordRequirements(event.currentTarget.value))
+          }
+          requirements={passwordRequirementState}
+        />
+      </Field>
+
+      <Field
+        {...fieldErrorProp(visibleFieldErrors, "confirmPassword")}
+        label="Confirme a nova senha"
+        required
+      >
+        <PasswordInput
+          autoComplete="new-password"
+          disabled={mutation.isPending || statusRefreshing}
+          maxLength={128}
+          name="confirmPassword"
+        />
+      </Field>
+
+      <Button
+        disabled={statusRefreshing}
+        loading={mutation.isPending}
+        loadingLabel="Atualizando senha"
+        type="submit"
+      >
+        Salvar nova senha
+      </Button>
+    </form>
+  );
+}
+
+export function RecoveryFlow() {
+  const [recoveryCompleted, setRecoveryCompleted] = useState(false);
+  const statusQuery = useQuery({
+    queryFn: readPasswordRecoveryStatus,
+    queryKey: identityQueryKeys.recoveryStatus,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    retry: false,
+    staleTime: 0,
+  });
+
+  if (recoveryCompleted) {
+    return <RecoveryUpdateSuccess />;
+  }
+
+  if (statusQuery.isPending) {
+    return <Alert>Verificando se o link de recuperação é válido…</Alert>;
+  }
+
+  if (statusQuery.isError) {
+    const message =
+      statusQuery.error instanceof IdentityApiError
+        ? statusQuery.error.message
+        : "Não foi possível verificar o link agora.";
+    return (
+      <Stack space={4}>
+        <Alert title="Verificação indisponível" variant="error">
+          {message}
+        </Alert>
+        <div className={styles.actions}>
+          <Button
+            loading={statusQuery.isFetching}
+            loadingLabel="Verificando link"
+            onClick={() => {
+              void statusQuery.refetch();
+            }}
+            variant="secondary"
+          >
+            Tentar novamente
+          </Button>
+          <Link className={styles.textLink} href="/entrar">
+            Voltar ao login
+          </Link>
+        </div>
+      </Stack>
+    );
+  }
+
+  return statusQuery.data.allowed ? (
+    <NewPasswordForm
+      onCompleted={() => setRecoveryCompleted(true)}
+      statusRefreshing={statusQuery.isFetching}
+    />
+  ) : (
+    <RecoveryRequestForm />
+  );
+}

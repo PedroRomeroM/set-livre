@@ -7,12 +7,17 @@
   --sl-color-surface-soft: #f3f6f3;
   --sl-color-canvas: #eaf0ec;
   --sl-color-line: #d6dfd9;
+  --sl-color-control-border: #65736c;
+  --sl-color-panel-border: #65736c;
   --sl-color-brand: #176b53;
   --sl-color-brand-strong: #0d4c3a;
   --sl-color-brand-soft: #dcefe7;
   --sl-color-accent: #d97a21;
   --sl-color-focus: #1565c0;
   --sl-color-danger: #a33a2e;
+  --sl-color-danger-soft: #fce8e5;
+  --sl-color-status: #176b53;
+  --sl-color-status-soft: #dcefe7;
   --sl-font-sans:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --sl-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -26,7 +31,10 @@
   --sl-radius-sm: 0.5rem;
   --sl-radius-md: 0.875rem;
   --sl-radius-lg: 1.25rem;
+  --sl-control-height: 2.75rem;
+  --sl-focus-ring: 0 0 0 0.2rem color-mix(in srgb, var(--sl-color-focus) 28%, transparent);
   --sl-shadow-card: 0 1rem 3rem rgb(21 36 30 / 10%);
+  --sl-content-narrow: 44rem;
   --sl-content-wide: 72rem;
 }
 
@@ -40,11 +48,16 @@
     --sl-color-surface-soft: #1a2b23;
     --sl-color-canvas: #0e1914;
     --sl-color-line: #33483e;
+    --sl-color-control-border: #aebdb5;
+    --sl-color-panel-border: #aebdb5;
     --sl-color-brand: #64c6a4;
     --sl-color-brand-strong: #8ad7bc;
     --sl-color-brand-soft: #183c2f;
     --sl-color-accent: #f1a65f;
     --sl-color-focus: #72b8ff;
     --sl-color-danger: #ff9287;
+    --sl-color-danger-soft: #41201e;
+    --sl-color-status: #64c6a4;
+    --sl-color-status-soft: #183c2f;
   }
 }

@@ -53,6 +53,10 @@ Responsável por:
 
 Não contém páginas ou bundles de backoffice.
 
+#### Identidade implementada na FEAT-002
+
+`/cadastro` entra em `POST /api/commands` com `identity.register`; o handler server-only cria uma intenção jurídica opaca pela role `app_dal` e chama Supabase Auth sem devolver o token ao browser. O trigger no `INSERT` de `auth.users` trava/consome essa intenção, revalida as duas versões vigentes e cria perfil mínimo + aceites na mesma transação. Login, logout, callback e recovery usam endpoints Auth específicos, enquanto sessão e documentos legais usam read models pequenos/RLS. O Proxy renova cookies por request e preserva o mesmo contrato CSP; nenhum cliente Supabase global ou service role entra no bundle.
+
 ### 2.2 Backoffice
 
 Aplicação Next.js separada em `apps/backoffice`.
@@ -282,13 +286,13 @@ const reservationKeys = {
 
 Cada action declara domínios afetados. Exemplo:
 
-| Action | Invalida |
-|---|---|
-| `studio.revision.update` | owner studio editor |
-| `studio.review.approve` | public list/detail, owner status, review queue |
-| `calendar.block.create` | availability, owner calendar, quote |
-| `payment.confirm` | reservation, calendar, owner/renter lists, payments |
-| `reservation.cancel` | reservation, calendar, payments, payouts |
+| Action                   | Invalida                                            |
+| ------------------------ | --------------------------------------------------- |
+| `studio.revision.update` | owner studio editor                                 |
+| `studio.review.approve`  | public list/detail, owner status, review queue      |
+| `calendar.block.create`  | availability, owner calendar, quote                 |
+| `payment.confirm`        | reservation, calendar, owner/renter lists, payments |
+| `reservation.cancel`     | reservation, calendar, payments, payouts            |
 
 ## 9. Segurança em camadas
 

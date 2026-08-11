@@ -3,9 +3,13 @@ import {
   contentSecurityPolicyNonceHeaderName,
   createContentSecurityPolicy,
 } from "@set-livre/contracts/content-security-policy";
+import type { Database } from "@set-livre/contracts";
+import { createServerClient } from "@supabase/ssr";
 import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+
+import { readSupabaseEnvironment } from "@/lib/supabase/config";
 
 const globalErrorDocument = `<!doctype html>
 <html lang="pt-BR">
@@ -39,7 +43,11 @@ function createGlobalErrorResponse(contentSecurityPolicy: string) {
   });
 }
 
-export function proxy(request: NextRequest) {
+function shouldRefreshSession(pathname: string) {
+  return !pathname.startsWith("/_next/static/") && !pathname.startsWith("/_next/image/");
+}
+
+export async function proxy(request: NextRequest) {
   const nonce = randomUUID().replaceAll("-", "");
   const contentSecurityPolicy = createContentSecurityPolicy(
     nonce,
@@ -54,8 +62,41 @@ export function proxy(request: NextRequest) {
   requestHeaders.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
   requestHeaders.set(contentSecurityPolicyNonceHeaderName, nonce);
 
-  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  const environment = readSupabaseEnvironment();
+  let response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
+
+  if (shouldRefreshSession(request.nextUrl.pathname)) {
+    const supabase = createServerClient<Database>(environment.supabaseOrigin, environment.anonKey, {
+      auth: { flowType: "pkce" },
+      cookieOptions: environment.cookieOptions,
+      cookies: {
+        getAll: () => request.cookies.getAll(),
+        setAll: (cookiesToSet, headers) => {
+          for (const { name, value } of cookiesToSet) {
+            request.cookies.set(name, value);
+          }
+          const refreshedRequestHeaders = new Headers(request.headers);
+          refreshedRequestHeaders.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
+          refreshedRequestHeaders.set(contentSecurityPolicyNonceHeaderName, nonce);
+          response = NextResponse.next({ request: { headers: refreshedRequestHeaders } });
+          response.headers.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
+          for (const { name, options, value } of cookiesToSet) {
+            response.cookies.set(name, value, { ...options, ...environment.cookieOptions });
+          }
+          for (const [name, value] of Object.entries(headers)) {
+            response.headers.set(name, value);
+          }
+        },
+      },
+    });
+    try {
+      await supabase.auth.getClaims();
+    } catch {
+      // Falha de refresh não transforma uma rota pública em erro nem autentica a requisição.
+    }
+  }
+
   return response;
 }
 

@@ -120,6 +120,21 @@ as $function$
   );
 $function$;
 
+create temporary table authorized_dal_routines (
+  signature text primary key
+) on commit drop;
+
+insert into authorized_dal_routines (signature)
+values
+  ('private.check_readiness(text)'),
+  ('private.check_runtime_readiness(text)'),
+  ('private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)'),
+  ('private.issue_identity_recovery_grant(uuid)'),
+  ('private.has_identity_recovery_grant(uuid,uuid)'),
+  ('private.claim_identity_recovery_grant(uuid,uuid,uuid)'),
+  ('private.release_identity_recovery_grant(uuid,uuid,uuid)'),
+  ('private.consume_identity_recovery_grant(uuid,uuid,uuid)');
+
 select plan(156);
 
 select ok(
@@ -555,9 +570,12 @@ select ok(
 );
 
 select ok(
-  to_regprocedure('private.check_readiness(text)') is not null
-    and to_regprocedure('private.check_runtime_readiness(text)') is not null,
-  'funções privadas de readiness existem'
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where pg_catalog.to_regprocedure(authorized_routine.signature) is null
+  ),
+  'entrypoints privados autorizados da DAL existem'
 );
 
 select ok(
@@ -584,53 +602,68 @@ select ok(
 );
 
 select ok(
-  has_function_privilege('app_dal', 'private.check_readiness(text)', 'execute')
-    and has_function_privilege(
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where not pg_catalog.has_function_privilege(
       'app_dal',
-      'private.check_runtime_readiness(text)',
-      'execute'
-    ),
-  'app_dal executa somente os contratos de readiness autorizados'
+      authorized_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'app_dal executa os oito entrypoints explicitamente autorizados'
 );
 
 select ok(
-  not has_function_privilege('public', 'private.check_readiness(text)', 'execute')
-    and not has_function_privilege(
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where pg_catalog.has_function_privilege(
       'public',
-      'private.check_runtime_readiness(text)',
-      'execute'
-    ),
-  'PUBLIC não executa readiness privada'
+      authorized_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'PUBLIC não executa entrypoint privado da DAL'
 );
 
 select ok(
-  not has_function_privilege('anon', 'private.check_readiness(text)', 'execute')
-    and not has_function_privilege(
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where pg_catalog.has_function_privilege(
       'anon',
-      'private.check_runtime_readiness(text)',
-      'execute'
-    ),
-  'anon não executa readiness privada'
+      authorized_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'anon não executa entrypoint privado da DAL'
 );
 
 select ok(
-  not has_function_privilege('authenticated', 'private.check_readiness(text)', 'execute')
-    and not has_function_privilege(
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where pg_catalog.has_function_privilege(
       'authenticated',
-      'private.check_runtime_readiness(text)',
-      'execute'
-    ),
-  'authenticated não executa readiness privada'
+      authorized_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'authenticated não executa entrypoint privado da DAL'
 );
 
 select ok(
-  not has_function_privilege('service_role', 'private.check_readiness(text)', 'execute')
-    and not has_function_privilege(
+  not exists (
+    select 1
+    from authorized_dal_routines as authorized_routine
+    where pg_catalog.has_function_privilege(
       'service_role',
-      'private.check_runtime_readiness(text)',
-      'execute'
-    ),
-  'service_role não executa readiness privada por padrão'
+      authorized_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'service_role não executa entrypoint privado da DAL por padrão'
 );
 
 select ok(
@@ -738,7 +771,7 @@ select ok(
     ),
     acl_dependencies as (
       select
-        pg_catalog.count(*) = 3
+        pg_catalog.count(*) = 9
         and pg_catalog.bool_and(
           (
             dependency.dbid = (
@@ -757,18 +790,9 @@ select ok(
               where database.datname = pg_catalog.current_database()
             )
             and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-            and dependency.objid = pg_catalog.to_regprocedure('private.check_readiness(text)')
-            and dependency.objsubid = 0
-          )
-          or (
-            dependency.dbid = (
-              select database.oid
-              from pg_catalog.pg_database as database
-              where database.datname = pg_catalog.current_database()
-            )
-            and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-            and dependency.objid = pg_catalog.to_regprocedure(
-              'private.check_runtime_readiness(text)'
+            and dependency.objid in (
+              select pg_catalog.to_regprocedure(authorized_routine.signature)
+              from authorized_dal_routines as authorized_routine
             )
             and dependency.objsubid = 0
           )
@@ -793,7 +817,7 @@ select ok(
         and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
     ),
     routine_privilege as (
-      select pg_catalog.count(*) = 2
+      select pg_catalog.count(*) = 8
         and pg_catalog.bool_and(
           privilege.grantee = runtime_role.oid
           and privilege.grantor <> runtime_role.oid
@@ -804,8 +828,8 @@ select ok(
       cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
       cross join runtime_role
       where routine.oid in (
-          pg_catalog.to_regprocedure('private.check_readiness(text)'),
-          pg_catalog.to_regprocedure('private.check_runtime_readiness(text)')
+          select pg_catalog.to_regprocedure(authorized_routine.signature)
+          from authorized_dal_routines as authorized_routine
         )
         and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
     )
@@ -813,7 +837,7 @@ select ok(
       and (select restricted from schema_privilege)
       and (select restricted from routine_privilege)
   ),
-  'app_dal preserva somente as três dependências ACL autorizadas, sem grant option'
+  'app_dal preserva somente as nove dependências ACL autorizadas, sem grant option'
 );
 
 select ok(
@@ -829,7 +853,7 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness confirma a migration head atual'
 );
 
@@ -855,7 +879,7 @@ select ok(
 );
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness recusa TEMPORARY público mesmo quando a baseline anterior o aceitava'
 );
 
@@ -876,49 +900,49 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após fechar TEMPORARY no banco'
 );
 
 grant usage on schema public to public;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta USAGE de PUBLIC recuperado em schema não sistêmico'
 );
 
 revoke usage on schema public from public;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após fechar novamente o schema public'
 );
 
 grant create on schema private to public;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta CREATE de PUBLIC em schema não sistêmico'
 );
 
 revoke create on schema private from public;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após remover CREATE público do schema'
 );
 
 grant create on database postgres to public;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta CREATE público no banco atual'
 );
 
 revoke create on database postgres from public;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após restaurar ACL pública exata do banco'
 );
 
@@ -943,7 +967,7 @@ select ok(
 );
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta EXECUTE efetivo de PUBLIC em função private'
 );
 
@@ -959,7 +983,7 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após fechar a função private'
 );
 
@@ -968,7 +992,7 @@ drop function private.readiness_public_routine_probe();
 create table private.readiness_relation_row_type_probe (id bigint);
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'row type implícito de tabela private não é tratado como tipo autônomo'
 );
 
@@ -977,14 +1001,14 @@ drop table private.readiness_relation_row_type_probe;
 grant usage on schema private to app_dal with grant option;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant option sobre o USAGE mínimo de app_dal'
 );
 
 revoke grant option for usage on schema private from app_dal;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após remover o grant option'
 );
 
@@ -998,7 +1022,7 @@ end
 $block$;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto no banco para app_dal'
 );
 
@@ -1012,21 +1036,21 @@ end
 $block$;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de banco'
 );
 
 grant create on schema public to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto em schema fora do manifesto'
 );
 
 revoke create on schema public from app_dal;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de schema'
 );
 
@@ -1034,7 +1058,7 @@ create table private.readiness_relation_privilege_probe (id bigint);
 grant select on table private.readiness_relation_privilege_probe to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto em relação para app_dal'
 );
 
@@ -1042,7 +1066,7 @@ revoke all on table private.readiness_relation_privilege_probe from app_dal;
 drop table private.readiness_relation_privilege_probe;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de relação'
 );
 
@@ -1050,7 +1074,7 @@ create table private.readiness_column_privilege_probe (id bigint, private_value 
 grant select (private_value) on table private.readiness_column_privilege_probe to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto por coluna invisível em relacl'
 );
 
@@ -1058,7 +1082,7 @@ revoke select (private_value) on table private.readiness_column_privilege_probe 
 drop table private.readiness_column_privilege_probe;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de coluna'
 );
 
@@ -1066,7 +1090,7 @@ create sequence private.readiness_sequence_privilege_probe;
 grant usage on sequence private.readiness_sequence_privilege_probe to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto em sequência para app_dal'
 );
 
@@ -1074,7 +1098,7 @@ revoke all on sequence private.readiness_sequence_privilege_probe from app_dal;
 drop sequence private.readiness_sequence_privilege_probe;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de sequência'
 );
 
@@ -1090,7 +1114,7 @@ $function$;
 grant execute on function private.readiness_routine_privilege_probe() to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto em função fora do manifesto'
 );
 
@@ -1098,7 +1122,7 @@ revoke all on function private.readiness_routine_privilege_probe() from app_dal;
 drop function private.readiness_routine_privilege_probe();
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de função'
 );
 
@@ -1106,7 +1130,7 @@ create type private.readiness_type_privilege_probe as enum ('probe');
 grant usage on type private.readiness_type_privilege_probe to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta grant direto em tipo para app_dal'
 );
 
@@ -1114,7 +1138,7 @@ revoke all on type private.readiness_type_privilege_probe from app_dal;
 drop type private.readiness_type_privilege_probe;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o grant de tipo'
 );
 
@@ -1122,7 +1146,7 @@ alter default privileges for role postgres in schema private
   grant select on tables to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta default privilege concedido a app_dal'
 );
 
@@ -1130,7 +1154,7 @@ alter default privileges for role postgres in schema private
   revoke select on tables from app_dal;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar o default privilege'
 );
 
@@ -1149,14 +1173,14 @@ end
 $block$;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta ACL compartilhada em objeto grande'
 );
 
 rollback to savepoint readiness_large_object_drift;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após restaurar o objeto grande'
 );
 
@@ -1175,14 +1199,14 @@ end
 $block$;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta ACL pública em objeto grande'
 );
 
 rollback to savepoint readiness_public_large_object_drift;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após restaurar objeto grande público'
 );
 
@@ -1190,7 +1214,7 @@ alter default privileges for role postgres in schema private
   grant select on tables to public;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta default privilege público antes de materializar objeto'
 );
 
@@ -1198,7 +1222,7 @@ alter default privileges for role postgres in schema private
   revoke select on tables from public;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após remover default privilege público'
 );
 
@@ -1207,14 +1231,14 @@ grant app_dal to postgres with inherit false, set true;
 create schema readiness_ownership_probe authorization app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta ownership indevido concedido a app_dal'
 );
 
 rollback to savepoint readiness_ownership_drift;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após restaurar o ownership'
 );
 
@@ -1223,28 +1247,28 @@ select ok(
 alter role app_dal bypassrls;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta app_dal adulterada com BYPASSRLS'
 );
 
 alter role app_dal nobypassrls;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após restaurar os atributos de app_dal'
 );
 
 alter role app_dal in database postgres set search_path = 'net, public';
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta parâmetro persistente por banco na role app_dal'
 );
 
 alter role app_dal in database postgres reset all;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após remover o parâmetro por banco'
 );
 
@@ -1253,28 +1277,28 @@ select ok(
 grant pg_read_all_data to app_dal;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta membership adicional concedida a app_dal'
 );
 
 revoke pg_read_all_data from app_dal;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após revogar a membership indevida'
 );
 
 grant pg_read_all_data to anon;
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta acesso transitivo de role web a catálogo sensível'
 );
 
 revoke pg_read_all_data from anon;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness volta a ficar pronta após remover acesso transitivo ao catálogo'
 );
 
@@ -1424,14 +1448,14 @@ select ok(
 alter database postgres set search_path = 'net, public';
 
 select ok(
-  not private.check_readiness('20260811000100'),
+  not private.check_readiness('20260811000200'),
   'readiness detecta parâmetro global por banco fora da allowlist'
 );
 
 alter database postgres reset search_path;
 
 select ok(
-  private.check_readiness('20260811000100'),
+  private.check_readiness('20260811000200'),
   'readiness preserva somente parâmetros globais autorizados após restauração'
 );
 
@@ -1517,7 +1541,7 @@ select ok(
       'pg_catalog.pg_authid',
       'SELECT'
     )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness preserva ACL pública inicial sem expor pg_authid'
 );
 
@@ -1544,7 +1568,7 @@ select ok(
     where routine.oid =
       pg_catalog.to_regprocedure('pg_catalog.current_database()')
   )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness preserva EXECUTE público implícito de rotina initdb canônica'
 );
 
@@ -1601,7 +1625,7 @@ select ok(
             'pg_catalog.current_database()',
             'execute'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(
       canonical_owner boolean,
@@ -1633,7 +1657,7 @@ select ok(
             'pg_catalog.current_database()',
             'execute'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(public_execute boolean, ready boolean)
   ),
@@ -1658,7 +1682,7 @@ select ok(
       'pg_catalog.current_database()',
       'execute'
     )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera owner e ACL implícita da rotina initdb após rollback'
 );
 
@@ -1737,7 +1761,7 @@ select ok(
               and privilege.privilege_type = 'EXECUTE'
               and not privilege.is_grantable
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
         from pg_catalog.pg_proc as routine
         join pg_catalog.pg_depend as dependency
           on dependency.classid =
@@ -1799,7 +1823,7 @@ select ok(
               and privilege.privilege_type = 'EXECUTE'
               and not privilege.is_grantable
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
         from pg_catalog.pg_proc as routine
         join pg_catalog.pg_depend as dependency
           on dependency.classid =
@@ -1846,7 +1870,7 @@ select ok(
             'pg_catalog.readiness_extension_owner_probe()',
             'execute'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(public_execute boolean, ready boolean)
   ),
@@ -1863,7 +1887,7 @@ select ok(
   pg_catalog.to_regprocedure(
     'pg_catalog.readiness_extension_owner_probe()'
   ) is null
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback remover o membro de extensão adulterado'
 );
 
@@ -1889,7 +1913,7 @@ select ok(
             'pg_catalog.pg_authid',
             'select'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(dal_has_select boolean, ready boolean)
   ),
@@ -1904,7 +1928,7 @@ $block$;
 
 select ok(
   not has_table_privilege('app_dal', 'pg_catalog.pg_authid', 'SELECT')
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback do grant PUBLIC na relação'
 );
 
@@ -1931,7 +1955,7 @@ select ok(
             'rolpassword',
             'select'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(dal_has_select boolean, ready boolean)
   ),
@@ -1951,7 +1975,7 @@ select ok(
     'rolpassword',
     'SELECT'
   )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback do grant PUBLIC por coluna'
 );
 
@@ -1984,7 +2008,7 @@ select ok(
             'pg_catalog.pg_read_file(text,boolean)',
             'execute'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(
       public_exact_overload boolean,
@@ -2007,7 +2031,7 @@ select ok(
     'pg_catalog.pg_read_file(text)',
     'execute'
   )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback do grant PUBLIC na rotina sensível'
 );
 
@@ -2071,7 +2095,7 @@ select ok(
                 'pg_catalog.pg_extension'::pg_catalog.regclass
               and dependency.deptype = 'e'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(
       public_execute boolean,
@@ -2093,7 +2117,7 @@ select ok(
   pg_catalog.to_regprocedure(
     'pg_catalog.readiness_public_routine_probe()'
   ) is null
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback remover a rotina normal adulterada'
 );
 
@@ -2140,7 +2164,7 @@ select ok(
               and privilege.grantee = 0
               and privilege.privilege_type = 'EXECUTE'
           ),
-          private.check_readiness('20260811000100')
+          private.check_readiness('20260811000200')
       $remote$
     ) as probe(public_grantors bigint, ready boolean)
   ),
@@ -2169,7 +2193,7 @@ select ok(
       and privilege.grantee = 0
       and privilege.privilege_type = 'EXECUTE'
   )
-    and private.check_readiness('20260811000100'),
+    and private.check_readiness('20260811000200'),
   'readiness recupera após rollback remover o grantor alternativo'
 );
 

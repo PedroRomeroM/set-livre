@@ -11,6 +11,8 @@
 
 ## Sequência inicial sugerida
 
+O repositório materializa essa sequência por migrations timestampadas e append-only, sem renomear as já aplicadas. A fundação ocupa oito migrations até `20260811000100`; a FEAT-002 adiciona `20260811000200_authentication_legal_core.sql`, que corresponde somente ao perfil mínimo, termos/aceites, intenção privada, grant de recovery durável no banco e expirável, read models e hardening do manifesto DAL. As tabelas pessoais completas previstas no item lógico 3 continuam pertencendo à FEAT-003.
+
 1. `0001_extensions_and_schemas`
 2. `0002_roles_and_security_baseline`
 3. `0003_profiles_owner_roles_terms`

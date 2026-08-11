@@ -1,0 +1,145 @@
+.form {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-5);
+}
+
+.formIntro,
+.supportingText,
+.statusText,
+.legalMeta,
+.legalParagraph {
+  margin: 0;
+}
+
+.formIntro,
+.supportingText,
+.legalMeta {
+  color: var(--sl-color-ink-muted);
+}
+
+.formIntro,
+.supportingText {
+  line-height: 1.55;
+}
+
+.legalChoice {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-2);
+}
+
+.legalLink,
+.textLink,
+.backLink {
+  display: inline-flex;
+  min-height: var(--sl-control-height);
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--sl-color-brand-strong);
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.2em;
+}
+
+.legalLink:hover,
+.textLink:hover,
+.backLink:hover {
+  text-decoration-thickness: 0.15em;
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--sl-space-3);
+  align-items: center;
+}
+
+.actions > button {
+  flex: 1 1 12rem;
+}
+
+.accountSummary {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-3);
+}
+
+.accountLabel {
+  margin: 0;
+  color: var(--sl-color-ink-muted);
+  font-size: 0.875rem;
+  font-weight: 750;
+}
+
+.accountValue {
+  margin: 0;
+  color: var(--sl-color-ink-strong);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.legalHeader {
+  display: grid;
+  gap: var(--sl-space-3);
+}
+
+.legalTitle {
+  margin: 0;
+  color: var(--sl-color-ink-strong);
+  font-size: clamp(1.75rem, 6vw, 2.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+
+.legalBody {
+  display: grid;
+  gap: var(--sl-space-4);
+  padding-block: var(--sl-space-2);
+}
+
+.legalParagraph {
+  color: var(--sl-color-ink);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.loadingPanel {
+  width: min(100%, 36rem);
+  margin-inline: auto;
+}
+
+@media (max-width: 24rem) {
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions > button,
+  .actions > a {
+    width: 100%;
+  }
+
+  .actions > button {
+    flex: 0 1 auto;
+  }
+
+  .textLink,
+  .backLink,
+  .legalLink {
+    justify-content: flex-start;
+  }
+}
+
+@media (forced-colors: active) {
+  .legalLink,
+  .textLink,
+  .backLink {
+    color: LinkText;
+  }
+}

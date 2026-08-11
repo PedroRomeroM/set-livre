@@ -41,6 +41,8 @@ Ameaças prioritárias:
 - conta suspensa não executa comando;
 - backoffice verifica role a cada request sensível.
 
+Na FEAT-002, os clientes Supabase são criados por request no servidor, a sessão é validada por claims e pelo read model do próprio perfil, e os cookies são `HttpOnly`, `SameSite=Lax` (`Strict` para o grant temporário de recovery) e `Secure` fora do HTTP loopback local. Os ambientes `development`/`production` recusam origens sem HTTPS para a aplicação ou o Supabase; somente `local`/`test` aceitam os endpoints HTTP `127.0.0.1` exatos. Confirmação e recovery aceitam somente `signup`/`recovery`: templates locais colocam o `TokenHash` no fragmento `#`, que não é enviado ao servidor no primeiro GET, e a UI apaga query/fragmento antes de publicar o JSON. O grant adicional de nova senha é opaco, vinculado ao usuário, one-shot, expira em 15 minutos e não substitui a sessão Auth. Ele só volta ao estado livre após uma rejeição explícita que prove ausência de efeito; falha ambígua mantém a claim terminal e exige novo link. Respostas de recovery não distinguem conta existente.
+
 ## 3. Autorização
 
 Camadas:
@@ -55,7 +57,7 @@ Camadas:
 
 Nunca aceitar `owner_user_id`, `role`, `status`, shares ou `approved` do cliente como autoridade.
 
-Na DAL, `app_dal` é `NOLOGIN`/`NOINHERIT` e pode ser assumida somente pelo login restrito configurado; as referências administrativas `postgres` exigidas pelo PostgreSQL 17 não possuem `SET/INHERIT`, e nenhuma role intermediária pode assumir o login. O readiness aplica allowlists exatas às duas identidades: `app_dal` não possui objetos nem default privileges e recebe diretamente apenas `USAGE` em `private` e `EXECUTE` nas duas funções privadas de readiness, totalizando três dependências ACL; o login recebe somente `CONNECT`, sua membership DAL, limite de dez conexões, validade infinita e a máscara local vazia do GUC de assinatura. `TEMPORARY` é revogado de `PUBLIC`, não é concedido à DAL nem ao login e sua ausência efetiva é verificada nos dois entrypoints de readiness; grants explícitos administrados pela stack permanecem intocados. A inspeção recusa grants por coluna, a role como grantor, parâmetros residuais, terceiro membro ou ownership fora do manifesto. A baseline pública é exata; objetos alcançáveis de `private` e objetos compartilhados monitorados falham fechado. Em `pg_catalog`, cada privilégio de relação ou coluna concedido a `PUBLIC` precisa estar contido na baseline inicial `i`/`e` do próprio objeto registrada em `pg_init_privs`; isso preserva as leituras built-in do PostgreSQL sem aceitar expansões posteriores, como `SELECT` em `pg_authid` ou em `rolpassword`. Rotinas são comparadas pelo OID do overload: ACL `i`/`e` prevalece; sem esse registro, membros de extensão usam `pg_extension.extowner` e demais built-ins initdb (`OID < 16384`) usam o owner bootstrap OID `10`, nunca o `proowner` mutável do objeto. O owner precisa coincidir com essa origem mesmo quando `PUBLIC` não conserva `EXECUTE`; uma rotina normal posterior começa com baseline pública vazia. Grantor e grant option também precisam caber na origem canônica, portanto o default interno e membros legítimos de extensão continuam válidos sem liberar `pg_read_file(text)`, função nova ou grantor derivado de owner adulterado. `pg_roles`, `pg_user` e `pg_db_role_setting` continuam sob a garantia adicional de ACL/owner exatos e inacessibilidade direta, por coluna ou transitiva às roles web/DAL. Row types, arrays e multiranges implícitos seguem seus objetos canônicos; composites explícitos continuam monitorados. O contrato restringe expansão direta de `PUBLIC`; ele não avalia sozinho a semântica da rotina, grants a roles nomeadas nem afirma que todo catálogo interno seja confidencial.
+Na DAL, `app_dal` é `NOLOGIN`/`NOINHERIT` e pode ser assumida somente pelo login restrito configurado; as referências administrativas `postgres` exigidas pelo PostgreSQL 17 não possuem `SET/INHERIT`, e nenhuma role intermediária pode assumir o login. O readiness aplica allowlists exatas às duas identidades: `app_dal` não possui objetos nem default privileges e recebe diretamente apenas `USAGE` em `private` e `EXECUTE` nas oito rotinas autorizadas — os dois checks de readiness, a criação da intenção legal e `issue`/`has`/`claim`/`release`/`consume` do grant recovery —, totalizando nove dependências ACL; o login recebe somente `CONNECT`, sua membership DAL, limite de dez conexões, validade infinita e a máscara local vazia do GUC de assinatura. `TEMPORARY` é revogado de `PUBLIC`, não é concedido à DAL nem ao login e sua ausência efetiva é verificada nos dois entrypoints de readiness; grants explícitos administrados pela stack permanecem intocados. A inspeção recusa grants por coluna, a role como grantor, parâmetros residuais, terceiro membro ou ownership fora do manifesto. A baseline pública é exata; objetos alcançáveis de `private` e objetos compartilhados monitorados falham fechado. Em `pg_catalog`, cada privilégio de relação ou coluna concedido a `PUBLIC` precisa estar contido na baseline inicial `i`/`e` do próprio objeto registrada em `pg_init_privs`; isso preserva as leituras built-in do PostgreSQL sem aceitar expansões posteriores, como `SELECT` em `pg_authid` ou em `rolpassword`. Rotinas são comparadas pelo OID do overload: ACL `i`/`e` prevalece; sem esse registro, membros de extensão usam `pg_extension.extowner` e demais built-ins initdb (`OID < 16384`) usam o owner bootstrap OID `10`, nunca o `proowner` mutável do objeto. O owner precisa coincidir com essa origem mesmo quando `PUBLIC` não conserva `EXECUTE`; uma rotina normal posterior começa com baseline pública vazia. Grantor e grant option também precisam caber na origem canônica, portanto o default interno e membros legítimos de extensão continuam válidos sem liberar `pg_read_file(text)`, função nova ou grantor derivado de owner adulterado. `pg_roles`, `pg_user` e `pg_db_role_setting` continuam sob a garantia adicional de ACL/owner exatos e inacessibilidade direta, por coluna ou transitiva às roles web/DAL. Row types, arrays e multiranges implícitos seguem seus objetos canônicos; composites explícitos continuam monitorados. O contrato restringe expansão direta de `PUBLIC`; ele não avalia sozinho a semântica da rotina, grants a roles nomeadas nem afirma que todo catálogo interno seja confidencial.
 
 O `pg_net` fornecido pela stack Supabase concede capacidades HTTP e de fila por ACLs gerenciados por `supabase_admin`, que a role de migration não pode revogar. Durante a fronteira local-first do ADR-018, o bootstrap usa exclusivamente o superuser local, em loopback, para revogar schema, tabelas, sequências, funções e defaults de `net` para `PUBLIC` e todas as roles runtime; somente o worker administrativo configurado como `postgres` mantém o acesso técnico necessário. A normalização equivalente na Supabase Cloud permanece bloqueada por PEND-002 e precisa garantir que o login DAL não leia material de assinatura nem por GUC/current_setting nem diretamente em `pg_roles`, `pg_user` ou `pg_db_role_setting` antes de liberar tráfego.
 
@@ -96,8 +98,7 @@ Minimização:
 
 Comandos cookie-based validam:
 
-- `Origin`;
-- `Host`/forwarded host;
+- `Origin` e `Host` exatos contra a origem configurada; em produção, também `X-Forwarded-Host` exato e `X-Forwarded-Proto=https` sobrescritos pela borda confiável;
 - método;
 - content type;
 - SameSite.
@@ -108,6 +109,8 @@ Webhooks não usam sessão; usam assinatura.
 
 VM única: memória por processo é primeira camada. Operações críticas também usam idempotência e constraints.
 
+- toda rota de escrita consome um bucket de fachada antes do parse/Zod e um bucket pseudonimizado específico depois da validação;
+- no local direto, a fachada é compartilhada porque somente loopback é permitido; em produção, o app falha fechado sem um único `X-Forwarded-For` canônico sobrescrito pelo Nginx confiável;
 - normalizar IP confiando apenas em proxy configurado;
 - fail-closed para payment/admin;
 - fail-open controlado para leitura baixa;
@@ -168,6 +171,8 @@ O arquivo opcional `.env.e2e.local` também é uma fronteira privada: antes do p
 ### 11.1 Consentimento
 
 Termos versionados. Aceite grava versão/hash/data. Checkbox não pré-selecionado.
+
+O `legal-core` da FEAT-002 materializa essa regra: versões vigentes não se sobrepõem, o hash SHA-256 é gerado pelo banco, a aposentadoria não pode ser retroativa, e dois fatos de aceite imutáveis são criados na mesma transação do perfil mínimo. A intenção opaca expira em dez minutos, é idempotente por `requestId` somente enquanto pendente, não contém e-mail e é apagada da tabela privada e de `raw_user_meta_data` no consumo; intenções expiradas são purgadas pelo próximo create. IP permanece nulo enquanto não houver proxy confiável; somente hash de user-agent é aceito como evidência minimizada. O seed `local_fixture` nunca representa texto jurídico aprovado.
 
 ### 11.2 Acesso/exportação
 
