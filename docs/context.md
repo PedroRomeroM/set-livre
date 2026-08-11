@@ -7,7 +7,7 @@
 - Mercado inicial: Curitiba/PR.
 - Equipe informada: três desenvolvedores com disponibilidade média de duas horas produtivas por dia cada.
 - Repositório remoto: `PedroRomeroM/set-livre`.
-- A fundação executável foi incorporada a `main`; a FEAT-002 é desenvolvida isoladamente em `feat/feat-002-auth-legal-core`.
+- A fundação executável e a FEAT-002 foram incorporadas a `main`; o PR #2 concluiu a primeira das 34 features.
 - O commit `d755c9f`, citado no pacote recebido, não pertence ao histórico efetivamente encontrado.
 - O fluxo autorizado é branch separada, PR para `main`, suíte completa e ciclos de `@codex review` antes de merge.
 - O progresso resumido para acompanhamento e apresentação fica em `contexto-projeto-set-livre.html`; toda mudança técnica precisa mantê-lo sincronizado sem substituir as fontes canônicas.
@@ -66,4 +66,4 @@ Este pacote substitui a especificação anterior do mini fórum. A plataforma de
 
 ## Próxima ação operacional
 
-Concluir a fatia vertical da FEAT-002, executar todos os gates, publicar seu PR e cumprir o ciclo integral de revisão antes do merge. Depois, seguir estritamente `docs/implementation-order.md`, uma feature por branch/PR. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.
+A FEAT-002 está concluída e incorporada a `main`. A próxima feature deve seguir estritamente `docs/implementation-order.md`, em nova branch e PR, sem antecipar escopo. A ordem não deve ser duplicada neste contexto; mudanças de sequência exigem atualização do ADR-017, da ordem especializada e da rastreabilidade.

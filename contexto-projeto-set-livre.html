@@ -641,11 +641,11 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · revisão sem achado, merge pendente</li>
+          <li>FEAT-002 · concluída e incorporada a main</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
-          <div class="stat"><strong>0/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>1/34</strong><span>features de produto concluídas</span></div>
           <div class="stat"><strong>458</strong><span>testes unitários verdes</span></div>
           <div class="stat"><strong>236</strong><span>asserts pgTAP verdes</span></div>
           <div class="stat"><strong>59</strong><span>execuções Playwright/axe verdes</span></div>
@@ -684,8 +684,9 @@
               autorização. As três correções passaram na cadeia canônica, foram publicadas no commit
               <code>da34f46</code> e geraram release imutável local. As três threads receberam
               respostas, foram resolvidas individualmente e a leitura thread-aware confirmou zero
-              aberta. O Codex revisou o snapshot final e não encontrou problema relevante. A feature
-              permanece fora da contagem de concluídas somente até o merge.
+              aberta. O Codex revisou o snapshot final e não encontrou problema relevante. O PR #2
+              foi integrado a <code>main</code> no merge <code>d272657</code>; a FEAT-002 é a
+              primeira das 34 features concluídas no repositório.
             </p>
           </div>
 
@@ -708,7 +709,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Revisão sem achado</span>
+              <span class="tag done">Concluída</span>
               <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
@@ -1076,7 +1077,8 @@
               vulnerabilidade. O índice técnico foi auditado, os pacotes standalone passaram nos
               smokes e a release do commit <code>da34f46</code> foi verificada por manifesto e
               archive. As três threads foram respondidas/resolvidas, não há thread aberta e a
-              revisão final não encontrou problema relevante; resta somente o merge.
+              revisão final não encontrou problema relevante; o PR #2 foi integrado a
+              <code>main</code> no merge <code>d272657</code>.
             </p>
           </div>
         </section>
@@ -1193,8 +1195,8 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está no
-              quarto ciclo de correção e validação local; as demais continuam planejadas conforme a
+              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está
+              concluída e incorporada a <code>main</code>; as demais continuam planejadas conforme a
               sequência executável do ADR-017.
             </p>
           </div>
@@ -1223,7 +1225,7 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag review">002 em validação · 0/9 concluídas</span></td>
+                  <td><span class="tag done">002 concluída · 1/9 concluídas</span></td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1280,7 +1282,8 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
+                  Abrir a FEAT-003 somente em nova branch e PR, seguindo a ordem canônica e sem
+                  antecipar qualquer feature posterior.
                 </li>
               </ol>
             </article>
