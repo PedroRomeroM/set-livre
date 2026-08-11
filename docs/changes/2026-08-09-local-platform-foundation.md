@@ -79,7 +79,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 ## Testes e IDs QA
 
-- 259 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
+- 270 testes unitários de docs, segurança E2E/browser/webServer/CSP, isolamento local, ambientes de desenvolvimento e preview, Docker/Supabase, health/release, concorrência, reprodutibilidade, remoção física protegida contra mounts, geração atômica, contratos gerados e migration head;
 - 156 asserts pgTAP;
 - IDs técnicos estáveis `FOUNDATION-E2E-001` a `011`, fora da matriz das 34 features;
 - 36 execuções Playwright: desktop, 390 px, 320 px, reflow equivalente ao zoom 200% em 160 CSS px nos três engines, altura compacta, backoffice, axe claro/escuro/mobile/narrow, safe-area não nula e Chromium/Firefox/WebKit críticos;
@@ -126,7 +126,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - uma row QA `automatizado` exige spec Playwright física dentro de `tests/e2e/`, binding runtime nomeado `test` importado de `@playwright/test` e registro direto no módulo ou em `test.describe(...)`, com callback e ID estável no título literal, validado por AST;
 - bootstrap e todos os wrappers Supabase comprovam contexto Docker `default` e endpoint local antes de qualquer operação, propagando o daemon pinado a cada subprocesso operacional;
 - todo `stderr` da CLI Supabase permanece privado e é descartado; falhas são relançadas sem erro original, buffers, URL de banco ou chaves, enquanto somente o `stdout` necessário a pgTAP e geração de tipos pode ser herdado;
-- os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram a árvore wrapper/Next sem deixar descendentes ou portas ocupadas;
+- os dois `webServer` do Playwright neutralizam integralmente o ambiente herdado antes do merge interno do runner, relêem o `.env.local` físico da aplicação em wrapper isolado e encerram a árvore wrapper/Next durante shutdown solicitado com a raiz ainda válida; a fronteira de saída natural posterior foi explicitada no décimo-sétimo review;
 - a validação da instalação npm permanece no release; desenvolvimento e Playwright passaram a validar e iniciar diretamente a CLI Next absoluta no sétimo review, sob a fronteira explícita de toolchain/checkout confiáveis e sem alteração concorrente por qualquer principal com permissão de escrita.
 
 ## Correções do sexto Codex review
@@ -139,7 +139,7 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 
 - `dev`, `dev:backoffice`, o workspace administrativo, `dev-all` e os `webServer` Playwright convergem no launcher compartilhado, relêem o ambiente local físico e iniciam a CLI Next validada por caminho absoluto, sem npm filho, shell ou precedência de uma DAL cloud herdada; isso substitui a camada npm descrita nos ciclos anteriores;
 - readiness exige os manifestos diretos mínimos de `app_dal` e do login runtime, zero ownership indevido, memberships de entrada/saída exatas, parâmetros restritos e a baseline pública exata; o bootstrap privilegiado fecha `pg_net` para runtimes, preserva o worker administrativo, mascara o GUC JWT local e nega leitura direta/transitiva de `pg_roles`, `pg_user` e `pg_db_role_setting`, enquanto a normalização Cloud permanece bloqueada por PEND-002;
-- no Windows, desenvolvimento e Playwright encerram a árvore pelo `taskkill.exe` absoluto derivado de `SystemRoot/System32`, com `/PID /T /F`, ambiente mínimo, sem `PATH`/shell e timeout de cinco segundos;
+- no Windows, desenvolvimento e o shutdown solicitado do Playwright encerram a árvore enquanto a raiz ainda é válida pelo `taskkill.exe` absoluto derivado de `SystemRoot/System32`, com `/PID /T /F`, ambiente mínimo, sem `PATH`/shell e timeout de cinco segundos; saída natural do Playwright não reutiliza PID liberado, conforme o décimo-sétimo review;
 - o gate de supply chain cobre todas as seções instaláveis, bundles, aliases e overrides, fixa os workspaces/manifests físicos e recusa specs não-registry, hooks, `binding.gyp`, shrinkwrap ou lock paralelo; `.npmrc` desabilita todo lifecycle durante `npm ci`, mantém o preflight estrito sem `allowScripts` e bloqueia o escape global perigoso.
 
 ## Correções do oitavo Codex review
@@ -196,6 +196,10 @@ Tokens e a superfície técnica compartilhada possuem composição própria em 1
 - um contrato de rede único exige o host textual e parseado exatamente `127.0.0.1` em runtime, E2E, bootstrap e `psql`, sem aceitar `localhost`, IPv6 ou representações IPv4 alternativas que o parser normalizaria;
 - a migration append-only `20260811000100` revoga `TEMPORARY` de `PUBLIC`, preserva somente grants administrativos já explícitos da stack e faz os dois entrypoints de readiness recusarem a capacidade efetiva para `app_dal` e `app_runtime_local`.
 
+## Correções do décimo-sétimo Codex review
+
+- cada Next iniciado como `webServer` persistente do Playwright converte uma saída natural inesperada com código `0` em falha `1`, preserva códigos não zero e sinais naturais e reserva o fluxo de shutdown solicitado para o encerramento coordenado existente; depois de um `close` natural, o wrapper não reutiliza PID já liberado no Windows nem força o PGID POSIX compartilhado, evitando matar outro processo ou apagar o próprio status de falha.
+
 ## Observabilidade e operação
 
 `/live` e `/ready` expõem aplicação, release, timestamp e `requestId`, propagam somente UUID válido, desabilitam cache e não revelam falha de banco. Não há evento de domínio que justifique logger falso; logging JSON entra no primeiro comando real e provider externo permanece em PEND-008.
@@ -228,7 +232,7 @@ Rodada final comprovada no runtime fixado Node `24.18.0`/npm `11.19.0`, na ordem
 
 - `npm ci`: 435 packages reproduzidos pelo lockfile, zero vulnerabilidades;
 - `npm run format:check`, `lint` e `typecheck`: aprovados sem warning;
-- `npm run test:unit`: 259 aprovados;
+- `npm run test:unit`: 270 aprovados;
 - `npm run supabase:reset`: banco vazio reaplicado e ambientes runtime/E2E separados;
 - `npm run test:db`: 156 aprovados e snapshot SQL/tipos conferidos byte a byte;
 - `npm run docs:check`: 34 features, 193 cenários de produto e 18 ADRs coerentes;

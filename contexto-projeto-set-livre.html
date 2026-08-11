@@ -641,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>16º ciclo de review validado localmente</li>
+          <li>17º ciclo de review validado localmente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -649,7 +649,7 @@
             <strong>0/34</strong><span>features de produto implementadas</span>
           </div>
           <div class="stat">
-            <strong>259</strong><span>testes unitários na rodada canônica atual</span>
+            <strong>270</strong><span>testes unitários na rodada canônica atual</span>
           </div>
           <div class="stat"><strong>156</strong><span>asserts pgTAP no banco local</span></div>
           <div class="stat"><strong>36</strong><span>execuções Playwright/axe</span></div>
@@ -698,10 +698,11 @@
             </article>
             <article class="card">
               <span class="tag done">Validado</span>
-              <h3>16º ciclo da fundação</h3>
+              <h3>17º ciclo da fundação</h3>
               <p>
-                O ciclo ancora a escrita de ambientes em ancestrais físicos, fixa toda URL local em
-                <code>127.0.0.1</code> e remove criação de tabelas temporárias da DAL.
+                O webServer persistente do Playwright agora trata saída natural inesperada com
+                código
+                <code>0</code> como falha, sem reutilizar PID já encerrado para forçar cleanup.
               </p>
             </article>
             <article class="card">
@@ -717,7 +718,7 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada canônica atual passou em 259 unitários, 156 asserts pgTAP e 36 execuções
+              A rodada canônica atual passou em 270 unitários, 156 asserts pgTAP e 36 execuções
               Playwright, além de instalação limpa, format, lint, TypeScript, docs, dois builds,
               audit e Knip.
             </p>
@@ -996,7 +997,7 @@
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">259 aprovados</span>
+              <span class="tag done">270 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { constants as operatingSystemConstants } from "node:os";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -7,6 +8,15 @@ import { terminateWindowsProcessTree } from "./windows-process-tree.mjs";
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
 const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
+function exitCodeForUnexpectedClose(code, signal) {
+  if (code !== null) {
+    return code === 0 ? 1 : code;
+  }
+
+  const signalNumber = signal === null ? undefined : operatingSystemConstants.signals[signal];
+  return Number.isInteger(signalNumber) ? 128 + signalNumber : 1;
+}
 
 export function createPlaywrightWebServerLaunch({
   application,
@@ -148,11 +158,7 @@ export async function runPlaywrightWebServer({
         resolveRun(signalExitCodes[requestedSignal]);
         return;
       }
-      if (code !== null) {
-        resolveRun(code);
-        return;
-      }
-      resolveRun(signal === "SIGHUP" ? 129 : signal === "SIGINT" ? 130 : 143);
+      resolveRun(exitCodeForUnexpectedClose(code, signal));
     });
   });
 }

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,7 +148,7 @@ describe("isolated Playwright webServer wrapper", () => {
       repositoryRoot: repository,
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
     expect(existsSync(prehookSentinel)).toBe(false);
     expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
       APP_ENV: "test",
@@ -164,6 +164,86 @@ describe("isolated Playwright webServer wrapper", () => {
       sshAgent: null,
       userConfig: null,
     });
+  });
+
+  it("returns process failure when the persistent Next child exits naturally with code 0", () => {
+    const repository = temporaryRepository({ dev: "node probe.cjs" });
+    const workerSource = `import { runPlaywrightWebServer } from ${JSON.stringify(
+      wrapperUrl,
+    )}; process.exitCode = await runPlaywrightWebServer({ application: "web", inheritedEnvironment: process.env, repositoryRoot: ${JSON.stringify(
+      repository,
+    )} });`;
+    const worker = spawnSync(process.execPath, ["--input-type=module", "--eval", workerSource], {
+      env: { HOME: repository, PATH: process.env.PATH },
+      killSignal: "SIGKILL",
+      stdio: "pipe",
+      timeout: 5_000,
+    });
+
+    expect(worker.error).toBeUndefined();
+    expect(worker.signal).toBeNull();
+    expect(worker.status).toBe(1);
+  });
+
+  it.each([
+    [0, null, 1],
+    [17, null, 17],
+    [null, null, 1],
+    [null, "SIGHUP", 129],
+    [null, "SIGINT", 130],
+    [null, "SIGTERM", 143],
+    [null, "SIGKILL", 137],
+  ])("preserves an unexpected child close (%s, %s) as exit %i", async (code, signal, exitCode) => {
+    const repository = temporaryRepository({ dev: "node probe.cjs" });
+    const child = new EventEmitter();
+    child.exitCode = null;
+    child.pid = 434_343;
+    child.signalCode = null;
+
+    const completion = runPlaywrightWebServer({
+      application: "web",
+      inheritedEnvironment: { HOME: repository, PATH: process.env.PATH },
+      repositoryRoot: repository,
+      signalSource: new EventEmitter(),
+      spawnProcess: () => child,
+    });
+    child.exitCode = code;
+    child.signalCode = signal;
+    child.emit("close", code, signal);
+
+    await expect(completion).resolves.toBe(exitCode);
+  });
+
+  it("does not target a reused Windows PID after an unexpected natural close", async () => {
+    const repository = temporaryRepository({ dev: "node probe.cjs" });
+    const child = new EventEmitter();
+    const signalSource = new EventEmitter();
+    const terminationCalls = [];
+    child.exitCode = null;
+    child.pid = 444_444;
+    child.signalCode = null;
+
+    const completion = runPlaywrightWebServer({
+      application: "web",
+      inheritedEnvironment: {
+        HOME: repository,
+        PATH: process.env.PATH,
+        SYSTEMROOT: "C:\\Windows",
+      },
+      platform: "win32",
+      repositoryRoot: repository,
+      signalSource,
+      spawnProcess: () => child,
+      terminateWindowsTree: (pid) => terminationCalls.push(pid),
+    });
+    child.exitCode = 0;
+    child.emit("close", 0, null);
+
+    await expect(completion).resolves.toBe(1);
+    expect(terminationCalls).toEqual([]);
+    expect(signalSource.listenerCount("SIGHUP")).toBe(0);
+    expect(signalSource.listenerCount("SIGINT")).toBe(0);
+    expect(signalSource.listenerCount("SIGTERM")).toBe(0);
   });
 
   it("creates distinct web and backoffice launches before spawning", () => {
@@ -207,37 +287,44 @@ describe("isolated Playwright webServer wrapper", () => {
     expect(backoffice.options.env.APP_ENV).toBe("test");
   });
 
-  it("falls back to the direct child when invoked outside a dedicated process group", async () => {
-    const repository = temporaryRepository({ dev: "node probe.cjs" });
-    const signalSource = new EventEmitter();
-    const child = new EventEmitter();
-    const receivedSignals = [];
-    child.pid = 424_242;
-    child.exitCode = null;
-    child.signalCode = null;
-    child.kill = (signal) => {
-      receivedSignals.push(signal);
-      child.signalCode = signal;
-      queueMicrotask(() => child.emit("close", null, signal));
-    };
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ])(
+    "preserves requested %s when invoked outside a dedicated process group",
+    async (requestedSignal, exitCode) => {
+      const repository = temporaryRepository({ dev: "node probe.cjs" });
+      const signalSource = new EventEmitter();
+      const child = new EventEmitter();
+      const receivedSignals = [];
+      child.pid = 424_242;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = (signal) => {
+        receivedSignals.push(signal);
+        child.signalCode = signal;
+        queueMicrotask(() => child.emit("close", null, signal));
+      };
 
-    const completion = runPlaywrightWebServer({
-      application: "web",
-      inheritedEnvironment: { HOME: repository, PATH: process.env.PATH },
-      repositoryRoot: repository,
-      signalProcessGroup: () => {
-        const error = new Error("group unavailable");
-        error.code = "ESRCH";
-        throw error;
-      },
-      signalSource,
-      spawnProcess: () => child,
-    });
-    signalSource.emit("SIGTERM");
+      const completion = runPlaywrightWebServer({
+        application: "web",
+        inheritedEnvironment: { HOME: repository, PATH: process.env.PATH },
+        repositoryRoot: repository,
+        signalProcessGroup: () => {
+          const error = new Error("group unavailable");
+          error.code = "ESRCH";
+          throw error;
+        },
+        signalSource,
+        spawnProcess: () => child,
+      });
+      signalSource.emit(requestedSignal);
 
-    await expect(completion).resolves.toBe(143);
-    expect(receivedSignals).toEqual(["SIGTERM"]);
-  });
+      await expect(completion).resolves.toBe(exitCode);
+      expect(receivedSignals).toEqual([requestedSignal]);
+    },
+  );
 
   it("terminates the Windows tree without forwarding the app environment to taskkill", async () => {
     const repository = temporaryRepository({ dev: "node probe.cjs" });
