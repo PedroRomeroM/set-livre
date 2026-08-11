@@ -85,7 +85,7 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - `386/386` testes unitários, `224/224` asserts pgTAP e a matriz Playwright integral `59/59` ficaram verdes;
 - reset limpo, snapshot SQL e tipos gerados coincidiram com a instância local no head `20260811000200`;
 - builds e smokes standalone de web e backoffice passaram sem deixar processos ou portas residuais;
-- o release imutável do commit `0e5451d6f29c85db3e3dcab1c7b0c9ce3ef061fd` validou `2.752` artefatos e publicou o archive local com SHA-256 `b5b2a90edfc8b40dec492de55c6333adccb0321e02c988cee74eeb51f09b7626`;
+- o release imutável das correções do primeiro review, commit `539ab7e07eeaf03b2e4ef0796b60100783c49779`, validou `2.752` artefatos e publicou o archive local com SHA-256 `97195c42dac857027cc9f41cf066406314f708aa7010fda5a4c001353dcb0768`;
 - scans de artefatos Auth não encontraram sentinela de senha nem `token_hash`; cleanup final confirmou zero usuários QA e zero mensagens QA;
 - auditorias independentes de segurança, QA, documentação, diff e índice staged encerraram sem blocker.
 
