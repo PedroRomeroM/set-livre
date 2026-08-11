@@ -2,7 +2,7 @@
 
 - Data: 2026-08-11
 - Autor/agente: Codex
-- Issue/PR: branch `feat/feat-002-auth-legal-core`; PR pendente
+- Issue/PR: branch `feat/feat-002-auth-legal-core`; rastreio pelo PR deste ciclo
 - Features: FEAT-002
 - ADRs: ADR-001, ADR-002, ADR-003, ADR-004, ADR-005, ADR-013, ADR-015, ADR-016, ADR-017 e ADR-018
 - Risco: alto — identidade, sessão, aceite legal e fronteiras de autorização
@@ -70,7 +70,7 @@ O primeiro comando real introduz evento JSON seguro com `requestId`, ação, dur
 
 ## Documentação atualizada
 
-Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. Resultados integrais, builds, release local e review só entram na evidência de conclusão depois de executados.
+Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo registra os gates e o release local já executados; o review do PR continua sendo a última etapa antes do merge.
 
 ## Rollback/correção
 
@@ -78,4 +78,13 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 
 ## Evidência de conclusão
 
-Em andamento. Esta seção será preenchida somente após os gates integrais, builds das duas aplicações, Playwright completo, release local e auditoria final do diff.
+- Node `24.18.0`, npm `11.19.0` e `npm ci` concluíram no ambiente canônico;
+- formatação, lint, TypeScript estrito, Knip, documentação e auditoria de dependências passaram, com zero vulnerabilidades reportadas;
+- `380/380` testes unitários, `224/224` asserts pgTAP e a matriz Playwright integral `59/59` ficaram verdes;
+- reset limpo, snapshot SQL e tipos gerados coincidiram com a instância local no head `20260811000200`;
+- builds e smokes standalone de web e backoffice passaram sem deixar processos ou portas residuais;
+- o release imutável do commit `0e5451d6f29c85db3e3dcab1c7b0c9ce3ef061fd` validou `2.752` artefatos e publicou o archive local com SHA-256 `b5b2a90edfc8b40dec492de55c6333adccb0321e02c988cee74eeb51f09b7626`;
+- scans de artefatos Auth não encontraram sentinela de senha nem `token_hash`; cleanup final confirmou zero usuários QA e zero mensagens QA;
+- auditorias independentes de segurança, QA, documentação, diff e índice staged encerraram sem blocker.
+
+A implementação está validada localmente e segue fora da contagem de features concluídas até o review do PR e o merge.

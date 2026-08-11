@@ -9,12 +9,12 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 ## Estado atual
 
 - fundação local executável incorporada a `main`, sem feature de produto simulada;
-- FEAT-002 em implementação na branch `feat/feat-002-auth-legal-core`, ainda fora da contagem de features concluídas;
+- FEAT-002 validada localmente na branch `feat/feat-002-auth-legal-core`, aguardando review do PR e ainda fora da contagem de features concluídas;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 9 migrations append-only, head `20260811000200` e 224 asserts pgTAP verdes na FEAT-002;
 - rodada atual com 380 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
-- lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações comprovados na fundação e obrigatórios novamente para a feature;
+- lint, TypeScript estrito, Knip, audit, builds, smokes standalone e release local imutável das duas aplicações comprovados na rodada atual;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
 - 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 
@@ -97,7 +97,7 @@ Não implementar sem novo ADR e alteração formal de escopo:
 
 ## Regra de conclusão
 
-Nenhuma feature está concluída porque apenas a interface funciona. A entrega exige coerência entre:
+Nenhuma feature é considerada concluída apenas porque a interface funciona. A entrega exige coerência entre:
 
 - especificação;
 - ADRs;

@@ -641,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 em implementação</li>
+          <li>FEAT-002 validada localmente · review pendente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -678,9 +678,9 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica foi incorporada a <code>main</code>. A FEAT-002 está em
-              implementação na sua própria branch; ela permanece fora da contagem de concluídas até
-              release local, auditoria e review finais ficarem verdes.
+              A fundação técnica foi incorporada a <code>main</code>. A FEAT-002 passou por todos os
+              gates, release e auditorias locais na sua própria branch; ela permanece fora da
+              contagem de concluídas até o review do PR e o merge.
             </p>
           </div>
 
@@ -703,13 +703,13 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Em implementação</span>
+              <span class="tag review">Validada localmente</span>
               <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
-                login/logout e recuperação já estão materializados no worktree e passaram nos
-                browsers; release, auditoria e review finais seguem pendentes, sem antecipar perfil
-                completo ou reserva.
+                login/logout e recuperação passaram em banco, unitários, browsers, builds, release e
+                auditorias locais. O review do PR segue pendente, sem antecipar perfil completo ou
+                reserva.
               </p>
             </article>
           </div>
@@ -1040,7 +1040,7 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Evidência intermediária da FEAT-002:</strong>
+            <strong>Evidência local da FEAT-002:</strong>
             <p>
               Reset limpo, geração determinística, 224/224 asserts pgTAP e 380/380 unitários estão
               verdes. A matriz Playwright integral passou em 59/59; os 23 casos Auth comprovaram
@@ -1053,8 +1053,8 @@
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. A fundação concluiu essa cadeia;
-              na FEAT-002, release e auditoria finais ainda seguem pendentes antes da conclusão.
+              → docs → Playwright completo → builds → audit → Knip. A FEAT-002 concluiu essa cadeia,
+              o release local e as auditorias do diff; resta o review do PR antes da conclusão.
             </p>
           </div>
         </section>
@@ -1125,9 +1125,9 @@
               <span class="tag done">Implementado localmente</span>
               <h3>Artefato por SHA</h3>
               <p>
-                O gerador exige checkout limpo, recompila web/backoffice com ambientes separados,
-                usa <code>BUILD_ID</code> do commit, inclui migrations e lockfile, faz smoke nos
-                entrypoints standalone e revalida a árvore.
+                A FEAT-002 foi empacotada no commit <code>0e5451d</code>: checkout limpo, builds e
+                smokes de web/backoffice, migrations e lockfile, com 2.752 artefatos validados e
+                archive SHA-256 <code>b5b2a90e…b7626</code>.
               </p>
             </article>
             <article class="card">
@@ -1164,9 +1164,9 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está em
-              implementação e as demais continuam planejadas; a ordem abaixo é a sequência
-              executável do ADR-017.
+              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está
+              validada localmente e aguardando review; as demais continuam planejadas conforme a
+              sequência executável do ADR-017.
             </p>
           </div>
 
@@ -1194,7 +1194,7 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag review">002 em implementação · 0/9 concluídas</span></td>
+                  <td><span class="tag review">002 validada localmente · 0/9 concluídas</span></td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1250,7 +1250,7 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Publicar somente depois dos gates integrais e da auditoria do diff staged.</li>
+                <li>Publicar a branch validada e abrir o PR da FEAT-002.</li>
                 <li>Resolver apenas comentários comprovadamente atendidos no commit publicado.</li>
                 <li>Repetir review, correção e testes enquanto houver problema acionável.</li>
                 <li>Concluir e revisar a FEAT-002 antes de iniciar qualquer feature seguinte.</li>
