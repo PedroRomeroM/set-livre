@@ -42,14 +42,34 @@ import { recoveryGrantCookieName, recoveryGrantMaximumAgeSeconds } from "./recov
 
 const databaseErrorSchema = z.object({ code: z.string().optional() });
 const claimsSchema = z.object({ sub: z.uuid() });
+type IdentityCookieStore = Awaited<ReturnType<typeof cookies>>;
+type IdentitySupabaseAuth = ReturnType<typeof createAnonymousSupabaseClient>["auth"];
 
 function userAgentEvidence(userAgent: string | null) {
   return userAgent === null ? null : createHash("sha256").update(userAgent).digest("hex");
 }
 
-async function signOutLocalOrProveAbsent(
-  auth: ReturnType<typeof createAnonymousSupabaseClient>["auth"],
-) {
+function clearSupabaseAuthCookies(cookieStore: IdentityCookieStore, supabaseOrigin: string) {
+  const projectReference = new URL(supabaseOrigin).hostname.split(".")[0];
+  if (projectReference === undefined || projectReference === "") {
+    return;
+  }
+  const storageKey = `sb-${projectReference}-auth-token`;
+  for (const cookie of cookieStore.getAll()) {
+    const chunk = cookie.name.startsWith(`${storageKey}.`)
+      ? cookie.name.slice(storageKey.length + 1)
+      : undefined;
+    if (cookie.name === storageKey || (chunk !== undefined && /^(?:0|[1-9][0-9]*)$/u.test(chunk))) {
+      try {
+        cookieStore.delete(cookie.name);
+      } catch {
+        // Uma falha pontual não impede a tentativa de apagar os demais chunks.
+      }
+    }
+  }
+}
+
+async function signOutLocalOrProveAbsent(auth: IdentitySupabaseAuth) {
   let providerError: unknown = null;
   try {
     const result = await auth.signOut({ scope: "local" });
@@ -71,6 +91,62 @@ async function signOutLocalOrProveAbsent(
   if (!localSessionWasRemoved) {
     handleLogoutProviderError(providerError);
   }
+}
+
+function isProvenRecoveryCallbackRejection(error: unknown) {
+  return (
+    error instanceof ApiRouteError &&
+    (error.code === "RATE_LIMITED" || error.code === "RECOVERY_INVALID")
+  );
+}
+
+async function restartRecoveryAfterAmbiguousCallback(input: {
+  auth: IdentitySupabaseAuth;
+  cookieStore: IdentityCookieStore;
+  recoveryGrant?: string | undefined;
+  supabaseOrigin: string;
+  userId?: string | undefined;
+}): Promise<never> {
+  try {
+    input.cookieStore.delete(recoveryGrantCookieName);
+  } catch {
+    // As demais limpezas ainda precisam ocorrer se o cookie store falhar.
+  }
+  if (input.recoveryGrant !== undefined && input.userId !== undefined) {
+    try {
+      const attemptId = randomUUID();
+      if (
+        await claimIdentityRecoveryGrant({
+          attemptId,
+          token: input.recoveryGrant,
+          userId: input.userId,
+        })
+      ) {
+        await consumeIdentityRecoveryGrant({
+          attemptId,
+          token: input.recoveryGrant,
+          userId: input.userId,
+        });
+      }
+    } catch {
+      // O grant permanece claimed/expirável e não pode autorizar outra tentativa.
+    }
+  }
+  try {
+    await signOutLocalOrProveAbsent(input.auth);
+  } catch {
+    // A falha de limpeza não torna reutilizável um OTP já verificado ou ambíguo.
+  }
+  try {
+    clearSupabaseAuthCookies(input.cookieStore, input.supabaseOrigin);
+  } catch {
+    // O fluxo continua terminal mesmo se o fallback do cookie store falhar.
+  }
+  throw new ApiRouteError(
+    503,
+    "RECOVERY_RESTART_REQUIRED",
+    "Não foi possível preparar a recuperação agora. Solicite um novo link.",
+  );
 }
 
 export async function registerIdentity(
@@ -230,55 +306,62 @@ export async function verifyIdentityCallback(input: {
     windowMs: 10 * 60_000,
   });
   const route = await createRouteSupabaseClient();
-  const { data, error } = await route.client.auth.verifyOtp({
-    token_hash: input.tokenHash,
-    type: input.type,
-  });
-  if (error !== null) {
-    handleCallbackProviderError(error, input.type);
-  }
-  if (data.user === null || data.session === null) {
-    throw new ApiRouteError(503, "SERVICE_UNAVAILABLE", "Não foi possível validar o link agora.");
-  }
+  const recoveryContext =
+    input.type === "recovery"
+      ? {
+          cookieStore: await cookies(),
+          supabaseOrigin: readSupabaseEnvironment().supabaseOrigin,
+        }
+      : undefined;
+  const data = await (async () => {
+    try {
+      const verification = await route.client.auth.verifyOtp({
+        token_hash: input.tokenHash,
+        type: input.type,
+      });
+      if (verification.error !== null) {
+        handleCallbackProviderError(verification.error, input.type);
+      }
+      if (verification.data.user === null || verification.data.session === null) {
+        throw new ApiRouteError(
+          503,
+          "SERVICE_UNAVAILABLE",
+          "Não foi possível validar o link agora.",
+        );
+      }
+      return { session: verification.data.session, user: verification.data.user };
+    } catch (error) {
+      if (recoveryContext === undefined || isProvenRecoveryCallbackRejection(error)) {
+        throw error;
+      }
+      return restartRecoveryAfterAmbiguousCallback({
+        auth: route.client.auth,
+        cookieStore: recoveryContext.cookieStore,
+        supabaseOrigin: recoveryContext.supabaseOrigin,
+      });
+    }
+  })();
 
   if (input.type === "recovery") {
-    const cookieStore = await cookies();
-    const environment = readSupabaseEnvironment();
+    if (recoveryContext === undefined) {
+      throw new ApiRouteError(503, "SERVICE_UNAVAILABLE", "Não foi possível validar o link agora.");
+    }
     let recoveryGrant: string | undefined;
     try {
       recoveryGrant = await issueIdentityRecoveryGrant(data.user.id);
-      cookieStore.set(recoveryGrantCookieName, recoveryGrant, {
-        ...environment.cookieOptions,
+      recoveryContext.cookieStore.set(recoveryGrantCookieName, recoveryGrant, {
+        ...readSupabaseEnvironment().cookieOptions,
         maxAge: recoveryGrantMaximumAgeSeconds,
         sameSite: "strict",
       });
     } catch {
-      if (recoveryGrant !== undefined) {
-        const attemptId = randomUUID();
-        try {
-          if (
-            await claimIdentityRecoveryGrant({
-              attemptId,
-              token: recoveryGrant,
-              userId: data.user.id,
-            })
-          ) {
-            await consumeIdentityRecoveryGrant({
-              attemptId,
-              token: recoveryGrant,
-              userId: data.user.id,
-            });
-          }
-        } catch {
-          // O grant permanece claimed/expirável e não pode autorizar outra tentativa.
-        }
-      }
-      await signOutLocalOrProveAbsent(route.client.auth);
-      throw new ApiRouteError(
-        503,
-        "SERVICE_UNAVAILABLE",
-        "Não foi possível preparar a recuperação agora. Solicite um novo link.",
-      );
+      return restartRecoveryAfterAmbiguousCallback({
+        auth: route.client.auth,
+        cookieStore: recoveryContext.cookieStore,
+        recoveryGrant,
+        supabaseOrigin: recoveryContext.supabaseOrigin,
+        userId: data.user.id,
+      });
     }
   }
 

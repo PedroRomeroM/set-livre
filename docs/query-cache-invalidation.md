@@ -6,7 +6,8 @@ Um único módulo exporta factories. Nenhuma key literal espalhada.
 
 Famílias:
 
-- `identityQueryKeys.session = ["identity", "session", "current-user"]`;
+- `identityQueryKeys.sessions = ["identity", "session"]` é somente o prefixo de invalidação;
+- `identityQueryKeys.session(scope) = ["identity", "session", userId | "anonymous"]`;
 - `identityQueryKeys.recoveryStatus = ["identity", "recovery", "current-session"]`;
 - `public.homeTaxonomies`;
 - `public.studioList(filters,cursor)`;
@@ -28,6 +29,7 @@ Famílias:
 ## 2. Scope
 
 - user ID/role scope obrigatório em privado;
+- sessão Auth usa o `userId` validado no SSR como escopo concreto; o estado anônimo usa a sentinela `anonymous`, nunca e-mail ou token;
 - filtros canonicalizados;
 - cursor;
 - published revision/version quando relevante;
@@ -50,7 +52,7 @@ Medir; não usar Infinity em dado operacional.
 | Command prefix        | Invalida                                                                                            |
 | --------------------- | --------------------------------------------------------------------------------------------------- |
 | `identity.register`   | nenhuma key privada; sucesso aguarda confirmação Auth                                               |
-| login/callback        | publica/refaz `identityQueryKeys.session` após retorno autoritativo; foco da aba revalida           |
+| login/callback        | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida        |
 | logout                | limpa integralmente o `QueryClient` antes da navegação SSR                                          |
 | recovery              | consulta o grant da sessão atual; revalida após update e foco; senha/token/e-mail ficam fora da key |
 | `profile.*`           | account/profile, owner overview                                                                     |
@@ -72,6 +74,9 @@ Medir; não usar Infinity em dado operacional.
 
 ## 5. UX
 
+- SSR e a primeira hidratação publicam o mesmo boundary sem PII; depois do mount, um efeito sem observer privado remove a família, semeia o `initialData` autoritativo e só então libera o painel;
+- cada nova revisão de props RSC faz o boundary voltar imediatamente ao estado fechado, desmonta o observer anterior e repete remove + seed antes de renderizar a mesma identidade ou outro usuário;
+- durante refetch por foco, a identidade fica oculta em todo `fetchStatus` não ocioso, inclusive `paused` offline; o payload autoritativo é validado contra o escopo antes de entrar no cache e, se o servidor retornar outro usuário/estado anônimo, o cache privado é limpo e a rota SSR é recarregada;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

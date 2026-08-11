@@ -152,7 +152,8 @@ export async function submitFeat002Registration(
   personType: "Pessoa física" | "Pessoa jurídica" = "Pessoa jurídica",
 ) {
   await gotoExpectedPage(page, "/cadastro", "Crie sua conta");
-  await page.getByRole("radio", { name: personType }).check();
+  const personTypeChoice = page.getByRole("radio", { name: personType });
+  await personTypeChoice.check();
   await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
   await stageFeat002PasswordForSubmission(
     getFeat002PasswordControl(page, "Senha"),
@@ -172,6 +173,7 @@ export async function submitFeat002Registration(
   await privacyAcceptance.check();
   await expect(termsAcceptance).toBeChecked();
   await expect(privacyAcceptance).toBeChecked();
+  await expect(personTypeChoice).toBeChecked();
 
   const notBefore = new Date(Date.now() - 1_000);
   await page.getByRole("button", { name: "Criar conta" }).click();

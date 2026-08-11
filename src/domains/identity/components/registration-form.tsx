@@ -4,7 +4,6 @@ import {
   identityRegistrationFormSchema,
   type CurrentLegalDocuments,
   type IdentityRegistrationPayload,
-  type PersonType,
 } from "@set-livre/contracts";
 import {
   Alert,
@@ -53,7 +52,6 @@ export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
   const [passwordRequirementState, setPasswordRequirementState] = useState(() =>
     passwordRequirements(""),
   );
-  const [personType, setPersonType] = useState<PersonType>("individual");
   const pendingRegistration = useRef<IdentityRegistrationPayload>(undefined);
   const mutation = useMutation({
     mutationFn: () => {
@@ -82,7 +80,7 @@ export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
       confirmPassword: formValue(form, "confirmPassword"),
       email: formValue(form, "email"),
       password: formValue(form, "password"),
-      personType,
+      personType: formValue(form, "personType"),
       privacyVersionId: legalDocuments.privacy.id,
       termsVersionId: legalDocuments.terms.id,
     });
@@ -136,12 +134,11 @@ export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
 
       <ChoiceGroup
         {...fieldErrorProp(visibleFieldErrors, "personType")}
+        defaultValue="individual"
         disabled={mutation.isPending}
         legend="Tipo de cadastro"
         name="personType"
-        onValueChange={setPersonType}
         required
-        value={personType}
       />
 
       <Field {...fieldErrorProp(visibleFieldErrors, "email")} label="E-mail" required>

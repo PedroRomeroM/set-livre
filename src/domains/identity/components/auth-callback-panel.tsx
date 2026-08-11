@@ -5,11 +5,16 @@ import { Alert, Button, Stack } from "@set-livre/ui";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { completeIdentityCallback, IdentityApiError } from "./identity-api";
+import {
+  completeIdentityCallback,
+  IdentityApiError,
+  isRetryableIdentityCallbackError,
+} from "./identity-api";
 import styles from "./identity.module.css";
 
 type CallbackPayload = Parameters<typeof completeIdentityCallback>[0];
-type CallbackState = { status: "error"; error: unknown } | { status: "pending" };
+type CallbackState =
+  { status: "error"; error: unknown; retryable: boolean } | { status: "pending" };
 
 function callbackPayloadFromAddress(): CallbackPayload {
   const address = new URL(window.location.href);
@@ -47,15 +52,6 @@ function callbackPayloadFromAddress(): CallbackPayload {
       };
 }
 
-function retryableCallbackError(error: unknown) {
-  return (
-    error instanceof IdentityApiError &&
-    ["NETWORK_UNAVAILABLE", "REQUEST_TIMEOUT", "RESPONSE_INVALID", "SERVICE_UNAVAILABLE"].includes(
-      error.code,
-    )
-  );
-}
-
 export function AuthCallbackPanel() {
   const callbackPayload = useRef<CallbackPayload>(undefined);
   const started = useRef(false);
@@ -69,10 +65,13 @@ export function AuthCallbackPanel() {
         callbackPayload.current = undefined;
         window.location.replace(result.redirectTo);
       } catch (error) {
-        if (!retryableCallbackError(error)) {
+        const retryable =
+          callbackPayload.current !== undefined &&
+          isRetryableIdentityCallbackError(error, callbackPayload.current.type);
+        if (!retryable) {
           callbackPayload.current = undefined;
         }
-        setState({ error, status: "error" });
+        setState({ error, retryable, status: "error" });
       }
     })();
   }, []);
@@ -99,7 +98,7 @@ export function AuthCallbackPanel() {
           Links expirados ou já utilizados não liberam o acesso nem o formulário de nova senha.
         </p>
         <div className={styles.actions}>
-          {retryableCallbackError(state.error) ? (
+          {state.retryable ? (
             <Button onClick={runCallback} variant="secondary">
               Tentar novamente
             </Button>

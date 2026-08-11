@@ -28,6 +28,21 @@ export class IdentityApiError extends Error {
   }
 }
 
+export function isRetryableIdentityCallbackError(error: unknown, type: "recovery" | "signup") {
+  if (!(error instanceof IdentityApiError)) {
+    return false;
+  }
+  if (type === "recovery") {
+    return error.code === "SERVICE_UNAVAILABLE";
+  }
+  return [
+    "NETWORK_UNAVAILABLE",
+    "REQUEST_TIMEOUT",
+    "RESPONSE_INVALID",
+    "SERVICE_UNAVAILABLE",
+  ].includes(error.code);
+}
+
 async function readPayload(response: Response): Promise<unknown> {
   try {
     return (await response.json()) as unknown;

@@ -6,9 +6,9 @@ import {
   type IdentitySession,
 } from "@set-livre/contracts";
 import { Alert, Button, Field, Input, PasswordInput, Stack } from "@set-livre/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
 import {
@@ -17,7 +17,15 @@ import {
   logoutIdentity,
   readIdentitySession,
 } from "./identity-api";
-import { identityQueryKeys } from "./identity-query-keys";
+import {
+  IdentitySessionScopeChangedError,
+  identityQueryKeys,
+  identitySessionCanRender,
+  identitySessionForScope,
+  identitySessionMatchesScope,
+  identitySessionScope,
+  type IdentitySessionScope,
+} from "./identity-query-keys";
 import styles from "./identity.module.css";
 
 type LoginPanelProps = {
@@ -29,27 +37,52 @@ function accountTypeLabel(session: Extract<IdentitySession, { authenticated: tru
   return session.personType === "individual" ? "Pessoa física" : "Pessoa jurídica";
 }
 
+function replaceIdentitySessionCache(queryClient: QueryClient, session: IdentitySession) {
+  queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+  queryClient.setQueryData(identityQueryKeys.session(identitySessionScope(session)), session);
+}
+
+function redactIdentitySessionCacheForReload(
+  queryClient: QueryClient,
+  previousScope: IdentitySessionScope,
+) {
+  queryClient.clear();
+  queryClient.setQueryData(identityQueryKeys.session(previousScope), { authenticated: false });
+}
+
 function AuthenticatedPanel({
   logoutNeedsVerification,
+  onSessionTransition,
   session,
 }: {
   logoutNeedsVerification: boolean;
+  onSessionTransition: () => void;
   session: Extract<IdentitySession, { authenticated: true }>;
 }) {
   const queryClient = useQueryClient();
   const logoutMutation = useMutation({
     mutationFn: logoutIdentity,
     onSuccess: () => {
-      queryClient.clear();
+      onSessionTransition();
+      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
       window.location.replace("/entrar");
     },
     onError: () => {
-      queryClient.setQueryData(identityQueryKeys.session, { authenticated: false });
+      onSessionTransition();
+      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
       window.location.replace("/entrar?saida=verificar");
     },
   });
   const apiError =
     logoutMutation.error instanceof IdentityApiError ? logoutMutation.error : undefined;
+
+  if (logoutMutation.isError) {
+    return (
+      <Alert title="Não foi possível confirmar a saída" variant="error">
+        {apiError?.message ?? "Sua sessão será validada novamente antes de exibir dados privados."}
+      </Alert>
+    );
+  }
 
   return (
     <Stack space={5}>
@@ -65,12 +98,6 @@ function AuthenticatedPanel({
         </Alert>
       ) : (
         <Alert title="Sessão ativa">Sua identidade foi validada no servidor.</Alert>
-      )}
-
-      {apiError === undefined ? null : (
-        <Alert title="Não foi possível sair" variant="error">
-          {apiError.message}
-        </Alert>
       )}
 
       <div className={styles.accountSummary}>
@@ -119,7 +146,7 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
       pendingLogin.current = undefined;
     },
     onSuccess: (result) => {
-      queryClient.setQueryData(identityQueryKeys.session, result.session);
+      replaceIdentitySessionCache(queryClient, result.session);
       window.location.assign(result.redirectTo);
     },
   });
@@ -198,17 +225,46 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
   );
 }
 
-export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPanelProps) {
+function PreparedLoginPanel({ initialSession, logoutNeedsVerification }: LoginPanelProps) {
+  const queryClient = useQueryClient();
+  const [sessionTransitionStarted, setSessionTransitionStarted] = useState(false);
+  const sessionScope = identitySessionScope(initialSession);
+  const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
   const sessionQuery = useQuery({
     initialData: initialSession,
-    queryFn: readIdentitySession,
-    queryKey: identityQueryKeys.session,
+    queryFn: async () => identitySessionForScope(await readIdentitySession(), sessionScope),
+    queryKey: sessionQueryKey,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 30_000,
   });
+  const observedSession = sessionQuery.data;
+  const observedSessionCanRender =
+    observedSession !== undefined &&
+    identitySessionCanRender(observedSession, sessionScope, sessionQuery.fetchStatus);
+  const observedScopeChanged =
+    observedSession !== undefined && !identitySessionMatchesScope(observedSession, sessionScope);
+  const authoritativeScopeChanged = sessionQuery.error instanceof IdentitySessionScopeChangedError;
 
-  if (sessionQuery.isError) {
+  useEffect(() => {
+    if ((!observedScopeChanged && !authoritativeScopeChanged) || sessionTransitionStarted) {
+      return;
+    }
+    redactIdentitySessionCacheForReload(queryClient, sessionScope);
+    window.location.replace("/entrar");
+  }, [
+    authoritativeScopeChanged,
+    observedScopeChanged,
+    queryClient,
+    sessionScope,
+    sessionTransitionStarted,
+  ]);
+
+  if (sessionTransitionStarted || (observedSession !== undefined && !observedSessionCanRender)) {
+    return <Alert>Validando sua sessão…</Alert>;
+  }
+
+  if (sessionQuery.isError || observedSession === undefined) {
     const message =
       sessionQuery.error instanceof IdentityApiError
         ? sessionQuery.error.message
@@ -234,12 +290,48 @@ export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPan
     );
   }
 
-  return sessionQuery.data.authenticated ? (
+  return observedSession.authenticated ? (
     <AuthenticatedPanel
       logoutNeedsVerification={logoutNeedsVerification}
-      session={sessionQuery.data}
+      onSessionTransition={() => {
+        setSessionTransitionStarted(true);
+      }}
+      session={observedSession}
     />
   ) : (
     <LoginForm logoutWasVerified={logoutNeedsVerification} />
+  );
+}
+
+export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPanelProps) {
+  const queryClient = useQueryClient();
+  const sessionScope = identitySessionScope(initialSession);
+  const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
+  const [preparedInitialSession, setPreparedInitialSession] = useState<IdentitySession>();
+  const seedIsCurrent = preparedInitialSession === initialSession;
+
+  useEffect(() => {
+    let active = true;
+    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+    queryClient.setQueryData(sessionQueryKey, initialSession);
+    queueMicrotask(() => {
+      if (active) {
+        setPreparedInitialSession(initialSession);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [initialSession, queryClient, sessionQueryKey]);
+
+  if (!seedIsCurrent) {
+    return <Alert>Validando sua sessão…</Alert>;
+  }
+
+  return (
+    <PreparedLoginPanel
+      initialSession={preparedInitialSession}
+      logoutNeedsVerification={logoutNeedsVerification}
+    />
   );
 }

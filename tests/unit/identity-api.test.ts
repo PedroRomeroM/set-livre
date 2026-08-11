@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loginIdentity } from "../../src/domains/identity/components/identity-api";
+import {
+  IdentityApiError,
+  isRetryableIdentityCallbackError,
+  loginIdentity,
+} from "../../src/domains/identity/components/identity-api";
 
 describe("identity browser API", () => {
   afterEach(() => {
@@ -42,5 +46,46 @@ describe("identity browser API", () => {
     expect(serializedError).not.toContain(privatePassword);
     expect(serializedError).not.toContain("provider-secret");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps signup retries while making ambiguous recovery transport failures terminal", () => {
+    for (const code of [
+      "NETWORK_UNAVAILABLE",
+      "REQUEST_TIMEOUT",
+      "RESPONSE_INVALID",
+      "SERVICE_UNAVAILABLE",
+    ]) {
+      expect(
+        isRetryableIdentityCallbackError(new IdentityApiError(code, "Erro seguro."), "signup"),
+      ).toBe(true);
+    }
+
+    expect(
+      isRetryableIdentityCallbackError(
+        new IdentityApiError("SERVICE_UNAVAILABLE", "Erro seguro."),
+        "recovery",
+      ),
+    ).toBe(true);
+    for (const code of ["NETWORK_UNAVAILABLE", "REQUEST_TIMEOUT", "RESPONSE_INVALID"]) {
+      expect(
+        isRetryableIdentityCallbackError(new IdentityApiError(code, "Erro seguro."), "recovery"),
+      ).toBe(false);
+    }
+
+    expect(
+      isRetryableIdentityCallbackError(
+        new IdentityApiError(
+          "RECOVERY_RESTART_REQUIRED",
+          "Não foi possível preparar a recuperação agora. Solicite um novo link.",
+        ),
+        "recovery",
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableIdentityCallbackError(
+        new IdentityApiError("RECOVERY_INVALID", "Solicite um novo link."),
+        "recovery",
+      ),
+    ).toBe(false);
   });
 });

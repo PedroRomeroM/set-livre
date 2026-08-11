@@ -41,6 +41,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - o cliente interrompe qualquer request de identidade após dez segundos e retorna estado recuperável sem preservar payload sensível;
 - login, logout, callback, recovery e sessão usam clientes Supabase server-side por request; senha, token e cookie nunca entram no cache TanStack;
 - o callback aceita apenas `signup` ou `recovery`; o `TokenHash` chega ao browser no fragmento, é apagado antes do `POST` e não aparece na request inicial nem no referrer;
+- em recovery, somente um `SERVICE_UNAVAILABLE` recebido em resposta válida antes de `verifyOtp` permite retry. Falha de rede, timeout ou resposta inválida após o envio são ambíguos no cliente; erro desconhecido, throw, sessão incompleta ou falha de grant depois que `verifyOtp` começa retornam `RECOVERY_RESTART_REQUIRED`, apagam o payload e exigem novo link;
 - a troca de senha reserva o grant no banco antes do provedor; somente rejeições explícitas sem efeito liberam retry, enquanto resultado ambíguo encerra a autorização e exige novo link;
 - logout e descarte da sessão pós-recovery só aceitam erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe; estado presente ou ambíguo falha fechado;
 - `returnTo` possui allowlist literal; nesta fatia o único destino autenticado é `/entrar?sessao=ativa`.
@@ -62,6 +63,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 | `PAYMENT_MISMATCH`             |  409 | valor/moeda              |
 | `RATE_LIMITED`                 |  429 | abuso                    |
 | `PAYLOAD_TOO_LARGE`            |  413 | limite                   |
+| `RECOVERY_RESTART_REQUIRED`    |  503 | OTP ambíguo ou consumido |
 | `INTERNAL_ERROR`               |  500 | inesperado com requestId |
 
 Mensagens de usuário são traduzidas por código. Não usar mensagem SQL.
@@ -368,7 +370,7 @@ Documento/código devem manter mapa único. Regras:
 - admin review invalida fila/status/public;
 - taxonomy invalida filtros e editores.
 
-Na FEAT-002, `identityQueryKeys.session = ["identity", "session", "current-user"]` e `identityQueryKeys.recoveryStatus = ["identity", "recovery", "current-session"]` são as duas keys centralizadas. Login publica a sessão autoritativa recebida; logout limpa todo o `QueryClient` antes da navegação SSR. Token de callback, senha e e-mail de formulário nunca entram em query key ou cache.
+Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação, `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada e `identityQueryKeys.recoveryStatus = ["identity", "recovery", "current-session"]` mantém o grant da sessão atual. Antes de renderizar PII, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; logout e recovery removem a família privada. Token de callback, senha e e-mail de formulário nunca entram em query key ou cache.
 
 ## 10. Rate limits iniciais
 

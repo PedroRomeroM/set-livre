@@ -128,6 +128,9 @@ describe("identity mutation cache security", () => {
 
     expect(content).toContain('refetchOnWindowFocus: "always"');
     expect(content).toContain("await queryClient.invalidateQueries({");
+    expect(content).toContain(
+      "queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });",
+    );
     expect(content).toContain("statusRefreshing={statusQuery.isFetching}");
     expect(content).toContain("disabled={mutation.isPending || statusRefreshing}");
   });
@@ -140,11 +143,51 @@ describe("identity mutation cache security", () => {
 
     expect(content).toContain("onError: () => {");
     expect(content).toContain(
-      "queryClient.setQueryData(identityQueryKeys.session, { authenticated: false });",
+      "redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));",
     );
+    expect(content).toContain("if (logoutMutation.isError)");
+    expect(content).toContain("antes de exibir dados privados");
     expect(content).toContain('window.location.replace("/entrar?saida=verificar")');
     expect(content).toContain("A sessão ainda está ativa");
     expect(content).toContain("A revalidação confirmou que não há uma sessão ativa");
+  });
+
+  it("scopes session queries and hides PII throughout an authoritative transition", () => {
+    const content = readFileSync(
+      resolve(process.cwd(), "src/domains/identity/components/login-panel.tsx"),
+      "utf8",
+    );
+
+    expect(content).toContain(
+      "const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope)",
+    );
+    expect(content).toContain("queryKey: sessionQueryKey");
+    expect(content).toContain("function PreparedLoginPanel");
+    expect(content).not.toContain("useSyncExternalStore");
+    expect(content).not.toContain("getQueryCache().subscribe");
+    expect(content).toContain(
+      "queryClient.removeQueries({ queryKey: identityQueryKeys.sessions })",
+    );
+    expect(content).toContain("queryClient.setQueryData(sessionQueryKey, initialSession)");
+    expect(content).toContain("queueMicrotask(() => {");
+    expect(content).toContain(
+      "identitySessionCanRender(observedSession, sessionScope, sessionQuery.fetchStatus)",
+    );
+    expect(content).toContain("observedScopeChanged");
+    expect(content).toContain("identitySessionForScope(await readIdentitySession(), sessionScope)");
+    expect(content).toContain("sessionQuery.error instanceof IdentitySessionScopeChangedError");
+    expect(content).toContain("setSessionTransitionStarted(true);");
+    expect(content).toContain("queryClient.clear();");
+    expect(content).toContain(
+      "queryClient.setQueryData(identityQueryKeys.session(previousScope), { authenticated: false });",
+    );
+    expect(content).toContain('window.location.replace("/entrar")');
+    expect(content).toContain("Validando sua sessão…");
+    const boundary = content.slice(content.indexOf("export function LoginPanel"));
+    expect(boundary).not.toContain("useQuery({");
+    expect(boundary.indexOf("if (!seedIsCurrent)")).toBeLessThan(
+      boundary.indexOf("<PreparedLoginPanel"),
+    );
   });
 
   it("keeps registration and recovery password fields uncontrolled", () => {
@@ -160,6 +203,19 @@ describe("identity mutation cache security", () => {
       expect(content).not.toMatch(/value=\{(?:confirmPassword|password)\}/u);
       expect(content).not.toMatch(/\bset(?:Confirm)?Password\(/u);
     }
+  });
+
+  it("reads the registration choice from the native form without hydration state", () => {
+    const content = readFileSync(
+      resolve(process.cwd(), "src/domains/identity/components/registration-form.tsx"),
+      "utf8",
+    );
+
+    expect(content).toContain('personType: formValue(form, "personType")');
+    expect(content).toContain('defaultValue="individual"');
+    expect(content).not.toMatch(/useState<PersonType>/u);
+    expect(content).not.toContain("onValueChange={setPersonType}");
+    expect(content).not.toContain("value={personType}");
   });
 
   it("stages E2E passwords outside the DOM through a redacted evaluate step", () => {
@@ -231,7 +287,11 @@ describe("identity mutation cache security", () => {
     expect(content).not.toContain("useMutation");
     expect(content).toContain("const callbackPayload = useRef<CallbackPayload>(undefined);");
     expect(content).toContain("const [state, setState] = useState<CallbackState>");
-    expect(content).toContain("if (!retryableCallbackError(error))");
+    expect(content).toContain(
+      "isRetryableIdentityCallbackError(error, callbackPayload.current.type)",
+    );
+    expect(content).toContain("if (!retryable)");
+    expect(content).toContain('setState({ error, retryable, status: "error" });');
     expect(content.match(/callbackPayload\.current = undefined;/gu)).toHaveLength(2);
     expect(content).not.toContain("MutationCache");
   });

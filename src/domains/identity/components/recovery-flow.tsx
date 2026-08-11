@@ -155,7 +155,7 @@ function NewPasswordForm({
         queryKey: identityQueryKeys.recoveryStatus,
       });
       queryClient.setQueryData(identityQueryKeys.recoveryStatus, { allowed: false });
-      queryClient.removeQueries({ exact: true, queryKey: identityQueryKeys.session });
+      queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
       onCompleted();
     },
     onSettled: async () => {

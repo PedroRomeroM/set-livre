@@ -51,13 +51,16 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 ## Regras de produto e domínio
 
 - A senha segue a regra real do provider.
+- O tipo de cadastro usa o rádio nativo como fonte única: o valor vem do `FormData`, passa pelo Zod estrito e não pode divergir de um estado React durante a hidratação.
 - Cadastro não considera perfil concluído até FEAT-003.
 - Recuperação retorna resposta genérica.
 - Logout invalida caches privados.
 - Se a resposta de logout for perdida ou ambígua, a UI oculta imediatamente os dados privados e recarrega a rota SSR; a tela então informa se a sessão continua ativa ou se a ausência local foi confirmada.
 - Token inválido/expirado não mostra formulário funcional.
+- Em recovery, somente uma resposta válida `SERVICE_UNAVAILABLE` emitida antes de iniciar `verifyOtp` permite retry. Depois do envio, falha de rede, timeout, resposta inválida, erro desconhecido do provider, publicação ambígua de cookies ou falha ao emitir/publicar o grant encerram a tentativa com `RECOVERY_RESTART_REQUIRED`, limpam grant, cookies e sessão e orientam solicitar novo link sem reutilizar o token possivelmente consumido.
 - O grant adicional de recovery fica persistido no banco, vinculado ao usuário, expira em 15 minutos e é one-shot: uma claim exclusiva precede o provider; somente rejeição explicitamente sem efeito permite release e retry.
 - O formulário de nova senha fica bloqueado durante toda revalidação autoritativa; após o consumo, o cache marca o grant como negado e descarta a sessão privada em memória.
+- Um refetch de sessão valida o usuário/escopo antes de publicar o payload no TanStack; uma troca autoritativa limpa a família e recarrega SSR sem gravar B sob a key de A.
 - Uma conta suspensa pode autenticar no provider, mas não acessa o produto.
 
 ## Dados canônicos afetados
@@ -83,7 +86,7 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 
 - Formulários preservam e-mail em erro seguro.
 - PasswordInput com mostrar/ocultar e requisitos.
-- O callback apresenta carregamento e falha recuperável.
+- O callback apresenta carregamento e falha recuperável somente quando a repetição é comprovadamente segura; recovery ambíguo encerra o payload one-shot.
 - A verificação inicial e o refetch de recovery apresentam loading sem reutilizar um estado `allowed` em cache.
 - Toda request interativa expira em dez segundos e reabilita uma recuperação acionável.
 - ReturnTo não permite URL externa.
@@ -135,7 +138,7 @@ Regras:
 
 ## Testes unitários, integração e banco
 
-- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter, recovery grant, templates, parser Markdown jurídico e helpers QA;
+- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter, recovery grant, fronteira retryable/terminal do callback, cleanup pós-OTP, templates, parser Markdown jurídico e helpers QA;
 - banco/RLS: perfil e aceites próprios para usuários A/B, intenção expirada/replay/concorrência, trigger atômico, metadata scrub, grant recovery com claim/release/consume concorrente, grants e readiness;
 - segurança: cookies, origem/request host, corpo limitado, callback em fragmento, redaction e cleanup local exato;
 - Playwright: os sete IDs possuem specs físicas; as 23 execuções Auth e a matriz integral de 59 casos passaram nos browsers.

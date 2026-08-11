@@ -13,7 +13,7 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 9 migrations append-only, head `20260811000200` e 224 asserts pgTAP verdes na FEAT-002;
-- rodada atual com 386 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
+- rodada atual com 403 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
 - lint, TypeScript estrito, Knip, audit, builds, smokes standalone e release local imutável das duas aplicações comprovados na rodada atual;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
 - 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
