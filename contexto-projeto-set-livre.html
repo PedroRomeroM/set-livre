@@ -641,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · quarto review atendido, nova revisão pendente</li>
+          <li>FEAT-002 · revisão sem achado, merge pendente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -684,8 +684,8 @@
               autorização. As três correções passaram na cadeia canônica, foram publicadas no commit
               <code>da34f46</code> e geraram release imutável local. As três threads receberam
               respostas, foram resolvidas individualmente e a leitura thread-aware confirmou zero
-              aberta. A feature permanece fora da contagem de concluídas até obter novo review sem
-              blocker e fazer merge.
+              aberta. O Codex revisou o snapshot final e não encontrou problema relevante. A feature
+              permanece fora da contagem de concluídas somente até o merge.
             </p>
           </div>
 
@@ -708,7 +708,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quarto review atendido</span>
+              <span class="tag review">Revisão sem achado</span>
               <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
@@ -1075,8 +1075,8 @@
               quarto review: 458 unitários, 236 asserts pgTAP, 59 execuções browser e zero
               vulnerabilidade. O índice técnico foi auditado, os pacotes standalone passaram nos
               smokes e a release do commit <code>da34f46</code> foi verificada por manifesto e
-              archive. As três threads foram respondidas/resolvidas e não há thread aberta; restam o
-              novo review e o merge.
+              archive. As três threads foram respondidas/resolvidas, não há thread aberta e a
+              revisão final não encontrou problema relevante; resta somente o merge.
             </p>
           </div>
         </section>
@@ -1279,7 +1279,6 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Solicitar novo review e confirmar novamente zero thread aberta.</li>
                 <li>
                   Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
                 </li>

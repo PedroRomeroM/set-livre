@@ -105,5 +105,6 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - a release imutável validou 2.756 artefatos — 1.467 de web, 1.276 de backoffice, 11 migrations, lockfile e manifesto — e publicou `.artifacts/set-livre-da34f4630948ec549b1b215c718a60e375c0d73a.tar.gz` com SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
 - os 2.755 nós descritos no manifesto conferem por hash com a árvore, o manifesto embutido no archive é byte-idêntico, os dois `BUILD_ID` correspondem ao commit e o pacote contém 11 migrations no head `20260811000400`.
 - as três threads do quarto review receberam respostas ancoradas nos commits técnico/de evidência, foram resolvidas individualmente e o fetch thread-aware confirmou 12 threads totais e zero abertas.
+- o Codex revisou o snapshot final `656a5dc1c04a33e3246edd389c5c0d877cbe37ae` e registrou que não encontrou problema relevante, sem criar thread adicional.
 
-A implementação segue fora da contagem de features concluídas até obter novo review do PR sem blocker e fazer merge.
+A implementação segue fora da contagem de features concluídas somente até o merge do PR.
