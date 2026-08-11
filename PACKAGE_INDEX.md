@@ -29,7 +29,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | Cenários P1         |         64 |
 | Runbooks            |          6 |
 
-A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 198: a FEAT-002 acrescentou um contrato de reflow e a FEAT-003 acrescenta quatro IDs para acessibilidade, reflow, tema/hidratação e estados adversos. Há 16 IDs automatizados; a suíte integral corrente passou em 91/91 execuções browser — 59 da fundação + FEAT-002 e 32 da FEAT-003. A árvore possui 12 migrations, head `20260811000500`, e passou em 284/284 asserts pgTAP e 538/538 unitários. O snapshot foi auditado, commitado em `727eecd` e empacotado em uma release imutável de 2.801 artefatos. A FEAT-002 permanece a primeira das 34 features concluídas; a FEAT-003 segue em implementação até publicação, review e merge.
+A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 198: a FEAT-002 acrescentou um contrato de reflow e a FEAT-003 acrescenta quatro IDs para acessibilidade, reflow, tema/hidratação e estados adversos. Há 16 IDs automatizados; a suíte integral corrente passou em 91/91 execuções browser — 59 da fundação + FEAT-002 e 32 da FEAT-003. A árvore possui 12 migrations, head `20260811000500`, e passou em 284/284 asserts pgTAP e 538/538 unitários. O snapshot foi auditado, commitado em `727eecd` e empacotado em uma release imutável de 2.801 artefatos; o draft [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4) está aberto. A FEAT-002 permanece a primeira das 34 features concluídas; a FEAT-003 segue em implementação até review e merge.
 
 ## Garantias documentais
 

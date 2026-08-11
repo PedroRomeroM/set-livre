@@ -10,7 +10,7 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 
 - fundação local executável incorporada a `main`, sem feature de produto simulada;
 - FEAT-002 incorporada a `main` pelo [PR #2](https://github.com/PedroRomeroM/set-livre/pull/2), no merge `d272657`; é a primeira das 34 features concluídas no repositório. Uma revisão posterior ao merge apontou dois hardenings P2, já corrigidos e validados integralmente na branch da FEAT-003;
-- FEAT-003 em implementação na branch própria, com perfil PF/PJ, `/conta`, segurança e preferência visual integrados localmente; a implementação foi congelada no commit `727eecd`, auditada e empacotada por SHA, mas a conclusão continua condicionada à publicação, review e merge;
+- FEAT-003 em implementação no [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4), com perfil PF/PJ, `/conta`, segurança e preferência visual integrados localmente; a implementação foi congelada no commit `727eecd`, auditada e empacotada por SHA, mas a conclusão continua condicionada ao review e merge;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 12 migrations append-only, head `20260811000500` e 284 asserts pgTAP verdes;
