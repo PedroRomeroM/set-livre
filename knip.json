@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/dev-all.mjs", "scripts/release-manifest.mjs", "tests/fixtures/*.mjs"],
+      "ignoreBinaries": ["flock", "mkfifo"]
+    },
+    "apps/backoffice": {},
+    "packages/contracts": {},
+    "packages/ui": {
+      "ignoreDependencies": ["@types/react", "@types/react-dom"]
+    }
+  }
+}

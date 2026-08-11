@@ -21,6 +21,8 @@ Comprovar contratos de produto, segurança, dados, concorrência, acessibilidade
 
 Cada comportamento possui ID `SL-Fxxx-E2E-nnn`. IDs não são reutilizados. O catálogo completo está em `qa-traceability.md`.
 
+Uma row marcada como `automatizado` somente é válida quando aponta para uma spec Playwright física e regular dentro de `tests/e2e/`, sem symlink no arquivo ou em seus diretórios. A spec precisa importar em runtime o binding nomeado `test` de `@playwright/test` (alias explícito é aceito) e registrar diretamente no módulo, ou no callback direto de `test.describe(...)`, uma chamada desse binding com callback e título literal (string ou template sem interpolação) contendo o mesmo ID estável. Comentário, constante, texto morto, binding local ou sombreado, função arbitrária, branch condicional, `describe` sem teste, título interpolado, outro arquivo ou spec sem o ID não comprovam automação; `test.only` e `test.skip` continuam proibidos pelo guard global.
+
 Prioridades:
 
 - P0: impede release;
@@ -37,7 +39,7 @@ Suítes:
 
 E2E destrutivo somente local:
 
-- host localhost;
+- host IPv4 literal `127.0.0.1`;
 - Supabase local;
 - provider fake/sandbox isolado;
 - e-mail sink;
@@ -46,6 +48,8 @@ E2E destrutivo somente local:
 
 O runner deve abortar antes de abrir browser se detectar production/acceptance host ou DB.
 
+Quando `.env.e2e.local` existir, o preflight somente o lê como arquivo regular exclusivo sob ancestrais físicos, com identidade estável e, em POSIX, owner igual ao usuário efetivo e modo `0600`. A suíte unitária prova ausência opcional, ramo Windows, rejeição anterior à leitura para modo amplo, owner divergente, symlink, hardlink e ancestral simbólico, além de trocas concorrentes do arquivo e do ancestral sem expor o conteúdo em erros.
+
 ## 5. Projetos Playwright
 
 - Chromium desktop;
@@ -53,9 +57,11 @@ O runner deve abortar antes de abrir browser se detectar production/acceptance h
 - WebKit desktop para critical;
 - Chromium mobile 390x844;
 - telefone estreito 320x720 em regressão;
+- reflow equivalente a 320x720 com zoom 200%: layout viewport 160x360 nos três engines, com escala física 2 quando suportada pelo engine;
 - height compact;
 - backoffice desktop;
-- axe.
+- axe em claro/escuro e nos viewports móveis de 390 e 320 px;
+- safe-area móvel com insets não nulos.
 
 A matriz completa pode distribuir specs, mas todos os P0 passam em Chromium e pelo menos um segundo engine nos fluxos críticos de auth/booking/payment.
 
@@ -79,6 +85,7 @@ SQL/integration deve provar:
 
 - migration from zero;
 - grants manifest;
+- `TEMPORARY` ausente efetivamente para `PUBLIC`, `app_dal` e login runtime, sem remover grants explícitos administrados pela stack;
 - RLS A/B;
 - private functions inaccessible;
 - status checks;
@@ -124,7 +131,7 @@ Fixtures de sandbox do provider real são sanitizadas e testes de contrato não 
 - teclado;
 - focus trap/restore;
 - aria errors/live regions;
-- zoom 200%;
+- zoom 200% com redução real do layout viewport, sem substituir o cenário de texto ampliado;
 - contrast;
 - touch target;
 - calendar alternative;
@@ -195,15 +202,15 @@ Timeout sem resumo é inconclusivo.
 
 ## 15. Gate por mudança
 
-| Mudança | Gate |
-|---|---|
-| UI | unit + affected E2E + axe/responsive |
-| Command | unit + integration + E2E |
-| Schema/RLS | reset + DB suite + affected E2E |
-| Calendar/payment | concurrency + full critical |
-| Infra | build + shell/static checks + deploy smoke |
-| Docs | docs check/link/ID |
-| Dependency | audit + build + tests |
+| Mudança          | Gate                                       |
+| ---------------- | ------------------------------------------ |
+| UI               | unit + affected E2E + axe/responsive       |
+| Command          | unit + integration + E2E                   |
+| Schema/RLS       | reset + DB suite + affected E2E            |
+| Calendar/payment | concurrency + full critical                |
+| Infra            | build + shell/static checks + deploy smoke |
+| Docs             | docs check/link/ID                         |
+| Dependency       | audit + build + tests                      |
 
 ## 16. Critério de release
 

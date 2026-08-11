@@ -13,6 +13,37 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot é gerado.
 
+### 1.1 Estado implementado na fundação
+
+A migration head atual é `20260811000100`. A fundação não antecipa nenhuma tabela de domínio e aplica somente:
+
+- `20260809000100_security_baseline.sql`: extensões estruturais, schemas `private`/`audit`, role `app_dal NOLOGIN NOINHERIT`, revogações e default privileges fechados;
+- `20260809000200_readiness_contract.sql`: `private.check_readiness(text)` como `security definer`, `search_path = ''` e `execute` exclusivo para `app_dal`;
+- `20260809000300_security_default_privileges_hardening.sql`: fecha o default global de `execute` de funções, normaliza `app_dal` e recusa atributos privilegiados que exigiriam superuser;
+- `20260810000100_app_dal_readiness_authorization.sql`: incorpora ao readiness os manifestos exatos de `app_dal` e do login da sessão, cria `private.check_runtime_readiness(text)`, fecha a baseline pública e impede ACL pública efetiva nos objetos alcançáveis de `private` e nos objetos compartilhados monitorados;
+- `20260810000200_pg_catalog_public_acl_hardening.sql`: mantém a leitura pública canônica dos catálogos do PostgreSQL, mas faz o readiness recusar qualquer privilégio de `PUBLIC` em relação ou coluna de `pg_catalog` que exceda a baseline inicial registrada em `pg_init_privs`, inclusive acesso a `pg_authid` ou `rolpassword`;
+- `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: estende o mesmo containment às rotinas de `pg_catalog`, por OID de cada overload, e recusa grantor, privilégio ou grant option público além da ACL inicial canônica;
+- `20260810000400_pg_catalog_implicit_routine_owner_hardening.sql`: elimina `proowner` mutável da derivação das baselines implícitas de rotinas `pg_catalog`; objetos initdb sem membership usam o owner bootstrap OID `10`, membros de extensão usam `pg_extension.extowner`, e qualquer owner divergente falha mesmo sem `EXECUTE` público;
+- `20260811000100_database_temporary_privilege_hardening.sql`: revoga `TEMPORARY` de `PUBLIC` no banco atual, preserva sem ampliar os grants explícitos administrados pela stack e faz os dois entrypoints de readiness recusarem a capacidade efetiva para `app_dal` e para o login restrito;
+- login `app_runtime_local` criado e rotacionado fora das migrations pelo bootstrap local, com atributos, memberships, parâmetros, ownership e grants diretos reconciliados antes de assumir `app_dal` explicitamente. Seu manifesto permite somente `CONNECT` direto no banco atual, a membership de saída para `app_dal`, a referência administrativa de `postgres` sem `SET/INHERIT` e uma máscara vazia para o GUC local de assinatura JWT; qualquer ACL, ownership, parâmetro ou membro adicional falha fechado. O mesmo bootstrap usa somente o superuser da stack local para fechar schema, tabelas, sequências, funções e defaults de `net`, preservando exclusivamente os privilégios administrativos exigidos pelo worker `pg_net` sob `postgres`;
+- readiness consulta as duas funções privadas por um subpath compartilhado `server-only` e falha se o login ou a role efetiva `app_dal` possuir login, herança, criação, replicação, superuser, `BYPASSRLS` ou `TEMPORARY` no banco; `app_dal` também deve permanecer sem qualquer membership de saída, pois `NOINHERIT` não impede `SET ROLE`;
+- o manifesto mínimo de `app_dal` permite diretamente apenas `USAGE` no schema `private` e `EXECUTE` em `private.check_readiness(text)` e `private.check_runtime_readiness(text)`, sempre sem grant option. A allowlist exige exatamente essas três dependências ACL em `pg_shdepend` e inspeciona seus `aclitem`; assim também rejeita referências da role como grantor e grants adicionais de banco, schema, relação, coluna, função, tipo, objeto grande, linguagem, foreign data wrapper/server, tablespace, parâmetro e default privilege sem depender de uma enumeração fechada no readiness. Como `USAGE private` torna grants de `PUBLIC` efetivos para a DAL, o guard expande ACLs atuais ou padrão (`acldefault`) de relações, colunas, sequências, rotinas e tipos autônomos desse schema e recusa qualquer entrada pública. Row types de relações, arrays e multiranges implícitos seguem seus objetos canônicos e não são tratados como tipos autônomos; composites explícitos continuam monitorados. Ownership é recusado pelo catálogo compartilhado. O pgTAP introduz cada drift transacionalmente, comprova a falha fechada, restaura o catálogo e exige readiness verde antes do cenário seguinte;
+- `app_dal` não pode assumir nenhuma role. Em sentido inverso, o manifesto permite exatamente o login da sessão com `SET=true`, sem `ADMIN/INHERIT`, e a membership administrativa de `postgres` criada pelo PostgreSQL 17 com `ADMIN=true`, sem `SET/INHERIT`; o login também só pode ser administrado por essa referência `postgres` sem `SET/INHERIT`, portanto uma cadeia intermediária até `app_dal` derruba readiness;
+- a baseline pública permite exatamente `USAGE` em `pg_catalog`/`information_schema`, `CONNECT` no banco e `USAGE` nas quatro linguagens internas, sem grant option. `TEMPORARY` fica restrito aos grants explícitos que a própria stack administra, como o da dashboard local; a migration não cria uma allowlist paralela nem amplia nenhuma role. Ela recusa ACL pública em outros schemas, defaults, objetos grandes, parâmetros, FDW/servers e tablespaces. Em toda relação ou coluna de `pg_catalog`, um privilégio efetivo de `PUBLIC` precisa já existir nos privilégios iniciais `i`/`e` de `pg_init_privs`; privilégios por coluna podem ser cobertos pelo grant inicial da própria coluna ou da relação. Nas rotinas desse schema, cada entrada pública atual precisa estar contida, com grantor e grant option, na ACL `i`/`e` do OID exato. Sem esse registro, a baseline implícita nunca deriva de `proowner`: membros de extensão usam `acldefault('f', pg_extension.extowner)`, exigindo o mesmo owner no objeto, e demais rotinas initdb (`OID < 16384`) usam `acldefault('f', 10)`, com owner bootstrap OID `10` obrigatório. Uma rotina normal posterior sem `pg_init_privs` tem baseline pública vazia. A checagem de owner é independente da presença de `EXECUTE` público, portanto revogar a ACL não mascara ownership adulterado. Isso preserva, por exemplo, o `EXECUTE` built-in de `current_database()` e uma extensão canônica sem init row, sem aceitar um grant em `pg_read_file(text)`, uma função normal nova ou grantor recalculado a partir de owner mutável. `pg_roles`, `pg_user` e `pg_db_role_setting` conservam ainda a baseline mais estrita de somente owner administrativo e `SELECT` de `postgres`, sem ACL por coluna; roles web/DAL também não podem alcançar esses três catálogos por membership transitiva. O contrato não classifica a segurança semântica de cada rotina, não cobre por si só grants a roles nomeadas nem afirma que todo catálogo built-in seja confidencial. Enquanto o ADR-018 suspender APIs externas, `app_dal`, `anon`, `authenticated`, `service_role` e `PUBLIC` não usam nem leem/escrevem/executam o schema `net`; o worker administrativo local conserva apenas o acesso necessário;
+- 156 asserts pgTAP, incluindo funções-probe que comprovam deny-by-default nos três schemas, ACLs efetivas, o estado exato das roles e a detecção/restauração de grants, ownership, parâmetros, atributos ou memberships adulterados;
+- snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
+
+`npm run supabase:schema` direciona o dump a um temporário exclusivo e irmão de `schema.generated.sql`; após a CLI terminar com sucesso, comprova que o arquivo físico não mudou, exige declarações dos schemas `audit`, `private` e `public`, normaliza a quebra de linha final, sincroniza em disco e publica por substituição atômica. `npm run supabase:types` usa o mesmo padrão para os tipos, valida os exports e a sintaxe TypeScript e aplica a configuração Prettier versionada antes da publicação. Uma falha da stack local, CLI, leitura, normalização, validação ou formatação preserva o artefato rastreado anterior e não deixa saída parcial.
+
+`npm run test:db` executa o pgTAP e, ainda contra a instância local, torna obrigatória a conferência dos dois artefatos. O gate valida a raiz e cada diretório ancestral físico, gera snapshot e tipos em destinos irmãos exclusivos, nunca nos arquivos rastreados, e preserva as extensões `.sql`/`.ts` para aplicar a mesma normalização e formatação dos comandos de publicação. As leituras usam `O_NOFOLLOW`; identidade e bytes dos quatro arquivos são revalidados depois dos dois geradores e então comparados. Qualquer diferença ou troca detectada pelas revalidações falha e exige correção; o cleanup tenta ambos os nomes temporários exatos, preserva a causa original se uma remoção também falhar e nunca recorre a remoção recursiva ou publica nos contratos versionados.
+
+As migrations aplicadas são imutáveis. Tabelas, RLS e comandos de cada domínio entram apenas na respectiva fatia vertical.
+Quando uma feature autorizar nova função para `app_dal`, a mesma migration append-only deve atualizar o manifesto de readiness; conceder `EXECUTE` sem ampliar explicitamente a allowlist mantém os apps em `unready`.
+
+O gate Git usa a mesma base segura escolhida pelos checks documentais e percorre cada snapshot da cadeia `first-parent` até `HEAD`. Antes de confiar em histórico, índice ou untracked, `git rev-parse --show-toplevel` precisa resolver para o mesmo caminho canônico e o mesmo diretório físico, por dispositivo e inode, da raiz auditada; ambos são revalidados depois da consulta. Um `core.worktree` que desvie o Git para outra árvore falha, enquanto um linked worktree legítimo continua válido quando a raiz informada é o próprio worktree. Todo checkout com `HEAD` precisa expor histórico completo: clone shallow, qualquer referência em `refs/replace` e `info/grafts` legado não vazio falham antes da leitura da cadeia. Depois que uma migration aparece em um commit, caminho, blob e modo tornam-se imutáveis nos commits seguintes; remoção e rename também falham. A base precisa pertencer à cadeia `first-parent`, e uma referência apenas ancestral por outro parent falha fechado em vez de formar uma transição falsa. Cada grupo de migrations introduzido no mesmo commit pode conter vários arquivos, mas todas as versões precisam ser únicas e avançar estritamente o head do snapshot anterior.
+
+O índice e o worktree são comparados separadamente com `HEAD`, inclusive para migrations introduzidas anteriormente na própria feature. Flags `assume-unchanged`, `skip-worktree`, conflitos e nós não físicos são recusados; novas migrations precisam permanecer arquivos regulares exclusivos sob ancestrais físicos e usar nomes canônicos. Toda entrada física do diretório precisa estar no índice ou aparecer exatamente como untracked em `git ls-files --others --exclude-standard`, executado no ambiente Git fechado. Assim uma migration nova e visível continua válida antes do stage, enquanto `.gitignore`, `.git/info/exclude` ou outra regra de ignore não podem esconder SQL físico do gate. Bootstrap sem `HEAD` e o commit raiz continuam aceitando a cadeia inicial, sem dispensar nomes, tipos, exclusividade ou o contrato do head atual.
+
 ## 2. Extensões
 
 Obrigatórias:
@@ -38,31 +69,31 @@ create schema if not exists audit;
 
 ### 4.1 `profiles`
 
-| Coluna | Tipo | Regra |
-|---|---|---|
-| `id` | uuid | PK/FK `auth.users`, cascade |
-| `person_type` | text | `individual/company` |
-| `display_name` | text | 2–120 |
-| `phone_e164` | text | formato normalizado |
-| `tax_document_type` | text | `cpf/cnpj` coerente |
-| `tax_document_number` | text | dígitos, acesso privado |
-| `identity_document_number` | text null | até 30 |
-| `status` | text | `active/suspended/deletion_pending/anonymized` |
-| `created_at` | timestamptz | UTC |
-| `updated_at` | timestamptz | UTC |
-| `anonymized_at` | timestamptz null | |
+| Coluna                     | Tipo             | Regra                                          |
+| -------------------------- | ---------------- | ---------------------------------------------- |
+| `id`                       | uuid             | PK/FK `auth.users`, cascade                    |
+| `person_type`              | text             | `individual/company`                           |
+| `display_name`             | text             | 2–120                                          |
+| `phone_e164`               | text             | formato normalizado                            |
+| `tax_document_type`        | text             | `cpf/cnpj` coerente                            |
+| `tax_document_number`      | text             | dígitos, acesso privado                        |
+| `identity_document_number` | text null        | até 30                                         |
+| `status`                   | text             | `active/suspended/deletion_pending/anonymized` |
+| `created_at`               | timestamptz      | UTC                                            |
+| `updated_at`               | timestamptz      | UTC                                            |
+| `anonymized_at`            | timestamptz null |                                                |
 
 O e-mail canônico permanece no Auth. Read models privados podem obtê-lo server-side quando necessário.
 
 ### 4.2 `owner_profiles`
 
-| Coluna | Regra |
-|---|---|
-| `user_id` | PK/FK profile |
-| `business_name` | 2–160 |
-| `support_phone_e164` | opcional |
-| `terms_version_id` | aceite do dono |
-| `status` | `active/blocked` |
+| Coluna               | Regra            |
+| -------------------- | ---------------- |
+| `user_id`            | PK/FK profile    |
+| `business_name`      | 2–160            |
+| `support_phone_e164` | opcional         |
+| `terms_version_id`   | aceite do dono   |
+| `status`             | `active/blocked` |
 
 ### 4.3 `platform_roles`
 
@@ -110,18 +141,18 @@ Browser lê ativos; somente backoffice altera via comando.
 
 ### 4.7 `studios`
 
-| Coluna | Tipo/Regra |
-|---|---|
-| `id` | uuid PK |
-| `owner_user_id` | FK profile, not null |
-| `status` | check de ciclo |
-| `published_revision_id` | FK revision null |
-| `draft_revision_id` | FK revision null |
-| `timezone` | default America/Sao_Paulo |
-| `reservations_enabled` | boolean |
-| `disabled_reason` | text null |
-| `created_at/updated_at` | timestamptz |
-| `paused_at/disabled_at` | timestamptz null |
+| Coluna                  | Tipo/Regra                |
+| ----------------------- | ------------------------- |
+| `id`                    | uuid PK                   |
+| `owner_user_id`         | FK profile, not null      |
+| `status`                | check de ciclo            |
+| `published_revision_id` | FK revision null          |
+| `draft_revision_id`     | FK revision null          |
+| `timezone`              | default America/Sao_Paulo |
+| `reservations_enabled`  | boolean                   |
+| `disabled_reason`       | text null                 |
+| `created_at/updated_at` | timestamptz               |
+| `paused_at/disabled_at` | timestamptz null          |
 
 A FK circular revisão↔estúdio é criada em etapas de migration.
 
@@ -229,18 +260,18 @@ Como janelas são consultadas e validadas, preferir tabela filha:
 
 ### 4.15 `calendar_allocations`
 
-| Coluna | Regra |
-|---|---|
-| `id` | uuid |
-| `studio_id` | FK |
-| `kind` | `hold/reservation/manual/ical` |
-| `actual_period` | tstzrange `[)` |
-| `blocked_period` | tstzrange `[)` incluindo buffer |
-| `status` | `active/released/cancelled/expired` |
-| `expires_at` | apenas hold |
-| `created_by_user_id` | null para system |
-| `label` | texto seguro |
-| timestamps | |
+| Coluna               | Regra                               |
+| -------------------- | ----------------------------------- |
+| `id`                 | uuid                                |
+| `studio_id`          | FK                                  |
+| `kind`               | `hold/reservation/manual/ical`      |
+| `actual_period`      | tstzrange `[)`                      |
+| `blocked_period`     | tstzrange `[)` incluindo buffer     |
+| `status`             | `active/released/cancelled/expired` |
+| `expires_at`         | apenas hold                         |
+| `created_by_user_id` | null para system                    |
+| `label`              | texto seguro                        |
+| timestamps           |                                     |
 
 Constraint estrutural:
 

@@ -156,6 +156,7 @@ Além disso:
 - mudança visual altera `design-system.md`;
 - mudança operacional altera `infrastructure.md`/runbook;
 - nova dívida atualiza `technical-debt.md`;
+- toda mudança técnica atualiza `contexto-projeto-set-livre.html` como resumo executivo direto do estado implementado, sem antecipar feature ou integração;
 - todo PR cria um registro em `docs/changes/`.
 
 ## 12. Proibições

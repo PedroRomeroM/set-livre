@@ -20,8 +20,8 @@ Todas as rotas públicas, autenticadas e de backoffice devem atender WCAG 2.2 AA
 - no color-only meaning;
 - contrast;
 - reduced motion;
-- 200% zoom;
-- reflow 320 px;
+- zoom a 200% com layout viewport equivalente de aproximadamente 160 CSS px;
+- reflow sem scroll horizontal em 320 px e no viewport reduzido pelo zoom;
 - 44x44 targets;
 - no hover-only;
 - table alternatives;
@@ -65,7 +65,8 @@ Todas as rotas públicas, autenticadas e de backoffice devem atender WCAG 2.2 AA
 - axe in main feature scenario;
 - manual keyboard checklist;
 - screen reader spot checks;
-- zoom 200%;
+- zoom 200% validado por layout viewport de 160x360 CSS px nos três engines, além da ampliação textual;
+- safe areas com insets não nulos em cenário de device;
 - Windows high contrast when practical;
 - reduced motion;
 - mobile touch target scan.

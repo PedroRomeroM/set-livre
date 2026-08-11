@@ -1,10 +1,23 @@
 # Set Livre — Plataforma Completa
 
-## Pacote documental de implementação end-to-end — versão 1.1
+## Implementação end-to-end orientada pela especificação 1.1
 
-Este repositório documental define o produto, a arquitetura, os contratos de dados, os fluxos, os critérios de qualidade e a ordem de implementação da **plataforma completa de aluguel de estúdios audiovisuais Set Livre**.
+Este repositório contém a especificação viva e a implementação da **plataforma completa de aluguel de estúdios audiovisuais Set Livre**. A baseline documental define produto, arquitetura, contratos de dados, fluxos, qualidade e ordem; o código avança em fatias verticais rastreáveis.
 
-O pacote foi preparado para orientar implementação integral por agentes de engenharia e revisão humana. Ele não descreve o mini fórum comunitário. A aplicação especificada aqui é o marketplace comercial de estúdios, com calendário próprio, reservas, pagamentos, split, repasses, backoffice e operação de produção.
+O projeto não descreve o mini fórum comunitário. A aplicação é o marketplace comercial de estúdios, com calendário próprio, reservas, pagamentos, split, repasses, backoffice e operação de produção.
+
+## Estado atual
+
+- fundação local executável implementada e validada na branch técnica, sem feature de produto simulada;
+- aplicações pública e backoffice separadas;
+- Node/npm e dependências fixados em lockfile;
+- Supabase local via Docker, migrations de segurança e pgTAP;
+- 270 unitários, 156 asserts pgTAP e 36 execuções Playwright/axe nos três engines;
+- lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações;
+- resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
+- 34 features ainda seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
+
+CI/CD, Supabase Cloud, Oracle Cloud e providers externos estão temporariamente diferidos pelo ADR-018 e rastreados em `pendencias.md`; isso bloqueia go-live, não a implementação local possível.
 
 ## Ordem obrigatória de leitura
 
@@ -22,7 +35,7 @@ O pacote foi preparado para orientar implementação integral por agentes de eng
 12. `docs/qa-test-plan.md`
 13. `docs/features/` na ordem do catálogo
 
-## Escopo desta versão
+## Escopo-alvo desta versão
 
 A versão 1.1 implementa o **MVP Completo comercializável** aprovado:
 
@@ -98,6 +111,6 @@ Nenhuma feature está concluída porque apenas a interface funciona. A entrega e
 
 Leia `AGENTS.md` antes de qualquer alteração.
 
-## Validação do pacote
+## Validação
 
-Consulte `docs/validation-report.md` e `MANIFEST_SHA256.md` antes de iniciar a implementação.
+Consulte `contexto-projeto-set-livre.html` para acompanhar o progresso em alto nível, `docs/validation-report.md` para a baseline recebida, `MANIFEST_SHA256.md` para sua integridade histórica e `docs/changes/` para a evolução executável.

@@ -1,0 +1,1 @@
+-- A fundação não antecipa dados de feature. Seeds estruturais serão adicionados pela feature proprietária.

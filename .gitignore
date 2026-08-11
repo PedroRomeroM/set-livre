@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+apps/*/.next/
+out/
+
+# Test artifacts
+.artifacts/
+playwright-report/
+test-results/
+coverage/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.e2e.example
+supabase/.branches/
+supabase/.temp/
+
+# Generated build files
+*.tsbuildinfo
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
