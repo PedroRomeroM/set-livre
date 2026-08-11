@@ -641,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · terceiro review validado localmente</li>
+          <li>FEAT-002 · terceiro review publicado e validado localmente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -679,9 +679,10 @@
             <h2>Estado atual</h2>
             <p>
               A fundação técnica foi incorporada a <code>main</code>. As cinco correções de Auth e
-              banco abertas pelo terceiro review da FEAT-002 passaram em banco, unitários e na
-              matriz browser integral. Ela permanece fora da contagem de concluídas até a publicação
-              do snapshot, novo review e merge.
+              banco abertas pelo terceiro review da FEAT-002 passaram em todos os gates locais,
+              foram publicadas no commit <code>3bb6cb3</code> e geraram release imutável. Ela
+              permanece fora da contagem de concluídas até a resolução comprovada das threads, novo
+              review e merge.
             </p>
           </div>
 
@@ -1065,8 +1066,8 @@
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
               → docs → Playwright completo → builds → audit → Knip. Banco, unitários, documentação,
-              builds, audit, Knip e Playwright estão verdes neste ciclo; release e auditoria do
-              índice fecham o snapshot antes da publicação.
+              builds, audit, Knip, Playwright e release imutável estão verdes neste ciclo; a
+              evidência documental e seu índice fecham o registro antes das respostas no PR.
             </p>
           </div>
         </section>
@@ -1140,10 +1141,10 @@
               <span class="tag done">Implementado localmente</span>
               <h3>Artefato por SHA</h3>
               <p>
-                A FEAT-002 foi reempacotada após o segundo review no commit
-                <code>7083d49</code>: checkout limpo, builds e smokes de web/backoffice, migrations
-                e lockfile, com 2.753 artefatos validados e archive SHA-256
-                <code>2382c53e…fc9b5</code>.
+                A FEAT-002 foi reempacotada após o terceiro review no commit
+                <code>3bb6cb3</code>: checkout limpo, builds e smokes de web/backoffice, dez
+                migrations e lockfile, com 2.754 artefatos validados e archive SHA-256
+                <code>94c52f37…9c9cd</code>.
               </p>
             </article>
             <article class="card">
@@ -1266,10 +1267,12 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Concluir release local e auditoria do índice das cinco correções.</li>
-                <li>Publicar o snapshot integralmente validado.</li>
-                <li>Publicar e resolver somente as threads comprovadamente atendidas.</li>
-                <li>Concluir e revisar a FEAT-002 antes de iniciar qualquer feature seguinte.</li>
+                <li>Auditar e publicar a evidência do release atual.</li>
+                <li>Responder e resolver somente as cinco threads comprovadamente atendidas.</li>
+                <li>Solicitar novo review sobre o SHA publicado.</li>
+                <li>
+                  Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
+                </li>
               </ol>
             </article>
             <article class="card">

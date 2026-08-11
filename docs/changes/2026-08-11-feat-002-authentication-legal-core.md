@@ -75,7 +75,7 @@ O primeiro comando real introduz evento JSON seguro com `requestId`, ação, dur
 
 ## Documentação atualizada
 
-Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo separa os gates atuais do release histórico do segundo review; o snapshot corrente será reempacotado depois do commit técnico e o review do PR continua sendo a última etapa antes do merge.
+Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo registra os gates e o release imutável atuais; o novo review do PR continua sendo a última etapa antes do merge.
 
 ## Rollback/correção
 
@@ -87,9 +87,9 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - formatação, lint, TypeScript estrito, Knip, documentação e auditoria de dependências passaram, com zero vulnerabilidades reportadas;
 - `407/407` testes unitários, `224/224` asserts pgTAP e `59/59` execuções Playwright ficaram verdes sobre as correções do terceiro review;
 - reset limpo, snapshot SQL e tipos gerados coincidiram com a instância local no head `20260811000300`;
-- builds de web e backoffice passaram no patch atual; smokes standalone serão repetidos pelo release imutável depois do commit técnico;
-- o release imutável das correções do segundo review, commit `7083d49bf68a430e6db239cd12e6fc24fdf58e86`, validou `2.753` artefatos e publicou o archive local com SHA-256 `2382c53e6c04174004132bb601a28d961f75734d1e2d7c8f2e8bf064172fc9b5`;
+- builds e smokes standalone de web e backoffice passaram sem deixar processos ou portas residuais;
+- o release imutável das correções do terceiro review, commit `3bb6cb34f10d8dbb6dd14d94a781a1508789cd1b`, validou `2.754` artefatos e publicou o archive local com SHA-256 `94c52f375b1e0d53b4e08f7f08cda0df90bcad67bd252867a3dc4afc5eb9c9cd`;
 - scans de artefatos Auth não encontraram sentinela de senha nem `token_hash`; cleanup final confirmou zero usuários QA e zero mensagens QA;
-- auditorias independentes de segurança, QA, documentação e diff encerraram sem blocker; o índice staged será auditado antes do commit.
+- auditorias independentes de segurança, QA, documentação, diff e índice técnico staged encerraram sem blocker; a evidência documental será auditada antes do próximo commit.
 
 A implementação está validada localmente e segue fora da contagem de features concluídas até o review do PR e o merge.
