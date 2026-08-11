@@ -14,7 +14,7 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 - Node/npm e dependências fixados em lockfile;
 - Supabase local via Docker com 11 migrations append-only, head `20260811000400` e 236 asserts pgTAP verdes;
 - rodada atual com 458 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
-- `npm ci`, formatação, lint, TypeScript estrito, documentação, Knip, audit e builds das duas aplicações passaram sobre o quarto review; smokes standalone, release imutável e auditoria do índice ainda serão reemitidos após o commit técnico;
+- `npm ci`, formatação, lint, TypeScript estrito, documentação, Knip, audit, builds e smokes standalone passaram sobre o quarto review; o commit técnico `da34f46` gerou release local imutável com 2.756 artefatos e SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
 - 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 

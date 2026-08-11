@@ -77,7 +77,7 @@ O primeiro comando real introduz evento JSON seguro com `requestId`, ação, dur
 
 ## Documentação atualizada
 
-Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo registra a última rodada integral verde, anterior ao quarto review. Os novos gates, release e auditoria do índice serão adicionados em bloco separado depois da estabilização.
+Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência histórica do terceiro review permanece separada da rodada atual, para que cada release continue atribuída ao SHA técnico exato que a produziu.
 
 ## Rollback/correção
 
@@ -100,6 +100,9 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - reset limpo, geração e duas execuções consecutivas de `236/236` asserts pgTAP passaram no head `20260811000400`, com cleanup persistente da fixture `dblink` fora do rollback;
 - `458/458` testes unitários e `59/59` execuções Playwright passaram; o run browser terminou sem sentinela de senha, `token_hash`, usuário QA ou mensagem QA residual;
 - `npm ci`, formatação, lint, typecheck integral, documentação, builds das duas aplicações, audit sem vulnerabilidades e Knip passaram sobre o mesmo snapshot;
-- smokes standalone, release imutável e auditoria do índice ainda serão consolidados depois do commit técnico.
+- a auditoria do índice técnico congelou 44 paths exatos — 35 modificados e nove novos —, sem arquivo fora do escopo, migration anterior reescrita, binário, symlink, artefato gerado indevido, segredo ou PII;
+- o commit técnico `da34f4630948ec549b1b215c718a60e375c0d73a` foi publicado e os smokes standalone de web/backoffice passaram sem deixar processo ou porta local;
+- a release imutável validou 2.756 artefatos — 1.467 de web, 1.276 de backoffice, 11 migrations, lockfile e manifesto — e publicou `.artifacts/set-livre-da34f4630948ec549b1b215c718a60e375c0d73a.tar.gz` com SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
+- os 2.755 nós descritos no manifesto conferem por hash com a árvore, o manifesto embutido no archive é byte-idêntico, os dois `BUILD_ID` correspondem ao commit e o pacote contém 11 migrations no head `20260811000400`.
 
-A implementação segue fora da contagem de features concluídas até os smokes standalone, release, auditoria do índice, review do PR e merge.
+A implementação segue fora da contagem de features concluídas até responder e resolver as threads atendidas, obter novo review do PR sem blocker e fazer merge.

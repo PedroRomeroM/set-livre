@@ -641,7 +641,7 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · quarto review em validação</li>
+          <li>FEAT-002 · correções do quarto review publicadas</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
@@ -678,14 +678,13 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica foi incorporada a <code>main</code>. As cinco correções de Auth e
-              banco abertas pelo terceiro review da FEAT-002 passaram em todos os gates locais,
-              foram publicadas no commit <code>3bb6cb3</code> e geraram release imutável. O quarto
-              review abriu três threads acionáveis: preservar cotas vivas sob saturação do rate
-              limiter, encerrar a sessão Auth quando a autorização de recovery expira e escopar o
-              cache dessa autorização. As três correções foram implementadas e passaram em banco,
-              unitários e browsers; a feature permanece fora da contagem de concluídas até os gates
-              operacionais restantes, review sem blocker e merge.
+              A fundação técnica foi incorporada a <code>main</code>. O quarto review da FEAT-002
+              abriu três threads acionáveis: preservar cotas vivas sob saturação do rate limiter,
+              encerrar a sessão Auth quando a autorização de recovery expira e escopar o cache dessa
+              autorização. As três correções passaram na cadeia canônica, foram publicadas no commit
+              <code>da34f46</code> e geraram release imutável local. A feature permanece fora da
+              contagem de concluídas até responder/resolver as threads, obter review sem blocker e
+              fazer merge.
             </p>
           </div>
 
@@ -708,7 +707,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quarto review em validação</span>
+              <span class="tag review">Quarto review publicado</span>
               <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
@@ -734,8 +733,9 @@
               As três correções do quarto review passaram em 458/458 unitários, 236/236 asserts
               pgTAP e 59/59 execuções browser. O run terminou sem sentinela de senha,
               <code>token_hash</code>, usuário QA ou mensagem QA residual. Instalação limpa,
-              formatação, lint, typecheck, documentação, builds, audit e Knip também passaram;
-              smokes standalone, release e auditoria do índice aguardam o commit técnico.
+              formatação, lint, typecheck, documentação, builds, audit e Knip também passaram. O
+              commit <code>da34f46</code> passou nos smokes standalone e originou release imutável
+              local com 2.756 artefatos e SHA-256 <code>33f0289b…7e47</code>.
             </p>
           </div>
         </section>
@@ -1072,8 +1072,9 @@
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
               → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde sobre o
               quarto review: 458 unitários, 236 asserts pgTAP, 59 execuções browser e zero
-              vulnerabilidade. Restam o smoke dos pacotes standalone, a release imutável e as
-              auditorias do índice/release depois do commit técnico.
+              vulnerabilidade. O índice técnico foi auditado, os pacotes standalone passaram nos
+              smokes e a release do commit <code>da34f46</code> foi verificada por manifesto e
+              archive; restam as respostas do PR, o novo review e o merge.
             </p>
           </div>
         </section>
@@ -1150,10 +1151,10 @@
               <span class="tag done">Implementado localmente</span>
               <h3>Artefato por SHA</h3>
               <p>
-                A FEAT-002 foi reempacotada após o terceiro review no commit
-                <code>3bb6cb3</code>: checkout limpo, builds e smokes de web/backoffice, dez
-                migrations e lockfile, com 2.754 artefatos validados e archive SHA-256
-                <code>94c52f37…9c9cd</code>.
+                A FEAT-002 foi reempacotada após o quarto review no commit
+                <code>da34f46</code>: checkout limpo, builds e smokes de web/backoffice, 11
+                migrations, lockfile e manifesto, com 2.756 artefatos validados e archive SHA-256
+                <code>33f0289b…7e47</code>.
               </p>
             </article>
             <article class="card">
@@ -1276,11 +1277,8 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Congelar e auditar o índice das três correções do quarto review.</li>
-                <li>Publicar o commit técnico e gerar a release imutável com smokes standalone.</li>
-                <li>
-                  Publicar, responder e resolver somente as três threads efetivamente atendidas.
-                </li>
+                <li>Publicar a evidência do release e auditar seu índice documental.</li>
+                <li>Responder e resolver somente as três threads efetivamente atendidas.</li>
                 <li>Solicitar novo review e confirmar novamente zero thread aberta.</li>
                 <li>
                   Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
