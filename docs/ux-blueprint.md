@@ -152,6 +152,17 @@ CTA:
 
 ## 7. Auth no contexto
 
+### 7.1 Superfície implementada na FEAT-002
+
+- `/cadastro`: escolha PF/PJ, e-mail, senha com requisitos, confirmação e dois aceites legais não pré-marcados;
+- `/entrar`: formulário quando anônimo e resumo da sessão SSR com logout quando autenticado; conta suspensa recebe bloqueio explícito;
+- `/recuperar-senha`: resposta genérica para qualquer e-mail e formulário de nova senha somente após callback válido;
+- `/auth/callback`: estado de validação, remoção imediata do fragmento sensível, falha recuperável e redirecionamento allowlisted;
+- `/termos` e `/privacidade`: versão/data vigentes, headings, parágrafos, listas, `strong`, `em` e links semanticamente preservados por um subset Markdown seguro, com `h1` único e alerta forte quando a fonte é `local_fixture`; HTML e sintaxe fora do subset aparecem como texto, enquanto links inseguros preservam apenas o rótulo;
+- todos os formulários têm labels persistentes, erros associados, loading sem duplo submit, sucesso recuperável, teclado, 320 px e reflow de 160 CSS px.
+
+### 7.2 Retorno à intenção de reserva (FEAT-019)
+
 Ao clicar:
 
 - salvar draft;

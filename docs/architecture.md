@@ -53,6 +53,14 @@ Responsável por:
 
 Não contém páginas ou bundles de backoffice.
 
+#### Identidade implementada na FEAT-002
+
+`/cadastro` entra em `POST /api/commands` com `identity.register`; o handler server-only cria uma intenção jurídica opaca pela role `app_dal` e chama Supabase Auth sem devolver o token ao browser. O trigger no `INSERT` de `auth.users` trava/consome essa intenção, revalida as duas versões vigentes e cria perfil mínimo + aceites na mesma transação. Login, logout, callback e recovery usam endpoints Auth específicos, enquanto sessão e documentos legais usam read models pequenos/RLS. O Proxy renova cookies por request e preserva o mesmo contrato CSP; nenhum cliente Supabase global ou service role entra no bundle.
+
+No callback de recovery, o servidor valida `sub`, `session_id` e `exp` assinados e exige a sessão correspondente em `auth.sessions` antes de criar uma binding/tombstone privada e seu grant one-shot de 15 minutos. O UUID `session_scope` exposto à interface é somente um namespace opaco para resposta e cache; a autoridade permanece no JWT validado, na binding e no grant. Proxy e read models consultam a tombstone pelo `session_id`, portanto uma sessão Auth de recovery nunca vira login comum mesmo depois de perder os cookies auxiliares. Fechamento, expiração ou uso fora da superfície recovery encerra a sessão local, enquanto uma sessão comum sem binding permanece comum. O tempo Auth fica pinado em `3600` segundos e a ausência canônica inicia retenção conservadora antes do purge.
+
+No cliente, `recoveryStatus(scope)` mantém scopes anônimo/UUID em queries distintas e valida que a resposta repita o mesmo recorte antes do cache. O formulário de nova senha só monta com autorização vigente, scope correspondente e `fetchStatus` ocioso; refetch ativo ou pausado conserva a fronteira fechada.
+
 ### 2.2 Backoffice
 
 Aplicação Next.js separada em `apps/backoffice`.
@@ -282,13 +290,13 @@ const reservationKeys = {
 
 Cada action declara domínios afetados. Exemplo:
 
-| Action | Invalida |
-|---|---|
-| `studio.revision.update` | owner studio editor |
-| `studio.review.approve` | public list/detail, owner status, review queue |
-| `calendar.block.create` | availability, owner calendar, quote |
-| `payment.confirm` | reservation, calendar, owner/renter lists, payments |
-| `reservation.cancel` | reservation, calendar, payments, payouts |
+| Action                   | Invalida                                            |
+| ------------------------ | --------------------------------------------------- |
+| `studio.revision.update` | owner studio editor                                 |
+| `studio.review.approve`  | public list/detail, owner status, review queue      |
+| `calendar.block.create`  | availability, owner calendar, quote                 |
+| `payment.confirm`        | reservation, calendar, owner/renter lists, payments |
+| `reservation.cancel`     | reservation, calendar, payments, payouts            |
 
 ## 9. Segurança em camadas
 

@@ -3,13 +3,144 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never;
+      profiles: {
+        Row: {
+          completed_at: string | null;
+          created_at: string;
+          id: string;
+          person_type: string;
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          completed_at?: string | null;
+          created_at?: string;
+          id: string;
+          person_type: string;
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          completed_at?: string | null;
+          created_at?: string;
+          id?: string;
+          person_type?: string;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      terms_acceptances: {
+        Row: {
+          accepted_at: string;
+          accepted_content_hash: string;
+          ip_hash: string | null;
+          request_id: string;
+          terms_version_id: string;
+          user_agent_hash: string | null;
+          user_id: string;
+        };
+        Insert: {
+          accepted_at: string;
+          accepted_content_hash: string;
+          ip_hash?: string | null;
+          request_id: string;
+          terms_version_id: string;
+          user_agent_hash?: string | null;
+          user_id: string;
+        };
+        Update: {
+          accepted_at?: string;
+          accepted_content_hash?: string;
+          ip_hash?: string | null;
+          request_id?: string;
+          terms_version_id?: string;
+          user_agent_hash?: string | null;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "terms_acceptances_terms_version_id_fkey";
+            columns: ["terms_version_id"];
+            isOneToOne: false;
+            referencedRelation: "terms_versions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "terms_acceptances_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      terms_versions: {
+        Row: {
+          body_markdown: string;
+          content_hash: string | null;
+          created_at: string;
+          effective_at: string;
+          id: string;
+          kind: string;
+          retired_at: string | null;
+          source: string;
+          title: string;
+          version: string;
+        };
+        Insert: {
+          body_markdown: string;
+          content_hash?: string | null;
+          created_at?: string;
+          effective_at: string;
+          id?: string;
+          kind: string;
+          retired_at?: string | null;
+          source: string;
+          title: string;
+          version: string;
+        };
+        Update: {
+          body_markdown?: string;
+          content_hash?: string | null;
+          created_at?: string;
+          effective_at?: string;
+          id?: string;
+          kind?: string;
+          retired_at?: string | null;
+          source?: string;
+          title?: string;
+          version?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      get_current_legal_terms: {
+        Args: never;
+        Returns: {
+          body_markdown: string;
+          content_hash: string;
+          effective_at: string;
+          id: string;
+          kind: string;
+          source: string;
+          title: string;
+          version: string;
+        }[];
+      };
+      get_own_identity_context: {
+        Args: never;
+        Returns: {
+          is_complete: boolean;
+          person_type: string;
+          status: string;
+          user_id: string;
+        }[];
+      };
     };
     Enums: {
       [_ in never]: never;

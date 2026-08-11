@@ -13,7 +13,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 5. `docs/specification.md` — escopo canônico do produto;
 6. `docs/implementation-order.md` — sequência de construção;
 7. `docs/feature-catalog.md` — catálogo das 34 features;
-8. `docs/qa-traceability.md` — catálogo dos 193 cenários.
+8. `docs/qa-traceability.md` — catálogo vivo dos 194 cenários.
 9. `docs/validation-report.md` — validação estrutural da baseline.
 10. `MANIFEST_SHA256.md` — hashes de integridade do pacote.
 11. `contexto-projeto-set-livre.html` — resumo executivo vivo para acompanhar o progresso e apresentar o estado implementado; não substitui as fontes canônicas.
@@ -24,12 +24,12 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | ------------------- | ---------: |
 | Features            |         34 |
 | ADRs                |         18 |
-| Cenários Playwright |        193 |
+| Cenários Playwright |        194 |
 | Cenários P0         |        134 |
-| Cenários P1         |         59 |
+| Cenários P1         |         60 |
 | Runbooks            |          6 |
 
-Os 193 cenários acima pertencem às 34 features e permanecem planejados até os respectivos PRs. A branch de fundação acrescenta 11 IDs técnicos estáveis, 36 execuções Playwright na matriz atual, 270 testes unitários, 156 asserts pgTAP e 8 migrations; eles são evidência transversal e não alteram a contagem do catálogo de produto.
+A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 194: a FEAT-002 acrescenta o contrato de reflow `SL-F002-E2E-007` e possui sete IDs automatizados, mapeados para 23 execuções verdes nos browsers. Somadas às 36 execuções técnicas da fundação, a matriz integral passou em 59/59. A rodada atual também soma 458 testes unitários e 236 asserts pgTAP. A árvore possui 11 migrations, head `20260811000400`.
 
 ## Garantias documentais
 

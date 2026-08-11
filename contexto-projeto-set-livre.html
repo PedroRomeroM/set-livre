@@ -641,19 +641,15 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>17º ciclo de review validado localmente</li>
+          <li>FEAT-002 · revisão sem achado, merge pendente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
-          <div class="stat">
-            <strong>0/34</strong><span>features de produto implementadas</span>
-          </div>
-          <div class="stat">
-            <strong>270</strong><span>testes unitários na rodada canônica atual</span>
-          </div>
-          <div class="stat"><strong>156</strong><span>asserts pgTAP no banco local</span></div>
-          <div class="stat"><strong>36</strong><span>execuções Playwright/axe</span></div>
-          <div class="stat"><strong>8</strong><span>migrations de fundação</span></div>
+          <div class="stat"><strong>0/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>458</strong><span>testes unitários verdes</span></div>
+          <div class="stat"><strong>236</strong><span>asserts pgTAP verdes</span></div>
+          <div class="stat"><strong>59</strong><span>execuções Playwright/axe verdes</span></div>
+          <div class="stat"><strong>11</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -682,8 +678,14 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica está executável e passou pelo último ciclo integral de gates. O PR
-              ainda está em review; nenhuma das 34 features de negócio foi iniciada ou simulada.
+              A fundação técnica foi incorporada a <code>main</code>. O quarto review da FEAT-002
+              abriu três threads acionáveis: preservar cotas vivas sob saturação do rate limiter,
+              encerrar a sessão Auth quando a autorização de recovery expira e escopar o cache dessa
+              autorização. As três correções passaram na cadeia canônica, foram publicadas no commit
+              <code>da34f46</code> e geraram release imutável local. As três threads receberam
+              respostas, foram resolvidas individualmente e a leitura thread-aware confirmou zero
+              aberta. O Codex revisou o snapshot final e não encontrou problema relevante. A feature
+              permanece fora da contagem de concluídas somente até o merge.
             </p>
           </div>
 
@@ -697,8 +699,8 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">Validado</span>
-              <h3>17º ciclo da fundação</h3>
+              <span class="tag done">Fundação incorporada</span>
+              <h3>Base técnica encerrada</h3>
               <p>
                 O webServer persistente do Playwright agora trata saída natural inesperada com
                 código
@@ -706,11 +708,22 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag planned">Planejado</span>
-              <h3>Produto: 0 de 34</h3>
+              <span class="tag review">Revisão sem achado</span>
+              <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
-                Autenticação, estúdios, calendário, reserva, pagamentos e backoffice operacional
-                continuam especificados, mas ainda não implementados.
+                Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
+                login/logout e recuperação passaram em banco e unitários. Termos e privacidade
+                preservam headings, parágrafos, listas, ênfase e links por um subset Markdown
+                seguro, sem HTML bruto e com hrefs fail-closed. Os reviews também isolaram a
+                capacidade do limiter por ação, tornaram callbacks ambíguos terminais depois do
+                envio do OTP e escoparam o cache de sessão por identidade, sem exibir PII antiga
+                durante refetch ou troca SSR. O terceiro review também fechou cookies Auth
+                parcialmente publicados, RLS da intenção privada e release de grant expirado. No
+                quarto review, buckets vivos deixaram de ser removidos sob churn, o status de
+                recovery ganhou scope opaco e só monta o formulário depois de uma resposta idle, e
+                cada sessão de recovery passou a possuir binding/tombstone durável pelo
+                <code>session_id</code> assinado. O tipo PF/PJ continua usando o rádio nativo como
+                fonte única, sem antecipar perfil completo ou reserva.
               </p>
             </article>
           </div>
@@ -718,9 +731,12 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada canônica atual passou em 270 unitários, 156 asserts pgTAP e 36 execuções
-              Playwright, além de instalação limpa, format, lint, TypeScript, docs, dois builds,
-              audit e Knip.
+              As três correções do quarto review passaram em 458/458 unitários, 236/236 asserts
+              pgTAP e 59/59 execuções browser. O run terminou sem sentinela de senha,
+              <code>token_hash</code>, usuário QA ou mensagem QA residual. Instalação limpa,
+              formatação, lint, typecheck, documentação, builds, audit e Knip também passaram. O
+              commit <code>da34f46</code> passou nos smokes standalone e originou release imutável
+              local com 2.756 artefatos e SHA-256 <code>33f0289b…7e47</code>.
             </p>
           </div>
         </section>
@@ -774,8 +790,9 @@
           <div class="section-head">
             <h2>Aplicações e pacotes</h2>
             <p>
-              A separação entre público e administração já existe de verdade. Neste momento, ambos
-              mostram apenas uma superfície técnica de fundação — não telas falsas de produto.
+              A separação entre público e administração já existe de verdade. O web público contém a
+              primeira fatia vertical de identidade; o backoffice permanece somente na superfície
+              técnica, sem telas falsas de produto.
             </p>
           </div>
 
@@ -785,11 +802,14 @@
               <h3>Web público · raiz · porta 3000</h3>
               <p>
                 Next.js App Router com página de status da fundação, layout responsivo, tokens
-                compartilhados, CSP por request e endpoints <code>/api/health/live</code> e
-                <code>/api/health/ready</code>.
+                compartilhados, CSP por request, health/readiness e as rotas de cadastro, login,
+                callback, recuperação, termos e privacidade da FEAT-002; os documentos jurídicos
+                mantêm título único e estrutura semântica de headings, parágrafos, listas, ênfase e
+                links seguros.
               </p>
               <p>
-                Rotas de catálogo, autenticação, conta, dono, checkout e comandos ainda não existem.
+                O primeiro comando real cria a intenção legal do cadastro; catálogo, conta completa,
+                dono, checkout e reserva continuam ausentes até suas próprias features.
               </p>
             </article>
             <article class="card">
@@ -808,18 +828,18 @@
               <span class="tag done">Implementado</span>
               <h3>packages/contracts</h3>
               <p>
-                Contratos Zod de health, release e URL DAL; readiness server-only; tipos gerados do
-                banco. O schema público permanece vazio porque nenhuma entidade de negócio foi
-                antecipada.
+                Contratos Zod de health, release, URL DAL e identidade; readiness server-only; tipos
+                gerados do banco. O schema público contém somente perfil mínimo, versões e aceites
+                da FEAT-002.
               </p>
             </article>
             <article class="card">
               <span class="tag done">Implementado</span>
               <h3>packages/ui</h3>
               <p>
-                Tokens claro/escuro e o componente técnico <code>FoundationStatus</code>, com
-                reflow, safe areas e redução de movimento. Primitives de produto entram apenas
-                quando houver consumidor real.
+                Tokens claro/escuro, <code>FoundationStatus</code> e primitives próprias de botão,
+                campos, senha, escolhas, alertas, painéis e layout, agora consumidas pelos
+                formulários Auth com reflow, safe areas e redução de movimento.
               </p>
             </article>
           </div>
@@ -857,11 +877,11 @@
               </p>
             </article>
             <article class="card">
-              <h3>Contratos futuros, sem antecipação</h3>
+              <h3>Primeiro domínio real, sem antecipação</h3>
               <p>
-                TanStack Query, clientes Supabase e adapters de pagamento/e-mail só entram no PR do
-                primeiro consumidor. A rota de comandos, domínio, workers e entidades de negócio
-                ainda não foram criados.
+                A FEAT-002 já consome TanStack Query, clientes Supabase, rotas Auth e o primeiro
+                comando modular do domínio de identidade. Pagamentos, storage de produto, workers e
+                as entidades dos demais domínios continuam ausentes até seus próprios PRs.
               </p>
             </article>
           </div>
@@ -959,7 +979,7 @@
                   <td>Documentação</td>
                   <td><code>docs:check</code></td>
                   <td>
-                    Valida Blueprint, ADRs, 34 features, 193 cenários, sequência, links, registro de
+                    Valida Blueprint, ADRs, 34 features, 194 cenários, sequência, links, registro de
                     dependências, migrations imutáveis, change records e atualização deste resumo
                     executivo.
                   </td>
@@ -990,35 +1010,37 @@
           <div class="section-head">
             <h2>Testes e gates</h2>
             <p>
-              A rodada canônica do patch atual está verde. Ela protege a fundação; os 193 cenários
-              das features seguem planejados para seus próprios PRs.
+              Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
+              fundação, a matriz atual passou em 59/59. O cenário 003 agora prova também cache
+              offline sem formulário, recovery nominal e encerramento real depois da expiração.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">270 aprovados</span>
+              <span class="tag done">458 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
-                tipos, docs, preflight E2E e remoção física protegida contra mounts.
+                tipos, docs, preflight E2E, parser Markdown jurídico seguro e remoção física
+                protegida contra mounts.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">156 aprovados</span>
+              <span class="tag done">236 aprovados</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
-                <code>pg_catalog</code>, <code>pg_net</code>, readiness e recuperação após drift
-                transacional.
+                <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados,
+                binding/tombstone por sessão, pin JWT, ausência canônica e retenção em duas fases.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">36 aprovadas</span>
+              <span class="tag done">59 aprovados</span>
               <h3>Playwright + axe</h3>
               <p>
-                11 cenários técnicos executados em matriz: 16 smoke, 3 critical, 1 backoffice, 12
-                acessibilidade, 1 safe area e 3 reflow/zoom.
+                36 execuções técnicas da fundação e 23 da FEAT-002, cobrindo smoke, Auth real,
+                desktop/mobile, axe, teclado, safe area e reflow/zoom nos três engines.
               </p>
             </article>
           </div>
@@ -1037,11 +1059,24 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Evidência local da FEAT-002:</strong>
+            <p>
+              Reset limpo, geração determinística, 236/236 asserts pgTAP, 458/458 unitários e 59/59
+              execuções browser estão verdes sobre o quarto review. O run não registrou sentinela de
+              senha, <code>token_hash</code>, usuário QA ou mensagem QA residual.
+            </p>
+          </div>
+
+          <div class="callout info" style="margin-top: 0.9rem">
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. No último ciclo concluído, todos
-              ficaram verdes e o audit registrou zero vulnerabilidades.
+              → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde sobre o
+              quarto review: 458 unitários, 236 asserts pgTAP, 59 execuções browser e zero
+              vulnerabilidade. O índice técnico foi auditado, os pacotes standalone passaram nos
+              smokes e a release do commit <code>da34f46</code> foi verificada por manifesto e
+              archive. As três threads foram respondidas/resolvidas, não há thread aberta e a
+              revisão final não encontrou problema relevante; resta somente o merge.
             </p>
           </div>
         </section>
@@ -1050,8 +1085,9 @@
           <div class="section-head">
             <h2>Segurança e local-first</h2>
             <p>
-              A etapa atual usa somente a máquina local e Supabase via Docker. A fundação nasce
-              fechada e só ampliará acesso junto com cada feature real.
+              A etapa atual usa somente a máquina local e Supabase via Docker. A FEAT-002 amplia a
+              fundação apenas para o perfil mínimo, documentos legais e aceites estritamente
+              necessários ao cadastro.
             </p>
           </div>
 
@@ -1059,10 +1095,12 @@
             <article class="card">
               <h3>Banco e readiness</h3>
               <p>
-                Oito migrations append-only criam os schemas internos, a role <code>app_dal</code> e
-                probes de readiness. Não há tabela de negócio. A DAL não recebe
-                <code>TEMPORARY</code>; grants, owners, memberships e ACLs públicas usam allowlists
-                exatas.
+                As oito migrations da fundação continuam imutáveis; a nona adiciona identidade e
+                legal-core, a décima endurece RLS/release e a décima primeira cria a
+                binding/tombstone da sessão de recovery. Grant, usuário e
+                <code>session_id</code> assinado ficam vinculados; o grant é one-shot por 15 minutos
+                e a tombstone sobrevive a grant/cookies. A DAL passa a expor nove rotinas privadas
+                em dez dependências ACL exatas e readiness exige <code>jwt_exp=3600</code>.
               </p>
             </article>
             <article class="card">
@@ -1070,7 +1108,11 @@
               <p>
                 CSP com nonce novo por request, headers seguros, fallback sem JavaScript, health sem
                 cache e readiness que falha fechado sem expor SQL, credencial ou diagnóstico
-                interno.
+                interno. Signup/recovery ambíguos não reutilizam OTP possivelmente consumido; login
+                parcial e sign-out final limpam apenas cookies Auth exatos. A binding impede que uma
+                sessão de recovery abandonada vire login comum mesmo sem marker. O cache de sessão
+                fica escopado por identidade; o de recovery usa scope UUID público não autoritativo
+                e mostra somente verificação durante refetch ativo ou offline pausado.
               </p>
             </article>
             <article class="card">
@@ -1111,9 +1153,10 @@
               <span class="tag done">Implementado localmente</span>
               <h3>Artefato por SHA</h3>
               <p>
-                O gerador exige checkout limpo, recompila web/backoffice com ambientes separados,
-                usa <code>BUILD_ID</code> do commit, inclui migrations e lockfile, faz smoke nos
-                entrypoints standalone e revalida a árvore.
+                A FEAT-002 foi reempacotada após o quarto review no commit
+                <code>da34f46</code>: checkout limpo, builds e smokes de web/backoffice, 11
+                migrations, lockfile e manifesto, com 2.756 artefatos validados e archive SHA-256
+                <code>33f0289b…7e47</code>.
               </p>
             </article>
             <article class="card">
@@ -1129,7 +1172,7 @@
               <span class="tag done">Validado localmente</span>
               <h3>Cleanup físico de artefatos</h3>
               <p>
-                O patch atual usa <code>/proc/self/mountinfo</code>, inspeção por
+                O release local usa <code>/proc/self/mountinfo</code>, inspeção por
                 <code>lstat</code>, rename atômico e revalidação antes de remover árvores; falha
                 fechado quando não pode provar a topologia.
               </p>
@@ -1150,8 +1193,9 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 193 cenários de produto. Todas continuam
-              planejadas; a ordem abaixo é a sequência executável do ADR-017.
+              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está no
+              quarto ciclo de correção e validação local; as demais continuam planejadas conforme a
+              sequência executável do ADR-017.
             </p>
           </div>
 
@@ -1170,7 +1214,7 @@
                   <td>Fundação</td>
                   <td>Transversal, sem FEAT de negócio</td>
                   <td>Apps, dados locais, segurança, qualidade e release local</td>
-                  <td><span class="tag review">PR em review</span></td>
+                  <td><span class="tag done">Incorporada</span></td>
                 </tr>
                 <tr>
                   <td>Fase 1 · Identidade e oferta</td>
@@ -1179,7 +1223,7 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag planned">0/9</span></td>
+                  <td><span class="tag review">002 em validação · 0/9 concluídas</span></td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1226,7 +1270,7 @@
           <div class="section-head">
             <h2>Próximos passos e pendências</h2>
             <p>
-              Primeiro termina a fundação; depois as features avançam uma por vez, em branches e PRs
+              A fundação terminou; agora as features avançam uma por vez, em branches e PRs
               independentes, sem antecipar tela, schema ou integração de outra feature.
             </p>
           </div>
@@ -1235,10 +1279,9 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Publicar somente depois dos gates integrais e da auditoria do diff staged.</li>
-                <li>Resolver apenas comentários comprovadamente atendidos no commit publicado.</li>
-                <li>Repetir review, correção e testes enquanto houver problema acionável.</li>
-                <li>Após o merge, abrir uma branch exclusiva para a FEAT-002 (autenticação).</li>
+                <li>
+                  Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
+                </li>
               </ol>
             </article>
             <article class="card">

@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import { ApplicationProviders } from "./providers";
 
 export const metadata: Metadata = {
   description: "Marketplace de aluguel de estúdios audiovisuais.",
@@ -27,7 +28,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <ApplicationProviders>{children}</ApplicationProviders>
+      </body>
     </html>
   );
 }

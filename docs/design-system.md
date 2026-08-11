@@ -12,13 +12,15 @@
 
 `lucide-react` será instalado somente no primeiro PR que tiver ícone real; não faz parte da fundação sem consumidor.
 
-## 1.1 Estado da fundação
+## 1.1 Estado implementado
 
-A fundação implementa apenas `packages/ui/src/tokens.css` e a superfície técnica `FoundationStatus`, compartilhada pelos dois apps para comprovar isolamento, responsividade e contraste. Ela não representa home, dashboard ou feature de produto.
+A superfície técnica `FoundationStatus` continua exportada para comprovar a fundação nos dois apps. A primeira fatia real, FEAT-002, acrescenta somente as primitives compartilhadas consumidas pelos fluxos de autenticação: ações, campos, escolha PF/PJ, feedback e composição de página. Nenhuma delas antecipa home, dashboard ou domínio posterior.
 
-Os tokens atuais usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, tipografia, spacing, radius, foco, sombra e largura de conteúdo. A identidade é deliberadamente neutra enquanto PEND-007/OPEN-003 estiver aberta. Primitives do catálogo abaixo nascem somente junto ao primeiro uso real e devem ampliar os tokens sem criar um sistema paralelo.
+Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
 
 A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
+
+As páginas jurídicas da FEAT-002 compõem o conteúdo dentro de `PageFrame`/`Panel` e estilizam somente elementos semânticos gerados pelo subset Markdown local: `h2`–`h6`, `p`, `ul`, `ol`, `li`, `strong`, `em` e `a`. O título da rota continua sendo o único `h1`; listas conservam marcador/ordem, links mantêm foco global e sublinhado, texto longo quebra sem overflow e nenhum HTML bruto entra na árvore.
 
 ## 2. Tokens
 
@@ -117,6 +119,31 @@ Nenhuma cor semântica é redefinida por tema.
 - MobileBottomNavigation;
 - Breadcrumb;
 - CursorPagination.
+
+### 3.1 Primitives implementadas na FEAT-002
+
+- `Button`: elemento `button` com `primary`, `secondary` e `ghost`. `loading` bloqueia duplo submit, aplica `aria-busy`, troca o nome acessível e mantém a largura medida pelo conteúdo original.
+- `Field` + `Input`: `Field` associa label persistente, descrição, obrigatório e erro ao controle filho por `id`, `aria-describedby`, `aria-required` e `aria-invalid`; `Input` preserva toda a API nativa.
+- `Checkbox`: checkbox nativo com label clicável e descrição associada. O alvo completo possui no mínimo 44 px.
+- `ChoiceGroup`: grupo de radios nativos limitado ao recorte real `individual | company`, com modos controlado e não controlado mutuamente exclusivos, legend, descrição, obrigatório e erro de grupo.
+- `PasswordInput`: Client Component que preserva a API nativa, usa botão textual `Mostrar senha`/`Ocultar senha` com `aria-controls` e `aria-pressed` e recebe requisitos tipados com estado textual `Requisito`, `Pendente` ou `Atendido`.
+- `Alert`: feedback de seção `status` (`role=status`) ou `error` (`role=alert`), com conteúdo atômico e significado independente de cor.
+- `Panel`, `Stack`, `PageFrame` e `AuthFrame`: superfícies e composição responsiva; `PageFrame` é o landmark `main`, aplica safe areas e limita largura, enquanto `AuthFrame` fornece um único `h1` e reflow próprio para autenticação.
+
+Todos os controles têm foco visível, fonte de input de 16 px, alvo mínimo de 44 px, contraste em temas claro/escuro e fallback para forced colors. Bordas necessárias para identificar controles e painéis usam tokens próprios com contraste não textual mínimo de 3:1; linhas meramente estruturais permanecem separadas. As composições quebram em 320 px e no viewport equivalente a aproximadamente 160 CSS px, onde ações resetam o `flex-basis` horizontal e labels de loading podem ocupar mais de uma linha sem perder conteúdo; não há animação que precise ser preservada quando `prefers-reduced-motion` estiver ativo.
+
+Exemplo mínimo:
+
+```tsx
+<Field label="Senha" required>
+  <PasswordInput autoComplete="new-password" requirements={passwordRequirements} />
+</Field>
+<Button loading={isSubmitting} loadingLabel="Criando conta" type="submit">
+  Criar conta
+</Button>
+```
+
+O estado de formulário e de rota permanece no consumidor. Não usar `Alert` no lugar de erro de campo, `Panel` para envolver cada bloco, `ChoiceGroup` para valores fora de PF/PJ ou `PasswordInput` para definir a política do provider. Typecheck e lint validam a API compartilhada; teclado, axe, reflow e estados devem ser exercitados nos cenários Playwright SL-F002 da feature consumidora.
 
 ## 4. Contratos
 

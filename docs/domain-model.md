@@ -2,22 +2,23 @@
 
 ## 1. Linguagem do produto
 
-| Termo | Definição |
-|---|---|
-| Estúdio | entidade operacional pertencente a um dono |
-| Revisão | versão editável/aprovável do conteúdo público |
-| Disponibilidade | resultado derivado de regras, exceções e alocações |
-| Alocação | período que ocupa calendário: hold, reserva, bloqueio ou iCal |
-| Cotação | snapshot de preço e seleção, com validade curta |
-| Tentativa | jornada de pagamento ainda não convertida em reserva |
-| Hold | alocação temporária adquirida após início do pagamento |
-| Reserva | fato confirmado após pagamento |
-| Pagamento | estado financeiro reportado e reconciliado com provider |
-| Split | regra financeira 80/20 sobre bruto |
-| Repasse | transferência programada/executada após o uso |
-| Reembolso | devolução total vinculada ao pagamento |
-| Evento operacional | transição relevante e auditável |
-| Read model | projeção para uma tela; não é fonte canônica |
+| Termo                         | Definição                                                                                                |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Estúdio                       | entidade operacional pertencente a um dono                                                               |
+| Revisão                       | versão editável/aprovável do conteúdo público                                                            |
+| Disponibilidade               | resultado derivado de regras, exceções e alocações                                                       |
+| Alocação                      | período que ocupa calendário: hold, reserva, bloqueio ou iCal                                            |
+| Cotação                       | snapshot de preço e seleção, com validade curta                                                          |
+| Tentativa                     | jornada de pagamento ainda não convertida em reserva                                                     |
+| Hold                          | alocação temporária adquirida após início do pagamento                                                   |
+| Reserva                       | fato confirmado após pagamento                                                                           |
+| Pagamento                     | estado financeiro reportado e reconciliado com provider                                                  |
+| Split                         | regra financeira 80/20 sobre bruto                                                                       |
+| Repasse                       | transferência programada/executada após o uso                                                            |
+| Reembolso                     | devolução total vinculada ao pagamento                                                                   |
+| Evento operacional            | transição relevante e auditável                                                                          |
+| Read model                    | projeção para uma tela; não é fonte canônica                                                             |
+| Intenção jurídica de cadastro | token opaco, temporário e one-shot que coordena Auth com os aceites sem transferir autoridade ao browser |
 
 ## 2. Classificação
 
@@ -81,34 +82,38 @@
 
 ## 3. Fontes canônicas
 
-| Conceito | Fonte |
-|---|---|
-| Conta | Supabase Auth + `profiles` |
-| Papel administrativo | `platform_roles` |
-| Estúdio operacional | `studios` |
-| Conteúdo público | revisão apontada por `published_revision_id` |
-| Conteúdo em edição | `draft_revision_id` |
-| Taxonomia | `studio_types`, `amenities`, `tags` |
-| Disponibilidade recorrente | `studio_weekly_windows` |
-| Exceção por data | `studio_date_exceptions` |
-| Ocupação | `calendar_allocations` |
-| Preço atual | tabelas de pricing |
-| Preço histórico | `reservation_quotes` e items |
-| Tentativa | `booking_attempts` |
-| Hold | `booking_holds` + allocation |
-| Reserva | `reservations` |
-| Pagamento | `payments` |
-| Provider events | `webhook_events` e `payment_events` |
-| Reembolso | `refunds` |
-| Repasse | `payouts` |
-| E-mail pendente | `email_outbox` |
-| Ação sensível | `audit_events` |
+| Conceito                   | Fonte                                        |
+| -------------------------- | -------------------------------------------- |
+| Conta                      | Supabase Auth + `profiles`                   |
+| Versão jurídica            | `terms_versions`                             |
+| Aceite jurídico            | `terms_acceptances`                          |
+| Papel administrativo       | `platform_roles`                             |
+| Estúdio operacional        | `studios`                                    |
+| Conteúdo público           | revisão apontada por `published_revision_id` |
+| Conteúdo em edição         | `draft_revision_id`                          |
+| Taxonomia                  | `studio_types`, `amenities`, `tags`          |
+| Disponibilidade recorrente | `studio_weekly_windows`                      |
+| Exceção por data           | `studio_date_exceptions`                     |
+| Ocupação                   | `calendar_allocations`                       |
+| Preço atual                | tabelas de pricing                           |
+| Preço histórico            | `reservation_quotes` e items                 |
+| Tentativa                  | `booking_attempts`                           |
+| Hold                       | `booking_holds` + allocation                 |
+| Reserva                    | `reservations`                               |
+| Pagamento                  | `payments`                                   |
+| Provider events            | `webhook_events` e `payment_events`          |
+| Reembolso                  | `refunds`                                    |
+| Repasse                    | `payouts`                                    |
+| E-mail pendente            | `email_outbox`                               |
+| Ação sensível              | `audit_events`                               |
 
 ## 4. Ownership
 
 ### 4.1 Usuário
 
 `profiles.id = auth.users.id`.
+
+Na FEAT-002, `profiles` contém somente `person_type`, `status` e `completed_at`; nome, telefone, CPF/CNPJ e documento pertencem à FEAT-003. O perfil mínimo e os dois aceites nascem atomicamente no trigger de `auth.users` após consumo de uma intenção privada válida. A intenção não é fato de negócio e pode expirar; o aceite preserva para sempre versão, hash, instante, `requestId` e evidência minimizada.
 
 ### 4.2 Estúdio
 
@@ -236,21 +241,21 @@ Bloqueios:
 
 ## 11. Correção e exclusão
 
-| Objeto | Estratégia |
-|---|---|
-| Draft de revisão sem dependência | hard delete |
-| Revisão submetida | imutável; nova revisão |
-| Estúdio publicado | pause/disable; não apagar histórico |
-| Janela semanal | editar |
-| Exceção futura | editar/remover |
-| Bloqueio manual futuro | editar/remover |
-| Reserva confirmada | cancelar/compensar |
-| Pagamento | evento/reembolso; nunca apagar |
-| Repasse | evento corretivo |
-| Perfil sem histórico | exclusão |
-| Perfil com histórico | anonimização |
-| Mídia não publicada | remover após cleanup |
-| Mídia publicada antiga | manter enquanto revisão for necessária; depois política de retenção |
+| Objeto                           | Estratégia                                                          |
+| -------------------------------- | ------------------------------------------------------------------- |
+| Draft de revisão sem dependência | hard delete                                                         |
+| Revisão submetida                | imutável; nova revisão                                              |
+| Estúdio publicado                | pause/disable; não apagar histórico                                 |
+| Janela semanal                   | editar                                                              |
+| Exceção futura                   | editar/remover                                                      |
+| Bloqueio manual futuro           | editar/remover                                                      |
+| Reserva confirmada               | cancelar/compensar                                                  |
+| Pagamento                        | evento/reembolso; nunca apagar                                      |
+| Repasse                          | evento corretivo                                                    |
+| Perfil sem histórico             | exclusão                                                            |
+| Perfil com histórico             | anonimização                                                        |
+| Mídia não publicada              | remover após cleanup                                                |
+| Mídia publicada antiga           | manter enquanto revisão for necessária; depois política de retenção |
 
 ## 12. Tempo
 

@@ -1,0 +1,99 @@
+.button {
+  position: relative;
+  display: inline-grid;
+  grid-template-areas: "content";
+  place-items: center;
+  min-width: 0;
+  min-height: var(--sl-control-height);
+  padding: var(--sl-space-3) var(--sl-space-5);
+  border: 1px solid transparent;
+  border-radius: var(--sl-radius-sm);
+  font: inherit;
+  font-weight: 750;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--sl-color-focus);
+  outline-offset: 2px;
+  box-shadow: var(--sl-focus-ring);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.primary {
+  border-color: var(--sl-color-brand-strong);
+  background: var(--sl-color-brand-strong);
+  color: var(--sl-color-surface);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--sl-color-brand);
+}
+
+.secondary {
+  border-color: var(--sl-color-control-border);
+  background: var(--sl-color-surface);
+  color: var(--sl-color-ink-strong);
+}
+
+.secondary:hover:not(:disabled),
+.ghost:hover:not(:disabled) {
+  background: var(--sl-color-surface-soft);
+}
+
+.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--sl-color-brand-strong);
+}
+
+.content {
+  grid-area: content;
+  min-width: 0;
+}
+
+.hiddenContent {
+  visibility: hidden;
+}
+
+.loadingLabel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  min-width: 0;
+  padding: inherit;
+  place-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 12rem) {
+  .loadingLabel {
+    position: static;
+    grid-area: content;
+    inset: auto;
+    padding: 0;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (forced-colors: active) {
+  .button {
+    border-color: ButtonText;
+  }
+
+  .button:focus-visible {
+    outline-color: Highlight;
+  }
+}

@@ -8,7 +8,7 @@
     "apps/backoffice": {},
     "packages/contracts": {},
     "packages/ui": {
-      "ignoreDependencies": ["@types/react", "@types/react-dom"]
+      "ignoreDependencies": ["@types/react-dom"]
     }
   }
 }

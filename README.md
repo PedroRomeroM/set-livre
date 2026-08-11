@@ -8,14 +8,15 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 
 ## Estado atual
 
-- fundação local executável implementada e validada na branch técnica, sem feature de produto simulada;
+- fundação local executável incorporada a `main`, sem feature de produto simulada;
+- FEAT-002 na branch `feat/feat-002-auth-legal-core`, com as três correções do quarto review publicadas, zero thread aberta e revisão final sem achado relevante; a feature aguarda somente integração ao `main` e ainda está fora da contagem de concluídas;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
-- Supabase local via Docker, migrations de segurança e pgTAP;
-- 270 unitários, 156 asserts pgTAP e 36 execuções Playwright/axe nos três engines;
-- lint, TypeScript estrito, Knip, audit e builds standalone das duas aplicações;
+- Supabase local via Docker com 11 migrations append-only, head `20260811000400` e 236 asserts pgTAP verdes;
+- rodada atual com 458 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
+- `npm ci`, formatação, lint, TypeScript estrito, documentação, Knip, audit, builds e smokes standalone passaram sobre o quarto review; o commit técnico `da34f46` gerou release local imutável com 2.756 artefatos e SHA-256 `33f0289b5a0a2ff491ac449958694417e6f43f8ab4630167e197975242ec7e47`;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
-- 34 features ainda seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
+- 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 
 CI/CD, Supabase Cloud, Oracle Cloud e providers externos estão temporariamente diferidos pelo ADR-018 e rastreados em `pendencias.md`; isso bloqueia go-live, não a implementação local possível.
 
@@ -96,7 +97,7 @@ Não implementar sem novo ADR e alteração formal de escopo:
 
 ## Regra de conclusão
 
-Nenhuma feature está concluída porque apenas a interface funciona. A entrega exige coerência entre:
+Nenhuma feature é considerada concluída apenas porque a interface funciona. A entrega exige coerência entre:
 
 - especificação;
 - ADRs;

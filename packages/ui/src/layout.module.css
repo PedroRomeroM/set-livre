@@ -1,0 +1,141 @@
+.pageFrame {
+  display: grid;
+  min-height: 100svh;
+  min-height: 100dvh;
+  padding: max(var(--sl-space-5), env(safe-area-inset-top))
+    max(var(--sl-space-4), env(safe-area-inset-right))
+    max(var(--sl-space-5), env(safe-area-inset-bottom))
+    max(var(--sl-space-4), env(safe-area-inset-left));
+  background: var(--sl-color-canvas);
+  color: var(--sl-color-ink);
+  place-items: center;
+}
+
+.pageContent {
+  min-width: 0;
+  width: min(100%, var(--sl-content-wide));
+}
+
+.narrow {
+  width: min(100%, var(--sl-content-narrow));
+}
+
+.wide {
+  width: min(100%, var(--sl-content-wide));
+}
+
+.stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.space2 {
+  gap: var(--sl-space-2);
+}
+
+.space3 {
+  gap: var(--sl-space-3);
+}
+
+.space4 {
+  gap: var(--sl-space-4);
+}
+
+.space5 {
+  gap: var(--sl-space-5);
+}
+
+.space6 {
+  gap: var(--sl-space-6);
+}
+
+.panel {
+  min-width: 0;
+  padding: clamp(var(--sl-space-4), 5vw, var(--sl-space-6));
+  border: 1px solid var(--sl-color-panel-border);
+  border-radius: var(--sl-radius-lg);
+  background: var(--sl-color-surface);
+  box-shadow: var(--sl-shadow-card);
+  overflow-wrap: anywhere;
+}
+
+.authGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(20rem, 1fr);
+  gap: clamp(var(--sl-space-5), 6vw, var(--sl-space-7));
+  align-items: center;
+}
+
+.authHeader {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.eyebrow {
+  margin: 0 0 var(--sl-space-3);
+  color: var(--sl-color-brand-strong);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.title {
+  max-width: 16ch;
+  margin: 0;
+  color: var(--sl-color-ink-strong);
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.description {
+  max-width: 48ch;
+  margin: var(--sl-space-4) 0 0;
+  color: var(--sl-color-ink);
+  font-size: clamp(1rem, 2vw, 1.125rem);
+  line-height: 1.55;
+}
+
+@media (max-width: 48rem) {
+  .authGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 24rem) {
+  .pageFrame {
+    place-items: start center;
+  }
+
+  .panel {
+    padding: var(--sl-space-4);
+    border-radius: var(--sl-radius-md);
+  }
+}
+
+@media (max-width: 12rem) {
+  .pageFrame {
+    padding: max(var(--sl-space-3), env(safe-area-inset-top))
+      max(var(--sl-space-2), env(safe-area-inset-right))
+      max(var(--sl-space-3), env(safe-area-inset-bottom))
+      max(var(--sl-space-2), env(safe-area-inset-left));
+  }
+
+  .panel {
+    padding: var(--sl-space-3);
+  }
+
+  .title {
+    font-size: 1.75rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .panel {
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+}

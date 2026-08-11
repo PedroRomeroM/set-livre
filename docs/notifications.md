@@ -6,22 +6,22 @@ Canal desta versão: e-mail. Não há push, WhatsApp, SMS ou inbox realtime.
 
 ## 2. Templates
 
-| Chave | Destinatário | Gatilho |
-|---|---|---|
-| `account.welcome` | usuário | perfil concluído |
-| `studio.review.submitted` | admin/reviewer | envio |
-| `studio.review.approved` | dono | aprovação |
-| `studio.review.rejected` | dono | rejeição |
-| `booking.payment.pending` | locatário | PIX/checkout iniciado quando útil |
-| `reservation.confirmed.renter` | locatário | pagamento confirmado |
-| `reservation.confirmed.owner` | dono | nova reserva |
-| `reservation.reminder.renter` | locatário | 24h antes |
-| `reservation.cancelled` | partes | cancelamento |
-| `refund.confirmed` | locatário | reembolso |
-| `payout.paid` | dono | repasse |
-| `account.deletion` | usuário | solicitação/conclusão |
+| Chave                          | Destinatário   | Gatilho                           |
+| ------------------------------ | -------------- | --------------------------------- |
+| `account.welcome`              | usuário        | perfil concluído                  |
+| `studio.review.submitted`      | admin/reviewer | envio                             |
+| `studio.review.approved`       | dono           | aprovação                         |
+| `studio.review.rejected`       | dono           | rejeição                          |
+| `booking.payment.pending`      | locatário      | PIX/checkout iniciado quando útil |
+| `reservation.confirmed.renter` | locatário      | pagamento confirmado              |
+| `reservation.confirmed.owner`  | dono           | nova reserva                      |
+| `reservation.reminder.renter`  | locatário      | 24h antes                         |
+| `reservation.cancelled`        | partes         | cancelamento                      |
+| `refund.confirmed`             | locatário      | reembolso                         |
+| `payout.paid`                  | dono           | repasse                           |
+| `account.deletion`             | usuário        | solicitação/conclusão             |
 
-Supabase Auth continua responsável por confirmação e reset, com templates alinhados à marca.
+Supabase Auth é responsável por confirmação e reset. A FEAT-002 já fornece templates locais PT-BR com assuntos estáveis; eles usam `TokenHash` somente no fragmento do callback allowlisted e nunca o endpoint intermediário `auth/v1/verify`. As specs físicas usam Mailpit em `127.0.0.1:54324` como sink real dos dois fluxos e o cleanup remove somente mensagem/usuário QA exatos; o resultado da rodada browser pertence à evidência final do PR. SMTP e remetente de produção continuam bloqueados por PEND-005.
 
 ## 3. Outbox
 
