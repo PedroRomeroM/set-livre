@@ -33,8 +33,10 @@ Os dois apps possuem somente a superfície técnica da fundação. Não existem 
 - o estado autenticado de `/entrar` comprova a sessão SSR e oferece logout sem antecipar `/conta`;
 - o cadastro cria um perfil mínimo PF/PJ e dois aceites legais por meio de uma intenção opaca, consumida atomicamente no `INSERT` de `auth.users`;
 - termos e privacidade vigentes possuem leitura pública mínima e fixtures explicitamente locais;
+- o corpo jurídico preserva headings, parágrafos, listas, ênfase e links por um subset Markdown local, sem HTML bruto ou dependência adicional;
 - recovery permanece genérico e o formulário de nova senha só aparece após token válido e revalidação concluída, sem reaproveitar autorização em cache durante refetch;
 - `returnTo` aceita somente destinos internos existentes e explicitamente allowlisted.
+- o primeiro review substitui a rejeição global por um limiter limitado e particionado por ação, com evicção controlada sob saturação, e preserva a estrutura dos documentos jurídicos por um subset Markdown seguro.
 
 ## Arquivos/componentes
 
@@ -46,7 +48,7 @@ A migration append-only `20260811000200` cria o perfil mínimo, versões legais,
 
 ## Segurança e privacidade
 
-O comando de cadastro aplica origem e host da request, limite de corpo, rate limit, Zod estrito e redaction. Senha, token, cookie, e-mail, IP e user-agent brutos não entram em logs ou tabelas de evidência. No browser, e-mails, senhas e `TokenHash` de cadastro, login, callback e recovery passam por refs one-shot e deixam `variables` do MutationCache vazias. Metadata do Auth carrega somente um identificador opaco temporário e não é usada como autoridade de perfil. O `TokenHash` de confirmação/recovery fica no fragmento, é apagado antes do `POST` e nunca integra a primeira request. Cookies de produção são seguros; apenas desenvolvimento e testes no HTTP loopback local usam a exceção estritamente limitada.
+O comando de cadastro aplica origem e host da request, limite de corpo, rate limit, Zod estrito e redaction. Senha, token, cookie, e-mail, IP e user-agent brutos não entram em logs ou tabelas de evidência. No browser, e-mails, senhas e `TokenHash` de cadastro, login, callback e recovery passam por refs one-shot e deixam `variables` do MutationCache vazias. Metadata do Auth carrega somente um identificador opaco temporário e não é usada como autoridade de perfil. O `TokenHash` de confirmação/recovery fica no fragmento, é apagado antes do `POST` e nunca integra a primeira request. Cookies de produção são seguros; apenas desenvolvimento e testes no HTTP loopback local usam a exceção estritamente limitada. O renderer jurídico não usa `dangerouslySetInnerHTML`: tags e sintaxe fora do subset permanecem texto escapado pelo React. Links são fail-closed para path interno absoluto ou HTTPS sem credenciais; destino rejeitado preserva somente o rótulo.
 
 ## Read models, comandos e invalidação
 
@@ -58,11 +60,11 @@ O comando de cadastro aplica origem e host da request, limite de corpo, rate lim
 
 ## UX, mobile e acessibilidade
 
-Formulários em PT-BR usam labels persistentes, `PasswordInput`, erros associados, live regions, alvos de 44 px e composição própria até 320 px e reflow de 160 CSS px. O callback apresenta loading e falha recuperável; ausência de versão legal e token inválido falham fechado.
+Formulários em PT-BR usam labels persistentes, `PasswordInput`, erros associados, live regions, alvos de 44 px e composição própria até 320 px e reflow de 160 CSS px. O callback apresenta loading e falha recuperável; ausência de versão legal e token inválido falham fechado. Nas páginas jurídicas, o título canônico é o único `h1`; headings do corpo começam em `h2`, listas mantêm a semântica ordenada ou não ordenada e ênfases/links usam elementos nativos.
 
 ## Testes e IDs QA
 
-Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas, totalizando 23 execuções verdes na matriz dedicada: Supabase Auth e Mailpit reais, confirmação, sessão SSR, recovery mobile, resposta genérica, matriz adversarial de `returnTo`, teclado, axe e reflow a 160x360 nos três engines. Senhas QA nunca entram no DOM ou em passos que serializam o valor: um `Locator.evaluate` valida input/form/nome e instala um listener `formdata` one-shot, deixando o segredo somente no `FormData`; trace, vídeo e screenshot permanecem desligados e a saída/artefatos passam por scan de sentinela e token. Com as 36 execuções técnicas da fundação, a rodada Playwright integral passou em 59/59. A rodada atual também passou em 380 unitários; 224 asserts pgTAP cobrem a baseline e o `legal-core`, incluindo constraints, grants, RLS A/B, trigger, readiness, corrida, purge, scrub, claim/release/consume concorrente e imutabilidade.
+Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas, totalizando 23 execuções verdes na matriz dedicada: Supabase Auth e Mailpit reais, confirmação, sessão SSR, recovery mobile, resposta genérica, matriz adversarial de `returnTo`, teclado, axe e reflow a 160x360 nos três engines. Senhas QA nunca entram no DOM ou em passos que serializam o valor: um `Locator.evaluate` valida input/form/nome e instala um listener `formdata` one-shot, deixando o segredo somente no `FormData`; trace, vídeo e screenshot permanecem desligados e a saída/artefatos passam por scan de sentinela e token. Logout e callback aguardam respostas, destinos sanitizados e estados visuais reais, sem depender do limite visual padrão de cinco segundos nem registrar a URL sensível intermediária. O parser jurídico possui prova unitária e de markup estático real para headings, parágrafos, listas, ênfase, links, hierarquia do título, escape de HTML e rejeição de hrefs inseguros. Com as 36 execuções técnicas da fundação, a rodada Playwright integral passou em 59/59. A rodada atual soma 386 unitários; 224 asserts pgTAP cobrem a baseline e o `legal-core`, incluindo constraints, grants, RLS A/B, trigger, readiness, corrida, purge, scrub, claim/release/consume concorrente e imutabilidade.
 
 ## Observabilidade e operação
 
@@ -80,7 +82,7 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 
 - Node `24.18.0`, npm `11.19.0` e `npm ci` concluíram no ambiente canônico;
 - formatação, lint, TypeScript estrito, Knip, documentação e auditoria de dependências passaram, com zero vulnerabilidades reportadas;
-- `380/380` testes unitários, `224/224` asserts pgTAP e a matriz Playwright integral `59/59` ficaram verdes;
+- `386/386` testes unitários, `224/224` asserts pgTAP e a matriz Playwright integral `59/59` ficaram verdes;
 - reset limpo, snapshot SQL e tipos gerados coincidiram com a instância local no head `20260811000200`;
 - builds e smokes standalone de web e backoffice passaram sem deixar processos ou portas residuais;
 - o release imutável do commit `0e5451d6f29c85db3e3dcab1c7b0c9ce3ef061fd` validou `2.752` artefatos e publicou o archive local com SHA-256 `b5b2a90edfc8b40dec492de55c6333adccb0321e02c988cee74eeb51f09b7626`;

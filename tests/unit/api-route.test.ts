@@ -205,16 +205,39 @@ describe("bounded rate limiter", () => {
   it("enforces a fixed window and allows the next one", async () => {
     const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
     const limiter = new BoundedFixedWindowRateLimiter(2);
-    expect(limiter.consume("one", 2, 1_000, 10)).toBe(true);
-    expect(limiter.consume("one", 2, 1_000, 20)).toBe(true);
-    expect(limiter.consume("one", 2, 1_000, 30)).toBe(false);
-    expect(limiter.consume("one", 2, 1_000, 1_011)).toBe(true);
+    expect(limiter.consume("identity.login", "one", 2, 1_000, 10)).toBe(true);
+    expect(limiter.consume("identity.login", "one", 2, 1_000, 20)).toBe(true);
+    expect(limiter.consume("identity.login", "one", 2, 1_000, 30)).toBe(false);
+    expect(limiter.consume("identity.login", "one", 2, 1_000, 1_011)).toBe(true);
   });
 
-  it("fails closed when the bounded store is full of live buckets", async () => {
+  it("admits a different action after 10,000 hostile live buckets fill the store", async () => {
     const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
-    const limiter = new BoundedFixedWindowRateLimiter(1);
-    expect(limiter.consume("one", 1, 1_000, 10)).toBe(true);
-    expect(limiter.consume("two", 1, 1_000, 20)).toBe(false);
+    const limiter = new BoundedFixedWindowRateLimiter(10_000);
+    for (let index = 0; index < 10_000; index += 1) {
+      expect(limiter.consume("identity.login", `hostile-${index}`, 1, 60_000, 10 + index)).toBe(
+        true,
+      );
+    }
+
+    expect(limiter.consume("identity.recovery.update", "legitimate", 1, 60_000, 10_010)).toBe(true);
+    expect(limiter.consume("identity.recovery.update", "legitimate", 1, 60_000, 10_011)).toBe(
+      false,
+    );
+  });
+
+  it("contains capacity churn in its action while retaining another action's exhausted bucket", async () => {
+    const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
+    const limiter = new BoundedFixedWindowRateLimiter(4);
+    expect(limiter.consume("identity.login", "hostile-one", 1, 1_000, 10)).toBe(true);
+    expect(limiter.consume("identity.login", "hostile-two", 1, 1_000, 20)).toBe(true);
+    expect(limiter.consume("identity.login", "hostile-three", 1, 1_000, 30)).toBe(true);
+    expect(limiter.consume("identity.recovery.update", "protected", 1, 1_000, 40)).toBe(true);
+
+    expect(limiter.consume("identity.recovery.update", "second", 1, 1_000, 50)).toBe(true);
+    expect(limiter.consume("identity.recovery.update", "protected", 1, 1_000, 60)).toBe(false);
+    expect(limiter.consume("identity.login", "hostile-four", 1, 1_000, 70)).toBe(true);
+    expect(limiter.consume("identity.register", "new-action", 1, 1_000, 80)).toBe(true);
+    expect(limiter.consume("identity.recovery.update", "protected", 1, 1_000, 90)).toBe(false);
   });
 });

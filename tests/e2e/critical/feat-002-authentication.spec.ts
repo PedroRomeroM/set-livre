@@ -6,6 +6,7 @@ import {
   createFeat002QaIdentity,
   expectUnauthenticatedSession,
   getFeat002PasswordControl,
+  logoutFeat002Identity,
   navigateFeat002AuthCallback,
   readFeat002AuthenticatedSession,
   readFeat002IdentitySession,
@@ -34,12 +35,6 @@ async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], e
       return `${address.pathname}${address.search}`;
     })
     .toBe(expected);
-}
-
-async function logoutThroughUi(page: Parameters<typeof gotoExpectedPage>[0]) {
-  await page.getByRole("button", { name: "Sair" }).click();
-  await expectCurrentPath(page, "/entrar");
-  await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
 }
 
 test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos", async ({
@@ -76,7 +71,7 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
   try {
     const notBefore = await submitFeat002Registration(page, identity, "Pessoa física");
     const confirmedSession = await confirmFeat002Registration(page, identity, notBefore);
-    await logoutThroughUi(page);
+    await logoutFeat002Identity(page);
 
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
     await stageFeat002PasswordForSubmission(
@@ -91,7 +86,7 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     expect(loggedInSession.userId).toBe(confirmedSession.userId);
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
 
-    await logoutThroughUi(page);
+    await logoutFeat002Identity(page);
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
   } finally {
     await cleanupFeat002QaIdentity(identity);
@@ -110,7 +105,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
   try {
     const signupNotBefore = await submitFeat002Registration(page, identity, "Pessoa física");
     await confirmFeat002Registration(page, identity, signupNotBefore);
-    await logoutThroughUi(page);
+    await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);

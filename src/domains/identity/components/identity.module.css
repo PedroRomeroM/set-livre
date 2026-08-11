@@ -7,8 +7,7 @@
 .formIntro,
 .supportingText,
 .statusText,
-.legalMeta,
-.legalParagraph {
+.legalMeta {
   margin: 0;
 }
 
@@ -102,11 +101,68 @@
   padding-block: var(--sl-space-2);
 }
 
-.legalParagraph {
+.legalBody h2,
+.legalBody h3,
+.legalBody h4,
+.legalBody h5,
+.legalBody h6,
+.legalBody p,
+.legalBody ul,
+.legalBody ol {
+  margin: 0;
+}
+
+.legalBody h2,
+.legalBody h3,
+.legalBody h4,
+.legalBody h5,
+.legalBody h6 {
+  color: var(--sl-color-ink-strong);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.legalBody h2 {
+  font-size: clamp(1.25rem, 4vw, 1.5rem);
+}
+
+.legalBody h3 {
+  font-size: 1.2rem;
+}
+
+.legalBody h4,
+.legalBody h5,
+.legalBody h6 {
+  font-size: 1rem;
+}
+
+.legalBody p,
+.legalBody li {
   color: var(--sl-color-ink);
   line-height: 1.75;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.legalBody strong {
+  color: var(--sl-color-ink-strong);
+}
+
+.legalBody a {
+  color: var(--sl-color-brand-strong);
+  font-weight: 750;
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.2em;
+}
+
+.legalBody a:hover {
+  text-decoration-thickness: 0.15em;
+}
+
+.legalBody ul,
+.legalBody ol {
+  display: grid;
+  gap: var(--sl-space-2);
+  padding-inline-start: var(--sl-space-5);
 }
 
 .loadingPanel {
@@ -137,6 +193,7 @@
 }
 
 @media (forced-colors: active) {
+  .legalBody a,
   .legalLink,
   .textLink,
   .backLink {

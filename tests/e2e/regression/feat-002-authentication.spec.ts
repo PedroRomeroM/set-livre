@@ -7,6 +7,7 @@ import {
   confirmFeat002Registration,
   createFeat002QaIdentity,
   getFeat002PasswordControl,
+  logoutFeat002Identity,
   navigateFeat002AuthCallback,
   stageFeat002PasswordForSubmission,
   submitFeat002Registration,
@@ -73,8 +74,7 @@ test("SL-F002-E2E-004 @p1 recuperação não enumera e-mail inexistente", async 
   try {
     const signupNotBefore = await submitFeat002Registration(page, existingIdentity);
     await confirmFeat002Registration(page, existingIdentity, signupNotBefore);
-    await page.getByRole("button", { name: "Sair" }).click();
-    await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
+    await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     const recoveryNotBefore = new Date(Date.now() - 1_000);

@@ -3,6 +3,7 @@ import { Alert, PageFrame, Panel, Stack } from "@set-livre/ui";
 import Link from "next/link";
 
 import styles from "./identity.module.css";
+import { LegalMarkdown } from "./legal-markdown";
 
 type LegalDocument = CurrentLegalDocuments["privacy"] | CurrentLegalDocuments["terms"];
 
@@ -15,17 +16,6 @@ function displayDate(isoDate: string) {
     dateStyle: "long",
     timeZone: "America/Sao_Paulo",
   }).format(new Date(isoDate));
-}
-
-function bodyParagraphs(bodyMarkdown: string, title: string) {
-  const paragraphs = bodyMarkdown
-    .split(/\n\s*\n/u)
-    .map((paragraph) => paragraph.trim())
-    .filter((paragraph) => paragraph.length > 0)
-    .map((paragraph) => paragraph.replace(/^#{1,6}\s+/u, ""));
-  return paragraphs[0]?.toLocaleLowerCase("pt-BR") === title.toLocaleLowerCase("pt-BR")
-    ? paragraphs.slice(1)
-    : paragraphs;
 }
 
 export function LegalDocumentView({ document }: LegalDocumentViewProps) {
@@ -50,13 +40,11 @@ export function LegalDocumentView({ document }: LegalDocumentViewProps) {
             </Alert>
           ) : null}
 
-          <div className={styles.legalBody}>
-            {bodyParagraphs(document.bodyMarkdown, document.title).map((paragraph, index) => (
-              <p className={styles.legalParagraph} key={`${index}-${paragraph.slice(0, 24)}`}>
-                {paragraph}
-              </p>
-            ))}
-          </div>
+          <LegalMarkdown
+            bodyMarkdown={document.bodyMarkdown}
+            className={styles.legalBody}
+            documentTitle={document.title}
+          />
 
           <div className={styles.actions}>
             <Link className={styles.textLink} href="/cadastro">

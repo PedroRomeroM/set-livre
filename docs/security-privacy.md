@@ -111,6 +111,8 @@ VM única: memória por processo é primeira camada. Operações críticas tamb�
 
 - toda rota de escrita consome um bucket de fachada antes do parse/Zod e um bucket pseudonimizado específico depois da validação;
 - no local direto, a fachada é compartilhada porque somente loopback é permitido; em produção, o app falha fechado sem um único `X-Forwarded-For` canônico sobrescrito pelo Nginx confiável;
+- o armazenamento local permanece limitado a 10.000 buckets e particionado por classe de ação; sob pressão, uma chave inédita toma o bucket mais antigo da maior partição até equilibrar as classes e só substitui na própria classe quando ela já é uma das maiores, impedindo que cardinalidade hostil produza rejeição global ou monopolize a capacidade sem varredura linear dos buckets;
+- um discriminador já presente e com cota esgotada continua recebendo `429`; a evicção sob pressão reduz apenas a precisão da primeira camada in-memory e não substitui o limiter obrigatório da borda;
 - normalizar IP confiando apenas em proxy configurado;
 - fail-closed para payment/admin;
 - fail-open controlado para leitura baixa;

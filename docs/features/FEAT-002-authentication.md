@@ -4,7 +4,7 @@
 
 | Campo            | Valor                                                                                                                                                                |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status           | Validada localmente; aguardando review do PR                                                                                                                         |
+| Status           | Validada localmente; em ciclos de review no PR                                                                                                                       |
 | Prioridade       | P0                                                                                                                                                                   |
 | Domínio          | `identity`                                                                                                                                                           |
 | Specs Playwright | `tests/e2e/critical/feat-002-authentication.spec.ts`<br>`tests/e2e/regression/feat-002-authentication.spec.ts`<br>`tests/e2e/reflow/feat-002-authentication.spec.ts` |
@@ -40,6 +40,7 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - Recuperação e definição de nova senha.
 - Redirecionamento allowlisted.
 - Mensagens em PT-BR para erros conhecidos.
+- Termos e privacidade renderizam o subset Markdown de headings, parágrafos, listas, ênfase e links com HTML tratado como texto.
 
 ## Fora desta feature
 
@@ -86,6 +87,7 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - A verificação inicial e o refetch de recovery apresentam loading sem reutilizar um estado `allowed` em cache.
 - Toda request interativa expira em dez segundos e reabilita uma recuperação acionável.
 - ReturnTo não permite URL externa.
+- O título canônico da página permanece como único `h1`; um `#` inicial igual ao título do documento é omitido e os demais headings preservam a hierarquia a partir de `h2`.
 
 Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
 
@@ -95,8 +97,10 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 - Cookies de sessão são server-side e `HttpOnly`; `Secure` só é relaxado no HTTP loopback local.
 - Sem enumeração de e-mail.
 - Limite de taxa e proteção antiabuso.
+- O limiter in-memory mantém no máximo 10.000 buckets, isola pressão por ação e admite chaves novas por evicção controlada, sem transformar cardinalidade hostil em `429` global; a borda Nginx continua obrigatória em produção.
 - Sessão sempre validada no servidor para comando.
 - E-mails, senhas e o `TokenHash` de cadastro, login, callback e recovery usam refs one-shot e não são persistidos como `variables` no MutationCache.
+- O conteúdo jurídico não usa `dangerouslySetInnerHTML`: somente o subset explicitamente reconhecido vira elementos React, e sintaxe/HTML não suportados permanecem texto escapado. Links aceitam apenas path interno absoluto sem destino protocol-relative/barra invertida ou URL `https:` sem credenciais; um destino rejeitado perde o link e preserva somente o rótulo.
 
 ## Critérios de aceitação
 
@@ -131,7 +135,7 @@ Regras:
 
 ## Testes unitários, integração e banco
 
-- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter, recovery grant, templates e helpers QA;
+- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter, recovery grant, templates, parser Markdown jurídico e helpers QA;
 - banco/RLS: perfil e aceites próprios para usuários A/B, intenção expirada/replay/concorrência, trigger atômico, metadata scrub, grant recovery com claim/release/consume concorrente, grants e readiness;
 - segurança: cookies, origem/request host, corpo limitado, callback em fragmento, redaction e cleanup local exato;
 - Playwright: os sete IDs possuem specs físicas; as 23 execuções Auth e a matriz integral de 59 casos passaram nos browsers.

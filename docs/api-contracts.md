@@ -388,7 +388,9 @@ Defaults por usuário/IP:
 
 Implementado no processo local único da FEAT-002: fachada pré-Zod `300/min` por ação e origem de rede confiável; cadastro `5/h` por hash de e-mail; login `10/15 min` por hash de e-mail; pedido de recovery `5/h` por hash de e-mail; callback `10/10 min` por hash do token; atualização de senha `5/h` por usuário. Nenhum discriminador bruto é armazenado. No runtime local direto, a fachada usa um único bucket deliberado porque a stack não é exposta; produção permanece bloqueada por PEND-003 até o Nginx sobrescrever o header e aplicar também o limiter de borda.
 
-No escopo local atual, o limiter in-memory é aceitável porque cada execução usa processo único e não fica exposta. Idempotência e banco protegem operações críticas; produção depende da borda Nginx de PEND-003, e horizontalização futura exige store compartilhado.
+O limiter in-memory limita o processo a 10.000 buckets totais e separa a pressão de capacidade por ação. Quando todos estão vivos, uma chave nova toma o bucket mais antigo da maior partição até equilibrar as classes; se a própria ação já for uma das maiores, a evicção ocorre nela. A seleção percorre somente as classes internas e a remoção do bucket é O(1), sem varrer os 10.000 discriminadores a cada admissão. Assim, encher o armazenamento com discriminadores sintéticos não transforma capacidade interna em `429` global nem monopoliza todas as vagas, enquanto uma chave presente em outra partição que já consumiu sua cota continua bloqueada. A evicção pode reduzir a precisão dessa primeira camada sob ataque de cardinalidade, por isso produção continua dependente do limiter Nginx de PEND-003, e horizontalização futura exige store compartilhado.
+
+No escopo local atual, o limiter in-memory é aceitável porque cada execução usa processo único e não fica exposta. Idempotência e banco protegem operações críticas.
 
 ## 11. Idempotência
 

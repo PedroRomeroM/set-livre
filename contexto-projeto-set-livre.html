@@ -641,12 +641,12 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 validada localmente · review pendente</li>
+          <li>FEAT-002 validada localmente · em review</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>0/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>380</strong><span>unitários na rodada atual</span></div>
+          <div class="stat"><strong>386</strong><span>unitários na rodada atual</span></div>
           <div class="stat"><strong>224</strong><span>asserts pgTAP na rodada atual</span></div>
           <div class="stat"><strong>59</strong><span>execuções Playwright/axe</span></div>
           <div class="stat"><strong>9</strong><span>migrations append-only</span></div>
@@ -708,8 +708,11 @@
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
                 login/logout e recuperação passaram em banco, unitários, browsers, builds, release e
-                auditorias locais. O review do PR segue pendente, sem antecipar perfil completo ou
-                reserva.
+                auditorias locais. Termos e privacidade preservam headings, parágrafos, listas,
+                ênfase e links por um subset Markdown seguro, sem HTML bruto e com hrefs
+                fail-closed. O primeiro review também isolou a capacidade do limiter por ação para
+                impedir rejeição global sob cardinalidade hostil. A feature segue em ciclos de
+                review, sem antecipar perfil completo ou reserva.
               </p>
             </article>
           </div>
@@ -717,7 +720,7 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada atual passou em 380 unitários e 224/224 asserts pgTAP. A fundação conserva 36
+              A rodada atual passou em 386 unitários e 224/224 asserts pgTAP. A fundação conserva 36
               execuções técnicas da fundação. Somadas às 23 execuções da FEAT-002, a matriz
               Playwright integral passou em 59/59 nos projetos desktop, mobile, Firefox, WebKit e
               reflow.
@@ -787,7 +790,9 @@
               <p>
                 Next.js App Router com página de status da fundação, layout responsivo, tokens
                 compartilhados, CSP por request, health/readiness e as rotas de cadastro, login,
-                callback, recuperação, termos e privacidade da FEAT-002.
+                callback, recuperação, termos e privacidade da FEAT-002; os documentos jurídicos
+                mantêm título único e estrutura semântica de headings, parágrafos, listas, ênfase e
+                links seguros.
               </p>
               <p>
                 O primeiro comando real cria a intenção legal do cadastro; catálogo, conta completa,
@@ -1000,11 +1005,12 @@
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">380 aprovados</span>
+              <span class="tag done">386 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
-                tipos, docs, preflight E2E e remoção física protegida contra mounts.
+                tipos, docs, preflight E2E, parser Markdown jurídico seguro e remoção física
+                protegida contra mounts.
               </p>
             </article>
             <article class="card">
@@ -1042,7 +1048,7 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Evidência local da FEAT-002:</strong>
             <p>
-              Reset limpo, geração determinística, 224/224 asserts pgTAP e 380/380 unitários estão
+              Reset limpo, geração determinística, 224/224 asserts pgTAP e 386/386 unitários estão
               verdes. A matriz Playwright integral passou em 59/59; os 23 casos Auth comprovaram
               cadastro, sessão, recovery, anti-enumeração, acessibilidade, teclado e reflow sem
               segredo em log ou artefato.
@@ -1165,7 +1171,7 @@
             <h2>Features e roadmap</h2>
             <p>
               As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está
-              validada localmente e aguardando review; as demais continuam planejadas conforme a
+              validada localmente e em ciclos de review; as demais continuam planejadas conforme a
               sequência executável do ADR-017.
             </p>
           </div>
@@ -1250,7 +1256,7 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Publicar a branch validada e abrir o PR da FEAT-002.</li>
+                <li>Publicar as correções validadas do ciclo atual no PR da FEAT-002.</li>
                 <li>Resolver apenas comentários comprovadamente atendidos no commit publicado.</li>
                 <li>Repetir review, correção e testes enquanto houver problema acionável.</li>
                 <li>Concluir e revisar a FEAT-002 antes de iniciar qualquer feature seguinte.</li>

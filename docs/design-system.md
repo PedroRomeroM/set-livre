@@ -20,6 +20,8 @@ Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de 
 
 A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
 
+As páginas jurídicas da FEAT-002 compõem o conteúdo dentro de `PageFrame`/`Panel` e estilizam somente elementos semânticos gerados pelo subset Markdown local: `h2`–`h6`, `p`, `ul`, `ol`, `li`, `strong`, `em` e `a`. O título da rota continua sendo o único `h1`; listas conservam marcador/ordem, links mantêm foco global e sublinhado, texto longo quebra sem overflow e nenhum HTML bruto entra na árvore.
+
 ## 2. Tokens
 
 Definir em `packages/ui/src/tokens.css`:

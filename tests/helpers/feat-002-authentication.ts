@@ -216,15 +216,33 @@ export async function confirmFeat002Registration(
   const email = await trackFeat002AuthEmail(identity, "signup", notBefore);
   await navigateFeat002AuthCallback(page, email.callbackUrl);
   await expect
-    .poll(() => {
-      const address = new URL(page.url());
-      return `${address.pathname}${address.search}`;
-    })
+    .poll(
+      () => {
+        const address = new URL(page.url());
+        return `${address.pathname}${address.search}`;
+      },
+      { timeout: 15_000 },
+    )
     .toBe("/entrar?confirmacao=sucesso");
-  await expect(page.getByRole("status")).toContainText("Sessão ativa");
+  await expect(page.getByRole("status")).toContainText("Sessão ativa", { timeout: 15_000 });
   const session = await readFeat002AuthenticatedSession(page);
   identity.userId = session.userId;
   return session;
+}
+
+export async function logoutFeat002Identity(page: Page) {
+  const logoutResponsePromise = page.waitForResponse((response) => {
+    const address = new URL(response.url());
+    return address.pathname === "/api/auth/logout" && response.request().method() === "POST";
+  });
+
+  await page.getByRole("button", { name: "Sair" }).click();
+  const logoutResponse = await logoutResponsePromise;
+  expect(logoutResponse.status()).toBe(200);
+  await page.waitForURL((address) => address.pathname === "/entrar" && address.search === "", {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
 }
 
 async function findExactLocalAuthUserId(email: string) {
