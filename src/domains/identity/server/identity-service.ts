@@ -21,126 +21,44 @@ import { readSupabaseEnvironment } from "@/lib/supabase/config";
 import { createAnonymousSupabaseClient, createRouteSupabaseClient } from "@/lib/supabase/server";
 
 import {
-  claimIdentityRecoveryGrant,
-  consumeIdentityRecoveryGrant,
+  claimIdentityRecoveryContext,
+  closeIdentityRecoverySession,
+  consumeIdentityRecoveryContext,
   createSignupLegalIntent,
-  hasIdentityRecoveryGrant,
-  issueIdentityRecoveryGrant,
-  releaseIdentityRecoveryGrant,
+  inspectIdentityRecoverySession,
+  issueIdentityRecoveryContext,
+  releaseIdentityRecoveryContext,
 } from "./identity-dal";
+import {
+  deleteCookieBestEffort,
+  discardIdentitySessionBestEffort,
+  parseAuthSessionContext,
+  signOutLocalAndClearExactAuthCookies,
+  signOutLocalOrProveAbsent,
+  type IdentityCookieStore,
+  type IdentitySupabaseAuth,
+} from "./identity-auth-session";
 import {
   handleCallbackProviderError,
   handleLoginProviderError,
-  handleLogoutProviderError,
   handlePasswordUpdateProviderError,
   handleRecoveryRequestProviderError,
   handleRegistrationProviderError,
   isPasswordUpdateProviderErrorSafeToRetry,
 } from "./identity-provider-errors";
 import { readIdentitySessionWithClient } from "./identity-read-model";
-import { recoveryGrantCookieName, recoveryGrantMaximumAgeSeconds } from "./recovery-grant";
+import {
+  recoveryGrantCookieName,
+  recoveryGrantMaximumAgeSeconds,
+  recoverySessionCookieMaximumAgeSeconds,
+  recoverySessionCookieName,
+  recoverySessionScopeFromCookieStore,
+} from "./recovery-grant";
 
 const databaseErrorSchema = z.object({ code: z.string().optional() });
-const claimsSchema = z.object({ sub: z.uuid() });
-type IdentityCookieStore = Awaited<ReturnType<typeof cookies>>;
-type IdentitySupabaseAuth = ReturnType<typeof createAnonymousSupabaseClient>["auth"];
 
 function userAgentEvidence(userAgent: string | null) {
   return userAgent === null ? null : createHash("sha256").update(userAgent).digest("hex");
-}
-
-function clearSupabaseAuthCookies(cookieStore: IdentityCookieStore, supabaseOrigin: string) {
-  let projectReference: string | undefined;
-  try {
-    projectReference = new URL(supabaseOrigin).hostname.split(".")[0];
-  } catch {
-    return;
-  }
-  if (projectReference === undefined || projectReference === "") {
-    return;
-  }
-  const storageKey = `sb-${projectReference}-auth-token`;
-  let currentCookies: ReturnType<IdentityCookieStore["getAll"]>;
-  try {
-    currentCookies = cookieStore.getAll();
-  } catch {
-    return;
-  }
-  for (const cookie of currentCookies) {
-    const chunk = cookie.name.startsWith(`${storageKey}.`)
-      ? cookie.name.slice(storageKey.length + 1)
-      : undefined;
-    if (cookie.name === storageKey || (chunk !== undefined && /^(?:0|[1-9][0-9]*)$/u.test(chunk))) {
-      try {
-        cookieStore.delete(cookie.name);
-      } catch {
-        // Uma falha pontual não impede a tentativa de apagar os demais chunks.
-      }
-    }
-  }
-}
-
-function deleteCookieBestEffort(cookieStore: IdentityCookieStore, name: string) {
-  try {
-    cookieStore.delete(name);
-  } catch {
-    // A limpeza das demais credenciais conhecidas ainda precisa continuar.
-  }
-}
-
-async function signOutLocalOrProveAbsent(auth: IdentitySupabaseAuth) {
-  let providerError: unknown = null;
-  try {
-    const result = await auth.signOut({ scope: "local" });
-    providerError = result.error;
-  } catch (error) {
-    providerError = error;
-  }
-  if (providerError === null) {
-    return;
-  }
-
-  let localSessionWasRemoved = false;
-  try {
-    const localState = await auth.getSession();
-    localSessionWasRemoved = localState.error === null && localState.data.session === null;
-  } catch {
-    // Sem prova local de remoção, a resposta permanece fail-closed.
-  }
-  if (!localSessionWasRemoved) {
-    handleLogoutProviderError(providerError);
-  }
-}
-
-async function signOutLocalAndClearExactAuthCookies(input: {
-  auth: IdentitySupabaseAuth;
-  cookieStore: IdentityCookieStore;
-  supabaseOrigin: string;
-}) {
-  let signOutError: unknown;
-  let signOutFailed = false;
-  try {
-    await signOutLocalOrProveAbsent(input.auth);
-  } catch (error) {
-    signOutError = error;
-    signOutFailed = true;
-  }
-  clearSupabaseAuthCookies(input.cookieStore, input.supabaseOrigin);
-  if (signOutFailed) {
-    throw signOutError;
-  }
-}
-
-async function discardIdentitySessionBestEffort(input: {
-  auth: IdentitySupabaseAuth;
-  cookieStore: IdentityCookieStore;
-  supabaseOrigin: string;
-}) {
-  try {
-    await signOutLocalAndClearExactAuthCookies(input);
-  } catch {
-    // O erro causal do fluxo permanece autoritativo e redigido.
-  }
 }
 
 function isProvenCallbackRejection(error: unknown, type: "recovery" | "signup") {
@@ -152,35 +70,58 @@ function isProvenCallbackRejection(error: unknown, type: "recovery" | "signup") 
   );
 }
 
+async function closeCurrentRecoveryBindingBestEffort(auth: IdentitySupabaseAuth) {
+  try {
+    const claimsResult = await auth.getClaims();
+    if (claimsResult.error !== null) {
+      return;
+    }
+    const context = parseAuthSessionContext(claimsResult.data?.claims);
+    if (context === undefined) {
+      return;
+    }
+    const binding = await inspectIdentityRecoverySession({
+      authExpiresAt: context.authExpiresAt,
+      authSessionId: context.authSessionId,
+      sessionScope: null,
+      token: null,
+      userId: context.userId,
+    });
+    if (binding !== undefined) {
+      await closeIdentityRecoverySession({
+        authSessionId: context.authSessionId,
+        userId: context.userId,
+      });
+    }
+  } catch {
+    // O tombstone continua detectável; as credenciais locais ainda serão substituídas/removidas.
+  }
+}
+
 async function restartAfterAmbiguousCallback(input: {
   auth: IdentitySupabaseAuth;
   cookieStore: IdentityCookieStore;
-  recoveryGrant?: string | undefined;
+  recoveryContext?:
+    | Readonly<{
+        authSessionId: string;
+        sessionScope: string;
+        token: string;
+        userId: string;
+      }>
+    | undefined;
   supabaseOrigin: string;
   type: "recovery" | "signup";
-  userId?: string | undefined;
 }): Promise<never> {
-  if (input.type === "recovery") {
-    deleteCookieBestEffort(input.cookieStore, recoveryGrantCookieName);
-  }
-  if (input.recoveryGrant !== undefined && input.userId !== undefined) {
+  deleteCookieBestEffort(input.cookieStore, recoveryGrantCookieName);
+  deleteCookieBestEffort(input.cookieStore, recoverySessionCookieName);
+  if (input.recoveryContext !== undefined) {
     try {
-      const attemptId = randomUUID();
-      if (
-        await claimIdentityRecoveryGrant({
-          attemptId,
-          token: input.recoveryGrant,
-          userId: input.userId,
-        })
-      ) {
-        await consumeIdentityRecoveryGrant({
-          attemptId,
-          token: input.recoveryGrant,
-          userId: input.userId,
-        });
-      }
+      await closeIdentityRecoverySession({
+        authSessionId: input.recoveryContext.authSessionId,
+        userId: input.recoveryContext.userId,
+      });
     } catch {
-      // O grant permanece claimed/expirável e não pode autorizar outra tentativa.
+      // A binding permanece detectável e não pode virar uma sessão comum.
     }
   }
   await discardIdentitySessionBestEffort(input);
@@ -275,6 +216,9 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
   const route = await createRouteSupabaseClient();
   const cookieStore = await cookies();
   const supabaseOrigin = readSupabaseEnvironment().supabaseOrigin;
+  await closeCurrentRecoveryBindingBestEffort(route.client.auth);
+  deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
+  deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
   let publishError: unknown = null;
   try {
     const publishResult = await route.client.auth.setSession({
@@ -309,6 +253,10 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
 
 export async function logoutIdentity() {
   const route = await createRouteSupabaseClient();
+  const cookieStore = await cookies();
+  await closeCurrentRecoveryBindingBestEffort(route.client.auth);
+  deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
+  deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
   await signOutLocalOrProveAbsent(route.client.auth);
   return { data: { signedOut: true as const }, responseHeaders: route.responseHeaders };
 }
@@ -356,8 +304,14 @@ export async function verifyIdentityCallback(input: {
     cookieStore: await cookies(),
     supabaseOrigin: readSupabaseEnvironment().supabaseOrigin,
   };
-  let recoveryGrant: string | undefined;
-  let verifiedUserId: string | undefined;
+  let recoveryContext:
+    | Readonly<{
+        authSessionId: string;
+        sessionScope: string;
+        token: string;
+        userId: string;
+      }>
+    | undefined;
   try {
     const verification = await route.client.auth.verifyOtp({
       token_hash: input.tokenHash,
@@ -369,15 +323,37 @@ export async function verifyIdentityCallback(input: {
     if (verification.data.user === null || verification.data.session === null) {
       throw new ApiRouteError(503, "SERVICE_UNAVAILABLE", "Não foi possível validar o link agora.");
     }
-    verifiedUserId = verification.data.user.id;
+    const claimsResult = await route.client.auth.getClaims(verification.data.session.access_token);
+    const authContext =
+      claimsResult.error === null ? parseAuthSessionContext(claimsResult.data?.claims) : undefined;
+    if (
+      authContext === undefined ||
+      authContext.userId !== verification.data.user.id ||
+      authContext.authExpiresAtEpochSeconds <= Math.floor(Date.now() / 1_000)
+    ) {
+      throw new ApiRouteError(503, "SERVICE_UNAVAILABLE", "Não foi possível validar o link agora.");
+    }
 
     if (input.type === "recovery") {
-      recoveryGrant = await issueIdentityRecoveryGrant(verifiedUserId);
-      callbackContext.cookieStore.set(recoveryGrantCookieName, recoveryGrant, {
+      const issuedContext = await issueIdentityRecoveryContext({
+        authExpiresAt: authContext.authExpiresAt,
+        authSessionId: authContext.authSessionId,
+        userId: authContext.userId,
+      });
+      recoveryContext = { ...authContext, ...issuedContext };
+      callbackContext.cookieStore.set(recoveryGrantCookieName, issuedContext.token, {
         ...readSupabaseEnvironment().cookieOptions,
         maxAge: recoveryGrantMaximumAgeSeconds,
         sameSite: "strict",
       });
+      callbackContext.cookieStore.set(recoverySessionCookieName, issuedContext.sessionScope, {
+        ...readSupabaseEnvironment().cookieOptions,
+        maxAge: recoverySessionCookieMaximumAgeSeconds(authContext.authExpiresAtEpochSeconds),
+        sameSite: "strict",
+      });
+    } else {
+      deleteCookieBestEffort(callbackContext.cookieStore, recoveryGrantCookieName);
+      deleteCookieBestEffort(callbackContext.cookieStore, recoverySessionCookieName);
     }
 
     const redirectTo =
@@ -394,10 +370,9 @@ export async function verifyIdentityCallback(input: {
     return restartAfterAmbiguousCallback({
       auth: route.client.auth,
       cookieStore: callbackContext.cookieStore,
-      recoveryGrant,
+      recoveryContext,
       supabaseOrigin: callbackContext.supabaseOrigin,
       type: input.type,
-      userId: verifiedUserId,
     });
   }
 }
@@ -405,61 +380,141 @@ export async function verifyIdentityCallback(input: {
 async function recoveryIdentity() {
   const route = await createRouteSupabaseClient();
   const claimsResult = await route.client.auth.getClaims();
-  const claims = claimsSchema.safeParse(claimsResult.data?.claims);
+  const authContext =
+    claimsResult.error === null ? parseAuthSessionContext(claimsResult.data?.claims) : undefined;
   const cookieStore = await cookies();
-  const token = cookieStore.get(recoveryGrantCookieName)?.value;
+  const parsedToken = z.uuid().safeParse(cookieStore.get(recoveryGrantCookieName)?.value);
+  const token = parsedToken.success ? parsedToken.data : null;
+  const cookieScope = recoverySessionScopeFromCookieStore(cookieStore);
+  const sessionScope = cookieScope === "anonymous" ? null : cookieScope;
   const supabaseOrigin = readSupabaseEnvironment().supabaseOrigin;
-  return { claims, cookieStore, route, supabaseOrigin, token };
+  let binding: Awaited<ReturnType<typeof inspectIdentityRecoverySession>>;
+  try {
+    binding =
+      authContext === undefined
+        ? undefined
+        : await inspectIdentityRecoverySession({
+            authExpiresAt: authContext.authExpiresAt,
+            authSessionId: authContext.authSessionId,
+            sessionScope,
+            token,
+            userId: authContext.userId,
+          });
+  } catch (error) {
+    deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
+    deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
+    throw error;
+  }
+  return {
+    authContext,
+    binding,
+    cookieStore,
+    route,
+    sessionScope,
+    supabaseOrigin,
+    token,
+  };
 }
 
-async function discardRecoverySessionBestEffort(
-  state: Awaited<ReturnType<typeof recoveryIdentity>>,
-) {
+function clearRecoveryCookies(state: Awaited<ReturnType<typeof recoveryIdentity>>) {
   deleteCookieBestEffort(state.cookieStore, recoveryGrantCookieName);
-  await discardIdentitySessionBestEffort({
+  deleteCookieBestEffort(state.cookieStore, recoverySessionCookieName);
+}
+
+async function closeAndDiscardRecoverySession(state: Awaited<ReturnType<typeof recoveryIdentity>>) {
+  if (state.authContext !== undefined && state.binding !== undefined) {
+    try {
+      await closeIdentityRecoverySession({
+        authSessionId: state.authContext.authSessionId,
+        userId: state.authContext.userId,
+      });
+    } catch {
+      // O tombstone ativo continua classificando a sessão como recovery.
+    }
+  }
+  clearRecoveryCookies(state);
+  await signOutLocalAndClearExactAuthCookies({
     auth: state.route.client.auth,
     cookieStore: state.cookieStore,
     supabaseOrigin: state.supabaseOrigin,
   });
 }
 
+async function discardRecoverySessionBestEffort(
+  state: Awaited<ReturnType<typeof recoveryIdentity>>,
+) {
+  try {
+    await closeAndDiscardRecoverySession(state);
+  } catch {
+    // O erro causal do fluxo permanece autoritativo e redigido.
+  }
+}
+
 export async function readIdentityRecoveryStatus() {
   const state = await recoveryIdentity();
-  const parsedToken = z.uuid().safeParse(state.token);
+  if (state.authContext === undefined || state.binding === undefined) {
+    clearRecoveryCookies(state);
+    return {
+      data: identityRecoveryStatusResultSchema.parse({
+        allowed: false,
+        scope: "anonymous",
+      }),
+      responseHeaders: state.route.responseHeaders,
+    };
+  }
   const allowed =
-    state.claims.success &&
-    parsedToken.success &&
-    (await hasIdentityRecoveryGrant({
-      token: parsedToken.data,
-      userId: state.claims.data.sub,
-    }));
+    state.binding.active &&
+    state.binding.grantAllowed &&
+    state.sessionScope === state.binding.sessionScope;
+  if (!allowed) {
+    await closeAndDiscardRecoverySession(state);
+  }
   return {
-    data: identityRecoveryStatusResultSchema.parse({ allowed }),
+    data: identityRecoveryStatusResultSchema.parse({
+      allowed,
+      scope: allowed ? state.binding.sessionScope : "anonymous",
+    }),
     responseHeaders: state.route.responseHeaders,
   };
 }
 
 export async function updateRecoveredIdentityPassword(password: string) {
   const state = await recoveryIdentity();
-  const parsedToken = z.uuid().safeParse(state.token);
-  if (!state.claims.success || !parsedToken.success) {
+  if (state.authContext === undefined || state.binding === undefined) {
+    clearRecoveryCookies(state);
     throw new ApiRouteError(
       403,
       "RECOVERY_INVALID",
       "Este link é inválido ou expirou. Solicite um novo link.",
     );
   }
-  enforceIdentityRateLimit("identity.recovery.update", state.claims.data.sub, {
+  if (
+    !state.binding.active ||
+    !state.binding.grantAllowed ||
+    state.token === null ||
+    state.sessionScope !== state.binding.sessionScope
+  ) {
+    await closeAndDiscardRecoverySession(state);
+    throw new ApiRouteError(
+      403,
+      "RECOVERY_INVALID",
+      "Este link é inválido ou expirou. Solicite um novo link.",
+    );
+  }
+  enforceIdentityRateLimit("identity.recovery.update", state.authContext.userId, {
     limit: 5,
     windowMs: 60 * 60_000,
   });
   const attemptId = randomUUID();
   const grantInput = {
     attemptId,
-    token: parsedToken.data,
-    userId: state.claims.data.sub,
+    authSessionId: state.authContext.authSessionId,
+    sessionScope: state.binding.sessionScope,
+    token: state.token,
+    userId: state.authContext.userId,
   };
-  if (!(await claimIdentityRecoveryGrant(grantInput))) {
+  if (!(await claimIdentityRecoveryContext(grantInput))) {
+    await closeAndDiscardRecoverySession(state);
     throw new ApiRouteError(
       403,
       "RECOVERY_INVALID",
@@ -478,7 +533,7 @@ export async function updateRecoveredIdentityPassword(password: string) {
     if (isPasswordUpdateProviderErrorSafeToRetry(providerError)) {
       let released = false;
       try {
-        released = await releaseIdentityRecoveryGrant(grantInput);
+        released = await releaseIdentityRecoveryContext(grantInput);
       } catch {
         // Falha fechada: sem release comprovado, a tentativa não pode ser repetida.
       }
@@ -498,7 +553,7 @@ export async function updateRecoveredIdentityPassword(password: string) {
 
   let consumed = false;
   try {
-    consumed = await consumeIdentityRecoveryGrant(grantInput);
+    consumed = await consumeIdentityRecoveryContext(grantInput);
   } catch {
     // A falha pública não expõe o banco e a claim impede outro consumo.
   }
@@ -510,12 +565,7 @@ export async function updateRecoveredIdentityPassword(password: string) {
       "A senha foi atualizada, mas a recuperação não pôde ser finalizada. Entre novamente.",
     );
   }
-  deleteCookieBestEffort(state.cookieStore, recoveryGrantCookieName);
-  await signOutLocalAndClearExactAuthCookies({
-    auth: state.route.client.auth,
-    cookieStore: state.cookieStore,
-    supabaseOrigin: state.supabaseOrigin,
-  });
+  await closeAndDiscardRecoverySession(state);
   return {
     data: identityRecoveryUpdateResultSchema.parse({ updated: true }),
     responseHeaders: state.route.responseHeaders,

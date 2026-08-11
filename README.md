@@ -9,12 +9,12 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 ## Estado atual
 
 - fundação local executável incorporada a `main`, sem feature de produto simulada;
-- FEAT-002 validada localmente na branch `feat/feat-002-auth-legal-core`, em ciclos de review no PR e ainda fora da contagem de features concluídas;
+- FEAT-002 na branch `feat/feat-002-auth-legal-core`, com as correções do quarto ciclo de review em validação e ainda fora da contagem de features concluídas;
 - aplicações pública e backoffice separadas;
 - Node/npm e dependências fixados em lockfile;
-- Supabase local via Docker com 10 migrations append-only, head `20260811000300` e 224 asserts pgTAP verdes na FEAT-002;
-- rodada atual com 407 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
-- lint, TypeScript estrito, Knip, audit, builds, smokes standalone e release local imutável das duas aplicações comprovados na rodada atual;
+- Supabase local via Docker com 11 migrations append-only, head `20260811000400` e 236 asserts pgTAP verdes;
+- rodada atual com 458 unitários e 59 execuções Playwright/axe verdes, combinando os 36 casos técnicos da fundação com as 23 execuções próprias da FEAT-002;
+- `npm ci`, formatação, lint, TypeScript estrito, documentação, Knip, audit e builds das duas aplicações passaram sobre o quarto review; smokes standalone, release imutável e auditoria do índice ainda serão reemitidos após o commit técnico;
 - resumo executivo vivo em `contexto-projeto-set-livre.html`, atualizado junto de cada mudança técnica;
 - 34 features seguem a sequência canônica de `docs/implementation-order.md`, uma por branch/PR.
 

@@ -205,9 +205,13 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         where membership.member = role.oid
       )
   ),
+  jwt_expiry_pinned as (
+    select pg_catalog.current_setting('app.settings.jwt_exp', true)
+      is not distinct from '3600' as restricted
+  ),
   authorized_acl_dependencies as (
     select
-      pg_catalog.count(*) = 9
+      pg_catalog.count(*) = 10
       and pg_catalog.bool_and(
         (
           dependency.dbid = (
@@ -261,7 +265,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
           and dependency.objid = pg_catalog.to_regprocedure(
-            'private.issue_identity_recovery_grant(uuid)'
+            'private.issue_identity_recovery_context(uuid,uuid,timestamptz)'
           )
           and dependency.objsubid = 0
         )
@@ -273,7 +277,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
           and dependency.objid = pg_catalog.to_regprocedure(
-            'private.has_identity_recovery_grant(uuid,uuid)'
+            'private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)'
           )
           and dependency.objsubid = 0
         )
@@ -285,7 +289,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
           and dependency.objid = pg_catalog.to_regprocedure(
-            'private.claim_identity_recovery_grant(uuid,uuid,uuid)'
+            'private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
           )
           and dependency.objsubid = 0
         )
@@ -297,7 +301,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
           and dependency.objid = pg_catalog.to_regprocedure(
-            'private.release_identity_recovery_grant(uuid,uuid,uuid)'
+            'private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
           )
           and dependency.objsubid = 0
         )
@@ -309,7 +313,19 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
           and dependency.objid = pg_catalog.to_regprocedure(
-            'private.consume_identity_recovery_grant(uuid,uuid,uuid)'
+            'private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
+          )
+          and dependency.objsubid = 0
+        )
+        or (
+          dependency.dbid = (
+            select database.oid
+            from pg_catalog.pg_database as database
+            where database.datname = pg_catalog.current_database()
+          )
+          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          and dependency.objid = pg_catalog.to_regprocedure(
+            'private.close_identity_recovery_session(uuid,uuid)'
           )
           and dependency.objsubid = 0
         )
@@ -336,7 +352,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_routine_privilege as (
     select
-      pg_catalog.count(*) = 8
+      pg_catalog.count(*) = 9
       and pg_catalog.bool_and(
         privilege.grantee = runtime_role.oid
         and privilege.grantor <> runtime_role.oid
@@ -353,19 +369,22 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           'private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)'
         ),
         pg_catalog.to_regprocedure(
-          'private.issue_identity_recovery_grant(uuid)'
+          'private.issue_identity_recovery_context(uuid,uuid,timestamptz)'
         ),
         pg_catalog.to_regprocedure(
-          'private.has_identity_recovery_grant(uuid,uuid)'
+          'private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)'
         ),
         pg_catalog.to_regprocedure(
-          'private.claim_identity_recovery_grant(uuid,uuid,uuid)'
+          'private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
         ),
         pg_catalog.to_regprocedure(
-          'private.release_identity_recovery_grant(uuid,uuid,uuid)'
+          'private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
         ),
         pg_catalog.to_regprocedure(
-          'private.consume_identity_recovery_grant(uuid,uuid,uuid)'
+          'private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.close_identity_recovery_session(uuid,uuid)'
         )
       )
       and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
@@ -919,6 +938,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
       select pg_catalog.max(schema_migrations.version)::text = expected_version
       from supabase_migrations.schema_migrations
     )
+    and (select restricted from jwt_expiry_pinned)
     and (select restricted from authorized_acl_dependencies)
     and (select restricted from authorized_schema_privilege)
     and (select restricted from authorized_routine_privilege)
@@ -1127,6 +1147,66 @@ COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" 
 
 
 
+CREATE OR REPLACE FUNCTION "private"."claim_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  claim_time timestamptz := pg_catalog.clock_timestamp();
+  grant_claimed boolean;
+begin
+  if p_token is null
+    or p_user_id is null
+    or p_auth_session_id is null
+    or p_session_scope is null
+    or p_attempt_id is null
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_grant';
+  end if;
+
+  perform 1
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+  for key share;
+
+  if not found then
+    return false;
+  end if;
+
+  update private.identity_recovery_grants as recovery_grant
+  set
+    claim_attempt_id = p_attempt_id,
+    claimed_at = coalesce(recovery_grant.claimed_at, claim_time)
+  from private.identity_recovery_sessions as recovery_session
+  where recovery_grant.token = p_token
+    and recovery_grant.user_id = p_user_id
+    and recovery_grant.auth_session_id = p_auth_session_id
+    and recovery_grant.expires_at > claim_time
+    and recovery_session.auth_session_id = recovery_grant.auth_session_id
+    and recovery_session.user_id = recovery_grant.user_id
+    and recovery_session.session_scope = p_session_scope
+    and recovery_session.closed_at is null
+    and (
+      recovery_grant.claim_attempt_id is null
+      or recovery_grant.claim_attempt_id = p_attempt_id
+    )
+  returning true into grant_claimed;
+
+  return coalesce(grant_claimed, false);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."claim_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."claim_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") IS 'Reserva exclusivamente grant vigente que corresponde a user, session_id e scope da binding ativa.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."claim_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -1165,6 +1245,98 @@ ALTER FUNCTION "private"."claim_identity_recovery_grant"("p_token" "uuid", "p_us
 
 
 COMMENT ON FUNCTION "private"."claim_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") IS 'Reserva exclusivamente um grant vigente; retry da mesma tentativa é idempotente.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  binding_closed boolean;
+begin
+  if p_user_id is null or p_auth_session_id is null then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_session';
+  end if;
+
+  update private.identity_recovery_sessions as recovery_session
+  set closed_at = coalesce(
+    recovery_session.closed_at,
+    pg_catalog.clock_timestamp()
+  )
+  where recovery_session.auth_session_id = p_auth_session_id
+    and recovery_session.user_id = p_user_id
+  returning true into binding_closed;
+
+  if coalesce(binding_closed, false) then
+    delete from private.identity_recovery_grants as recovery_grant
+    where recovery_grant.auth_session_id = p_auth_session_id
+      and recovery_grant.user_id = p_user_id;
+  end if;
+
+  return coalesce(binding_closed, false);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") IS 'Fecha a binding e remove seu grant; o tombstone persiste para bloquear replay da sessão Auth.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  grant_consumed boolean;
+begin
+  if p_token is null
+    or p_user_id is null
+    or p_auth_session_id is null
+    or p_session_scope is null
+    or p_attempt_id is null
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_grant';
+  end if;
+
+  perform 1
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+  for key share;
+
+  if not found then
+    return false;
+  end if;
+
+  delete from private.identity_recovery_grants as recovery_grant
+  using private.identity_recovery_sessions as recovery_session
+  where recovery_grant.token = p_token
+    and recovery_grant.user_id = p_user_id
+    and recovery_grant.auth_session_id = p_auth_session_id
+    and recovery_grant.claim_attempt_id = p_attempt_id
+    and recovery_session.auth_session_id = recovery_grant.auth_session_id
+    and recovery_session.user_id = recovery_grant.user_id
+    and recovery_session.session_scope = p_session_scope
+    and recovery_session.closed_at is null
+  returning true into grant_consumed;
+
+  return coalesce(grant_consumed, false);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") IS 'Consome o grant da tentativa sem remover o tombstone da sessão recovery.';
 
 
 
@@ -1379,6 +1551,233 @@ COMMENT ON FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p
 
 
 
+CREATE OR REPLACE FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") RETURNS TABLE("session_scope" "uuid", "active" boolean, "grant_allowed" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  binding_active boolean;
+  binding_scope uuid;
+  inspection_time timestamptz := pg_catalog.clock_timestamp();
+begin
+  if pg_catalog.current_setting('app.settings.jwt_exp', true) is distinct from '3600' then
+    raise exception using
+      errcode = '55000',
+      message = 'identity_recovery_jwt_expiry_not_pinned';
+  end if;
+
+  if p_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_auth_expires_at <= inspection_time
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_session';
+  end if;
+
+  perform 1
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+  for key share;
+
+  if not found then
+    update private.identity_recovery_sessions as absent_binding
+    set
+      auth_expires_at = greatest(
+        absent_binding.auth_expires_at,
+        inspection_time + interval '1 hour'
+      ),
+      retain_until = greatest(
+        absent_binding.retain_until,
+        inspection_time + interval '65 minutes'
+      ),
+      canonical_absence_observed_at = coalesce(
+        absent_binding.canonical_absence_observed_at,
+        inspection_time
+      ),
+      closed_at = coalesce(absent_binding.closed_at, inspection_time)
+    where absent_binding.auth_session_id = p_auth_session_id
+      and absent_binding.user_id = p_user_id
+    returning absent_binding.session_scope into binding_scope;
+
+    if not found then
+      return;
+    end if;
+
+    delete from private.identity_recovery_grants as recovery_grant
+    where recovery_grant.auth_session_id = p_auth_session_id
+      and recovery_grant.user_id = p_user_id;
+
+    session_scope := binding_scope;
+    active := false;
+    grant_allowed := false;
+    return next;
+    return;
+  end if;
+
+  update private.identity_recovery_sessions as recovery_session
+  set
+    auth_expires_at = greatest(
+      recovery_session.auth_expires_at,
+      p_auth_expires_at
+    ),
+    retain_until = greatest(
+      recovery_session.retain_until,
+      p_auth_expires_at + interval '5 minutes'
+    )
+  where recovery_session.auth_session_id = p_auth_session_id
+    and recovery_session.user_id = p_user_id
+  returning
+    recovery_session.session_scope,
+    recovery_session.closed_at is null
+  into binding_scope, binding_active;
+
+  if not found then
+    return;
+  end if;
+
+  session_scope := binding_scope;
+  active := binding_active;
+  grant_allowed := binding_active
+    and p_grant_token is not null
+    and p_session_scope = binding_scope
+    and exists (
+      select 1
+      from private.identity_recovery_grants as recovery_grant
+      where recovery_grant.token = p_grant_token
+        and recovery_grant.user_id = p_user_id
+        and recovery_grant.auth_session_id = p_auth_session_id
+        and recovery_grant.expires_at > inspection_time
+        and recovery_grant.claim_attempt_id is null
+    );
+  return next;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") IS 'Classifica binding/tombstone pelo session_id assinado, estende retenção ao JWT observado e só autoriza grant/escopo ativos correspondentes.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("grant_token" "uuid", "session_scope" "uuid")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  binding_time timestamptz := pg_catalog.clock_timestamp();
+  issued_scope uuid;
+  issued_token uuid;
+begin
+  if pg_catalog.current_setting('app.settings.jwt_exp', true) is distinct from '3600' then
+    raise exception using
+      errcode = '55000',
+      message = 'identity_recovery_jwt_expiry_not_pinned';
+  end if;
+
+  if p_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_auth_expires_at <= binding_time
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_session';
+  end if;
+
+  perform 1
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+  for key share;
+
+  if not found then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_session';
+  end if;
+
+  update private.identity_recovery_sessions as absent_binding
+  set
+    auth_expires_at = greatest(
+      absent_binding.auth_expires_at,
+      binding_time + interval '1 hour'
+    ),
+    retain_until = greatest(
+      absent_binding.retain_until,
+      binding_time + interval '65 minutes'
+    ),
+    canonical_absence_observed_at = binding_time,
+    closed_at = coalesce(absent_binding.closed_at, binding_time)
+  where absent_binding.canonical_absence_observed_at is null
+    and not exists (
+      select 1
+      from auth.sessions as canonical_session
+      where canonical_session.id = absent_binding.auth_session_id
+        and canonical_session.user_id = absent_binding.user_id
+    );
+
+  delete from private.identity_recovery_sessions as expired_binding
+  where expired_binding.canonical_absence_observed_at is not null
+    and expired_binding.retain_until <= binding_time
+    and not exists (
+      select 1
+      from auth.sessions as canonical_session
+      where canonical_session.id = expired_binding.auth_session_id
+        and canonical_session.user_id = expired_binding.user_id
+    );
+
+  delete from private.identity_recovery_grants as expired_grant
+  where expired_grant.expires_at <= binding_time;
+
+  insert into private.identity_recovery_sessions (
+    auth_session_id,
+    user_id,
+    bound_at,
+    auth_expires_at,
+    retain_until
+  )
+  values (
+    p_auth_session_id,
+    p_user_id,
+    binding_time,
+    p_auth_expires_at,
+    p_auth_expires_at + interval '5 minutes'
+  )
+  returning identity_recovery_sessions.session_scope into issued_scope;
+
+  insert into private.identity_recovery_grants (
+    user_id,
+    auth_session_id,
+    issued_at,
+    expires_at
+  )
+  values (
+    p_user_id,
+    p_auth_session_id,
+    binding_time,
+    binding_time + interval '15 minutes'
+  )
+  returning identity_recovery_grants.token into issued_token;
+
+  grant_token := issued_token;
+  session_scope := issued_scope;
+  return next;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) IS 'Emite atomicamente binding por session_id Auth, scope opaco e grant de 15 minutos após validar auth.sessions.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -1508,6 +1907,62 @@ $$;
 
 
 ALTER FUNCTION "private"."protect_terms_version"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  grant_released boolean;
+begin
+  if p_token is null
+    or p_user_id is null
+    or p_auth_session_id is null
+    or p_session_scope is null
+    or p_attempt_id is null
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'invalid_identity_recovery_grant';
+  end if;
+
+  perform 1
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+  for key share;
+
+  if not found then
+    return false;
+  end if;
+
+  update private.identity_recovery_grants as recovery_grant
+  set
+    claim_attempt_id = null,
+    claimed_at = null
+  from private.identity_recovery_sessions as recovery_session
+  where recovery_grant.token = p_token
+    and recovery_grant.user_id = p_user_id
+    and recovery_grant.auth_session_id = p_auth_session_id
+    and recovery_grant.claim_attempt_id = p_attempt_id
+    and recovery_grant.expires_at > pg_catalog.statement_timestamp()
+    and recovery_session.auth_session_id = recovery_grant.auth_session_id
+    and recovery_session.user_id = recovery_grant.user_id
+    and recovery_session.session_scope = p_session_scope
+    and recovery_session.closed_at is null
+  returning true into grant_released;
+
+  return coalesce(grant_released, false);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") IS 'Libera somente a reserva vigente da mesma tentativa e binding ativa após rejeição segura.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") RETURNS boolean
@@ -1655,6 +2110,7 @@ CREATE TABLE IF NOT EXISTS "private"."identity_recovery_grants" (
     "expires_at" timestamp with time zone NOT NULL,
     "claim_attempt_id" "uuid",
     "claimed_at" timestamp with time zone,
+    "auth_session_id" "uuid" NOT NULL,
     CONSTRAINT "identity_recovery_grants_claim_pair_check" CHECK (((("claim_attempt_id" IS NULL) AND ("claimed_at" IS NULL)) OR (("claim_attempt_id" IS NOT NULL) AND ("claimed_at" IS NOT NULL) AND ("claimed_at" >= "issued_at") AND ("claimed_at" < "expires_at")))),
     CONSTRAINT "identity_recovery_grants_expiry_check" CHECK ((("expires_at" > "issued_at") AND ("expires_at" <= ("issued_at" + '00:15:00'::interval))))
 );
@@ -1668,6 +2124,44 @@ COMMENT ON TABLE "private"."identity_recovery_grants" IS 'Grant opaco de recuper
 
 
 COMMENT ON COLUMN "private"."identity_recovery_grants"."claim_attempt_id" IS 'Reserva exclusiva e idempotente da tentativa que pode chamar o provedor Auth.';
+
+
+
+COMMENT ON COLUMN "private"."identity_recovery_grants"."auth_session_id" IS 'Sessão Auth assinada que originou o recovery; o grant nunca existe sem sua binding.';
+
+
+
+CREATE TABLE IF NOT EXISTS "private"."identity_recovery_sessions" (
+    "auth_session_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "session_scope" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "bound_at" timestamp with time zone NOT NULL,
+    "auth_expires_at" timestamp with time zone NOT NULL,
+    "retain_until" timestamp with time zone NOT NULL,
+    "canonical_absence_observed_at" timestamp with time zone,
+    "closed_at" timestamp with time zone,
+    CONSTRAINT "identity_recovery_sessions_absence_check" CHECK ((("canonical_absence_observed_at" IS NULL) OR ("canonical_absence_observed_at" >= "bound_at"))),
+    CONSTRAINT "identity_recovery_sessions_closed_check" CHECK ((("closed_at" IS NULL) OR ("closed_at" >= "bound_at"))),
+    CONSTRAINT "identity_recovery_sessions_expiry_check" CHECK ((("auth_expires_at" > "bound_at") AND ("retain_until" = ("auth_expires_at" + '00:05:00'::interval))))
+);
+
+
+ALTER TABLE "private"."identity_recovery_sessions" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."identity_recovery_sessions" IS 'Binding/tombstone de recovery por session_id Auth; sobrevive ao grant e só purga após ausência canônica e expiração do último JWT.';
+
+
+
+COMMENT ON COLUMN "private"."identity_recovery_sessions"."session_scope" IS 'Escopo opaco não autoritativo usado apenas para isolar estado de interface.';
+
+
+
+COMMENT ON COLUMN "private"."identity_recovery_sessions"."retain_until" IS 'Última expiração JWT observada acrescida de cinco minutos; nunca autoriza purge sem ausência em auth.sessions.';
+
+
+
+COMMENT ON COLUMN "private"."identity_recovery_sessions"."canonical_absence_observed_at" IS 'Primeira ausência em auth.sessions; inicia nova retenção pelo JWT pinado de 3600 segundos mais cinco minutos antes de qualquer purge.';
 
 
 
@@ -1784,6 +2278,26 @@ ALTER TABLE ONLY "private"."identity_recovery_grants"
 
 
 
+ALTER TABLE ONLY "private"."identity_recovery_grants"
+    ADD CONSTRAINT "identity_recovery_grants_session_key" UNIQUE ("auth_session_id");
+
+
+
+ALTER TABLE ONLY "private"."identity_recovery_sessions"
+    ADD CONSTRAINT "identity_recovery_sessions_pkey" PRIMARY KEY ("auth_session_id");
+
+
+
+ALTER TABLE ONLY "private"."identity_recovery_sessions"
+    ADD CONSTRAINT "identity_recovery_sessions_scope_key" UNIQUE ("session_scope");
+
+
+
+ALTER TABLE ONLY "private"."identity_recovery_sessions"
+    ADD CONSTRAINT "identity_recovery_sessions_user_session_key" UNIQUE ("auth_session_id", "user_id");
+
+
+
 ALTER TABLE ONLY "private"."signup_legal_intents"
     ADD CONSTRAINT "signup_legal_intents_pkey" PRIMARY KEY ("id");
 
@@ -1828,6 +2342,10 @@ CREATE INDEX "identity_recovery_grants_expires_at_idx" ON "private"."identity_re
 
 
 
+CREATE INDEX "identity_recovery_sessions_retain_until_idx" ON "private"."identity_recovery_sessions" USING "btree" ("retain_until");
+
+
+
 CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_intents" USING "btree" ("expires_at");
 
 
@@ -1853,7 +2371,17 @@ CREATE OR REPLACE TRIGGER "terms_versions_protect_immutability" BEFORE DELETE OR
 
 
 ALTER TABLE ONLY "private"."identity_recovery_grants"
+    ADD CONSTRAINT "identity_recovery_grants_session_user_fkey" FOREIGN KEY ("auth_session_id", "user_id") REFERENCES "private"."identity_recovery_sessions"("auth_session_id", "user_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "private"."identity_recovery_grants"
     ADD CONSTRAINT "identity_recovery_grants_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "private"."identity_recovery_sessions"
+    ADD CONSTRAINT "identity_recovery_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -1883,6 +2411,9 @@ ALTER TABLE ONLY "public"."terms_acceptances"
 
 
 ALTER TABLE "private"."identity_recovery_grants" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "private"."identity_recovery_sessions" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "private"."signup_legal_intents" ENABLE ROW LEVEL SECURITY;
@@ -1935,13 +2466,26 @@ GRANT ALL ON FUNCTION "private"."check_runtime_readiness"("expected_session_role
 
 
 
+REVOKE ALL ON FUNCTION "private"."claim_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."claim_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."claim_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."claim_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
 
 
 REVOKE ALL ON FUNCTION "private"."consume_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."consume_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
 
 
@@ -1951,12 +2495,20 @@ GRANT ALL ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_ver
 
 
 REVOKE ALL ON FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."inspect_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_grant_token" "uuid", "p_session_scope" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) TO "app_dal";
 
 
 
 REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") TO "app_dal";
 
 
 
@@ -1972,8 +2524,12 @@ REVOKE ALL ON FUNCTION "private"."protect_terms_version"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
 
 

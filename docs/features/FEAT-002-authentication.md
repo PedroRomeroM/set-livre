@@ -4,7 +4,7 @@
 
 | Campo            | Valor                                                                                                                                                                |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status           | Validada localmente; em ciclos de review no PR                                                                                                                       |
+| Status           | Em validação local das correções do quarto review                                                                                                                    |
 | Prioridade       | P0                                                                                                                                                                   |
 | Domínio          | `identity`                                                                                                                                                           |
 | Specs Playwright | `tests/e2e/critical/feat-002-authentication.spec.ts`<br>`tests/e2e/regression/feat-002-authentication.spec.ts`<br>`tests/e2e/reflow/feat-002-authentication.spec.ts` |
@@ -58,8 +58,9 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - Se a resposta de logout for perdida ou ambígua, a UI oculta imediatamente os dados privados e recarrega a rota SSR; a tela então informa se a sessão continua ativa ou se a ausência local foi confirmada.
 - Token inválido/expirado não mostra formulário funcional.
 - Em callbacks de signup e recovery, somente uma resposta API válida `SERVICE_UNAVAILABLE` emitida antes de iniciar `verifyOtp` permite retry. Depois do envio, falha de rede, timeout, resposta inválida, erro desconhecido do provider ou publicação ambígua encerram a tentativa com `AUTH_RESTART_REQUIRED`/`RECOVERY_RESTART_REQUIRED`, limpam cookies e sessão Auth exatos e orientam solicitar novo link sem reutilizar o OTP possivelmente consumido.
-- O grant adicional de recovery fica persistido no banco, vinculado ao usuário, expira em 15 minutos e é one-shot: uma claim exclusiva precede o provider; somente rejeição explicitamente sem efeito e ocorrida antes da expiração permite release e retry.
-- O formulário de nova senha fica bloqueado durante toda revalidação autoritativa; após o consumo, o cache marca o grant como negado e descarta a sessão privada em memória.
+- Cada callback de recovery cria uma binding/tombstone privada pelo `session_id` do JWT assinado e pela linha canônica de `auth.sessions`; a sessão nunca pode ser promovida a login comum. O grant adicional fica vinculado à mesma binding, expira em 15 minutos e é one-shot: uma claim exclusiva precede o provider; somente rejeição explicitamente sem efeito e ocorrida antes da expiração permite release e retry.
+- O cookie `sl-recovery-session` carrega somente um UUID público, opaco e não autoritativo para escopar SSR/cache. Perda, expiração ou remoção desse marker não remove a classificação durável da sessão Auth.
+- O formulário de nova senha não é montado durante `fetching` nem `paused`; somente `allowed=true`, scope correspondente e `fetchStatus=idle` autorizam a interface. Após consumo, expiração, ausência canônica ou saída da superfície de recovery, a binding é fechada, o grant é invalidado e a sessão/cookies Auth exatos são encerrados.
 - Um refetch de sessão valida o usuário/escopo antes de publicar o payload no TanStack; uma troca autoritativa limpa a família e recarrega SSR sem gravar B sob a key de A.
 - Uma conta suspensa pode autenticar no provider, mas não acessa o produto.
 
@@ -68,26 +69,28 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - `auth.users`;
 - `profiles` mínimo criado pelo trigger do signup;
 - `terms_versions` e `terms_acceptances`;
-- `private.signup_legal_intents`, expiráveis e one-shot, e `private.identity_recovery_grants`, persistidos no banco até expiração/consumo; ambos com RLS sem policy, zero grants runtime e sem leitura do browser.
+- `private.signup_legal_intents`, expiráveis e one-shot;
+- `private.identity_recovery_grants`, persistidos até expiração/consumo e vinculados à sessão Auth;
+- `private.identity_recovery_sessions`, binding/tombstone por `session_id` assinado, com retenção conservadora mesmo depois do grant e dos cookies. Os três estados privados usam RLS sem policy, zero grants runtime e nenhuma leitura do browser.
 
 ## Read models
 
 - sessão server-side
 - termos vigentes
-- status autoritativo do grant da sessão atual de recovery
+- status autoritativo do grant e da binding da sessão atual de recovery, retornado com scope público opaco
 
 ## Comandos e integrações
 
 - `identity.register` cria uma intenção legal opaca antes do Auth; o trigger cria perfil mínimo e aceites atomicamente
 - métodos Supabase Auth para login, logout, callback e recovery
-- DAL privado emite, consulta, reserva, libera e consome o grant de recovery
+- DAL privado emite binding+grant, inspeciona a sessão, reserva, libera, consome e fecha o contexto de recovery
 
 ## UX e estados obrigatórios
 
 - Formulários preservam e-mail em erro seguro.
 - PasswordInput com mostrar/ocultar e requisitos.
 - Os callbacks de signup e recovery apresentam carregamento e falha recuperável somente quando a repetição é comprovadamente segura; qualquer resultado ambíguo após o envio encerra o payload one-shot e exige novo link.
-- A verificação inicial e o refetch de recovery apresentam loading sem reutilizar um estado `allowed` em cache.
+- A verificação inicial e todo refetch de recovery apresentam somente loading durante `fetching` ou `paused`; um estado `allowed` em cache não mantém o formulário no DOM.
 - Toda request interativa expira em dez segundos e reabilita uma recuperação acionável.
 - ReturnTo não permite URL externa.
 - O título canônico da página permanece como único `h1`; um `#` inicial igual ao título do documento é omitido e os demais headings preservam a hierarquia a partir de `h2`.
@@ -100,7 +103,7 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 - Cookies de sessão são server-side e `HttpOnly`; `Secure` só é relaxado no HTTP loopback local.
 - Sem enumeração de e-mail.
 - Limite de taxa e proteção antiabuso.
-- O limiter in-memory mantém no máximo 10.000 buckets, isola pressão por ação e admite chaves novas por evicção controlada, sem transformar cardinalidade hostil em `429` global; a borda Nginx continua obrigatória em produção.
+- O limiter in-memory mantém no máximo 10.000 buckets exatos e nunca remove um bucket vivo. Depois da saturação, chaves inéditas compartilham um contador overflow sticky por ação; até 64 partíções ficam limitadas e uma partíção adicional falha fechado, sem resetar a cota de um discriminador por churn. A borda Nginx continua obrigatória em produção.
 - Sessão sempre validada no servidor para comando.
 - E-mails, senhas e o `TokenHash` de cadastro, login, callback e recovery usam refs one-shot e não são persistidos como `variables` no MutationCache.
 - O conteúdo jurídico não usa `dangerouslySetInnerHTML`: somente o subset explicitamente reconhecido vira elementos React, e sintaxe/HTML não suportados permanecem texto escapado. Links aceitam apenas path interno absoluto sem destino protocol-relative/barra invertida ou URL `https:` sem credenciais; um destino rejeitado perde o link e preserva somente o rótulo.
@@ -138,10 +141,10 @@ Regras:
 
 ## Testes unitários, integração e banco
 
-- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter, recovery grant, fronteira retryable/terminal dos dois callbacks, publicação parcial de login, cleanup exato pós-OTP, templates, parser Markdown jurídico e helpers QA;
-- banco/RLS: perfil e aceites próprios para usuários A/B, intenção expirada/replay/concorrência e fechada por RLS, trigger atômico, metadata scrub, grant recovery com claim/release/consume concorrente, release recusado após expiração, grants e readiness;
+- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter sem evicção viva e overflow limitado, cache recovery escopado/pausado, binding da sessão, fronteira retryable/terminal dos callbacks, publicação parcial, cleanup exato, templates, parser Markdown jurídico e helpers QA;
+- banco/RLS: perfil e aceites próprios para usuários A/B, intenção expirada/replay/concorrência, trigger atômico, metadata scrub, binding/tombstone recovery, grant com claim/release/consume concorrente, expiração e ausência canônica, retenção conservadora, pin `jwt_exp=3600`, grants e readiness;
 - segurança: cookies, origem/request host, corpo limitado, callback em fragmento, redaction e cleanup local exato;
-- Playwright: os sete IDs possuem specs físicas; as 23 execuções Auth e a matriz integral de 59 casos passaram nos browsers.
+- Playwright: os sete IDs possuem specs físicas; 23 execuções Auth e a matriz integral de 59 casos passaram depois da ampliação de `SL-F002-E2E-003`, sem criar ID nem alterar o catálogo de 194 cenários.
 
 ## Documentação viva afetada
 

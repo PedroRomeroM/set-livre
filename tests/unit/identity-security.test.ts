@@ -131,8 +131,10 @@ describe("identity mutation cache security", () => {
     expect(content).toContain(
       "queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });",
     );
-    expect(content).toContain("statusRefreshing={statusQuery.isFetching}");
-    expect(content).toContain("disabled={mutation.isPending || statusRefreshing}");
+    expect(content).toContain("identityRecoveryStatusCanAuthorize(");
+    expect(content).toContain("statusQuery.fetchStatus");
+    expect(content).toContain('statusQuery.fetchStatus !== "idle"');
+    expect(content).not.toContain("statusRefreshing");
   });
 
   it("hides private session data and reloads SSR after an uncertain logout", () => {
@@ -273,9 +275,11 @@ describe("identity mutation cache security", () => {
       resolve(process.cwd(), "src/domains/identity/components/recovery-flow.tsx"),
       "utf8",
     );
-    expect(recovery.match(/event\.preventDefault\(\);\n    mutation\.reset\(\);/gu)).toHaveLength(
-      2,
-    );
+    expect(
+      recovery.match(
+        /mutation\.reset\(\);\n    setFieldErrors\(\{\}\);\n    const form = new FormData/gu,
+      ),
+    ).toHaveLength(2);
   });
 
   it("retains a callback token only for an active retryable callback", () => {

@@ -1,3 +1,9 @@
+-- A fixture de concorrência é criada em sessão dblink e, portanto, vive fora
+-- da transação pgTAP. O preflight exato torna a suíte recuperável mesmo após
+-- uma execução interrompida antes do cleanup final.
+delete from auth.users
+where id = '20000000-0000-4000-8000-000000000008';
+
 begin;
 
 create function private.feat002_capture_error(command text)
@@ -84,7 +90,10 @@ revoke all on function private.feat002_force_scrub_failure()
 
 create temporary table feat002_test_state (
   label text primary key,
-  token uuid not null
+  token uuid not null,
+  session_scope uuid,
+  auth_session_id uuid,
+  auth_expires_at timestamptz
 ) on commit drop;
 
 create temporary table feat002_recovery_routines (
@@ -93,26 +102,28 @@ create temporary table feat002_recovery_routines (
 
 insert into feat002_recovery_routines (signature)
 values
-  ('private.issue_identity_recovery_grant(uuid)'),
-  ('private.has_identity_recovery_grant(uuid,uuid)'),
-  ('private.claim_identity_recovery_grant(uuid,uuid,uuid)'),
-  ('private.release_identity_recovery_grant(uuid,uuid,uuid)'),
-  ('private.consume_identity_recovery_grant(uuid,uuid,uuid)');
+  ('private.issue_identity_recovery_context(uuid,uuid,timestamptz)'),
+  ('private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)'),
+  ('private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'),
+  ('private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'),
+  ('private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'),
+  ('private.close_identity_recovery_session(uuid,uuid)');
 
 create temporary table feat002_recovery_outcomes (
   label text primary key,
   outcome boolean not null
 ) on commit drop;
 
-select plan(68);
+select plan(78);
 
 select ok(
   pg_catalog.to_regclass('public.profiles') is not null
     and pg_catalog.to_regclass('public.terms_versions') is not null
     and pg_catalog.to_regclass('public.terms_acceptances') is not null
     and pg_catalog.to_regclass('private.signup_legal_intents') is not null
-    and pg_catalog.to_regclass('private.identity_recovery_grants') is not null,
-  'as cinco relações canônicas da identidade e legal-core existem'
+    and pg_catalog.to_regclass('private.identity_recovery_grants') is not null
+    and pg_catalog.to_regclass('private.identity_recovery_sessions') is not null,
+  'as seis relações canônicas da identidade e legal-core existem'
 );
 
 select ok(
@@ -215,7 +226,8 @@ select ok(
     cross join (
       values
         ('private.signup_legal_intents'::pg_catalog.regclass),
-        ('private.identity_recovery_grants'::pg_catalog.regclass)
+        ('private.identity_recovery_grants'::pg_catalog.regclass),
+        ('private.identity_recovery_sessions'::pg_catalog.regclass)
     ) as private_relation(relation_oid)
     where pg_catalog.has_table_privilege(
       monitored.role_name,
@@ -224,12 +236,13 @@ select ok(
     )
   )
     and (
-      select pg_catalog.count(*) = 2
+      select pg_catalog.count(*) = 3
         and pg_catalog.bool_and(private_relation.relrowsecurity)
       from pg_catalog.pg_class as private_relation
       where private_relation.oid in (
         'private.signup_legal_intents'::pg_catalog.regclass,
-        'private.identity_recovery_grants'::pg_catalog.regclass
+        'private.identity_recovery_grants'::pg_catalog.regclass,
+        'private.identity_recovery_sessions'::pg_catalog.regclass
       )
     )
     and not exists (
@@ -238,7 +251,8 @@ select ok(
       where policy.schemaname = 'private'
         and policy.tablename in (
           'signup_legal_intents',
-          'identity_recovery_grants'
+          'identity_recovery_grants',
+          'identity_recovery_sessions'
         )
     ),
   'estados privados permanecem sem grants runtime e fechados por RLS sem policies'
@@ -250,6 +264,9 @@ select ok(
   ) is not null
     and pg_catalog.to_regclass(
       'private.identity_recovery_grants_expires_at_idx'
+    ) is not null
+    and pg_catalog.to_regclass(
+      'private.identity_recovery_sessions_retain_until_idx'
     ) is not null,
   'purges de tokens expirados possuem índices dedicados'
 );
@@ -292,7 +309,7 @@ select ok(
 
 select ok(
   (
-    select pg_catalog.count(*) = 6
+    select pg_catalog.count(*) = 7
       and pg_catalog.bool_and(routine.prosecdef)
       and pg_catalog.bool_and('search_path=""' = any(routine.proconfig))
     from pg_catalog.pg_proc as routine
@@ -350,6 +367,26 @@ select ok(
       'EXECUTE'
     ),
   'somente app_dal executa os comandos privados de cadastro e recovery'
+);
+
+select ok(
+  not exists (
+    select 1
+    from (
+      values
+        ('private.issue_identity_recovery_grant(uuid)'),
+        ('private.has_identity_recovery_grant(uuid,uuid)'),
+        ('private.claim_identity_recovery_grant(uuid,uuid,uuid)'),
+        ('private.release_identity_recovery_grant(uuid,uuid,uuid)'),
+        ('private.consume_identity_recovery_grant(uuid,uuid,uuid)')
+    ) as legacy_routine(signature)
+    where pg_catalog.has_function_privilege(
+      'app_dal',
+      legacy_routine.signature,
+      'EXECUTE'
+    )
+  ),
+  'assinaturas legadas sem binding perderam EXECUTE da DAL'
 );
 
 select ok(
@@ -744,62 +781,126 @@ select ok(
   'trigger remove o token consumido de user_metadata e preserva o fato privado'
 );
 
-insert into feat002_test_state (label, token)
-select
-  'recovery-expired',
-  private.issue_identity_recovery_grant(
-    '20000000-0000-4000-8000-000000000002'
+insert into auth.sessions (id, user_id, created_at, updated_at, aal)
+values
+  (
+    '50000000-0000-4000-8000-000000000001',
+    '20000000-0000-4000-8000-000000000002',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000002',
+    '20000000-0000-4000-8000-000000000003',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000003',
+    '20000000-0000-4000-8000-000000000002',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000004',
+    '20000000-0000-4000-8000-000000000002',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000005',
+    '20000000-0000-4000-8000-000000000003',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000006',
+    '20000000-0000-4000-8000-000000000003',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000007',
+    '20000000-0000-4000-8000-000000000003',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
+  ),
+  (
+    '50000000-0000-4000-8000-000000000008',
+    '20000000-0000-4000-8000-000000000003',
+    pg_catalog.now(),
+    pg_catalog.now(),
+    'aal1'
   );
 
-select ok(
-  private.has_identity_recovery_grant(
-    (select token from feat002_test_state where label = 'recovery-expired'),
-    '20000000-0000-4000-8000-000000000002'
-  )
-    and not private.has_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-expired'),
-      '20000000-0000-4000-8000-000000000003'
-    )
-    and not private.claim_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-expired'),
-      '20000000-0000-4000-8000-000000000003',
-      '40000000-0000-4000-8000-000000000001'
-    )
-    and (
-      select expires_at - issued_at = interval '15 minutes'
-        and claim_attempt_id is null
-        and claimed_at is null
-      from private.identity_recovery_grants
-      where token = (
-        select token
-        from feat002_test_state
-        where label = 'recovery-expired'
-      )
-    ),
-  'grant emitido é opaco, vinculado ao usuário, livre e limitado a 15 minutos'
-);
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-expired',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000001'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000001',
+  pg_catalog.statement_timestamp() + interval '30 minutes'
+) as recovery_context;
 
-update private.identity_recovery_grants
-set
-  issued_at = pg_catalog.statement_timestamp() - interval '15 minutes 1 second',
-  expires_at = pg_catalog.statement_timestamp() - interval '1 second',
-  claim_attempt_id = '40000000-0000-4000-8000-000000000001',
-  claimed_at = pg_catalog.statement_timestamp() - interval '5 minutes'
-where token = (
-  select token
-  from feat002_test_state
-  where label = 'recovery-expired'
-);
+update feat002_test_state
+set auth_expires_at = pg_catalog.statement_timestamp() + interval '1 hour'
+where label = 'recovery-expired';
+
+insert into feat002_recovery_outcomes (label, outcome)
+select
+  'refresh-inspection',
+  inspection.active and inspection.grant_allowed
+from private.inspect_identity_recovery_session(
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000001',
+  (
+    select auth_expires_at
+    from feat002_test_state
+    where label = 'recovery-expired'
+  ),
+  (select token from feat002_test_state where label = 'recovery-expired'),
+  (select session_scope from feat002_test_state where label = 'recovery-expired')
+) as inspection;
 
 select ok(
-  not private.has_identity_recovery_grant(
-    (select token from feat002_test_state where label = 'recovery-expired'),
-    '20000000-0000-4000-8000-000000000002'
-  )
-    and not private.release_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-expired'),
-      '20000000-0000-4000-8000-000000000002',
-      '40000000-0000-4000-8000-000000000001'
+  (select outcome from feat002_recovery_outcomes where label = 'refresh-inspection')
+    and exists (
+      select 1
+      from private.identity_recovery_sessions as recovery_session
+      where recovery_session.auth_session_id =
+          '50000000-0000-4000-8000-000000000001'
+        and recovery_session.auth_expires_at = (
+          select auth_expires_at
+          from feat002_test_state
+          where label = 'recovery-expired'
+        )
+        and recovery_session.retain_until = (
+          select auth_expires_at + interval '5 minutes'
+          from feat002_test_state
+          where label = 'recovery-expired'
+        )
+        and recovery_session.canonical_absence_observed_at is null
+        and recovery_session.closed_at is null
+        and recovery_session.session_scope = (
+          select session_scope
+          from feat002_test_state
+          where label = 'recovery-expired'
+        )
     )
     and exists (
       select 1
@@ -809,34 +910,487 @@ select ok(
         from feat002_test_state
         where label = 'recovery-expired'
       )
-        and claim_attempt_id = '40000000-0000-4000-8000-000000000001'
-        and claimed_at is not null
     ),
-  'grant expirado falha fechado, não libera a claim e força caminho terminal'
+  'refresh observado estende exp e retenção sem trocar scope, grant ou estado ativo'
 );
 
-insert into feat002_test_state (label, token)
+select ok(
+  exists (
+    select 1
+    from private.inspect_identity_recovery_session(
+      '20000000-0000-4000-8000-000000000002',
+      '50000000-0000-4000-8000-000000000001',
+      pg_catalog.statement_timestamp() + interval '1 hour',
+      (select token from feat002_test_state where label = 'recovery-expired'),
+      (select session_scope from feat002_test_state where label = 'recovery-expired')
+    ) as inspection
+    where inspection.active
+      and inspection.grant_allowed
+  )
+    and not exists (
+      select 1
+      from private.inspect_identity_recovery_session(
+        '20000000-0000-4000-8000-000000000003',
+        '50000000-0000-4000-8000-000000000001',
+        pg_catalog.statement_timestamp() + interval '1 hour',
+        (select token from feat002_test_state where label = 'recovery-expired'),
+        (select session_scope from feat002_test_state where label = 'recovery-expired')
+      )
+    )
+    and not private.claim_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-expired'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000001',
+      (select session_scope from feat002_test_state where label = 'recovery-expired'),
+      '40000000-0000-4000-8000-000000000001'
+    )
+    and (
+      select expires_at - issued_at = interval '15 minutes'
+        and auth_session_id = '50000000-0000-4000-8000-000000000001'
+      from private.identity_recovery_grants
+      where token = (
+        select token
+        from feat002_test_state
+        where label = 'recovery-expired'
+      )
+    )
+    and (
+      select session_scope <> auth_session_id
+        and session_scope <> (
+          select token
+          from feat002_test_state
+          where label = 'recovery-expired'
+        )
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000001'
+    ),
+  'binding usa session_id assinado, isola dois usuários e mantém scope opaco separado do grant'
+);
+
+select pg_catalog.set_config('app.settings.jwt_exp', '7200', true);
+
+select is(
+  private.feat002_capture_error(
+    $command$
+      select *
+      from private.issue_identity_recovery_context(
+        '20000000-0000-4000-8000-000000000003',
+        '50000000-0000-4000-8000-000000000008',
+        pg_catalog.statement_timestamp() + interval '2 hours'
+      )
+    $command$
+  ),
+  '55000:identity_recovery_jwt_expiry_not_pinned',
+  'emissão falha fechada quando jwt_exp diverge de 3600 segundos'
+);
+
+select pg_catalog.set_config('app.settings.jwt_exp', '3600', true);
+
+select private.claim_identity_recovery_context(
+  (select token from feat002_test_state where label = 'recovery-expired'),
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000001',
+  (select session_scope from feat002_test_state where label = 'recovery-expired'),
+  '40000000-0000-4000-8000-000000000001'
+);
+
+update private.identity_recovery_grants
+set
+  issued_at = pg_catalog.statement_timestamp() - interval '15 minutes 1 second',
+  expires_at = pg_catalog.statement_timestamp() - interval '1 second',
+  claimed_at = pg_catalog.statement_timestamp() - interval '5 minutes'
+where token = (
+  select token
+  from feat002_test_state
+  where label = 'recovery-expired'
+);
+
+select ok(
+  exists (
+    select 1
+    from private.inspect_identity_recovery_session(
+      '20000000-0000-4000-8000-000000000002',
+      '50000000-0000-4000-8000-000000000001',
+      pg_catalog.statement_timestamp() + interval '1 hour',
+      (select token from feat002_test_state where label = 'recovery-expired'),
+      (select session_scope from feat002_test_state where label = 'recovery-expired')
+    ) as inspection
+    where inspection.active
+      and not inspection.grant_allowed
+  )
+    and not private.release_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-expired'),
+      '20000000-0000-4000-8000-000000000002',
+      '50000000-0000-4000-8000-000000000001',
+      (select session_scope from feat002_test_state where label = 'recovery-expired'),
+      '40000000-0000-4000-8000-000000000001'
+    )
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000001'
+    ),
+  'grant expirado perde autorização sem remover nem reclassificar o tombstone recovery'
+);
+
+insert into feat002_recovery_outcomes (label, outcome)
 select
-  'recovery-after-purge',
-  private.issue_identity_recovery_grant(
-    '20000000-0000-4000-8000-000000000003'
+  'close-expired',
+  private.close_identity_recovery_session(
+    '20000000-0000-4000-8000-000000000002',
+    '50000000-0000-4000-8000-000000000001'
   );
+
+select ok(
+  (select outcome from feat002_recovery_outcomes where label = 'close-expired')
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000001'
+        and closed_at is not null
+    )
+    and not exists (
+      select 1
+      from private.identity_recovery_grants
+      where auth_session_id = '50000000-0000-4000-8000-000000000001'
+    ),
+  'close remove o grant mas preserva a binding enquanto auth.sessions existe'
+);
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-consume',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000002'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000003',
+  '50000000-0000-4000-8000-000000000002',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
+
+insert into feat002_recovery_outcomes (label, outcome)
+values
+  (
+    'claim-consume-a',
+    private.claim_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000002'
+    )
+  ),
+  (
+    'claim-consume-a-retry',
+    private.claim_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000002'
+    )
+  ),
+  (
+    'release-consume-a',
+    private.release_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000002'
+    )
+  ),
+  (
+    'claim-consume-b',
+    private.claim_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000003'
+    )
+  );
+
+select ok(
+  (select outcome from feat002_recovery_outcomes where label = 'claim-consume-a')
+    and (select outcome from feat002_recovery_outcomes where label = 'claim-consume-a-retry')
+    and (select outcome from feat002_recovery_outcomes where label = 'release-consume-a')
+    and (select outcome from feat002_recovery_outcomes where label = 'claim-consume-b'),
+  'claim é idempotente por tentativa e release comprovado permite um novo claim'
+);
+
+select ok(
+  not private.consume_identity_recovery_context(
+    (select token from feat002_test_state where label = 'recovery-consume'),
+    '20000000-0000-4000-8000-000000000003',
+    '50000000-0000-4000-8000-000000000002',
+    (select session_scope from feat002_test_state where label = 'recovery-consume'),
+    '40000000-0000-4000-8000-000000000002'
+  )
+    and exists (
+      select 1
+      from private.identity_recovery_grants
+      where auth_session_id = '50000000-0000-4000-8000-000000000002'
+    ),
+  'tentativa diferente não consome a reserva corrente'
+);
+
+insert into feat002_recovery_outcomes (label, outcome)
+values
+  (
+    'consume-b',
+    private.consume_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000003'
+    )
+  ),
+  (
+    'consume-b-replay',
+    private.consume_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-consume'),
+      '20000000-0000-4000-8000-000000000003',
+      '50000000-0000-4000-8000-000000000002',
+      (select session_scope from feat002_test_state where label = 'recovery-consume'),
+      '40000000-0000-4000-8000-000000000003'
+    )
+  );
+
+select ok(
+  (select outcome from feat002_recovery_outcomes where label = 'consume-b')
+    and not (
+      select outcome
+      from feat002_recovery_outcomes
+      where label = 'consume-b-replay'
+    )
+    and not exists (
+      select 1
+      from private.identity_recovery_grants
+      where auth_session_id = '50000000-0000-4000-8000-000000000002'
+    )
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000002'
+        and closed_at is null
+    ),
+  'consume é one-shot e preserva a binding recovery aberta para fechamento terminal'
+);
+
+insert into feat002_recovery_outcomes (label, outcome)
+select
+  'close-consumed',
+  private.close_identity_recovery_session(
+    '20000000-0000-4000-8000-000000000003',
+    '50000000-0000-4000-8000-000000000002'
+  );
+
+select ok(
+  (select outcome from feat002_recovery_outcomes where label = 'close-consumed')
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000002'
+        and closed_at is not null
+    ),
+  'fechamento posterior ao consume preserva o tombstone da sessão Auth'
+);
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-canonical-absence',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000003'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000003',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
+
+delete from auth.sessions
+where id = '50000000-0000-4000-8000-000000000003';
+
+insert into feat002_recovery_outcomes (label, outcome)
+select
+  'canonical-absence-inspection',
+  not inspection.active and not inspection.grant_allowed
+from private.inspect_identity_recovery_session(
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000003',
+  pg_catalog.statement_timestamp() + interval '1 hour',
+  (select token from feat002_test_state where label = 'recovery-canonical-absence'),
+  (
+    select session_scope
+    from feat002_test_state
+    where label = 'recovery-canonical-absence'
+  )
+) as inspection;
+
+select ok(
+  (
+    select outcome
+    from feat002_recovery_outcomes
+    where label = 'canonical-absence-inspection'
+  )
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000003'
+        and canonical_absence_observed_at is not null
+        and retain_until >= canonical_absence_observed_at + interval '65 minutes'
+        and closed_at is not null
+    )
+    and not exists (
+      select 1
+      from private.identity_recovery_grants
+      where auth_session_id = '50000000-0000-4000-8000-000000000003'
+    ),
+  'inspect detecta ausência canônica, fecha, remove grant e inicia retenção de 65 minutos'
+);
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-gc-target',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000004'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000002',
+  '50000000-0000-4000-8000-000000000004',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
+
+update private.identity_recovery_sessions
+set
+  bound_at = pg_catalog.statement_timestamp() - interval '2 hours',
+  auth_expires_at = pg_catalog.statement_timestamp() - interval '70 minutes',
+  retain_until = pg_catalog.statement_timestamp() - interval '65 minutes'
+where auth_session_id = '50000000-0000-4000-8000-000000000004';
+
+delete from auth.sessions
+where id = '50000000-0000-4000-8000-000000000004';
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-gc-driver-one',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000005'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000003',
+  '50000000-0000-4000-8000-000000000005',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
+
+select ok(
+  exists (
+    select 1
+    from private.identity_recovery_sessions
+    where auth_session_id = '50000000-0000-4000-8000-000000000004'
+      and canonical_absence_observed_at is not null
+      and retain_until >= canonical_absence_observed_at + interval '65 minutes'
+      and closed_at is not null
+  ),
+  'primeiro purge apenas observa ausência e abre nova janela; nunca apaga o tombstone'
+);
+
+update private.identity_recovery_sessions
+set
+  bound_at = pg_catalog.statement_timestamp() - interval '2 hours',
+  auth_expires_at = pg_catalog.statement_timestamp() - interval '70 minutes',
+  retain_until = pg_catalog.statement_timestamp() - interval '65 minutes'
+where auth_session_id = '50000000-0000-4000-8000-000000000005';
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-gc-driver-two',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000006'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000003',
+  '50000000-0000-4000-8000-000000000006',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
+
+select ok(
+  exists (
+    select 1
+    from private.identity_recovery_sessions
+    where auth_session_id = '50000000-0000-4000-8000-000000000004'
+  )
+    and exists (
+      select 1
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000005'
+        and canonical_absence_observed_at is null
+    ),
+  'purge antes de 65 minutos preserva ausente observado e nunca apaga sessão canônica presente'
+);
+
+update private.identity_recovery_sessions
+set
+  bound_at = pg_catalog.statement_timestamp() - interval '2 hours',
+  auth_expires_at = pg_catalog.statement_timestamp() - interval '10 minutes',
+  retain_until = pg_catalog.statement_timestamp() - interval '5 minutes',
+  canonical_absence_observed_at =
+    pg_catalog.statement_timestamp() - interval '70 minutes',
+  closed_at = pg_catalog.statement_timestamp() - interval '70 minutes'
+where auth_session_id = '50000000-0000-4000-8000-000000000004';
+
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-gc-driver-three',
+  recovery_context.grant_token,
+  recovery_context.session_scope,
+  '50000000-0000-4000-8000-000000000007'
+from private.issue_identity_recovery_context(
+  '20000000-0000-4000-8000-000000000003',
+  '50000000-0000-4000-8000-000000000007',
+  pg_catalog.statement_timestamp() + interval '1 hour'
+) as recovery_context;
 
 select ok(
   not exists (
     select 1
-    from private.identity_recovery_grants
-    where token = (
-      select token
-      from feat002_test_state
-      where label = 'recovery-expired'
-    )
-  )
-    and private.has_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-after-purge'),
-      '20000000-0000-4000-8000-000000000003'
-    ),
-  'próxima emissão purga por índice grants já expirados e preserva o novo'
+    from private.identity_recovery_sessions
+    where auth_session_id = '50000000-0000-4000-8000-000000000004'
+  ),
+  'purge posterior remove somente tombstone ainda ausente após a janela completa'
 );
 
 do $block$
@@ -864,6 +1418,14 @@ begin
   perform extensions.dblink_exec(
     'feat002_recovery_a',
     $remote$
+      delete from auth.users
+      where id = '20000000-0000-4000-8000-000000000008'
+    $remote$
+  );
+
+  perform extensions.dblink_exec(
+    'feat002_recovery_a',
+    $remote$
       with legal_intent as materialized (
         select private.create_signup_legal_intent(
           '00000000-0000-4000-8000-000000000201',
@@ -872,49 +1434,72 @@ begin
           '10000000-0000-4000-8000-000000000015',
           '{}'::jsonb
         ) as token
+      ),
+      inserted_user as (
+        insert into auth.users (
+          id,
+          aud,
+          role,
+          email,
+          encrypted_password,
+          email_confirmed_at,
+          raw_app_meta_data,
+          raw_user_meta_data,
+          created_at,
+          updated_at
+        )
+        select
+          '20000000-0000-4000-8000-000000000008',
+          'authenticated',
+          'authenticated',
+          'qa-feat002-recovery-concurrency@setlivre.local',
+          '',
+          pg_catalog.now(),
+          '{"provider":"email","providers":["email"]}'::jsonb,
+          pg_catalog.jsonb_build_object(
+            'sl_legal_intent',
+            legal_intent.token::text
+          ),
+          pg_catalog.now(),
+          pg_catalog.now()
+        from legal_intent
+        returning id
       )
-      insert into auth.users (
-        id,
-        aud,
-        role,
-        email,
-        encrypted_password,
-        email_confirmed_at,
-        raw_app_meta_data,
-        raw_user_meta_data,
-        created_at,
-        updated_at
-      )
+      insert into auth.sessions (id, user_id, created_at, updated_at, aal)
       select
-        '20000000-0000-4000-8000-000000000008',
-        'authenticated',
-        'authenticated',
-        'qa-feat002-recovery-concurrency@setlivre.local',
-        '',
+        '50000000-0000-4000-8000-000000000009',
+        inserted_user.id,
         pg_catalog.now(),
-        '{"provider":"email","providers":["email"]}'::jsonb,
-        pg_catalog.jsonb_build_object(
-          'sl_legal_intent',
-          legal_intent.token::text
-        ),
         pg_catalog.now(),
-        pg_catalog.now()
-      from legal_intent
+        'aal1'
+      from inserted_user
     $remote$
   );
 end;
 $block$;
 
-insert into feat002_test_state (label, token)
-select 'recovery-concurrent', remote_result.token
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-concurrent',
+  remote_result.grant_token,
+  remote_result.session_scope,
+  '50000000-0000-4000-8000-000000000009'
 from extensions.dblink(
   'feat002_recovery_a',
   $remote$
-    select private.issue_identity_recovery_grant(
-      '20000000-0000-4000-8000-000000000008'
+    select grant_token, session_scope
+    from private.issue_identity_recovery_context(
+      '20000000-0000-4000-8000-000000000008',
+      '50000000-0000-4000-8000-000000000009',
+      pg_catalog.statement_timestamp() + interval '1 hour'
     )
   $remote$
-) as remote_result(token uuid);
+) as remote_result(grant_token uuid, session_scope uuid);
 
 do $block$
 begin
@@ -928,22 +1513,30 @@ from extensions.dblink(
   'feat002_recovery_a',
   pg_catalog.format(
     $remote$
-      select private.claim_identity_recovery_grant(
+      select private.claim_identity_recovery_context(
         %L::uuid,
         '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000002'
+        '50000000-0000-4000-8000-000000000009',
+        %L::uuid,
+        '40000000-0000-4000-8000-000000000004'
       )
     $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
+    (select token::text from feat002_test_state where label = 'recovery-concurrent'),
+    (
+      select session_scope::text
+      from feat002_test_state
+      where label = 'recovery-concurrent'
+    )
   )
 ) as remote_result(outcome boolean);
 
 do $block$
 declare
+  recovery_scope uuid;
   recovery_token uuid;
 begin
-  select token
-  into strict recovery_token
+  select token, session_scope
+  into strict recovery_token, recovery_scope
   from feat002_test_state
   where label = 'recovery-concurrent';
 
@@ -951,13 +1544,16 @@ begin
     'feat002_recovery_b',
     pg_catalog.format(
       $remote$
-        select private.claim_identity_recovery_grant(
+        select private.claim_identity_recovery_context(
           %L::uuid,
           '20000000-0000-4000-8000-000000000008',
-          '40000000-0000-4000-8000-000000000003'
+          '50000000-0000-4000-8000-000000000009',
+          %L::uuid,
+          '40000000-0000-4000-8000-000000000005'
         )
       $remote$,
-      recovery_token::text
+      recovery_token::text,
+      recovery_scope::text
     )
   );
   perform extensions.dblink_exec('feat002_recovery_a', 'commit');
@@ -986,7 +1582,7 @@ select ok(
       from feat002_recovery_outcomes
       where label = 'claim-b-while-a'
     ),
-  'claim concorrente A vence e B perde após aguardar o commit da mesma linha'
+  'claim concorrente A vence e B perde após o lock da mesma sessão e grant'
 );
 
 insert into feat002_recovery_outcomes (label, outcome)
@@ -995,24 +1591,22 @@ from extensions.dblink(
   'feat002_recovery_a',
   pg_catalog.format(
     $remote$
-      select private.release_identity_recovery_grant(
+      select private.release_identity_recovery_context(
         %L::uuid,
         '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000002'
+        '50000000-0000-4000-8000-000000000009',
+        %L::uuid,
+        '40000000-0000-4000-8000-000000000004'
       )
     $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
+    (select token::text from feat002_test_state where label = 'recovery-concurrent'),
+    (
+      select session_scope::text
+      from feat002_test_state
+      where label = 'recovery-concurrent'
+    )
   )
 ) as remote_result(outcome boolean);
-
-select ok(
-  (select outcome from feat002_recovery_outcomes where label = 'release-a')
-    and private.has_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-concurrent'),
-      '20000000-0000-4000-8000-000000000008'
-    ),
-  'release da tentativa A torna o mesmo grant disponível para retry'
-);
 
 insert into feat002_recovery_outcomes (label, outcome)
 select 'claim-b-after-release', remote_result.outcome
@@ -1020,13 +1614,20 @@ from extensions.dblink(
   'feat002_recovery_b',
   pg_catalog.format(
     $remote$
-      select private.claim_identity_recovery_grant(
+      select private.claim_identity_recovery_context(
         %L::uuid,
         '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000003'
+        '50000000-0000-4000-8000-000000000009',
+        %L::uuid,
+        '40000000-0000-4000-8000-000000000005'
       )
     $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
+    (select token::text from feat002_test_state where label = 'recovery-concurrent'),
+    (
+      select session_scope::text
+      from feat002_test_state
+      where label = 'recovery-concurrent'
+    )
   )
 ) as remote_result(outcome boolean);
 
@@ -1036,145 +1637,147 @@ from extensions.dblink(
   'feat002_recovery_b',
   pg_catalog.format(
     $remote$
-      select private.claim_identity_recovery_grant(
+      select private.claim_identity_recovery_context(
         %L::uuid,
         '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000003'
+        '50000000-0000-4000-8000-000000000009',
+        %L::uuid,
+        '40000000-0000-4000-8000-000000000005'
       )
     $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
+    (select token::text from feat002_test_state where label = 'recovery-concurrent'),
+    (
+      select session_scope::text
+      from feat002_test_state
+      where label = 'recovery-concurrent'
+    )
   )
 ) as remote_result(outcome boolean);
 
 select ok(
-  (select outcome from feat002_recovery_outcomes where label = 'claim-b-after-release')
-    and (select outcome from feat002_recovery_outcomes where label = 'claim-b-retry')
-    and not private.has_identity_recovery_grant(
-      (select token from feat002_test_state where label = 'recovery-concurrent'),
-      '20000000-0000-4000-8000-000000000008'
+  (select outcome from feat002_recovery_outcomes where label = 'release-a')
+    and (select outcome from feat002_recovery_outcomes where label = 'claim-b-after-release')
+    and (select outcome from feat002_recovery_outcomes where label = 'claim-b-retry'),
+  'release permite retry concorrente e a mesma tentativa permanece idempotente'
+);
+
+select ok(
+  not private.consume_identity_recovery_context(
+    (select token from feat002_test_state where label = 'recovery-concurrent'),
+    '20000000-0000-4000-8000-000000000008',
+    '50000000-0000-4000-8000-000000000009',
+    (
+      select session_scope
+      from feat002_test_state
+      where label = 'recovery-concurrent'
     ),
-  'B reserva após release e o retry da mesma tentativa é idempotente'
+    '40000000-0000-4000-8000-000000000004'
+  ),
+  'consume concorrente com attempt_id vencido falha fechado'
 );
 
 insert into feat002_recovery_outcomes (label, outcome)
-select 'consume-wrong-attempt', remote_result.outcome
-from extensions.dblink(
-  'feat002_recovery_b',
-  pg_catalog.format(
-    $remote$
-      select private.consume_identity_recovery_grant(
-        %L::uuid,
-        '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000002'
-      )
-    $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
-  )
-) as remote_result(outcome boolean);
-
-select ok(
-  not (
-    select outcome
-    from feat002_recovery_outcomes
-    where label = 'consume-wrong-attempt'
-  )
-    and exists (
-      select 1
-      from private.identity_recovery_grants
-      where token = (
-        select token
+values
+  (
+    'consume-concurrent-b',
+    private.consume_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-concurrent'),
+      '20000000-0000-4000-8000-000000000008',
+      '50000000-0000-4000-8000-000000000009',
+      (
+        select session_scope
         from feat002_test_state
         where label = 'recovery-concurrent'
-      )
-    ),
-  'tentativa diferente não consome a reserva de B'
-);
-
-insert into feat002_recovery_outcomes (label, outcome)
-select 'consume-b', remote_result.outcome
-from extensions.dblink(
-  'feat002_recovery_b',
-  pg_catalog.format(
-    $remote$
-      select private.consume_identity_recovery_grant(
-        %L::uuid,
-        '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000003'
-      )
-    $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
-  )
-) as remote_result(outcome boolean);
-
-insert into feat002_recovery_outcomes (label, outcome)
-select 'consume-b-replay', remote_result.outcome
-from extensions.dblink(
-  'feat002_recovery_b',
-  pg_catalog.format(
-    $remote$
-      select private.consume_identity_recovery_grant(
-        %L::uuid,
-        '20000000-0000-4000-8000-000000000008',
-        '40000000-0000-4000-8000-000000000003'
-      )
-    $remote$,
-    (select token::text from feat002_test_state where label = 'recovery-concurrent')
-  )
-) as remote_result(outcome boolean);
+      ),
+      '40000000-0000-4000-8000-000000000005'
+    )
+  ),
+  (
+    'consume-concurrent-b-replay',
+    private.consume_identity_recovery_context(
+      (select token from feat002_test_state where label = 'recovery-concurrent'),
+      '20000000-0000-4000-8000-000000000008',
+      '50000000-0000-4000-8000-000000000009',
+      (
+        select session_scope
+        from feat002_test_state
+        where label = 'recovery-concurrent'
+      ),
+      '40000000-0000-4000-8000-000000000005'
+    )
+  );
 
 select ok(
-  (select outcome from feat002_recovery_outcomes where label = 'consume-b')
+  (select outcome from feat002_recovery_outcomes where label = 'consume-concurrent-b')
     and not (
       select outcome
       from feat002_recovery_outcomes
-      where label = 'consume-b-replay'
+      where label = 'consume-concurrent-b-replay'
     )
-    and not exists (
+    and exists (
       select 1
-      from private.identity_recovery_grants
-      where token = (
-        select token
-        from feat002_test_state
-        where label = 'recovery-concurrent'
-      )
+      from private.identity_recovery_sessions
+      where auth_session_id = '50000000-0000-4000-8000-000000000009'
     ),
-  'consume remove a linha e replay da mesma tentativa falha fechado'
+  'consume concorrente é one-shot e mantém o tombstone da sessão'
 );
-
-insert into feat002_test_state (label, token)
-select 'recovery-cascade', remote_result.token
-from extensions.dblink(
-  'feat002_recovery_a',
-  $remote$
-    select private.issue_identity_recovery_grant(
-      '20000000-0000-4000-8000-000000000008'
-    )
-  $remote$
-) as remote_result(token uuid);
 
 do $block$
 begin
   perform extensions.dblink_exec(
     'feat002_recovery_a',
     $remote$
-      delete from auth.users
-      where id = '20000000-0000-4000-8000-000000000008'
+      insert into auth.sessions (id, user_id, created_at, updated_at, aal)
+      values (
+        '50000000-0000-4000-8000-000000000010',
+        '20000000-0000-4000-8000-000000000008',
+        pg_catalog.now(),
+        pg_catalog.now(),
+        'aal1'
+      )
     $remote$
   );
 end;
 $block$;
 
+insert into feat002_test_state (
+  label,
+  token,
+  session_scope,
+  auth_session_id
+)
+select
+  'recovery-cascade',
+  remote_result.grant_token,
+  remote_result.session_scope,
+  '50000000-0000-4000-8000-000000000010'
+from extensions.dblink(
+  'feat002_recovery_a',
+  $remote$
+    select grant_token, session_scope
+    from private.issue_identity_recovery_context(
+      '20000000-0000-4000-8000-000000000008',
+      '50000000-0000-4000-8000-000000000010',
+      pg_catalog.statement_timestamp() + interval '1 hour'
+    )
+  $remote$
+) as remote_result(grant_token uuid, session_scope uuid);
+
+delete from auth.users
+where id = '20000000-0000-4000-8000-000000000008';
+
 select ok(
   not exists (
     select 1
-    from private.identity_recovery_grants
-    where token = (
-      select token
-      from feat002_test_state
-      where label = 'recovery-cascade'
-    )
-  ),
-  'exclusão canônica do usuário remove grants efêmeros por cascata'
+    from private.identity_recovery_sessions
+    where user_id = '20000000-0000-4000-8000-000000000008'
+  )
+    and not exists (
+      select 1
+      from private.identity_recovery_grants
+      where user_id = '20000000-0000-4000-8000-000000000008'
+    ),
+  'exclusão canônica do usuário remove bindings e grants por cascata de privacidade'
 );
 
 do $block$
@@ -1183,7 +1786,6 @@ begin
   perform extensions.dblink_disconnect('feat002_recovery_b');
 end;
 $block$;
-
 create trigger feat002_force_scrub_failure
 before update of raw_user_meta_data on auth.users
 for each row execute function private.feat002_force_scrub_failure();
@@ -1741,8 +2343,8 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000300'),
-  'readiness permanece verde com nove dependências e oito rotinas DAL'
+  private.check_readiness('20260811000400'),
+  'readiness permanece verde com dez dependências e nove rotinas DAL'
 );
 
 select is(
@@ -1773,3 +2375,9 @@ select ok(
 select * from finish();
 
 rollback;
+
+-- O DELETE exercitado dentro da transação é revertido junto dos demais dados
+-- do teste. Esta limpeza exata remove de forma persistente a fixture dblink e
+-- permite executar test:db novamente sem reset intermediário.
+delete from auth.users
+where id = '20000000-0000-4000-8000-000000000008';

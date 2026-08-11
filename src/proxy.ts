@@ -9,6 +9,20 @@ import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
+import {
+  closeIdentityRecoverySession,
+  inspectIdentityRecoverySession,
+} from "@/domains/identity/server/identity-dal";
+import {
+  parseAuthSessionContext,
+  readSupabaseAccessTokenFromCookies,
+  signOutLocalOrProveAbsent,
+  supabaseAuthCookieNames,
+} from "@/domains/identity/server/identity-auth-session";
+import {
+  recoveryGrantCookieName,
+  recoverySessionCookieName,
+} from "@/domains/identity/server/recovery-grant";
 import { readSupabaseEnvironment } from "@/lib/supabase/config";
 
 const globalErrorDocument = `<!doctype html>
@@ -45,6 +59,19 @@ function createGlobalErrorResponse(contentSecurityPolicy: string) {
 
 function shouldRefreshSession(pathname: string) {
   return !pathname.startsWith("/_next/static/") && !pathname.startsWith("/_next/image/");
+}
+
+function isRecoverySessionSurface(pathname: string) {
+  return (
+    pathname === "/recuperar-senha" ||
+    pathname === "/auth/callback" ||
+    pathname === "/api/auth/callback" ||
+    pathname === "/api/auth/logout" ||
+    pathname === "/api/auth/session" ||
+    pathname === "/api/auth/recovery/request" ||
+    pathname === "/api/auth/recovery/status" ||
+    pathname === "/api/auth/recovery/update"
+  );
 }
 
 export async function proxy(request: NextRequest) {
@@ -90,10 +117,103 @@ export async function proxy(request: NextRequest) {
         },
       },
     });
+    const hasRecoveryMarker = request.cookies.get(recoverySessionCookieName) !== undefined;
+    const hasRecoveryGrant = request.cookies.get(recoveryGrantCookieName) !== undefined;
+    const clearCookies = async (includeAuth: boolean) => {
+      const priorHeaders = new Headers(response.headers);
+      const priorCookies = response.cookies.getAll();
+      const cookieNamesToDelete = [recoveryGrantCookieName, recoverySessionCookieName];
+      if (includeAuth) {
+        cookieNamesToDelete.push(
+          ...supabaseAuthCookieNames(
+            { getAll: () => request.cookies.getAll() },
+            environment.supabaseOrigin,
+          ),
+        );
+      }
+      let authCleanupError: unknown;
+      if (includeAuth) {
+        try {
+          await signOutLocalOrProveAbsent(supabase.auth);
+        } catch (error) {
+          authCleanupError = error;
+        }
+      }
+      for (const name of cookieNamesToDelete) {
+        request.cookies.delete(name);
+      }
+      const anonymousRequestHeaders = new Headers(request.headers);
+      anonymousRequestHeaders.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
+      anonymousRequestHeaders.set(contentSecurityPolicyNonceHeaderName, nonce);
+      response = NextResponse.next({ request: { headers: anonymousRequestHeaders } });
+      for (const [name, value] of priorHeaders.entries()) {
+        if (name.toLowerCase() !== "set-cookie") {
+          response.headers.set(name, value);
+        }
+      }
+      for (const cookie of priorCookies) {
+        if (!cookieNamesToDelete.includes(cookie.name)) {
+          response.cookies.set(cookie);
+        }
+      }
+      response.headers.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
+      for (const name of cookieNamesToDelete) {
+        response.cookies.delete(name);
+      }
+      if (authCleanupError !== undefined) {
+        throw authCleanupError;
+      }
+    };
+
     try {
-      await supabase.auth.getClaims();
+      const accessToken = hasRecoveryMarker
+        ? await readSupabaseAccessTokenFromCookies(
+            { getAll: () => request.cookies.getAll() },
+            environment.supabaseOrigin,
+          )
+        : undefined;
+      if (hasRecoveryMarker && accessToken === undefined) {
+        await clearCookies(false);
+        return response;
+      }
+      const claimsResult = await supabase.auth.getClaims(accessToken);
+      const authContext =
+        claimsResult.error === null
+          ? parseAuthSessionContext(claimsResult.data?.claims)
+          : undefined;
+      if (authContext !== undefined) {
+        const recoveryBinding = await inspectIdentityRecoverySession({
+          authExpiresAt: authContext.authExpiresAt,
+          authSessionId: authContext.authSessionId,
+          sessionScope: null,
+          token: null,
+          userId: authContext.userId,
+        });
+        if (recoveryBinding !== undefined && !isRecoverySessionSurface(request.nextUrl.pathname)) {
+          try {
+            await closeIdentityRecoverySession({
+              authSessionId: authContext.authSessionId,
+              userId: authContext.userId,
+            });
+          } catch {
+            // O tombstone existente continua classificando qualquer replay como recovery.
+          }
+          await clearCookies(true);
+        } else if (recoveryBinding === undefined && (hasRecoveryMarker || hasRecoveryGrant)) {
+          await clearCookies(false);
+        }
+      } else if (hasRecoveryMarker || hasRecoveryGrant) {
+        await clearCookies(false);
+      }
     } catch {
-      // Falha de refresh não transforma uma rota pública em erro nem autentica a requisição.
+      if (hasRecoveryMarker || hasRecoveryGrant) {
+        await clearCookies(false);
+      }
+      const errorResponse = createGlobalErrorResponse(contentSecurityPolicy);
+      for (const cookie of response.cookies.getAll()) {
+        errorResponse.cookies.set(cookie);
+      }
+      return errorResponse;
     }
   }
 

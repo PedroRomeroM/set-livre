@@ -240,4 +240,53 @@ describe("bounded rate limiter", () => {
     expect(limiter.consume("identity.register", "new-action", 1, 1_000, 80)).toBe(true);
     expect(limiter.consume("identity.recovery.update", "protected", 1, 1_000, 90)).toBe(false);
   });
+
+  it("never evicts a live exhausted bucket to admit churn in the same action", async () => {
+    const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
+    const limiter = new BoundedFixedWindowRateLimiter(2);
+    expect(limiter.consume("identity.login", "protected", 1, 1_000, 10)).toBe(true);
+    expect(limiter.consume("identity.login", "protected", 1, 1_000, 20)).toBe(false);
+    expect(limiter.consume("identity.login", "hostile-one", 1, 1_000, 30)).toBe(true);
+    expect(limiter.consume("identity.login", "hostile-two", 1, 1_000, 40)).toBe(true);
+
+    for (let index = 3; index < 20; index += 1) {
+      expect(limiter.consume("identity.login", `hostile-${index}`, 1, 1_000, 40 + index)).toBe(
+        false,
+      );
+    }
+
+    expect(limiter.consume("identity.login", "protected", 1, 1_000, 100)).toBe(false);
+  });
+
+  it("keeps a partition overflow sticky until reset while an exact slot expires", async () => {
+    const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
+    const limiter = new BoundedFixedWindowRateLimiter(1);
+    expect(limiter.consume("identity.login", "exact", 1, 100, 10)).toBe(true);
+    expect(limiter.consume("identity.login", "overflow-one", 2, 1_000, 20)).toBe(true);
+    expect(limiter.consume("identity.login", "overflow-two", 2, 1_000, 30)).toBe(true);
+    expect(limiter.consume("identity.login", "overflow-three", 2, 1_000, 120)).toBe(false);
+    expect(limiter.storageSizeForTests()).toEqual({ exactBuckets: 0, overflowCounters: 1 });
+    expect(limiter.consume("identity.login", "overflow-three", 2, 1_000, 1_021)).toBe(true);
+    expect(limiter.storageSizeForTests()).toEqual({ exactBuckets: 1, overflowCounters: 0 });
+    expect(limiter.consume("identity.login", "overflow-three", 2, 1_000, 1_022)).toBe(true);
+    expect(limiter.consume("identity.login", "overflow-three", 2, 1_000, 1_023)).toBe(false);
+  });
+
+  it("isolates bounded overflow counters by action and fails closed beyond their metadata cap", async () => {
+    const { BoundedFixedWindowRateLimiter } = await import("../../src/lib/server/rate-limit");
+    const limiter = new BoundedFixedWindowRateLimiter(2);
+    expect(limiter.consume("identity.login", "exact-one", 1, 1_000, 10)).toBe(true);
+    expect(limiter.consume("identity.login", "exact-two", 1, 1_000, 20)).toBe(true);
+
+    expect(limiter.consume("identity.recovery.request", "overflow-one", 1, 1_000, 30)).toBe(true);
+    expect(limiter.consume("identity.recovery.request", "overflow-two", 1, 1_000, 40)).toBe(false);
+    expect(limiter.consume("identity.register", "isolated", 1, 1_000, 50)).toBe(true);
+    expect(limiter.consume("identity.register", "isolated-again", 1, 1_000, 60)).toBe(false);
+    expect(limiter.consume("identity.recovery.request", "still-isolated", 1, 1_000, 65)).toBe(
+      false,
+    );
+    expect(limiter.consume("identity.callback", "metadata-cap", 1, 1_000, 70)).toBe(false);
+    expect(limiter.storageSizeForTests()).toEqual({ exactBuckets: 2, overflowCounters: 2 });
+    expect(limiter.consume("identity.login", "exact-one", 1, 1_000, 80)).toBe(false);
+  });
 });

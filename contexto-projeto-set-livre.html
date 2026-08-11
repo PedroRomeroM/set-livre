@@ -641,15 +641,15 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · terceiro review resolvido; novo review pendente</li>
+          <li>FEAT-002 · quarto review em validação</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>0/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>407</strong><span>unitários na rodada atual</span></div>
-          <div class="stat"><strong>224</strong><span>asserts pgTAP na rodada atual</span></div>
-          <div class="stat"><strong>59</strong><span>execuções Playwright/axe</span></div>
-          <div class="stat"><strong>10</strong><span>migrations append-only</span></div>
+          <div class="stat"><strong>458</strong><span>testes unitários verdes</span></div>
+          <div class="stat"><strong>236</strong><span>asserts pgTAP verdes</span></div>
+          <div class="stat"><strong>59</strong><span>execuções Playwright/axe verdes</span></div>
+          <div class="stat"><strong>11</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -680,9 +680,12 @@
             <p>
               A fundação técnica foi incorporada a <code>main</code>. As cinco correções de Auth e
               banco abertas pelo terceiro review da FEAT-002 passaram em todos os gates locais,
-              foram publicadas no commit <code>3bb6cb3</code> e geraram release imutável. As cinco
-              threads foram respondidas e resolvidas, deixando o PR sem thread aberta; a feature
-              permanece fora da contagem de concluídas até o novo review e o merge.
+              foram publicadas no commit <code>3bb6cb3</code> e geraram release imutável. O quarto
+              review abriu três threads acionáveis: preservar cotas vivas sob saturação do rate
+              limiter, encerrar a sessão Auth quando a autorização de recovery expira e escopar o
+              cache dessa autorização. As três correções foram implementadas e passaram em banco,
+              unitários e browsers; a feature permanece fora da contagem de concluídas até os gates
+              operacionais restantes, review sem blocker e merge.
             </p>
           </div>
 
@@ -705,7 +708,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Validada localmente</span>
+              <span class="tag review">Quarto review em validação</span>
               <h3>FEAT-002 · Auth e legal-core</h3>
               <p>
                 Cadastro PF/PJ mínimo, aceite legal versionado, confirmação, sessão SSR,
@@ -715,10 +718,12 @@
                 capacidade do limiter por ação, tornaram callbacks ambíguos terminais depois do
                 envio do OTP e escoparam o cache de sessão por identidade, sem exibir PII antiga
                 durante refetch ou troca SSR. O terceiro review também fechou cookies Auth
-                parcialmente publicados, RLS da intenção privada e release de grant expirado. A
-                fronteira prepara o snapshot após a hidratação, sem assinatura do cache durante
-                render, e o tipo PF/PJ usa o rádio nativo como fonte única, sem antecipar perfil
-                completo ou reserva.
+                parcialmente publicados, RLS da intenção privada e release de grant expirado. No
+                quarto review, buckets vivos deixaram de ser removidos sob churn, o status de
+                recovery ganhou scope opaco e só monta o formulário depois de uma resposta idle, e
+                cada sessão de recovery passou a possuir binding/tombstone durável pelo
+                <code>session_id</code> assinado. O tipo PF/PJ continua usando o rádio nativo como
+                fonte única, sem antecipar perfil completo ou reserva.
               </p>
             </article>
           </div>
@@ -726,9 +731,11 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              As correções do terceiro review passaram em 407 unitários, 224/224 asserts pgTAP e
-              59/59 execuções browser. O run atual terminou sem warning React/hidratação, sentinela
-              de senha, <code>token_hash</code>, usuário QA, mensagem QA ou processo/porta residual.
+              As três correções do quarto review passaram em 458/458 unitários, 236/236 asserts
+              pgTAP e 59/59 execuções browser. O run terminou sem sentinela de senha,
+              <code>token_hash</code>, usuário QA ou mensagem QA residual. Instalação limpa,
+              formatação, lint, typecheck, documentação, builds, audit e Knip também passaram;
+              smokes standalone, release e auditoria do índice aguardam o commit técnico.
             </p>
           </div>
         </section>
@@ -1002,16 +1009,15 @@
           <div class="section-head">
             <h2>Testes e gates</h2>
             <p>
-              A rodada atual incorpora os testes unitários, de banco e browser da FEAT-002. Os sete
-              cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
-              fundação, a matriz integral atual passou em 59/59 sobre as cinco correções do terceiro
-              review.
+              Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
+              fundação, a matriz atual passou em 59/59. O cenário 003 agora prova também cache
+              offline sem formulário, recovery nominal e encerramento real depois da expiração.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">407 aprovados</span>
+              <span class="tag done">458 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1020,12 +1026,12 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">224 aprovados</span>
+              <span class="tag done">236 aprovados</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
-                <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados e
-                release de recovery recusado depois da expiração.
+                <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados,
+                binding/tombstone por sessão, pin JWT, ausência canônica e retenção em duas fases.
               </p>
             </article>
             <article class="card">
@@ -1054,10 +1060,9 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Evidência local da FEAT-002:</strong>
             <p>
-              Reset limpo, geração determinística, 224/224 asserts pgTAP, 407/407 unitários e 59/59
-              execuções browser estão verdes sobre o terceiro review. O run não registrou warning
-              React/hidratação, sentinela de senha, <code>token_hash</code>, usuário QA ou mensagem
-              QA residual.
+              Reset limpo, geração determinística, 236/236 asserts pgTAP, 458/458 unitários e 59/59
+              execuções browser estão verdes sobre o quarto review. O run não registrou sentinela de
+              senha, <code>token_hash</code>, usuário QA ou mensagem QA residual.
             </p>
           </div>
 
@@ -1065,9 +1070,10 @@
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. Banco, unitários, documentação,
-              builds, audit, Knip, Playwright e release imutável estão verdes neste ciclo; a
-              evidência documental e seu índice fecham o registro antes das respostas no PR.
+              → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde sobre o
+              quarto review: 458 unitários, 236 asserts pgTAP, 59 execuções browser e zero
+              vulnerabilidade. Restam o smoke dos pacotes standalone, a release imutável e as
+              auditorias do índice/release depois do commit técnico.
             </p>
           </div>
         </section>
@@ -1087,9 +1093,11 @@
               <h3>Banco e readiness</h3>
               <p>
                 As oito migrations da fundação continuam imutáveis; a nona adiciona identidade e
-                legal-core, e a décima habilita RLS sem policy na intenção privada e impede release
-                de grant expirado. O grant permanece vinculado ao usuário, one-shot e válido por 15
-                minutos; a DAL conserva oito rotinas privadas e nenhum grant nas tabelas.
+                legal-core, a décima endurece RLS/release e a décima primeira cria a
+                binding/tombstone da sessão de recovery. Grant, usuário e
+                <code>session_id</code> assinado ficam vinculados; o grant é one-shot por 15 minutos
+                e a tombstone sobrevive a grant/cookies. A DAL passa a expor nove rotinas privadas
+                em dez dependências ACL exatas e readiness exige <code>jwt_exp=3600</code>.
               </p>
             </article>
             <article class="card">
@@ -1098,9 +1106,10 @@
                 CSP com nonce novo por request, headers seguros, fallback sem JavaScript, health sem
                 cache e readiness que falha fechado sem expor SQL, credencial ou diagnóstico
                 interno. Signup/recovery ambíguos não reutilizam OTP possivelmente consumido; login
-                parcial e sign-out final limpam apenas cookies Auth exatos. O cache de sessão fica
-                escopado por identidade, valida o payload antes da escrita e oculta PII durante
-                revalidação, troca SSR ou estado offline pausado.
+                parcial e sign-out final limpam apenas cookies Auth exatos. A binding impede que uma
+                sessão de recovery abandonada vire login comum mesmo sem marker. O cache de sessão
+                fica escopado por identidade; o de recovery usa scope UUID público não autoritativo
+                e mostra somente verificação durante refetch ativo ou offline pausado.
               </p>
             </article>
             <article class="card">
@@ -1181,8 +1190,8 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está
-              validada localmente e em ciclos de review; as demais continuam planejadas conforme a
+              As 34 features estão especificadas com 194 cenários de produto. A FEAT-002 está no
+              quarto ciclo de correção e validação local; as demais continuam planejadas conforme a
               sequência executável do ADR-017.
             </p>
           </div>
@@ -1211,7 +1220,7 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag review">002 validada localmente · 0/9 concluídas</span></td>
+                  <td><span class="tag review">002 em validação · 0/9 concluídas</span></td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1267,9 +1276,12 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Solicitar novo review sobre o SHA publicado.</li>
-                <li>Monitorar o PR e tratar somente eventual comentário acionável novo.</li>
-                <li>Confirmar novamente zero thread aberta e todos os checks.</li>
+                <li>Congelar e auditar o índice das três correções do quarto review.</li>
+                <li>Publicar o commit técnico e gerar a release imutável com smokes standalone.</li>
+                <li>
+                  Publicar, responder e resolver somente as três threads efetivamente atendidas.
+                </li>
+                <li>Solicitar novo review e confirmar novamente zero thread aberta.</li>
                 <li>
                   Concluir e fazer merge da FEAT-002 antes de iniciar qualquer feature seguinte.
                 </li>

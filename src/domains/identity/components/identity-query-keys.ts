@@ -1,9 +1,21 @@
-import type { IdentitySession } from "@set-livre/contracts";
+import type {
+  IdentityRecoverySessionScope,
+  IdentityRecoveryStatusResult,
+  IdentitySession,
+} from "@set-livre/contracts";
 
 export type IdentitySessionScope = string;
-export type IdentitySessionFetchStatus = "fetching" | "idle" | "paused";
+type IdentityFetchStatus = "fetching" | "idle" | "paused";
 
+const identityRecoveryQueryRoot = ["identity", "recovery", "status"] as const;
 const identitySessionQueryRoot = ["identity", "session"] as const;
+
+export class IdentityRecoveryScopeChangedError extends Error {
+  constructor() {
+    super("A autorização de recuperação mudou de escopo.");
+    this.name = "IdentityRecoveryScopeChangedError";
+  }
+}
 
 export class IdentitySessionScopeChangedError extends Error {
   constructor() {
@@ -13,10 +25,43 @@ export class IdentitySessionScopeChangedError extends Error {
 }
 
 export const identityQueryKeys = {
-  recoveryStatus: ["identity", "recovery", "current-session"] as const,
+  recoveryStatus: (scope: IdentityRecoverySessionScope) =>
+    [...identityRecoveryQueryRoot, scope] as const,
+  recoveryStatuses: identityRecoveryQueryRoot,
   session: (scope: IdentitySessionScope) => [...identitySessionQueryRoot, scope] as const,
   sessions: identitySessionQueryRoot,
 };
+
+export function identityRecoveryQueryScope(queryKey: readonly unknown[]): string | undefined {
+  if (
+    queryKey.length !== 4 ||
+    queryKey[0] !== identityRecoveryQueryRoot[0] ||
+    queryKey[1] !== identityRecoveryQueryRoot[1] ||
+    queryKey[2] !== identityRecoveryQueryRoot[2] ||
+    typeof queryKey[3] !== "string"
+  ) {
+    return undefined;
+  }
+  return queryKey[3];
+}
+
+export function identityRecoveryStatusCanAuthorize(
+  status: IdentityRecoveryStatusResult,
+  expectedScope: IdentityRecoverySessionScope,
+  fetchStatus: IdentityFetchStatus,
+) {
+  return fetchStatus === "idle" && status.allowed && status.scope === expectedScope;
+}
+
+export function identityRecoveryStatusForScope(
+  status: IdentityRecoveryStatusResult,
+  expectedScope: IdentityRecoverySessionScope,
+) {
+  if (status.scope !== expectedScope) {
+    throw new IdentityRecoveryScopeChangedError();
+  }
+  return status;
+}
 
 export function identitySessionScope(session: IdentitySession): IdentitySessionScope {
   return session.authenticated ? session.userId : "anonymous";
@@ -39,7 +84,7 @@ export function identitySessionQueryScope(
 export function identitySessionCanRender(
   session: IdentitySession,
   expectedScope: IdentitySessionScope,
-  fetchStatus: IdentitySessionFetchStatus,
+  fetchStatus: IdentityFetchStatus,
 ) {
   return fetchStatus === "idle" && identitySessionMatchesScope(session, expectedScope);
 }

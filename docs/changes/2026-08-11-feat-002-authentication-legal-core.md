@@ -36,9 +36,10 @@ Os dois apps possuem somente a superfície técnica da fundação. Não existem 
 - o corpo jurídico preserva headings, parágrafos, listas, ênfase e links por um subset Markdown local, sem HTML bruto ou dependência adicional;
 - recovery permanece genérico e o formulário de nova senha só aparece após token válido e revalidação concluída, sem reaproveitar autorização em cache durante refetch;
 - `returnTo` aceita somente destinos internos existentes e explicitamente allowlisted.
-- o primeiro review substitui a rejeição global por um limiter limitado e particionado por ação, com evicção controlada sob saturação, e preserva a estrutura dos documentos jurídicos por um subset Markdown seguro.
+- o primeiro review substitui a rejeição global por um limiter limitado e particionado por ação e preserva a estrutura dos documentos jurídicos por um subset Markdown seguro;
 - o segundo review encerra recovery ambíguo depois do envio do OTP sem oferecer retry e isola o cache de sessão por identidade, substituindo inclusive uma Query fresca da mesma identidade pelo snapshot SSR atual antes de liberar PII.
-- o terceiro review torna também o signup ambíguo terminal, fecha cookies parcialmente publicados em login/recovery, habilita RLS na intenção privada e impede release de grant já expirado.
+- o terceiro review torna também o signup ambíguo terminal, fecha cookies parcialmente publicados em login/recovery, habilita RLS na intenção privada e impede release de grant já expirado;
+- o quarto review elimina a evicção de buckets vivos do limiter, escopa e bloqueia o cache de recovery até uma resposta autoritativa idle e vincula toda sessão Auth de recovery a uma binding/tombstone durável, impedindo que abandono, expiração ou remoção de cookies a transformem em login comum.
 
 ## Arquivos/componentes
 
@@ -46,11 +47,11 @@ Implementados: contratos compartilhados, primitives usadas pela feature, domíni
 
 ## Banco, migration, grants e RLS
 
-A migration append-only `20260811000200` cria o perfil mínimo, versões legais, aceites, intenções privadas e grants de recovery duráveis no banco e expiráveis. A correção append-only `20260811000300` habilita RLS sem policy em `private.signup_legal_intents` e faz o release recusar grant já expirado, sem alterar grants ou a allowlist DAL. Tabelas começam revogadas; RLS separa leitura pública vigente da leitura própria; nenhum browser escreve aceite ou grant. A DAL recebe somente `USAGE` em `private` e `EXECUTE` nas oito rotinas autorizadas — dois checks de readiness, criação da intenção e cinco operações de recovery —, totalizando nove dependências ACL exatas. Claim exclusiva, release de falha comprovadamente sem efeito e ainda vigente e consume com delete mantêm retry e one-shot duráveis entre processos. O trigger remove a metadata transitória sem apagar chaves alheias. O seed contém somente textos locais não aprovados para produção.
+A migration append-only `20260811000200` cria o perfil mínimo, versões legais, aceites, intenções privadas e grants de recovery duráveis. A correção `20260811000300` habilita RLS sem policy na intenção privada e impede release depois da expiração. A nova `20260811000400` invalida grants anteriores sem `session_id`, cria `private.identity_recovery_sessions`, vincula grant, usuário, sessão Auth e scope opaco, exige `jwt_exp=3600` e conserva uma tombstone depois do grant/cookies. Ausência em `auth.sessions` fecha a binding, remove o grant e inicia retenção conservadora; purge requer nova prova de ausência depois da janela. Os três estados privados usam RLS sem policy. A DAL recebe somente `USAGE private` e `EXECUTE` nas nove rotinas autorizadas — dois checks de readiness, criação da intenção e seis operações do contexto recovery —, totalizando dez dependências ACL exatas. O trigger remove a metadata transitória sem apagar chaves alheias. O seed contém somente textos locais não aprovados para produção.
 
 ## Segurança e privacidade
 
-O comando de cadastro aplica origem e host da request, limite de corpo, rate limit, Zod estrito e redaction. Senha, token, cookie, e-mail, IP e user-agent brutos não entram em logs ou tabelas de evidência. No browser, e-mails, senhas e `TokenHash` de cadastro, login, callback e recovery passam por refs one-shot e deixam `variables` do MutationCache vazias. Metadata do Auth carrega somente um identificador opaco temporário e não é usada como autoridade de perfil. O `TokenHash` de confirmação/recovery fica no fragmento, é apagado antes do `POST` e nunca integra a primeira request. Depois que um callback de signup ou recovery é enviado, rede/timeout/resposta inválida e qualquer resultado desconhecido de `verifyOtp` são terminais: o payload é descartado, cookies/sessão Auth exatos são limpos e a UI solicita novo link. O mesmo fallback fecha publicação parcial de login e sign-out final inconclusivo do recovery, sem remover cookies alheios. Cookies de produção são seguros; apenas desenvolvimento e testes no HTTP loopback local usam a exceção estritamente limitada. O renderer jurídico não usa `dangerouslySetInnerHTML`: tags e sintaxe fora do subset permanecem texto escapado pelo React. Links são fail-closed para path interno absoluto ou HTTPS sem credenciais; destino rejeitado preserva somente o rótulo.
+O comando de cadastro aplica origem e host da request, limite de corpo, rate limit, Zod estrito e redaction. Senha, token, cookie, e-mail, IP e user-agent brutos não entram em logs ou tabelas de evidência. No browser, e-mails, senhas e `TokenHash` passam por refs one-shot e deixam `variables` do MutationCache vazias. O limiter conserva até 10.000 buckets exatos sem evicção viva; depois da saturação, chaves novas compartilham overflow sticky por ação, limitado a 64 partições e fail-closed além desse teto. Depois que um callback é enviado, rede, timeout, resposta inválida e resultado desconhecido são terminais. Recovery recebe uma binding autoritativa pelo `session_id` assinado; o UUID exposto em cookie/SSR serve somente para escopar UI/cache. Perda do marker, expiração do grant ou saída da superfície de recovery fecham a binding e a sessão Auth exata. Cookies de produção são seguros; apenas HTTP loopback local usa a exceção limitada. O renderer jurídico não usa `dangerouslySetInnerHTML`; links são fail-closed para path interno absoluto ou HTTPS sem credenciais.
 
 ## Read models, comandos e invalidação
 
@@ -59,7 +60,8 @@ O comando de cadastro aplica origem e host da request, limite de corpo, rate lim
 - read models explícitos para documentos legais vigentes e contexto da própria identidade;
 - sessão usa key por `userId`/anônimo; Query preexistente, refetch ativo/pausado, observer antigo ou troca de usuário bloqueiam PII até remover a família, semear o SSR atual ou recarregar a rota;
 - logout limpa integralmente o cache privado do TanStack Query e força nova renderização server-side;
-- a troca de senha marca o grant de recovery como consumido no cache e remove a sessão privada armazenada antes do próximo login.
+- status de recovery usa key `recoveryStatus(scope)`; resposta com outro scope é rejeitada antes do cache e `fetching`/`paused` exibem somente verificação, sem montar o formulário;
+- a troca de senha marca o grant como consumido no cache, remove a família de sessão e encerra binding, grant e sessão Auth antes do próximo login.
 
 ## UX, mobile e acessibilidade
 
@@ -67,7 +69,7 @@ Formulários em PT-BR usam labels persistentes, `PasswordInput`, erros associado
 
 ## Testes e IDs QA
 
-Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas, totalizando 23 execuções verdes na matriz dedicada: Supabase Auth e Mailpit reais, confirmação, sessão SSR, recovery mobile, resposta genérica, matriz adversarial de `returnTo`, teclado, axe e reflow a 160x360 nos três engines. Senhas QA nunca entram no DOM ou em passos que serializam o valor: um `Locator.evaluate` valida input/form/nome e instala um listener `formdata` one-shot, deixando o segredo somente no `FormData`; trace, vídeo e screenshot permanecem desligados e a saída/artefatos passam por scan de sentinela e token. O tipo PF/PJ é verificado novamente imediatamente antes do submit, fechando a corrida de hidratação reproduzida no WebKit. Logout e callback aguardam respostas, destinos sanitizados e estados visuais reais, sem depender do limite visual padrão de cinco segundos nem registrar a URL sensível intermediária. O parser jurídico possui prova unitária e de markup estático real para headings, parágrafos, listas, ênfase, links, hierarquia do título, escape de HTML e rejeição de hrefs inseguros. Os testes de sessão reproduzem A→B, mesmo usuário com novo snapshot SSR, observer antigo, refetch offline pausado e rejeição do payload antes de B entrar na key de A; os testes Auth cobrem os dois callbacks ambíguos, publicação parcial, cookies fragmentados, cleanup e redaction. Com as 36 execuções técnicas da fundação, a rodada Playwright integral passou em 59/59. A rodada atual soma 407 unitários; 224 asserts pgTAP cobrem a baseline e o `legal-core`, incluindo constraints, grants, RLS A/B e nos estados privados, trigger, readiness, corrida, purge, scrub, claim/release/consume concorrente, expiração e imutabilidade.
+Os IDs `SL-F002-E2E-001` a `007` possuem specs físicas. O quarto review acrescenta unidades adversariais para churn/overflow, cache de recovery online/offline e binding/tombstone; `SL-F002-E2E-003` foi ampliado, sem novo ID, para provar cache pausado sem formulário, sucesso nominal, expiração real e encerramento de binding, grant, sessão Auth e cookies. A rodada atual passou em 458/458 unitários, 236/236 asserts pgTAP e 59/59 execuções Playwright, com sentinela e `token_hash` ausentes dos artefatos e cleanup Auth/Mailpit em zero.
 
 ## Observabilidade e operação
 
@@ -75,13 +77,13 @@ O primeiro comando real introduz evento JSON seguro com `requestId`, ação, dur
 
 ## Documentação atualizada
 
-Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo registra os gates e o release imutável atuais; o novo review do PR continua sendo a última etapa antes do merge.
+Este registro acompanha a mudança junto de feature, API, banco, segurança, UX, design system, notificações, cache, observabilidade, QA, dependências, contexto, pendências, índices e resumo HTML. A evidência abaixo registra a última rodada integral verde, anterior ao quarto review. Os novos gates, release e auditoria do índice serão adicionados em bloco separado depois da estabilização.
 
 ## Rollback/correção
 
-Antes de qualquer consumidor mergeado, o código pode ser revertido junto da branch. Depois de aplicada a migration, correções de schema, grants, trigger ou readiness usam exclusivamente nova migration append-only. Fixtures locais podem ser substituídas por reset; nenhum recurso cloud será criado neste ciclo.
+Antes de qualquer consumidor mergeado, o código pode ser revertido junto da branch. Depois de aplicada a migration, correções de schema, grants, trigger ou readiness usam exclusivamente nova migration append-only. A `00400` invalida grants antigos sem `session_id`, que exigem novo link; essa transição é segura porque `00200`/`00300` nunca foram aplicadas fora da branch e o primeiro deploy executará a cadeia completa antes de liberar tráfego. Fixtures locais podem ser substituídas por reset; nenhum recurso cloud será criado neste ciclo.
 
-## Evidência de conclusão
+## Evidência histórica — terceiro review
 
 - Node `24.18.0`, npm `11.19.0` e `npm ci` concluíram no ambiente canônico;
 - formatação, lint, TypeScript estrito, Knip, documentação e auditoria de dependências passaram, com zero vulnerabilidades reportadas;
@@ -93,4 +95,11 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - auditorias independentes de segurança, QA, documentação, diff, índice técnico e release encerraram sem blocker; a evidência do release foi publicada em `e77b28d`.
 - as cinco threads do terceiro review receberam respostas ancoradas no commit técnico e na evidência de release, foram resolvidas individualmente e o fetch thread-aware confirmou zero thread aberta.
 
-A implementação está validada localmente e segue fora da contagem de features concluídas até o review do PR e o merge.
+## Evidência do quarto review
+
+- reset limpo, geração e duas execuções consecutivas de `236/236` asserts pgTAP passaram no head `20260811000400`, com cleanup persistente da fixture `dblink` fora do rollback;
+- `458/458` testes unitários e `59/59` execuções Playwright passaram; o run browser terminou sem sentinela de senha, `token_hash`, usuário QA ou mensagem QA residual;
+- `npm ci`, formatação, lint, typecheck integral, documentação, builds das duas aplicações, audit sem vulnerabilidades e Knip passaram sobre o mesmo snapshot;
+- smokes standalone, release imutável e auditoria do índice ainda serão consolidados depois do commit técnico.
+
+A implementação segue fora da contagem de features concluídas até os smokes standalone, release, auditoria do índice, review do PR e merge.

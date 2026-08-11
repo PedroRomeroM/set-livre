@@ -3,11 +3,12 @@
 import {
   identityRecoveryRequestPayloadSchema,
   identityRecoveryUpdatePayloadSchema,
+  type IdentityRecoverySessionScope,
 } from "@set-livre/contracts";
 import { Alert, Button, Field, Input, PasswordInput, Stack } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
 import {
@@ -16,7 +17,13 @@ import {
   requestPasswordRecovery,
   updateRecoveredPassword,
 } from "./identity-api";
-import { identityQueryKeys } from "./identity-query-keys";
+import {
+  IdentityRecoveryScopeChangedError,
+  identityQueryKeys,
+  identityRecoveryQueryScope,
+  identityRecoveryStatusCanAuthorize,
+  identityRecoveryStatusForScope,
+} from "./identity-query-keys";
 import styles from "./identity.module.css";
 import { passwordRequirements } from "./password-requirements";
 
@@ -128,10 +135,10 @@ function RecoveryUpdateSuccess() {
 
 function NewPasswordForm({
   onCompleted,
-  statusRefreshing,
+  recoverySessionScope,
 }: {
   onCompleted: () => void;
-  statusRefreshing: boolean;
+  recoverySessionScope: IdentityRecoverySessionScope;
 }) {
   const queryClient = useQueryClient();
   const pendingRecoveryPassword = useRef<{ confirmPassword: string; password: string } | undefined>(
@@ -152,19 +159,24 @@ function NewPasswordForm({
     onSuccess: async () => {
       await queryClient.cancelQueries({
         exact: true,
-        queryKey: identityQueryKeys.recoveryStatus,
+        queryKey: identityQueryKeys.recoveryStatus(recoverySessionScope),
       });
-      queryClient.setQueryData(identityQueryKeys.recoveryStatus, { allowed: false });
+      queryClient.setQueryData(identityQueryKeys.recoveryStatus(recoverySessionScope), {
+        allowed: false,
+        scope: recoverySessionScope,
+      });
       queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
       onCompleted();
     },
-    onSettled: async () => {
+    onSettled: async (_data, error) => {
       pendingRecoveryPassword.current = undefined;
-      await queryClient.invalidateQueries({
-        exact: true,
-        queryKey: identityQueryKeys.recoveryStatus,
-        refetchType: "active",
-      });
+      if (error !== null) {
+        await queryClient.invalidateQueries({
+          exact: true,
+          queryKey: identityQueryKeys.recoveryStatus(recoverySessionScope),
+          refetchType: "active",
+        });
+      }
     },
   });
 
@@ -190,14 +202,12 @@ function NewPasswordForm({
 
   return (
     <form
-      aria-busy={mutation.isPending || statusRefreshing}
+      aria-busy={mutation.isPending}
       className={styles.form}
       noValidate
       onSubmit={submitPassword}
     >
       <p className={styles.formIntro}>Crie uma senha nova para concluir a recuperação.</p>
-
-      {statusRefreshing ? <Alert>Revalidando a autorização de recuperação…</Alert> : null}
 
       {apiError === undefined ? null : (
         <Alert title="Não foi possível atualizar a senha" variant="error">
@@ -208,7 +218,7 @@ function NewPasswordForm({
       <Field {...fieldErrorProp(visibleFieldErrors, "password")} label="Nova senha" required>
         <PasswordInput
           autoComplete="new-password"
-          disabled={mutation.isPending || statusRefreshing}
+          disabled={mutation.isPending}
           maxLength={128}
           name="password"
           onChange={(event) =>
@@ -225,40 +235,62 @@ function NewPasswordForm({
       >
         <PasswordInput
           autoComplete="new-password"
-          disabled={mutation.isPending || statusRefreshing}
+          disabled={mutation.isPending}
           maxLength={128}
           name="confirmPassword"
         />
       </Field>
 
-      <Button
-        disabled={statusRefreshing}
-        loading={mutation.isPending}
-        loadingLabel="Atualizando senha"
-        type="submit"
-      >
+      <Button loading={mutation.isPending} loadingLabel="Atualizando senha" type="submit">
         Salvar nova senha
       </Button>
     </form>
   );
 }
 
-export function RecoveryFlow() {
+export function RecoveryFlow({
+  initialSessionScope,
+}: {
+  initialSessionScope: IdentityRecoverySessionScope;
+}) {
+  const queryClient = useQueryClient();
   const [recoveryCompleted, setRecoveryCompleted] = useState(false);
+  const recoveryStatusQueryKey = useMemo(
+    () => identityQueryKeys.recoveryStatus(initialSessionScope),
+    [initialSessionScope],
+  );
   const statusQuery = useQuery({
-    queryFn: readPasswordRecoveryStatus,
-    queryKey: identityQueryKeys.recoveryStatus,
+    queryFn: async () =>
+      identityRecoveryStatusForScope(await readPasswordRecoveryStatus(), initialSessionScope),
+    queryKey: recoveryStatusQueryKey,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
   });
+  const scopeChanged = statusQuery.error instanceof IdentityRecoveryScopeChangedError;
+
+  useEffect(() => {
+    queryClient.removeQueries({
+      predicate: (query) => identityRecoveryQueryScope(query.queryKey) !== initialSessionScope,
+      queryKey: identityQueryKeys.recoveryStatuses,
+    });
+  }, [initialSessionScope, queryClient]);
+
+  useEffect(() => {
+    if (!scopeChanged) {
+      return;
+    }
+    queryClient.removeQueries({ queryKey: identityQueryKeys.recoveryStatuses });
+    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+    window.location.replace("/recuperar-senha");
+  }, [queryClient, scopeChanged]);
 
   if (recoveryCompleted) {
     return <RecoveryUpdateSuccess />;
   }
 
-  if (statusQuery.isPending) {
+  if (statusQuery.isPending || scopeChanged) {
     return <Alert>Verificando se o link de recuperação é válido…</Alert>;
   }
 
@@ -291,11 +323,17 @@ export function RecoveryFlow() {
     );
   }
 
-  return statusQuery.data.allowed ? (
+  return identityRecoveryStatusCanAuthorize(
+    statusQuery.data,
+    initialSessionScope,
+    statusQuery.fetchStatus,
+  ) ? (
     <NewPasswordForm
       onCompleted={() => setRecoveryCompleted(true)}
-      statusRefreshing={statusQuery.isFetching}
+      recoverySessionScope={initialSessionScope}
     />
+  ) : statusQuery.fetchStatus !== "idle" ? (
+    <Alert>Verificando se o link de recuperação é válido…</Alert>
   ) : (
     <RecoveryRequestForm />
   );

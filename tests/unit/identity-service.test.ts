@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
-  claimIdentityRecoveryGrant: vi.fn(),
-  consumeIdentityRecoveryGrant: vi.fn(),
+  claimIdentityRecoveryContext: vi.fn(),
+  closeIdentityRecoverySession: vi.fn(),
+  consumeIdentityRecoveryContext: vi.fn(),
   cookieDelete: vi.fn(),
   cookieGet: vi.fn(),
   cookieGetAll: vi.fn(),
@@ -12,9 +13,10 @@ const mocks = vi.hoisted(() => ({
   createRouteSupabaseClient: vi.fn(),
   getClaims: vi.fn(),
   getSession: vi.fn(),
-  issueIdentityRecoveryGrant: vi.fn(),
+  inspectIdentityRecoverySession: vi.fn(),
+  issueIdentityRecoveryContext: vi.fn(),
   readIdentitySessionWithClient: vi.fn(),
-  releaseIdentityRecoveryGrant: vi.fn(),
+  releaseIdentityRecoveryContext: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   setSession: vi.fn(),
   signInWithPassword: vi.fn(),
@@ -61,12 +63,13 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("../../src/domains/identity/server/identity-dal", () => ({
-  claimIdentityRecoveryGrant: mocks.claimIdentityRecoveryGrant,
-  consumeIdentityRecoveryGrant: mocks.consumeIdentityRecoveryGrant,
+  claimIdentityRecoveryContext: mocks.claimIdentityRecoveryContext,
+  closeIdentityRecoverySession: mocks.closeIdentityRecoverySession,
+  consumeIdentityRecoveryContext: mocks.consumeIdentityRecoveryContext,
   createSignupLegalIntent: vi.fn(),
-  hasIdentityRecoveryGrant: vi.fn(),
-  issueIdentityRecoveryGrant: mocks.issueIdentityRecoveryGrant,
-  releaseIdentityRecoveryGrant: mocks.releaseIdentityRecoveryGrant,
+  inspectIdentityRecoverySession: mocks.inspectIdentityRecoverySession,
+  issueIdentityRecoveryContext: mocks.issueIdentityRecoveryContext,
+  releaseIdentityRecoveryContext: mocks.releaseIdentityRecoveryContext,
 }));
 
 vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
@@ -85,6 +88,7 @@ vi.mock("next/headers", () => ({
 import {
   loginIdentity,
   logoutIdentity,
+  readIdentityRecoveryStatus,
   requestIdentityRecovery,
   updateRecoveredIdentityPassword,
   verifyIdentityCallback,
@@ -92,6 +96,9 @@ import {
 
 const recoveryToken = "22222222-2222-4222-8222-222222222222";
 const recoveryUserId = "11111111-1111-4111-8111-111111111111";
+const recoverySessionId = "33333333-3333-4333-8333-333333333333";
+const recoveryScope = "44444444-4444-4444-8444-444444444444";
+const recoveryExpiresAtEpochSeconds = 4_102_444_800;
 const authenticatedSession = {
   authenticated: true as const,
   email: "qa-login@example.test",
@@ -109,7 +116,13 @@ describe("identity recovery service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.cookieDelete.mockImplementation(() => undefined);
-    mocks.cookieGet.mockReturnValue({ value: recoveryToken });
+    mocks.cookieGet.mockImplementation((name: string) =>
+      name === "sl-recovery-grant"
+        ? { value: recoveryToken }
+        : name === "sl-recovery-session"
+          ? { value: recoveryScope }
+          : undefined,
+    );
     mocks.cookieGetAll.mockReturnValue([
       { name: "sb-127-auth-token", value: "opaque-session" },
       { name: "sb-127-auth-token.0", value: "opaque-session-chunk-zero" },
@@ -117,10 +130,29 @@ describe("identity recovery service", () => {
       { name: "sb-127-auth-token.backup", value: "preserve" },
       { name: "unrelated-cookie", value: "preserve" },
     ]);
-    mocks.getClaims.mockResolvedValue({ data: { claims: { sub: recoveryUserId } }, error: null });
-    mocks.claimIdentityRecoveryGrant.mockResolvedValue(true);
-    mocks.releaseIdentityRecoveryGrant.mockResolvedValue(true);
-    mocks.consumeIdentityRecoveryGrant.mockResolvedValue(true);
+    mocks.getClaims.mockResolvedValue({
+      data: {
+        claims: {
+          exp: recoveryExpiresAtEpochSeconds,
+          session_id: recoverySessionId,
+          sub: recoveryUserId,
+        },
+      },
+      error: null,
+    });
+    mocks.claimIdentityRecoveryContext.mockResolvedValue(true);
+    mocks.closeIdentityRecoverySession.mockResolvedValue(true);
+    mocks.consumeIdentityRecoveryContext.mockResolvedValue(true);
+    mocks.inspectIdentityRecoverySession.mockResolvedValue({
+      active: true,
+      grantAllowed: true,
+      sessionScope: recoveryScope,
+    });
+    mocks.issueIdentityRecoveryContext.mockResolvedValue({
+      sessionScope: recoveryScope,
+      token: recoveryToken,
+    });
+    mocks.releaseIdentityRecoveryContext.mockResolvedValue(true);
     mocks.signOut.mockResolvedValue({ error: null });
     mocks.getSession.mockResolvedValue({ data: { session: null }, error: null });
     mocks.transientSignOut.mockResolvedValue({ error: null });
@@ -292,7 +324,7 @@ describe("identity recovery service", () => {
       message: "Não foi possível preparar a recuperação agora. Solicite um novo link.",
       status: 503,
     });
-    expect(mocks.issueIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.issueIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
     expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
@@ -322,7 +354,8 @@ describe("identity recovery service", () => {
       status: 503,
     });
     expect(mocks.verifyOtp).toHaveBeenCalledOnce();
-    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-session");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
@@ -410,7 +443,7 @@ describe("identity recovery service", () => {
       message: "Não foi possível preparar a recuperação agora. Solicite um novo link.",
       status: 503,
     });
-    expect(mocks.issueIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.issueIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
     expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
@@ -448,7 +481,7 @@ describe("identity recovery service", () => {
   });
 
   it("makes a recovery callback terminal after OTP verification when grant issue fails", async () => {
-    mocks.issueIdentityRecoveryGrant.mockRejectedValueOnce(
+    mocks.issueIdentityRecoveryContext.mockRejectedValueOnce(
       new Error("private-recovery-grant-failure"),
     );
 
@@ -464,7 +497,11 @@ describe("identity recovery service", () => {
     });
 
     expect(mocks.verifyOtp).toHaveBeenCalledOnce();
-    expect(mocks.issueIdentityRecoveryGrant).toHaveBeenCalledWith(recoveryUserId);
+    expect(mocks.issueIdentityRecoveryContext).toHaveBeenCalledWith({
+      authExpiresAt: new Date(recoveryExpiresAtEpochSeconds * 1_000).toISOString(),
+      authSessionId: recoverySessionId,
+      userId: recoveryUserId,
+    });
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
     expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
@@ -473,7 +510,7 @@ describe("identity recovery service", () => {
   });
 
   it("keeps the verified recovery terminal when local sign-out cannot be proven", async () => {
-    mocks.issueIdentityRecoveryGrant.mockRejectedValueOnce(
+    mocks.issueIdentityRecoveryContext.mockRejectedValueOnce(
       new Error("private-recovery-grant-failure"),
     );
     mocks.signOut.mockRejectedValueOnce(new Error("private-signout-failure"));
@@ -495,8 +532,107 @@ describe("identity recovery service", () => {
     expect(JSON.stringify(await outcome)).not.toContain("private-signout-failure");
   });
 
+  it("binds a verified recovery to the signed session and a separate opaque scope", async () => {
+    const result = await verifyIdentityCallback({
+      tokenHash: "opaque-recovery-token-hash",
+      type: "recovery",
+    });
+
+    expect(result.data).toEqual({ redirectTo: "/recuperar-senha?modo=nova-senha" });
+    expect(mocks.getClaims).toHaveBeenCalledWith(providerSession.access_token);
+    expect(mocks.issueIdentityRecoveryContext).toHaveBeenCalledWith({
+      authExpiresAt: new Date(recoveryExpiresAtEpochSeconds * 1_000).toISOString(),
+      authSessionId: recoverySessionId,
+      userId: recoveryUserId,
+    });
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "sl-recovery-grant",
+      recoveryToken,
+      expect.objectContaining({ httpOnly: true, maxAge: 900, sameSite: "strict" }),
+    );
+    expect(mocks.cookieSet).toHaveBeenCalledWith(
+      "sl-recovery-session",
+      recoveryScope,
+      expect.objectContaining({ httpOnly: true, sameSite: "strict" }),
+    );
+    expect(recoveryScope).not.toBe(recoveryToken);
+    expect(recoveryScope).not.toBe(recoverySessionId);
+    expect(recoveryScope).not.toBe(recoveryUserId);
+  });
+
+  it("returns the bound opaque scope only while grant, session and marker all match", async () => {
+    await expect(readIdentityRecoveryStatus()).resolves.toMatchObject({
+      data: { allowed: true, scope: recoveryScope },
+    });
+
+    expect(mocks.inspectIdentityRecoverySession).toHaveBeenCalledWith({
+      authExpiresAt: new Date(recoveryExpiresAtEpochSeconds * 1_000).toISOString(),
+      authSessionId: recoverySessionId,
+      sessionScope: recoveryScope,
+      token: recoveryToken,
+      userId: recoveryUserId,
+    });
+    expect(mocks.signOut).not.toHaveBeenCalled();
+  });
+
+  it("closes the bound Auth session when its recovery grant is lost or expired", async () => {
+    mocks.inspectIdentityRecoverySession.mockResolvedValueOnce({
+      active: true,
+      grantAllowed: false,
+      sessionScope: recoveryScope,
+    });
+
+    await expect(readIdentityRecoveryStatus()).resolves.toMatchObject({
+      data: { allowed: false, scope: "anonymous" },
+    });
+
+    expect(mocks.closeIdentityRecoverySession).toHaveBeenCalledWith({
+      authSessionId: recoverySessionId,
+      userId: recoveryUserId,
+    });
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-session");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+  });
+
+  it("clears a stale marker without signing out an ordinary session", async () => {
+    mocks.inspectIdentityRecoverySession.mockResolvedValueOnce(undefined);
+
+    await expect(readIdentityRecoveryStatus()).resolves.toMatchObject({
+      data: { allowed: false, scope: "anonymous" },
+    });
+
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-session");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.closeIdentityRecoverySession).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on DAL drift without letting a stale marker decide logout", async () => {
+    mocks.inspectIdentityRecoverySession.mockRejectedValueOnce(
+      new Error("private-recovery-inspection-drift"),
+    );
+
+    await expect(readIdentityRecoveryStatus()).rejects.toThrow("private-recovery-inspection-drift");
+
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-session");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.closeIdentityRecoverySession).not.toHaveBeenCalled();
+  });
+
   it("revokes an issued recovery grant when its cookie cannot be published", async () => {
-    mocks.issueIdentityRecoveryGrant.mockResolvedValueOnce(recoveryToken);
+    mocks.issueIdentityRecoveryContext.mockResolvedValueOnce({
+      sessionScope: recoveryScope,
+      token: recoveryToken,
+    });
     mocks.cookieSet.mockImplementationOnce(() => {
       throw new Error("private-cookie-publication-failure");
     });
@@ -511,16 +647,12 @@ describe("identity recovery service", () => {
       status: 503,
     });
 
-    expect(mocks.claimIdentityRecoveryGrant).toHaveBeenCalledWith({
-      attemptId: expect.any(String),
-      token: recoveryToken,
+    expect(mocks.closeIdentityRecoverySession).toHaveBeenCalledWith({
+      authSessionId: recoverySessionId,
       userId: recoveryUserId,
     });
-    expect(mocks.consumeIdentityRecoveryGrant).toHaveBeenCalledWith({
-      attemptId: expect.any(String),
-      token: recoveryToken,
-      userId: recoveryUserId,
-    });
+    expect(mocks.claimIdentityRecoveryContext).not.toHaveBeenCalled();
+    expect(mocks.consumeIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
@@ -533,9 +665,9 @@ describe("identity recovery service", () => {
       status: 503,
     });
 
-    expect(mocks.claimIdentityRecoveryGrant).toHaveBeenCalledOnce();
-    expect(mocks.releaseIdentityRecoveryGrant).not.toHaveBeenCalled();
-    expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.claimIdentityRecoveryContext).toHaveBeenCalledOnce();
+    expect(mocks.releaseIdentityRecoveryContext).not.toHaveBeenCalled();
+    expect(mocks.consumeIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
@@ -554,8 +686,8 @@ describe("identity recovery service", () => {
       status: 503,
     });
 
-    expect(mocks.releaseIdentityRecoveryGrant).not.toHaveBeenCalled();
-    expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.releaseIdentityRecoveryContext).not.toHaveBeenCalled();
+    expect(mocks.consumeIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
@@ -576,21 +708,21 @@ describe("identity recovery service", () => {
       status: 400,
     });
 
-    expect(mocks.releaseIdentityRecoveryGrant).toHaveBeenCalledOnce();
-    expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.releaseIdentityRecoveryContext).toHaveBeenCalledOnce();
+    expect(mocks.consumeIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).not.toHaveBeenCalled();
   });
 
   it("closes the recovery session when a retry-safe rejection cannot release its grant", async () => {
     mocks.updateUser.mockResolvedValueOnce({ error: { code: "weak_password" } });
-    mocks.releaseIdentityRecoveryGrant.mockResolvedValueOnce(false);
+    mocks.releaseIdentityRecoveryContext.mockResolvedValueOnce(false);
 
     await expect(updateRecoveredIdentityPassword("WeakPassword9")).rejects.toMatchObject({
       code: "SERVICE_UNAVAILABLE",
       status: 503,
     });
 
-    expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.consumeIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
@@ -608,7 +740,7 @@ describe("identity recovery service", () => {
       data: { updated: true },
     });
 
-    expect(mocks.consumeIdentityRecoveryGrant).toHaveBeenCalledOnce();
+    expect(mocks.consumeIdentityRecoveryContext).toHaveBeenCalledOnce();
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
@@ -637,8 +769,8 @@ describe("identity recovery service", () => {
       status: 503,
     });
 
-    expect(mocks.consumeIdentityRecoveryGrant).toHaveBeenCalledOnce();
-    expect(mocks.releaseIdentityRecoveryGrant).not.toHaveBeenCalled();
+    expect(mocks.consumeIdentityRecoveryContext).toHaveBeenCalledOnce();
+    expect(mocks.releaseIdentityRecoveryContext).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");

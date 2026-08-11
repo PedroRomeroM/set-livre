@@ -39,35 +39,39 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - sucesso e erro usam envelope JSON com `requestId`, `private, no-store` e sem payload de provider, SQL ou PII;
 - o pedido de recovery responde sempre `202` com o mesmo corpo, inclusive quando o provider rejeita ou está indisponível; somente o evento redigido marca a degradação, sem permitir inferir se o e-mail existe;
 - o cliente interrompe qualquer request de identidade após dez segundos e retorna estado recuperável sem preservar payload sensível;
-- login, logout, callback, recovery e sessão usam clientes Supabase server-side por request; senha, token e cookie nunca entram no cache TanStack;
+- login, logout, callback, recovery e sessão usam clientes Supabase server-side por request; senha, token, cookie e o `session_id` assinado nunca entram no cache TanStack;
 - o callback aceita apenas `signup` ou `recovery`; o `TokenHash` chega ao browser no fragmento, é apagado antes do `POST` e não aparece na request inicial nem no referrer;
 - somente um `SERVICE_UNAVAILABLE` recebido em resposta API válida antes de `verifyOtp` permite retry do callback. Depois que o `POST` de signup ou recovery foi despachado, falha de rede, timeout e resposta inválida são ambíguos e terminais no cliente, que apaga sua ref one-shot sem reenviar o token;
 - erro desconhecido, throw, sessão incompleta ou falha posterior ao início de `verifyOtp` retornam `AUTH_RESTART_REQUIRED` no signup e `RECOVERY_RESTART_REQUIRED` no recovery, limpam somente a sessão/cookies Auth conhecidos e exigem novo link sem afirmar o estado da conta; rejeição explícita de OTP inválido/expirado preserva sua classificação segura;
-- a troca de senha reserva o grant no banco antes do provedor; somente rejeições explícitas sem efeito liberam retry, enquanto resultado ambíguo encerra a autorização e exige novo link;
+- o callback de recovery valida `sub`, `session_id` e `exp` do JWT assinado contra `auth.sessions` antes de emitir atomicamente a binding/tombstone e o grant de 15 minutos. O UUID público `session_scope` é somente um marcador opaco de UI/cache; ele não autoriza nenhuma operação;
+- a troca de senha reserva o grant e a binding correspondentes no banco antes do provedor; somente rejeições explícitas sem efeito liberam retry, enquanto resultado ambíguo encerra a autorização e exige novo link;
 - publicação parcial no login e descarte da sessão pós-recovery apagam exatamente o cookie Supabase Auth base e seus chunks numéricos observados, preservando cookies de prefixo semelhante e cookies alheios mesmo quando `signOut` ou uma deleção falha. Recovery final só conclui após `signOut` ou prova local de ausência; estado presente/ambíguo falha fechado depois do fallback exato;
+- uma sessão Auth vinculada a recovery nunca é publicada como login comum. Expiração/consumo do grant, binding fechada, marcador ausente/divergente ou navegação fora das superfícies autorizadas fecham a binding, removem o grant e encerram a sessão local; a tombstone persiste para classificar replay pelo `session_id` mesmo sem cookies auxiliares;
+- `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - logout só aceita erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe;
 - `returnTo` possui allowlist literal; nesta fatia o único destino autenticado é `/entrar?sessao=ativa`.
 
 ## 3. Códigos de erro
 
-| Código                         | HTTP | Uso                      |
-| ------------------------------ | ---: | ------------------------ |
-| `AUTH_REQUIRED`                |  401 | sem sessão               |
-| `AUTH_RESTART_REQUIRED`        |  503 | signup OTP ambíguo       |
-| `FORBIDDEN`                    |  403 | papel/ownership          |
-| `ACCOUNT_SUSPENDED`            |  403 | conta suspensa           |
-| `VALIDATION_FAILED`            |  422 | campos                   |
-| `NOT_FOUND`                    |  404 | recurso não visível      |
-| `CONFLICT`                     |  409 | estado concorrente       |
-| `SLOT_UNAVAILABLE`             |  409 | calendário               |
-| `QUOTE_EXPIRED`                |  409 | cotação                  |
-| `PAYMENT_PROVIDER_UNAVAILABLE` |  503 | integração               |
-| `PAYMENT_NOT_STARTED`          |  409 | provider não confirmou   |
-| `PAYMENT_MISMATCH`             |  409 | valor/moeda              |
-| `RATE_LIMITED`                 |  429 | abuso                    |
-| `PAYLOAD_TOO_LARGE`            |  413 | limite                   |
-| `RECOVERY_RESTART_REQUIRED`    |  503 | OTP ambíguo ou consumido |
-| `INTERNAL_ERROR`               |  500 | inesperado com requestId |
+| Código                         | HTTP | Uso                        |
+| ------------------------------ | ---: | -------------------------- |
+| `AUTH_REQUIRED`                |  401 | sem sessão                 |
+| `AUTH_RESTART_REQUIRED`        |  503 | signup OTP ambíguo         |
+| `FORBIDDEN`                    |  403 | papel/ownership            |
+| `ACCOUNT_SUSPENDED`            |  403 | conta suspensa             |
+| `VALIDATION_FAILED`            |  422 | campos                     |
+| `NOT_FOUND`                    |  404 | recurso não visível        |
+| `CONFLICT`                     |  409 | estado concorrente         |
+| `SLOT_UNAVAILABLE`             |  409 | calendário                 |
+| `QUOTE_EXPIRED`                |  409 | cotação                    |
+| `PAYMENT_PROVIDER_UNAVAILABLE` |  503 | integração                 |
+| `PAYMENT_NOT_STARTED`          |  409 | provider não confirmou     |
+| `PAYMENT_MISMATCH`             |  409 | valor/moeda                |
+| `RATE_LIMITED`                 |  429 | abuso                      |
+| `PAYLOAD_TOO_LARGE`            |  413 | limite                     |
+| `RECOVERY_INVALID`             |  403 | recovery inválido/expirado |
+| `RECOVERY_RESTART_REQUIRED`    |  503 | OTP ambíguo ou consumido   |
+| `INTERNAL_ERROR`               |  500 | inesperado com requestId   |
 
 Mensagens de usuário são traduzidas por código. Não usar mensagem SQL.
 
@@ -373,7 +377,9 @@ Documento/código devem manter mapa único. Regras:
 - admin review invalida fila/status/public;
 - taxonomy invalida filtros e editores.
 
-Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação, `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada e `identityQueryKeys.recoveryStatus = ["identity", "recovery", "current-session"]` mantém o grant da sessão atual. Antes de renderizar PII, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; logout e recovery removem a família privada. Token de callback, senha e e-mail de formulário nunca entram em query key ou cache.
+Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação e `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada. Recovery usa o prefixo `identityQueryKeys.recoveryStatuses = ["identity", "recovery", "status"]` e a factory `identityQueryKeys.recoveryStatus(scope)`, em que `scope` é o UUID público/opaco recebido pelo Server Component ou `anonymous`. O normalizer rejeita uma resposta cujo scope não corresponda antes de publicá-la no cache. O formulário de nova senha só monta com `allowed=true`, scope correspondente e `fetchStatus="idle"`; `fetching` ou `paused` mantém a verificação fechada, e uma troca de scope remove as famílias recovery/session e recompõe a rota no servidor.
+
+Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; logout e recovery removem a família privada. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
 
 ## 10. Rate limits iniciais
 
@@ -393,7 +399,7 @@ Defaults por usuário/IP:
 
 Implementado no processo local único da FEAT-002: fachada pré-Zod `300/min` por ação e origem de rede confiável; cadastro `5/h` por hash de e-mail; login `10/15 min` por hash de e-mail; pedido de recovery `5/h` por hash de e-mail; callback `10/10 min` por hash do token; atualização de senha `5/h` por usuário. Nenhum discriminador bruto é armazenado. No runtime local direto, a fachada usa um único bucket deliberado porque a stack não é exposta; produção permanece bloqueada por PEND-003 até o Nginx sobrescrever o header e aplicar também o limiter de borda.
 
-O limiter in-memory limita o processo a 10.000 buckets totais e separa a pressão de capacidade por ação. Quando todos estão vivos, uma chave nova toma o bucket mais antigo da maior partição até equilibrar as classes; se a própria ação já for uma das maiores, a evicção ocorre nela. A seleção percorre somente as classes internas e a remoção do bucket é O(1), sem varrer os 10.000 discriminadores a cada admissão. Assim, encher o armazenamento com discriminadores sintéticos não transforma capacidade interna em `429` global nem monopoliza todas as vagas, enquanto uma chave presente em outra partição que já consumiu sua cota continua bloqueada. A evicção pode reduzir a precisão dessa primeira camada sob ataque de cardinalidade, por isso produção continua dependente do limiter Nginx de PEND-003, e horizontalização futura exige store compartilhado.
+O limiter in-memory mantém até 10.000 buckets exatos e nunca remove um bucket vivo. Quando essa capacidade está cheia, uma chave inédita passa a compartilhar um contador overflow sticky da sua ação até o reset da janela; a cota já esgotada de uma chave exata não pode ser reiniciada por churn. O overflow aceita até 64 partições de ação e falha fechado para uma nova partição quando esse limite continua ocupado depois da limpeza de contadores expirados. Essa degradação pode gerar rejeição conservadora dentro da ação, mas não transfere pressão para a cota exata de outra classe. Produção continua dependente do limiter Nginx de PEND-003, e horizontalização futura exige armazenamento compartilhado.
 
 No escopo local atual, o limiter in-memory é aceitável porque cada execução usa processo único e não fica exposta. Idempotência e banco protegem operações críticas.
 

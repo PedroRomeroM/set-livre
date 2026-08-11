@@ -118,9 +118,11 @@ export const identityRecoveryUpdateResultSchema = z.strictObject({
   updated: z.literal(true),
 });
 
-export const identityRecoveryStatusResultSchema = z.strictObject({
-  allowed: z.boolean(),
-});
+export const identityRecoverySessionScopeSchema = z.union([z.literal("anonymous"), z.uuid()]);
+export const identityRecoveryStatusResultSchema = z.discriminatedUnion("allowed", [
+  z.strictObject({ allowed: z.literal(false), scope: identityRecoverySessionScopeSchema }),
+  z.strictObject({ allowed: z.literal(true), scope: z.uuid() }),
+]);
 
 export const identityCallbackResultSchema = z.strictObject({
   redirectTo: z.string(),
@@ -153,6 +155,8 @@ export type ApiError = z.infer<typeof apiErrorSchema>;
 export type CurrentLegalDocuments = z.infer<typeof currentLegalDocumentsSchema>;
 export type IdentityCommand = z.infer<typeof identityCommandSchema>;
 export type IdentityLoginPayload = z.infer<typeof identityLoginPayloadSchema>;
+export type IdentityRecoverySessionScope = z.infer<typeof identityRecoverySessionScopeSchema>;
+export type IdentityRecoveryStatusResult = z.infer<typeof identityRecoveryStatusResultSchema>;
 export type IdentityRegistrationPayload = z.infer<typeof identityRegistrationPayloadSchema>;
 export type IdentitySession = z.infer<typeof identitySessionSchema>;
 export type PersonType = z.infer<typeof personTypeSchema>;

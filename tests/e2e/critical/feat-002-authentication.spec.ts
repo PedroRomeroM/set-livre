@@ -15,6 +15,10 @@ import {
   trackFeat002AuthEmail,
 } from "../../helpers/feat-002-authentication";
 import { gotoExpectedPage } from "../../helpers/expected-page";
+import {
+  assertExactLocalRecoverySessionClosed,
+  expireExactLocalRecoveryGrant,
+} from "../../helpers/local-recovery-grant";
 
 test.use({ screenshot: "off", trace: "off", video: "off" });
 
@@ -30,10 +34,13 @@ function createDeferredSignal() {
 
 async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], expected: string) {
   await expect
-    .poll(() => {
-      const address = new URL(page.url());
-      return `${address.pathname}${address.search}`;
-    })
+    .poll(
+      () => {
+        const address = new URL(page.url());
+        return `${address.pathname}${address.search}`;
+      },
+      { timeout: 15_000 },
+    )
     .toBe(expected);
 }
 
@@ -104,7 +111,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
 
   try {
     const signupNotBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    await confirmFeat002Registration(page, identity, signupNotBefore);
+    const confirmedSession = await confirmFeat002Registration(page, identity, signupNotBefore);
     await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
@@ -122,8 +129,28 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
 
     const newPasswordInput = getFeat002PasswordControl(page, "Nova senha");
     const confirmNewPasswordInput = getFeat002PasswordControl(page, "Confirme a nova senha");
-    const passwordToggles = page.getByRole("button", { name: "Mostrar senha" });
     await expect(newPasswordInput).toBeEnabled();
+
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      await expect(page.getByRole("status")).toContainText(
+        "Verificando se o link de recuperação é válido",
+      );
+      await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+
+    await expect(newPasswordInput).toBeEnabled();
+    const passwordToggles = page.getByRole("button", { name: "Mostrar senha" });
     await newPasswordInput.focus();
     await expect(newPasswordInput).toBeFocused();
     await stageFeat002PasswordForSubmission(newPasswordInput, newPassword);
@@ -161,7 +188,10 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
       await page.getByRole("link", { name: "Esqueci minha senha" }).click();
       await expectCurrentPath(page, "/recuperar-senha");
       await recoveryStatusStarted.promise;
-      await expect(page.getByRole("textbox", { name: "E-mail" })).toBeVisible();
+      await expect(page.getByRole("status")).toContainText(
+        "Verificando se o link de recuperação é válido",
+      );
+      await expect(page.getByRole("textbox", { name: "E-mail" })).toHaveCount(0);
       await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
     } finally {
       releaseRecoveryStatus.resolve();
@@ -178,12 +208,54 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     await expectCurrentPath(page, "/entrar?sessao=ativa");
     await expect(page.getByRole("status")).toContainText("Sessão ativa");
 
+    await logoutFeat002Identity(page);
+    await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
+    await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
+    const expiringRecoveryNotBefore = new Date(Date.now() - 1_000);
+    await page.getByRole("button", { name: "Enviar instruções" }).click();
+    await expect(page.getByRole("status")).toContainText(
+      "Se existir uma conta para o endereço informado",
+    );
+    const expiringRecoveryEmail = await trackFeat002AuthEmail(
+      identity,
+      "recovery",
+      expiringRecoveryNotBefore,
+    );
+    await navigateFeat002AuthCallback(page, expiringRecoveryEmail.callbackUrl);
+    await expectCurrentPath(page, "/recuperar-senha?modo=nova-senha");
+    await expect(getFeat002PasswordControl(page, "Nova senha")).toBeEnabled();
+
+    await expireExactLocalRecoveryGrant({
+      email: identity.email,
+      userId: confirmedSession.userId,
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expectCurrentPath(page, "/recuperar-senha");
+    await expect(page.getByRole("textbox", { name: "E-mail" })).toBeVisible();
+    await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+    expectUnauthenticatedSession(await readFeat002IdentitySession(page));
+
+    const remainingRecoveryCookieNames = (await page.context().cookies())
+      .map((cookie) => cookie.name)
+      .filter(
+        (name) =>
+          name === "sl-recovery-grant" ||
+          name === "sl-recovery-session" ||
+          /^sb-127-auth-token(?:\.(?:0|[1-9][0-9]*))?$/u.test(name),
+      );
+    expect(remainingRecoveryCookieNames).toEqual([]);
+    await assertExactLocalRecoverySessionClosed({
+      email: identity.email,
+      userId: confirmedSession.userId,
+    });
+
     const hasHorizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    await navigateFeat002AuthCallback(page, recoveryEmail.callbackUrl);
+    await navigateFeat002AuthCallback(page, expiringRecoveryEmail.callbackUrl);
     await expectCurrentPath(page, "/auth/callback");
     await expect(
       page
