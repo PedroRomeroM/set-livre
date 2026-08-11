@@ -111,7 +111,10 @@ describe("identity recovery service", () => {
     mocks.cookieDelete.mockImplementation(() => undefined);
     mocks.cookieGet.mockReturnValue({ value: recoveryToken });
     mocks.cookieGetAll.mockReturnValue([
-      { name: "sb-127-auth-token.0", value: "opaque-session-chunk" },
+      { name: "sb-127-auth-token", value: "opaque-session" },
+      { name: "sb-127-auth-token.0", value: "opaque-session-chunk-zero" },
+      { name: "sb-127-auth-token.1", value: "opaque-session-chunk-one" },
+      { name: "sb-127-auth-token.backup", value: "preserve" },
       { name: "unrelated-cookie", value: "preserve" },
     ]);
     mocks.getClaims.mockResolvedValue({ data: { claims: { sub: recoveryUserId } }, error: null });
@@ -178,18 +181,57 @@ describe("identity recovery service", () => {
     expect(mocks.setSession).not.toHaveBeenCalled();
   });
 
-  it("fails closed and clears local sessions when cookie publication is ambiguous", async () => {
+  it("clears partially published login cookies without masking setSession when sign-out fails", async () => {
     mocks.setSession.mockRejectedValueOnce(new Error("private-cookie-publication-failure"));
+    mocks.signOut.mockRejectedValueOnce(new Error("private-login-signout-failure"));
+    mocks.getSession.mockResolvedValueOnce({ data: { session: providerSession }, error: null });
+    mocks.cookieDelete.mockImplementation((name: string) => {
+      if (name === "sb-127-auth-token") {
+        throw new Error("private-login-cookie-cleanup-failure");
+      }
+    });
 
-    await expect(
-      loginIdentity({
-        email: "qa-login@example.test",
-        password: "ValidPassword9",
-      }),
-    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    const outcome = loginIdentity({
+      email: "qa-login@example.test",
+      password: "ValidPassword9",
+    }).catch((error: unknown) => error);
 
+    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
+    const serializedOutcome = JSON.stringify(await outcome);
+    expect(serializedOutcome).not.toContain("private-cookie-publication-failure");
+    expect(serializedOutcome).not.toContain("private-login-signout-failure");
+    expect(serializedOutcome).not.toContain("private-login-cookie-cleanup-failure");
+  });
+
+  it("preserves the login publication error when exact cookie enumeration also fails", async () => {
+    mocks.setSession.mockRejectedValueOnce(new Error("private-cookie-publication-failure"));
+    mocks.signOut.mockRejectedValueOnce(new Error("private-login-signout-failure"));
+    mocks.getSession.mockResolvedValueOnce({ data: { session: providerSession }, error: null });
+    mocks.cookieGetAll.mockImplementationOnce(() => {
+      throw new Error("private-login-cookie-enumeration-failure");
+    });
+
+    const outcome = loginIdentity({
+      email: "qa-login@example.test",
+      password: "ValidPassword9",
+    }).catch((error: unknown) => error);
+
+    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(mocks.getSession).toHaveBeenCalledOnce();
+    expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });
+    const serializedOutcome = JSON.stringify(await outcome);
+    expect(serializedOutcome).not.toContain("private-cookie-publication-failure");
+    expect(serializedOutcome).not.toContain("private-login-signout-failure");
+    expect(serializedOutcome).not.toContain("private-login-cookie-enumeration-failure");
   });
 
   it("accepts an errored provider logout only after proving the local session is absent", async () => {
@@ -256,6 +298,83 @@ describe("identity recovery service", () => {
     expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(JSON.stringify(await outcome)).not.toContain("private-retryable-provider-failure");
+  });
+
+  it("makes an ambiguous signup provider result terminal after OTP verification starts", async () => {
+    mocks.verifyOtp.mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: {
+        message: "private-signup-provider-failure",
+        name: "AuthRetryableFetchError",
+        status: 0,
+      },
+    });
+
+    const outcome = verifyIdentityCallback({
+      tokenHash: "opaque-signup-token-hash",
+      type: "signup",
+    }).catch((error: unknown) => error);
+
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_RESTART_REQUIRED",
+      message:
+        "Não foi possível confirmar o cadastro com segurança. Solicite um novo link de confirmação.",
+      status: 503,
+    });
+    expect(mocks.verifyOtp).toHaveBeenCalledOnce();
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(JSON.stringify(await outcome)).not.toContain("private-signup-provider-failure");
+  });
+
+  it("makes a thrown signup cookie publication outcome terminal and redacted", async () => {
+    mocks.verifyOtp.mockRejectedValueOnce(new Error("private-signup-cookie-publication-failure"));
+
+    const outcome = verifyIdentityCallback({
+      tokenHash: "opaque-signup-token-hash",
+      type: "signup",
+    }).catch((error: unknown) => error);
+
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_RESTART_REQUIRED",
+      status: 503,
+    });
+    expect(mocks.verifyOtp).toHaveBeenCalledOnce();
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
+    expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    const serializedOutcome = JSON.stringify(await outcome);
+    expect(serializedOutcome).not.toContain("opaque-signup-token-hash");
+    expect(serializedOutcome).not.toContain("private-signup-cookie-publication-failure");
+  });
+
+  it("preserves a proven signup OTP rejection without ambiguous session cleanup", async () => {
+    mocks.verifyOtp.mockResolvedValueOnce({
+      data: { session: null, user: null },
+      error: { code: "otp_expired", message: "private-signup-expired-token-detail" },
+    });
+
+    const outcome = verifyIdentityCallback({
+      tokenHash: "opaque-signup-token-hash",
+      type: "signup",
+    }).catch((error: unknown) => error);
+
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_INVALID",
+      message: "Este link é inválido ou expirou. Solicite um novo link.",
+      status: 400,
+    });
+    expect(mocks.cookieDelete).not.toHaveBeenCalled();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(JSON.stringify(await outcome)).not.toContain("private-signup-expired-token-detail");
   });
 
   it("preserves an explicit expired-OTP rejection without ambiguous cleanup", async () => {
@@ -426,7 +545,11 @@ describe("identity recovery service", () => {
     mocks.signOut.mockRejectedValueOnce(new Error("ambiguous-signout-outcome"));
     mocks.getSession.mockResolvedValueOnce({ data: { session: providerSession }, error: null });
 
-    await expect(updateRecoveredIdentityPassword("NewPassword9A")).rejects.toMatchObject({
+    const outcome = updateRecoveredIdentityPassword("NewPassword9A").catch(
+      (error: unknown) => error,
+    );
+
+    await expect(outcome).resolves.toMatchObject({
       code: "SERVICE_UNAVAILABLE",
       status: 503,
     });
@@ -435,6 +558,14 @@ describe("identity recovery service", () => {
     expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
+    const serializedOutcome = JSON.stringify(await outcome);
+    expect(serializedOutcome).not.toContain("ambiguous-provider-outcome");
+    expect(serializedOutcome).not.toContain("ambiguous-signout-outcome");
   });
 
   it("releases a grant only after a provider rejection with no password effect", async () => {
@@ -461,6 +592,11 @@ describe("identity recovery service", () => {
 
     expect(mocks.consumeIdentityRecoveryGrant).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
@@ -475,14 +611,28 @@ describe("identity recovery service", () => {
     expect(mocks.consumeIdentityRecoveryGrant).toHaveBeenCalledOnce();
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
   });
 
   it("fails closed when consumed recovery cannot prove the local session was removed", async () => {
     mocks.updateUser.mockResolvedValueOnce({ error: null });
     mocks.signOut.mockRejectedValueOnce(new Error("provider-signout-transport-failure"));
     mocks.getSession.mockResolvedValueOnce({ data: { session: providerSession }, error: null });
+    mocks.cookieDelete.mockImplementation((name: string) => {
+      if (name === "sb-127-auth-token") {
+        throw new Error("private-final-cookie-cleanup-failure");
+      }
+    });
 
-    await expect(updateRecoveredIdentityPassword("NewPassword9A")).rejects.toMatchObject({
+    const outcome = updateRecoveredIdentityPassword("NewPassword9A").catch(
+      (error: unknown) => error,
+    );
+
+    await expect(outcome).resolves.toMatchObject({
       code: "SERVICE_UNAVAILABLE",
       status: 503,
     });
@@ -490,5 +640,13 @@ describe("identity recovery service", () => {
     expect(mocks.consumeIdentityRecoveryGrant).toHaveBeenCalledOnce();
     expect(mocks.releaseIdentityRecoveryGrant).not.toHaveBeenCalled();
     expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-recovery-grant");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.0");
+    expect(mocks.cookieDelete).toHaveBeenCalledWith("sb-127-auth-token.1");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("sb-127-auth-token.backup");
+    expect(mocks.cookieDelete).not.toHaveBeenCalledWith("unrelated-cookie");
+    const serializedOutcome = JSON.stringify(await outcome);
+    expect(serializedOutcome).not.toContain("provider-signout-transport-failure");
+    expect(serializedOutcome).not.toContain("private-final-cookie-cleanup-failure");
   });
 });

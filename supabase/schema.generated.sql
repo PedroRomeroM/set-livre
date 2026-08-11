@@ -1530,6 +1530,7 @@ begin
   where recovery_grant.token = p_token
     and recovery_grant.user_id = p_user_id
     and recovery_grant.claim_attempt_id = p_attempt_id
+    and recovery_grant.expires_at > pg_catalog.statement_timestamp()
   returning true into grant_released;
 
   return coalesce(grant_released, false);
@@ -1540,7 +1541,7 @@ $$;
 ALTER FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") IS 'Libera somente a reserva da tentativa informada para retry após falha do provedor.';
+COMMENT ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") IS 'Libera somente grant vigente reservado pela tentativa informada após rejeição segura do provedor.';
 
 
 
@@ -1882,6 +1883,9 @@ ALTER TABLE ONLY "public"."terms_acceptances"
 
 
 ALTER TABLE "private"."identity_recovery_grants" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "private"."signup_legal_intents" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;

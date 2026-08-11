@@ -50,12 +50,23 @@ function userAgentEvidence(userAgent: string | null) {
 }
 
 function clearSupabaseAuthCookies(cookieStore: IdentityCookieStore, supabaseOrigin: string) {
-  const projectReference = new URL(supabaseOrigin).hostname.split(".")[0];
+  let projectReference: string | undefined;
+  try {
+    projectReference = new URL(supabaseOrigin).hostname.split(".")[0];
+  } catch {
+    return;
+  }
   if (projectReference === undefined || projectReference === "") {
     return;
   }
   const storageKey = `sb-${projectReference}-auth-token`;
-  for (const cookie of cookieStore.getAll()) {
+  let currentCookies: ReturnType<IdentityCookieStore["getAll"]>;
+  try {
+    currentCookies = cookieStore.getAll();
+  } catch {
+    return;
+  }
+  for (const cookie of currentCookies) {
     const chunk = cookie.name.startsWith(`${storageKey}.`)
       ? cookie.name.slice(storageKey.length + 1)
       : undefined;
@@ -66,6 +77,14 @@ function clearSupabaseAuthCookies(cookieStore: IdentityCookieStore, supabaseOrig
         // Uma falha pontual não impede a tentativa de apagar os demais chunks.
       }
     }
+  }
+}
+
+function deleteCookieBestEffort(cookieStore: IdentityCookieStore, name: string) {
+  try {
+    cookieStore.delete(name);
+  } catch {
+    // A limpeza das demais credenciais conhecidas ainda precisa continuar.
   }
 }
 
@@ -93,24 +112,56 @@ async function signOutLocalOrProveAbsent(auth: IdentitySupabaseAuth) {
   }
 }
 
-function isProvenRecoveryCallbackRejection(error: unknown) {
+async function signOutLocalAndClearExactAuthCookies(input: {
+  auth: IdentitySupabaseAuth;
+  cookieStore: IdentityCookieStore;
+  supabaseOrigin: string;
+}) {
+  let signOutError: unknown;
+  let signOutFailed = false;
+  try {
+    await signOutLocalOrProveAbsent(input.auth);
+  } catch (error) {
+    signOutError = error;
+    signOutFailed = true;
+  }
+  clearSupabaseAuthCookies(input.cookieStore, input.supabaseOrigin);
+  if (signOutFailed) {
+    throw signOutError;
+  }
+}
+
+async function discardIdentitySessionBestEffort(input: {
+  auth: IdentitySupabaseAuth;
+  cookieStore: IdentityCookieStore;
+  supabaseOrigin: string;
+}) {
+  try {
+    await signOutLocalAndClearExactAuthCookies(input);
+  } catch {
+    // O erro causal do fluxo permanece autoritativo e redigido.
+  }
+}
+
+function isProvenCallbackRejection(error: unknown, type: "recovery" | "signup") {
   return (
     error instanceof ApiRouteError &&
-    (error.code === "RATE_LIMITED" || error.code === "RECOVERY_INVALID")
+    (error.code === "RATE_LIMITED" ||
+      (type === "recovery" && error.code === "RECOVERY_INVALID") ||
+      (type === "signup" && error.code === "AUTH_INVALID"))
   );
 }
 
-async function restartRecoveryAfterAmbiguousCallback(input: {
+async function restartAfterAmbiguousCallback(input: {
   auth: IdentitySupabaseAuth;
   cookieStore: IdentityCookieStore;
   recoveryGrant?: string | undefined;
   supabaseOrigin: string;
+  type: "recovery" | "signup";
   userId?: string | undefined;
 }): Promise<never> {
-  try {
-    input.cookieStore.delete(recoveryGrantCookieName);
-  } catch {
-    // As demais limpezas ainda precisam ocorrer se o cookie store falhar.
+  if (input.type === "recovery") {
+    deleteCookieBestEffort(input.cookieStore, recoveryGrantCookieName);
   }
   if (input.recoveryGrant !== undefined && input.userId !== undefined) {
     try {
@@ -132,20 +183,13 @@ async function restartRecoveryAfterAmbiguousCallback(input: {
       // O grant permanece claimed/expirável e não pode autorizar outra tentativa.
     }
   }
-  try {
-    await signOutLocalOrProveAbsent(input.auth);
-  } catch {
-    // A falha de limpeza não torna reutilizável um OTP já verificado ou ambíguo.
-  }
-  try {
-    clearSupabaseAuthCookies(input.cookieStore, input.supabaseOrigin);
-  } catch {
-    // O fluxo continua terminal mesmo se o fallback do cookie store falhar.
-  }
+  await discardIdentitySessionBestEffort(input);
   throw new ApiRouteError(
     503,
-    "RECOVERY_RESTART_REQUIRED",
-    "Não foi possível preparar a recuperação agora. Solicite um novo link.",
+    input.type === "recovery" ? "RECOVERY_RESTART_REQUIRED" : "AUTH_RESTART_REQUIRED",
+    input.type === "recovery"
+      ? "Não foi possível preparar a recuperação agora. Solicite um novo link."
+      : "Não foi possível confirmar o cadastro com segurança. Solicite um novo link de confirmação.",
   );
 }
 
@@ -229,6 +273,8 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
   }
 
   const route = await createRouteSupabaseClient();
+  const cookieStore = await cookies();
+  const supabaseOrigin = readSupabaseEnvironment().supabaseOrigin;
   let publishError: unknown = null;
   try {
     const publishResult = await route.client.auth.setSession({
@@ -240,11 +286,11 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
     publishError = sessionError;
   }
   if (publishError !== null) {
-    try {
-      await route.client.auth.signOut({ scope: "local" });
-    } catch {
-      // A limpeza local é best effort; nenhum sucesso é devolvido com publicação ambígua.
-    }
+    await discardIdentitySessionBestEffort({
+      auth: route.client.auth,
+      cookieStore,
+      supabaseOrigin,
+    });
     try {
       await transientClient.auth.signOut({ scope: "local" });
     } catch {
@@ -306,72 +352,54 @@ export async function verifyIdentityCallback(input: {
     windowMs: 10 * 60_000,
   });
   const route = await createRouteSupabaseClient();
-  const recoveryContext =
-    input.type === "recovery"
-      ? {
-          cookieStore: await cookies(),
-          supabaseOrigin: readSupabaseEnvironment().supabaseOrigin,
-        }
-      : undefined;
-  const data = await (async () => {
-    try {
-      const verification = await route.client.auth.verifyOtp({
-        token_hash: input.tokenHash,
-        type: input.type,
-      });
-      if (verification.error !== null) {
-        handleCallbackProviderError(verification.error, input.type);
-      }
-      if (verification.data.user === null || verification.data.session === null) {
-        throw new ApiRouteError(
-          503,
-          "SERVICE_UNAVAILABLE",
-          "Não foi possível validar o link agora.",
-        );
-      }
-      return { session: verification.data.session, user: verification.data.user };
-    } catch (error) {
-      if (recoveryContext === undefined || isProvenRecoveryCallbackRejection(error)) {
-        throw error;
-      }
-      return restartRecoveryAfterAmbiguousCallback({
-        auth: route.client.auth,
-        cookieStore: recoveryContext.cookieStore,
-        supabaseOrigin: recoveryContext.supabaseOrigin,
-      });
+  const callbackContext = {
+    cookieStore: await cookies(),
+    supabaseOrigin: readSupabaseEnvironment().supabaseOrigin,
+  };
+  let recoveryGrant: string | undefined;
+  let verifiedUserId: string | undefined;
+  try {
+    const verification = await route.client.auth.verifyOtp({
+      token_hash: input.tokenHash,
+      type: input.type,
+    });
+    if (verification.error !== null) {
+      handleCallbackProviderError(verification.error, input.type);
     }
-  })();
-
-  if (input.type === "recovery") {
-    if (recoveryContext === undefined) {
+    if (verification.data.user === null || verification.data.session === null) {
       throw new ApiRouteError(503, "SERVICE_UNAVAILABLE", "Não foi possível validar o link agora.");
     }
-    let recoveryGrant: string | undefined;
-    try {
-      recoveryGrant = await issueIdentityRecoveryGrant(data.user.id);
-      recoveryContext.cookieStore.set(recoveryGrantCookieName, recoveryGrant, {
+    verifiedUserId = verification.data.user.id;
+
+    if (input.type === "recovery") {
+      recoveryGrant = await issueIdentityRecoveryGrant(verifiedUserId);
+      callbackContext.cookieStore.set(recoveryGrantCookieName, recoveryGrant, {
         ...readSupabaseEnvironment().cookieOptions,
         maxAge: recoveryGrantMaximumAgeSeconds,
         sameSite: "strict",
       });
-    } catch {
-      return restartRecoveryAfterAmbiguousCallback({
-        auth: route.client.auth,
-        cookieStore: recoveryContext.cookieStore,
-        recoveryGrant,
-        supabaseOrigin: recoveryContext.supabaseOrigin,
-        userId: data.user.id,
-      });
     }
-  }
 
-  const redirectTo =
-    input.type === "recovery"
-      ? "/recuperar-senha?modo=nova-senha"
-      : input.returnTo === undefined
-        ? "/entrar?confirmacao=sucesso"
-        : resolveAuthenticatedReturnTo(input.returnTo);
-  return { data: { redirectTo }, responseHeaders: route.responseHeaders };
+    const redirectTo =
+      input.type === "recovery"
+        ? "/recuperar-senha?modo=nova-senha"
+        : input.returnTo === undefined
+          ? "/entrar?confirmacao=sucesso"
+          : resolveAuthenticatedReturnTo(input.returnTo);
+    return { data: { redirectTo }, responseHeaders: route.responseHeaders };
+  } catch (error) {
+    if (isProvenCallbackRejection(error, input.type)) {
+      throw error;
+    }
+    return restartAfterAmbiguousCallback({
+      auth: route.client.auth,
+      cookieStore: callbackContext.cookieStore,
+      recoveryGrant,
+      supabaseOrigin: callbackContext.supabaseOrigin,
+      type: input.type,
+      userId: verifiedUserId,
+    });
+  }
 }
 
 async function recoveryIdentity() {
@@ -380,7 +408,19 @@ async function recoveryIdentity() {
   const claims = claimsSchema.safeParse(claimsResult.data?.claims);
   const cookieStore = await cookies();
   const token = cookieStore.get(recoveryGrantCookieName)?.value;
-  return { claims, cookieStore, route, token };
+  const supabaseOrigin = readSupabaseEnvironment().supabaseOrigin;
+  return { claims, cookieStore, route, supabaseOrigin, token };
+}
+
+async function discardRecoverySessionBestEffort(
+  state: Awaited<ReturnType<typeof recoveryIdentity>>,
+) {
+  deleteCookieBestEffort(state.cookieStore, recoveryGrantCookieName);
+  await discardIdentitySessionBestEffort({
+    auth: state.route.client.auth,
+    cookieStore: state.cookieStore,
+    supabaseOrigin: state.supabaseOrigin,
+  });
 }
 
 export async function readIdentityRecoveryStatus() {
@@ -443,8 +483,7 @@ export async function updateRecoveredIdentityPassword(password: string) {
         // Falha fechada: sem release comprovado, a tentativa não pode ser repetida.
       }
       if (!released) {
-        state.cookieStore.delete(recoveryGrantCookieName);
-        await signOutLocalOrProveAbsent(state.route.client.auth);
+        await discardRecoverySessionBestEffort(state);
         throw new ApiRouteError(
           503,
           "SERVICE_UNAVAILABLE",
@@ -452,8 +491,7 @@ export async function updateRecoveredIdentityPassword(password: string) {
         );
       }
     } else {
-      state.cookieStore.delete(recoveryGrantCookieName);
-      await signOutLocalOrProveAbsent(state.route.client.auth);
+      await discardRecoverySessionBestEffort(state);
     }
     handlePasswordUpdateProviderError(providerError);
   }
@@ -465,16 +503,19 @@ export async function updateRecoveredIdentityPassword(password: string) {
     // A falha pública não expõe o banco e a claim impede outro consumo.
   }
   if (!consumed) {
-    state.cookieStore.delete(recoveryGrantCookieName);
-    await signOutLocalOrProveAbsent(state.route.client.auth);
+    await discardRecoverySessionBestEffort(state);
     throw new ApiRouteError(
       503,
       "SERVICE_UNAVAILABLE",
       "A senha foi atualizada, mas a recuperação não pôde ser finalizada. Entre novamente.",
     );
   }
-  state.cookieStore.delete(recoveryGrantCookieName);
-  await signOutLocalOrProveAbsent(state.route.client.auth);
+  deleteCookieBestEffort(state.cookieStore, recoveryGrantCookieName);
+  await signOutLocalAndClearExactAuthCookies({
+    auth: state.route.client.auth,
+    cookieStore: state.cookieStore,
+    supabaseOrigin: state.supabaseOrigin,
+  });
   return {
     data: identityRecoveryUpdateResultSchema.parse({ updated: true }),
     responseHeaders: state.route.responseHeaders,

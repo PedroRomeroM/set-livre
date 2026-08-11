@@ -641,15 +641,15 @@
         <ul class="meta" aria-label="Fotografia atual do projeto">
           <li>Atualizado em 11 de agosto de 2026</li>
           <li>Fundação local</li>
-          <li>FEAT-002 · threads do segundo review resolvidas</li>
+          <li>FEAT-002 · terceiro review validado localmente</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>0/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>403</strong><span>unitários na rodada atual</span></div>
+          <div class="stat"><strong>407</strong><span>unitários na rodada atual</span></div>
           <div class="stat"><strong>224</strong><span>asserts pgTAP na rodada atual</span></div>
           <div class="stat"><strong>59</strong><span>execuções Playwright/axe</span></div>
-          <div class="stat"><strong>9</strong><span>migrations append-only</span></div>
+          <div class="stat"><strong>10</strong><span>migrations append-only</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -678,10 +678,10 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica foi incorporada a <code>main</code>. A FEAT-002 passou novamente em
-              banco, unitários, builds e na matriz browser após o segundo review; as correções já
-              estão publicadas no PR. Ela permanece fora da contagem de concluídas até a nova
-              revisão e o merge.
+              A fundação técnica foi incorporada a <code>main</code>. As cinco correções de Auth e
+              banco abertas pelo terceiro review da FEAT-002 passaram em banco, unitários e na
+              matriz browser integral. Ela permanece fora da contagem de concluídas até a publicação
+              do snapshot, novo review e merge.
             </p>
           </div>
 
@@ -711,12 +711,13 @@
                 login/logout e recuperação passaram em banco e unitários. Termos e privacidade
                 preservam headings, parágrafos, listas, ênfase e links por um subset Markdown
                 seguro, sem HTML bruto e com hrefs fail-closed. Os reviews também isolaram a
-                capacidade do limiter por ação, tornaram recovery ambíguo terminal depois do envio
-                do OTP e escoparam o cache de sessão por identidade, sem exibir PII antiga durante
-                refetch ou troca SSR. A fronteira agora prepara o snapshot após a hidratação, sem
-                assinatura do cache durante render, e o tipo PF/PJ usa o rádio nativo como fonte
-                única. A nova matriz passou sem warnings de React ou hidratação, sem antecipar
-                perfil completo ou reserva.
+                capacidade do limiter por ação, tornaram callbacks ambíguos terminais depois do
+                envio do OTP e escoparam o cache de sessão por identidade, sem exibir PII antiga
+                durante refetch ou troca SSR. O terceiro review também fechou cookies Auth
+                parcialmente publicados, RLS da intenção privada e release de grant expirado. A
+                fronteira prepara o snapshot após a hidratação, sem assinatura do cache durante
+                render, e o tipo PF/PJ usa o rádio nativo como fonte única, sem antecipar perfil
+                completo ou reserva.
               </p>
             </article>
           </div>
@@ -724,9 +725,9 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Base numérica deste documento:</strong>
             <p>
-              A rodada atual passou em 403 unitários, 224/224 asserts pgTAP e 59/59 execuções
-              Playwright/axe. A repetição integral após o segundo review terminou sem warnings de
-              React/hidratação, sem sentinela ou token nos artefatos e sem resíduos Auth/Mailpit.
+              As correções do terceiro review passaram em 407 unitários, 224/224 asserts pgTAP e
+              59/59 execuções browser. O run atual terminou sem warning React/hidratação, sentinela
+              de senha, <code>token_hash</code>, usuário QA, mensagem QA ou processo/porta residual.
             </p>
           </div>
         </section>
@@ -1000,15 +1001,16 @@
           <div class="section-head">
             <h2>Testes e gates</h2>
             <p>
-              A rodada atual já incorpora os testes unitários e de banco da FEAT-002. Os sete
-              cenários de Auth somam 23 execuções próprias; a nova matriz integral passou em 59/59
-              após os fixes do segundo review.
+              A rodada atual incorpora os testes unitários, de banco e browser da FEAT-002. Os sete
+              cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
+              fundação, a matriz integral atual passou em 59/59 sobre as cinco correções do terceiro
+              review.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">403 aprovados</span>
+              <span class="tag done">407 aprovados</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1021,8 +1023,8 @@
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
-                <code>pg_catalog</code>, <code>pg_net</code>, readiness e recuperação após drift
-                transacional.
+                <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados e
+                release de recovery recusado depois da expiração.
               </p>
             </article>
             <article class="card">
@@ -1051,9 +1053,10 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Evidência local da FEAT-002:</strong>
             <p>
-              Reset limpo, geração determinística, 224/224 asserts pgTAP, 403/403 unitários e 59/59
-              execuções Playwright/axe estão verdes. A rodada browser não registrou warning React ou
-              hidratação; scans de segredo e cleanup QA também terminaram limpos.
+              Reset limpo, geração determinística, 224/224 asserts pgTAP, 407/407 unitários e 59/59
+              execuções browser estão verdes sobre o terceiro review. O run não registrou warning
+              React/hidratação, sentinela de senha, <code>token_hash</code>, usuário QA ou mensagem
+              QA residual.
             </p>
           </div>
 
@@ -1061,8 +1064,9 @@
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. A FEAT-002 concluiu essa cadeia,
-              o release local e as auditorias do diff; resta o review do PR antes da conclusão.
+              → docs → Playwright completo → builds → audit → Knip. Banco, unitários, documentação,
+              builds, audit, Knip e Playwright estão verdes neste ciclo; release e auditoria do
+              índice fecham o snapshot antes da publicação.
             </p>
           </div>
         </section>
@@ -1081,10 +1085,10 @@
             <article class="card">
               <h3>Banco e readiness</h3>
               <p>
-                As oito migrations da fundação continuam imutáveis; a nona migration adiciona perfil
-                mínimo, versões legais, aceites, intenção opaca de cadastro e um grant de recovery
-                persistido no banco, vinculado ao usuário, one-shot e válido por 15 minutos. A DAL
-                conserva uma allowlist exata de oito rotinas privadas, sem grants nas tabelas.
+                As oito migrations da fundação continuam imutáveis; a nona adiciona identidade e
+                legal-core, e a décima habilita RLS sem policy na intenção privada e impede release
+                de grant expirado. O grant permanece vinculado ao usuário, one-shot e válido por 15
+                minutos; a DAL conserva oito rotinas privadas e nenhum grant nas tabelas.
               </p>
             </article>
             <article class="card">
@@ -1092,8 +1096,9 @@
               <p>
                 CSP com nonce novo por request, headers seguros, fallback sem JavaScript, health sem
                 cache e readiness que falha fechado sem expor SQL, credencial ou diagnóstico
-                interno. Recovery ambíguo não reutiliza OTP possivelmente consumido; cache de sessão
-                fica escopado por identidade, valida o payload antes da escrita e oculta PII durante
+                interno. Signup/recovery ambíguos não reutilizam OTP possivelmente consumido; login
+                parcial e sign-out final limpam apenas cookies Auth exatos. O cache de sessão fica
+                escopado por identidade, valida o payload antes da escrita e oculta PII durante
                 revalidação, troca SSR ou estado offline pausado.
               </p>
             </article>
@@ -1261,9 +1266,9 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Acompanhar a nova revisão do Codex no PR da FEAT-002.</li>
-                <li>Corrigir, testar e publicar qualquer novo problema acionável.</li>
-                <li>Resolver somente novas threads comprovadamente atendidas.</li>
+                <li>Concluir release local e auditoria do índice das cinco correções.</li>
+                <li>Publicar o snapshot integralmente validado.</li>
+                <li>Publicar e resolver somente as threads comprovadamente atendidas.</li>
                 <li>Concluir e revisar a FEAT-002 antes de iniciar qualquer feature seguinte.</li>
               </ol>
             </article>

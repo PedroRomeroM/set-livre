@@ -224,18 +224,24 @@ select ok(
     )
   )
     and (
-      select recovery_relation.relrowsecurity
-      from pg_catalog.pg_class as recovery_relation
-      where recovery_relation.oid =
+      select pg_catalog.count(*) = 2
+        and pg_catalog.bool_and(private_relation.relrowsecurity)
+      from pg_catalog.pg_class as private_relation
+      where private_relation.oid in (
+        'private.signup_legal_intents'::pg_catalog.regclass,
         'private.identity_recovery_grants'::pg_catalog.regclass
+      )
     )
     and not exists (
       select 1
       from pg_catalog.pg_policies as policy
       where policy.schemaname = 'private'
-        and policy.tablename = 'identity_recovery_grants'
+        and policy.tablename in (
+          'signup_legal_intents',
+          'identity_recovery_grants'
+        )
     ),
-  'estado privado permanece sem grants runtime e recovery fica fechado por RLS'
+  'estados privados permanecem sem grants runtime e fechados por RLS sem policies'
 );
 
 select ok(
@@ -775,8 +781,10 @@ select ok(
 
 update private.identity_recovery_grants
 set
-  issued_at = pg_catalog.now() - interval '20 minutes',
-  expires_at = pg_catalog.now() - interval '5 minutes'
+  issued_at = pg_catalog.statement_timestamp() - interval '15 minutes 1 second',
+  expires_at = pg_catalog.statement_timestamp() - interval '1 second',
+  claim_attempt_id = '40000000-0000-4000-8000-000000000001',
+  claimed_at = pg_catalog.statement_timestamp() - interval '5 minutes'
 where token = (
   select token
   from feat002_test_state
@@ -787,8 +795,24 @@ select ok(
   not private.has_identity_recovery_grant(
     (select token from feat002_test_state where label = 'recovery-expired'),
     '20000000-0000-4000-8000-000000000002'
-  ),
-  'grant expirado falha fechado'
+  )
+    and not private.release_identity_recovery_grant(
+      (select token from feat002_test_state where label = 'recovery-expired'),
+      '20000000-0000-4000-8000-000000000002',
+      '40000000-0000-4000-8000-000000000001'
+    )
+    and exists (
+      select 1
+      from private.identity_recovery_grants
+      where token = (
+        select token
+        from feat002_test_state
+        where label = 'recovery-expired'
+      )
+        and claim_attempt_id = '40000000-0000-4000-8000-000000000001'
+        and claimed_at is not null
+    ),
+  'grant expirado falha fechado, não libera a claim e força caminho terminal'
 );
 
 insert into feat002_test_state (label, token)
@@ -1717,7 +1741,7 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000200'),
+  private.check_readiness('20260811000300'),
   'readiness permanece verde com nove dependências e oito rotinas DAL'
 );
 

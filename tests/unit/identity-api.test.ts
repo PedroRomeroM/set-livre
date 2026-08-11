@@ -48,28 +48,19 @@ describe("identity browser API", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps signup retries while making ambiguous recovery transport failures terminal", () => {
-    for (const code of [
-      "NETWORK_UNAVAILABLE",
-      "REQUEST_TIMEOUT",
-      "RESPONSE_INVALID",
-      "SERVICE_UNAVAILABLE",
-    ]) {
+  it("retries only a valid pre-OTP service response for signup and recovery callbacks", () => {
+    for (const type of ["signup", "recovery"] as const) {
       expect(
-        isRetryableIdentityCallbackError(new IdentityApiError(code, "Erro seguro."), "signup"),
+        isRetryableIdentityCallbackError(
+          new IdentityApiError("SERVICE_UNAVAILABLE", "Erro seguro."),
+          type,
+        ),
       ).toBe(true);
-    }
-
-    expect(
-      isRetryableIdentityCallbackError(
-        new IdentityApiError("SERVICE_UNAVAILABLE", "Erro seguro."),
-        "recovery",
-      ),
-    ).toBe(true);
-    for (const code of ["NETWORK_UNAVAILABLE", "REQUEST_TIMEOUT", "RESPONSE_INVALID"]) {
-      expect(
-        isRetryableIdentityCallbackError(new IdentityApiError(code, "Erro seguro."), "recovery"),
-      ).toBe(false);
+      for (const code of ["NETWORK_UNAVAILABLE", "REQUEST_TIMEOUT", "RESPONSE_INVALID"]) {
+        expect(
+          isRetryableIdentityCallbackError(new IdentityApiError(code, "Erro seguro."), type),
+        ).toBe(false);
+      }
     }
 
     expect(
@@ -79,6 +70,15 @@ describe("identity browser API", () => {
           "Não foi possível preparar a recuperação agora. Solicite um novo link.",
         ),
         "recovery",
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableIdentityCallbackError(
+        new IdentityApiError(
+          "AUTH_RESTART_REQUIRED",
+          "Não foi possível confirmar o cadastro com segurança. Solicite um novo link de confirmação.",
+        ),
+        "signup",
       ),
     ).toBe(false);
     expect(

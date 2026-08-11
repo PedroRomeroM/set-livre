@@ -29,7 +29,7 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 | Cenários P1         |         60 |
 | Runbooks            |          6 |
 
-A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 194: a FEAT-002 acrescenta o contrato de reflow `SL-F002-E2E-007` e possui sete IDs automatizados, mapeados para 23 execuções verdes nos browsers. Somadas às 36 execuções técnicas da fundação, a matriz integral passou em 59/59. A rodada atual também soma 403 testes unitários, 224 asserts pgTAP e 9 migrations, com head `20260811000200`.
+A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 194: a FEAT-002 acrescenta o contrato de reflow `SL-F002-E2E-007` e possui sete IDs automatizados, mapeados para 23 execuções verdes nos browsers. Somadas às 36 execuções técnicas da fundação, a matriz integral passou em 59/59. A rodada atual também soma 407 testes unitários, 224 asserts pgTAP e 10 migrations, com head `20260811000300`.
 
 ## Garantias documentais
 

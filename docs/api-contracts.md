@@ -41,9 +41,11 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - o cliente interrompe qualquer request de identidade após dez segundos e retorna estado recuperável sem preservar payload sensível;
 - login, logout, callback, recovery e sessão usam clientes Supabase server-side por request; senha, token e cookie nunca entram no cache TanStack;
 - o callback aceita apenas `signup` ou `recovery`; o `TokenHash` chega ao browser no fragmento, é apagado antes do `POST` e não aparece na request inicial nem no referrer;
-- em recovery, somente um `SERVICE_UNAVAILABLE` recebido em resposta válida antes de `verifyOtp` permite retry. Falha de rede, timeout ou resposta inválida após o envio são ambíguos no cliente; erro desconhecido, throw, sessão incompleta ou falha de grant depois que `verifyOtp` começa retornam `RECOVERY_RESTART_REQUIRED`, apagam o payload e exigem novo link;
+- somente um `SERVICE_UNAVAILABLE` recebido em resposta API válida antes de `verifyOtp` permite retry do callback. Depois que o `POST` de signup ou recovery foi despachado, falha de rede, timeout e resposta inválida são ambíguos e terminais no cliente, que apaga sua ref one-shot sem reenviar o token;
+- erro desconhecido, throw, sessão incompleta ou falha posterior ao início de `verifyOtp` retornam `AUTH_RESTART_REQUIRED` no signup e `RECOVERY_RESTART_REQUIRED` no recovery, limpam somente a sessão/cookies Auth conhecidos e exigem novo link sem afirmar o estado da conta; rejeição explícita de OTP inválido/expirado preserva sua classificação segura;
 - a troca de senha reserva o grant no banco antes do provedor; somente rejeições explícitas sem efeito liberam retry, enquanto resultado ambíguo encerra a autorização e exige novo link;
-- logout e descarte da sessão pós-recovery só aceitam erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe; estado presente ou ambíguo falha fechado;
+- publicação parcial no login e descarte da sessão pós-recovery apagam exatamente o cookie Supabase Auth base e seus chunks numéricos observados, preservando cookies de prefixo semelhante e cookies alheios mesmo quando `signOut` ou uma deleção falha. Recovery final só conclui após `signOut` ou prova local de ausência; estado presente/ambíguo falha fechado depois do fallback exato;
+- logout só aceita erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe;
 - `returnTo` possui allowlist literal; nesta fatia o único destino autenticado é `/entrar?sessao=ativa`.
 
 ## 3. Códigos de erro
@@ -51,6 +53,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 | Código                         | HTTP | Uso                      |
 | ------------------------------ | ---: | ------------------------ |
 | `AUTH_REQUIRED`                |  401 | sem sessão               |
+| `AUTH_RESTART_REQUIRED`        |  503 | signup OTP ambíguo       |
 | `FORBIDDEN`                    |  403 | papel/ownership          |
 | `ACCOUNT_SUSPENDED`            |  403 | conta suspensa           |
 | `VALIDATION_FAILED`            |  422 | campos                   |

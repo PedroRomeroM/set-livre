@@ -15,6 +15,10 @@ import { z } from "zod";
 
 const identityLogoutResultSchema = z.strictObject({ signedOut: z.literal(true) });
 const identityRequestTimeoutMs = 10_000;
+const retryableIdentityCallbackCode = {
+  recovery: "SERVICE_UNAVAILABLE",
+  signup: "SERVICE_UNAVAILABLE",
+} as const;
 
 export class IdentityApiError extends Error {
   readonly code: string;
@@ -32,15 +36,7 @@ export function isRetryableIdentityCallbackError(error: unknown, type: "recovery
   if (!(error instanceof IdentityApiError)) {
     return false;
   }
-  if (type === "recovery") {
-    return error.code === "SERVICE_UNAVAILABLE";
-  }
-  return [
-    "NETWORK_UNAVAILABLE",
-    "REQUEST_TIMEOUT",
-    "RESPONSE_INVALID",
-    "SERVICE_UNAVAILABLE",
-  ].includes(error.code);
+  return error.code === retryableIdentityCallbackCode[type];
 }
 
 async function readPayload(response: Response): Promise<unknown> {

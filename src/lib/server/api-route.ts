@@ -13,6 +13,7 @@ const trustedEnvironmentSchema = z.object({
 
 export type ApiRouteErrorCode =
   | "AUTH_INVALID"
+  | "AUTH_RESTART_REQUIRED"
   | "BODY_TOO_LARGE"
   | "CONFLICT"
   | "CONTENT_TYPE_INVALID"
