@@ -90,6 +90,7 @@ Antes de qualquer consumidor mergeado, o código pode ser revertido junto da bra
 - builds e smokes standalone de web e backoffice passaram sem deixar processos ou portas residuais;
 - o release imutável das correções do terceiro review, commit `3bb6cb34f10d8dbb6dd14d94a781a1508789cd1b`, validou `2.754` artefatos e publicou o archive local com SHA-256 `94c52f375b1e0d53b4e08f7f08cda0df90bcad67bd252867a3dc4afc5eb9c9cd`;
 - scans de artefatos Auth não encontraram sentinela de senha nem `token_hash`; cleanup final confirmou zero usuários QA e zero mensagens QA;
-- auditorias independentes de segurança, QA, documentação, diff e índice técnico staged encerraram sem blocker; a evidência documental será auditada antes do próximo commit.
+- auditorias independentes de segurança, QA, documentação, diff, índice técnico e release encerraram sem blocker; a evidência do release foi publicada em `e77b28d`.
+- as cinco threads do terceiro review receberam respostas ancoradas no commit técnico e na evidência de release, foram resolvidas individualmente e o fetch thread-aware confirmou zero thread aberta.
 
 A implementação está validada localmente e segue fora da contagem de features concluídas até o review do PR e o merge.
