@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   inspectIdentityRecoverySession: vi.fn(),
   issueIdentityRecoveryContext: vi.fn(),
+  readOwnProfile: vi.fn(),
   readIdentitySessionWithClient: vi.fn(),
   releaseIdentityRecoveryContext: vi.fn(),
   resetPasswordForEmail: vi.fn(),
@@ -74,6 +75,10 @@ vi.mock("../../src/domains/identity/server/identity-dal", () => ({
 
 vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
   readIdentitySessionWithClient: mocks.readIdentitySessionWithClient,
+}));
+
+vi.mock("../../src/domains/identity/server/profile-read-model", () => ({
+  readOwnProfile: mocks.readOwnProfile,
 }));
 
 vi.mock("next/headers", () => ({
@@ -161,6 +166,10 @@ describe("identity recovery service", () => {
       error: null,
     });
     mocks.readIdentitySessionWithClient.mockResolvedValue(authenticatedSession);
+    mocks.readOwnProfile.mockResolvedValue({
+      profile: { colorScheme: "dark" },
+      scope: recoveryUserId,
+    });
     mocks.setSession.mockResolvedValue({ data: { session: providerSession }, error: null });
     mocks.verifyOtp.mockResolvedValue({
       data: { session: providerSession, user: { id: recoveryUserId } },
@@ -182,18 +191,151 @@ describe("identity recovery service", () => {
   });
 
   it("validates the identity context before publishing browser session cookies", async () => {
-    const result = await loginIdentity({
-      email: "qa-login@example.test",
-      password: "ValidPassword9",
-    });
+    vi.useFakeTimers();
+    try {
+      const result = await loginIdentity({
+        email: "qa-login@example.test",
+        password: "ValidPassword9",
+      });
 
-    expect(mocks.readIdentitySessionWithClient).toHaveBeenCalledOnce();
-    expect(mocks.createRouteSupabaseClient).toHaveBeenCalledOnce();
-    expect(mocks.setSession).toHaveBeenCalledWith(providerSession);
-    expect(result.data).toEqual({
-      redirectTo: "/entrar?sessao=ativa",
-      session: authenticatedSession,
-    });
+      expect(mocks.readIdentitySessionWithClient).toHaveBeenCalledOnce();
+      expect(mocks.createRouteSupabaseClient).toHaveBeenCalledOnce();
+      expect(mocks.setSession).toHaveBeenCalledWith(providerSession);
+      expect(mocks.readOwnProfile).toHaveBeenCalledWith(recoveryUserId, expect.any(AbortSignal));
+      const profileSignal = mocks.readOwnProfile.mock.calls[0]?.[1];
+      expect(profileSignal).toBeInstanceOf(AbortSignal);
+      expect(profileSignal?.aborted).toBe(false);
+      expect(mocks.cookieSet).toHaveBeenCalledWith(
+        "sl-color-scheme",
+        "dark",
+        expect.objectContaining({ httpOnly: true, sameSite: "lax" }),
+      );
+      expect(result.data).toEqual({
+        redirectTo: "/entrar?sessao=ativa",
+        session: authenticatedSession,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps login available when the visual preference projection cannot be read", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.readOwnProfile.mockRejectedValueOnce(new Error("private-profile-read-failure"));
+
+      await expect(
+        loginIdentity({
+          email: "qa-login@example.test",
+          password: "ValidPassword9",
+        }),
+      ).resolves.toMatchObject({ data: { session: authenticatedSession } });
+
+      expect(mocks.cookieDelete).toHaveBeenCalledWith("sl-color-scheme");
+      expect(mocks.cookieSet).not.toHaveBeenCalledWith(
+        "sl-color-scheme",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts a stuck preference lookup and completes the published login at its own deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let profileSignal: AbortSignal | undefined;
+      mocks.readOwnProfile.mockImplementationOnce(
+        (_userId: string, signal: AbortSignal | undefined) =>
+          new Promise((_resolve, reject) => {
+            profileSignal = signal;
+            signal?.addEventListener(
+              "abort",
+              () => reject(new Error("private-profile-read-aborted")),
+              { once: true },
+            );
+          }),
+      );
+
+      const outcome = loginIdentity({
+        email: "qa-login@example.test",
+        password: "ValidPassword9",
+      });
+      let settled = false;
+      void outcome.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(profileSignal).toBeInstanceOf(AbortSignal);
+      expect(profileSignal?.aborted).toBe(false);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(outcome).resolves.toMatchObject({ data: { session: authenticatedSession } });
+      expect(profileSignal?.aborted).toBe(true);
+      expect(mocks.cookieSet).not.toHaveBeenCalledWith(
+        "sl-color-scheme",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(mocks.signOut).not.toHaveBeenCalled();
+      expect(mocks.transientSignOut).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a preference lookup that resolves after the login deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      let profileSignal: AbortSignal | undefined;
+      let resolveProfile: ((profile: { profile: { colorScheme: "dark" } }) => void) | undefined;
+      mocks.readOwnProfile.mockImplementationOnce(
+        (_userId: string, signal: AbortSignal | undefined) => {
+          profileSignal = signal;
+          return new Promise((resolve) => {
+            resolveProfile = resolve;
+          });
+        },
+      );
+
+      const outcome = loginIdentity({
+        email: "qa-login@example.test",
+        password: "ValidPassword9",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(outcome).resolves.toMatchObject({ data: { session: authenticatedSession } });
+      expect(profileSignal?.aborted).toBe(true);
+      expect(mocks.cookieSet).not.toHaveBeenCalledWith(
+        "sl-color-scheme",
+        expect.anything(),
+        expect.anything(),
+      );
+
+      resolveProfile?.({ profile: { colorScheme: "dark" } });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mocks.cookieSet).not.toHaveBeenCalledWith(
+        "sl-color-scheme",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(mocks.signOut).not.toHaveBeenCalled();
+      expect(mocks.transientSignOut).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not publish cookies when identity context validation fails", async () => {
@@ -228,7 +370,10 @@ describe("identity recovery service", () => {
       password: "ValidPassword9",
     }).catch((error: unknown) => error);
 
-    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_SESSION_RECHECK_REQUIRED",
+      status: 503,
+    });
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });
@@ -256,7 +401,10 @@ describe("identity recovery service", () => {
       password: "ValidPassword9",
     }).catch((error: unknown) => error);
 
-    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    await expect(outcome).resolves.toMatchObject({
+      code: "AUTH_SESSION_RECHECK_REQUIRED",
+      status: 503,
+    });
     expect(mocks.signOut).toHaveBeenCalledWith({ scope: "local" });
     expect(mocks.getSession).toHaveBeenCalledOnce();
     expect(mocks.transientSignOut).toHaveBeenCalledWith({ scope: "local" });
@@ -269,7 +417,9 @@ describe("identity recovery service", () => {
   it("accepts an errored provider logout only after proving the local session is absent", async () => {
     mocks.signOut.mockResolvedValueOnce({ error: { code: "provider_unavailable" } });
 
-    await expect(logoutIdentity()).resolves.toMatchObject({ data: { signedOut: true } });
+    await expect(logoutIdentity(recoveryUserId)).resolves.toMatchObject({
+      data: { signedOut: true },
+    });
 
     expect(mocks.getSession).toHaveBeenCalledOnce();
   });
@@ -281,10 +431,82 @@ describe("identity recovery service", () => {
       error: null,
     });
 
-    await expect(logoutIdentity()).rejects.toMatchObject({
+    await expect(logoutIdentity(recoveryUserId)).rejects.toMatchObject({
       code: "SERVICE_UNAVAILABLE",
       status: 503,
     });
+  });
+
+  it("rejects a stale logout scope before cookies, recovery DAL or sign-out", async () => {
+    const staleScope = "55555555-5555-4555-8555-555555555555";
+
+    await expect(logoutIdentity(staleScope)).rejects.toMatchObject({
+      code: "SESSION_CHANGED",
+      status: 409,
+    });
+
+    expect(mocks.getClaims).toHaveBeenCalledOnce();
+    expect(mocks.cookieDelete).not.toHaveBeenCalled();
+    expect(mocks.inspectIdentityRecoverySession).not.toHaveBeenCalled();
+    expect(mocks.closeIdentityRecoverySession).not.toHaveBeenCalled();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.getSession).not.toHaveBeenCalled();
+  });
+
+  it("reports an unavailable claims lookup before every destructive logout effect", async () => {
+    mocks.getClaims.mockRejectedValueOnce(new Error("private-claims-transport-failure"));
+
+    const outcome = logoutIdentity(recoveryUserId).catch((error: unknown) => error);
+
+    await expect(outcome).resolves.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    expect(mocks.cookieDelete).not.toHaveBeenCalled();
+    expect(mocks.inspectIdentityRecoverySession).not.toHaveBeenCalled();
+    expect(mocks.closeIdentityRecoverySession).not.toHaveBeenCalled();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(JSON.stringify(await outcome)).not.toContain("private-claims-transport-failure");
+  });
+
+  it.each([
+    ["provider rejection", { data: { claims: null }, error: { code: "invalid_claims" } }],
+    ["missing signed context", { data: { claims: {} }, error: null }],
+  ])(
+    "reports unauthenticated %s before every destructive logout effect",
+    async (_case, claimsResult) => {
+      mocks.getClaims.mockResolvedValueOnce(claimsResult);
+
+      await expect(logoutIdentity(recoveryUserId)).rejects.toMatchObject({
+        code: "UNAUTHENTICATED",
+        status: 401,
+      });
+      expect(mocks.cookieDelete).not.toHaveBeenCalled();
+      expect(mocks.inspectIdentityRecoverySession).not.toHaveBeenCalled();
+      expect(mocks.closeIdentityRecoverySession).not.toHaveBeenCalled();
+      expect(mocks.signOut).not.toHaveBeenCalled();
+      expect(mocks.getSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("validates logout scope before touching recovery or browser credentials", async () => {
+    await expect(logoutIdentity(recoveryUserId)).resolves.toMatchObject({
+      data: { signedOut: true },
+    });
+
+    const firstClaimsOrder = mocks.getClaims.mock.invocationCallOrder[0];
+    const firstDalOrder = mocks.inspectIdentityRecoverySession.mock.invocationCallOrder[0];
+    const firstCookieOrder = mocks.cookieDelete.mock.invocationCallOrder[0];
+    const signOutOrder = mocks.signOut.mock.invocationCallOrder[0];
+    if (
+      firstClaimsOrder === undefined ||
+      firstDalOrder === undefined ||
+      firstCookieOrder === undefined ||
+      signOutOrder === undefined
+    ) {
+      throw new Error("A ordem dos efeitos do logout não foi observada.");
+    }
+    expect(firstClaimsOrder).toBeLessThan(firstDalOrder);
+    expect(firstClaimsOrder).toBeLessThan(firstCookieOrder);
+    expect(firstClaimsOrder).toBeLessThan(signOutOrder);
   });
 
   it("keeps the public recovery result indistinguishable when the provider throws", async () => {

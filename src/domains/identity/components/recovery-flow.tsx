@@ -26,6 +26,11 @@ import {
 } from "./identity-query-keys";
 import styles from "./identity.module.css";
 import { passwordRequirements } from "./password-requirements";
+import {
+  reconcileRecoveryUpdateFeedback,
+  recoveryUpdateFeedbackFromError,
+  type RecoveryUpdateFeedback,
+} from "./recovery-update-feedback";
 
 function RecoveryRequestForm() {
   const pendingRecoveryEmail = useRef<string | undefined>(undefined);
@@ -135,9 +140,13 @@ function RecoveryUpdateSuccess() {
 
 function NewPasswordForm({
   onCompleted,
+  onFeedbackChange,
+  recoveryUpdateFeedback,
   recoverySessionScope,
 }: {
   onCompleted: () => void;
+  onFeedbackChange: (feedback: RecoveryUpdateFeedback | undefined) => void;
+  recoveryUpdateFeedback: RecoveryUpdateFeedback | undefined;
   recoverySessionScope: IdentityRecoverySessionScope;
 }) {
   const queryClient = useQueryClient();
@@ -156,7 +165,11 @@ function NewPasswordForm({
       }
       return updateRecoveredPassword(value.password, value.confirmPassword);
     },
+    onError: (error) => {
+      onFeedbackChange(recoveryUpdateFeedbackFromError(error, recoverySessionScope));
+    },
     onSuccess: async () => {
+      onFeedbackChange(undefined);
       await queryClient.cancelQueries({
         exact: true,
         queryKey: identityQueryKeys.recoveryStatus(recoverySessionScope),
@@ -182,6 +195,7 @@ function NewPasswordForm({
 
   function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    onFeedbackChange(undefined);
     mutation.reset();
     setFieldErrors({});
     const form = new FormData(event.currentTarget);
@@ -197,8 +211,9 @@ function NewPasswordForm({
     mutation.mutate();
   }
 
-  const apiError = mutation.error instanceof IdentityApiError ? mutation.error : undefined;
-  const visibleFieldErrors = apiError?.fieldErrors ?? fieldErrors;
+  const visibleRecoveryUpdateFeedback =
+    recoveryUpdateFeedback?.scope === recoverySessionScope ? recoveryUpdateFeedback : undefined;
+  const visibleFieldErrors = visibleRecoveryUpdateFeedback?.fieldErrors ?? fieldErrors;
 
   return (
     <form
@@ -209,9 +224,9 @@ function NewPasswordForm({
     >
       <p className={styles.formIntro}>Crie uma senha nova para concluir a recuperação.</p>
 
-      {apiError === undefined ? null : (
+      {visibleRecoveryUpdateFeedback === undefined ? null : (
         <Alert title="Não foi possível atualizar a senha" variant="error">
-          {apiError.message}
+          {visibleRecoveryUpdateFeedback.message}
         </Alert>
       )}
 
@@ -255,6 +270,11 @@ export function RecoveryFlow({
 }) {
   const queryClient = useQueryClient();
   const [recoveryCompleted, setRecoveryCompleted] = useState(false);
+  const [recoveryUpdateFeedback, setRecoveryUpdateFeedback] = useState<
+    RecoveryUpdateFeedback | undefined
+  >(undefined);
+  const [scopeTransitionStarted, setScopeTransitionStarted] = useState(false);
+  const scopeTransitionGuard = useRef(false);
   const recoveryStatusQueryKey = useMemo(
     () => identityQueryKeys.recoveryStatus(initialSessionScope),
     [initialSessionScope],
@@ -269,6 +289,12 @@ export function RecoveryFlow({
     staleTime: 0,
   });
   const scopeChanged = statusQuery.error instanceof IdentityRecoveryScopeChangedError;
+  const visibleRecoveryUpdateFeedback = reconcileRecoveryUpdateFeedback(
+    recoveryUpdateFeedback,
+    statusQuery.data,
+    initialSessionScope,
+    statusQuery.fetchStatus,
+  );
 
   useEffect(() => {
     queryClient.removeQueries({
@@ -278,19 +304,43 @@ export function RecoveryFlow({
   }, [initialSessionScope, queryClient]);
 
   useEffect(() => {
-    if (!scopeChanged) {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) {
+        setRecoveryUpdateFeedback((feedback) =>
+          reconcileRecoveryUpdateFeedback(
+            feedback,
+            statusQuery.data,
+            initialSessionScope,
+            statusQuery.fetchStatus,
+          ),
+        );
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [initialSessionScope, statusQuery.data, statusQuery.fetchStatus]);
+
+  useEffect(() => {
+    if (!scopeChanged || scopeTransitionGuard.current) {
       return;
     }
-    queryClient.removeQueries({ queryKey: identityQueryKeys.recoveryStatuses });
-    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-    window.location.replace("/recuperar-senha");
+    scopeTransitionGuard.current = true;
+    queueMicrotask(() => {
+      setScopeTransitionStarted(true);
+      setRecoveryUpdateFeedback(undefined);
+      queryClient.removeQueries({ queryKey: identityQueryKeys.recoveryStatuses });
+      queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+      window.location.replace("/recuperar-senha");
+    });
   }, [queryClient, scopeChanged]);
 
   if (recoveryCompleted) {
     return <RecoveryUpdateSuccess />;
   }
 
-  if (statusQuery.isPending || scopeChanged) {
+  if (scopeTransitionStarted || statusQuery.isPending || scopeChanged) {
     return <Alert>Verificando se o link de recuperação é válido…</Alert>;
   }
 
@@ -330,6 +380,8 @@ export function RecoveryFlow({
   ) ? (
     <NewPasswordForm
       onCompleted={() => setRecoveryCompleted(true)}
+      onFeedbackChange={setRecoveryUpdateFeedback}
+      recoveryUpdateFeedback={visibleRecoveryUpdateFeedback}
       recoverySessionScope={initialSessionScope}
     />
   ) : statusQuery.fetchStatus !== "idle" ? (

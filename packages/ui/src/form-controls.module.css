@@ -34,7 +34,8 @@
   overflow-wrap: anywhere;
 }
 
-.input {
+.input,
+.select {
   display: block;
   width: 100%;
   min-width: 0;
@@ -49,16 +50,53 @@
   line-height: 1.3;
 }
 
+.selectFrame {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.select {
+  appearance: none;
+  max-width: 100%;
+  padding-inline-end: calc(var(--sl-space-6) + var(--sl-space-3));
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectIndicator {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: var(--sl-space-4);
+  width: 0.55rem;
+  height: 0.55rem;
+  border-inline-end: 0.125rem solid currentColor;
+  border-block-end: 0.125rem solid currentColor;
+  color: var(--sl-color-ink-strong);
+  pointer-events: none;
+  transform: translateY(-70%) rotate(45deg);
+}
+
+.selectFrame:has(.select:disabled) .selectIndicator {
+  opacity: 0.68;
+}
+
 .input::placeholder {
   color: var(--sl-color-ink-muted);
   opacity: 1;
 }
 
-.input:hover:not(:disabled) {
+.input:hover:not(:disabled),
+.select:hover:not(:disabled) {
   border-color: var(--sl-color-brand-strong);
 }
 
 .input:focus-visible,
+.select:focus-visible,
 .checkboxControl:focus-visible,
 .choiceControl:focus-visible {
   outline: 2px solid var(--sl-color-focus);
@@ -66,11 +104,13 @@
   box-shadow: var(--sl-focus-ring);
 }
 
-.input[aria-invalid="true"] {
+.input[aria-invalid="true"],
+.select[aria-invalid="true"] {
   border-color: var(--sl-color-danger);
 }
 
-.input:disabled {
+.input:disabled,
+.select:disabled {
   cursor: not-allowed;
   opacity: 0.68;
 }
@@ -181,11 +221,13 @@
 
 @media (forced-colors: active) {
   .input,
+  .select,
   .choice {
     border-color: CanvasText;
   }
 
   .input:focus-visible,
+  .select:focus-visible,
   .checkboxControl:focus-visible,
   .choiceControl:focus-visible {
     outline-color: Highlight;

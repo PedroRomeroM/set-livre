@@ -9,6 +9,7 @@ import {
   identityRegisterResultSchema,
   identitySessionSchema,
   type IdentityLoginPayload,
+  type IdentityLogoutPayload,
   type IdentityRegistrationPayload,
 } from "@set-livre/contracts";
 import { z } from "zod";
@@ -119,7 +120,7 @@ function jsonBody(value: unknown) {
 }
 
 export function registerIdentity(payload: IdentityRegistrationPayload) {
-  return requestIdentity("/api/commands", identityRegisterResultSchema, {
+  return requestIdentity("/api/auth/register", identityRegisterResultSchema, {
     body: jsonBody({ action: "identity.register", payload }),
     method: "POST",
   });
@@ -132,9 +133,9 @@ export function loginIdentity(payload: IdentityLoginPayload) {
   });
 }
 
-export function logoutIdentity() {
+export function logoutIdentity(expectedScope: IdentityLogoutPayload["expectedScope"]) {
   return requestIdentity("/api/auth/logout", identityLogoutResultSchema, {
-    body: jsonBody({}),
+    body: jsonBody({ expectedScope } satisfies IdentityLogoutPayload),
     method: "POST",
   });
 }

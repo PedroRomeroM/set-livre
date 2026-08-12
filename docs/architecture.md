@@ -13,9 +13,12 @@ flowchart LR
 
     WEB --> TQ[TanStack Query]
     TQ --> RM[Read models Supabase]
-    WEB --> CMD[POST /api/commands]
+    WEB --> CMD[POST /api/commands privado]
+    WEB --> REG[POST /api/auth/register convidado]
     CMD --> AUTH[Auth + Origin + Rate Limit + Zod]
+    REG --> GUEST[Origin + Rate Limit + Zod fechado]
     AUTH --> DAL[DAL server-only / app_dal]
+    GUEST --> DAL
     DAL --> SQL[Comandos SQL private]
     SQL --> PG[(Supabase PostgreSQL)]
     RM --> PG
@@ -55,7 +58,7 @@ Não contém páginas ou bundles de backoffice.
 
 #### Identidade implementada na FEAT-002
 
-`/cadastro` entra em `POST /api/commands` com `identity.register`; o handler server-only cria uma intenção jurídica opaca pela role `app_dal` e chama Supabase Auth sem devolver o token ao browser. O trigger no `INSERT` de `auth.users` trava/consome essa intenção, revalida as duas versões vigentes e cria perfil mínimo + aceites na mesma transação. Login, logout, callback e recovery usam endpoints Auth específicos, enquanto sessão e documentos legais usam read models pequenos/RLS. O Proxy renova cookies por request e preserva o mesmo contrato CSP; nenhum cliente Supabase global ou service role entra no bundle.
+`/cadastro` entra exclusivamente em `POST /api/auth/register` com `identity.register`; o endpoint Auth convidado aceita somente esse envelope estrito, aplica origem, fachada, limite de stream e limiter específico, e então o handler server-only cria uma intenção jurídica opaca pela role `app_dal` e chama Supabase Auth sem devolver o token ao browser. `POST /api/commands` fica reservado a ações privadas e valida a sessão autoritativa antes de ler ou interpretar o body. O trigger no `INSERT` de `auth.users` trava/consome a intenção, revalida as duas versões vigentes e cria perfil mínimo + aceites na mesma transação. Login, logout, callback e recovery usam endpoints Auth específicos, enquanto sessão e documentos legais usam read models pequenos/RLS. O Proxy renova cookies por request e preserva o mesmo contrato CSP; nenhum cliente Supabase global ou service role entra no bundle.
 
 No callback de recovery, o servidor valida `sub`, `session_id` e `exp` assinados e exige a sessão correspondente em `auth.sessions` antes de criar uma binding/tombstone privada e seu grant one-shot de 15 minutos. O UUID `session_scope` exposto à interface é somente um namespace opaco para resposta e cache; a autoridade permanece no JWT validado, na binding e no grant. Proxy e read models consultam a tombstone pelo `session_id`, portanto uma sessão Auth de recovery nunca vira login comum mesmo depois de perder os cookies auxiliares. Fechamento, expiração ou uso fora da superfície recovery encerra a sessão local, enquanto uma sessão comum sem binding permanece comum. O tempo Auth fica pinado em `3600` segundos e a ausência canônica inicia retenção conservadora antes do purge.
 

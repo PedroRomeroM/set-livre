@@ -15,7 +15,10 @@ type IdentityAction = Parameters<typeof writeSafeOperationalEvent>[0]["action"];
 export async function runIdentityPostRoute(
   request: Request,
   action: IdentityAction,
-  execute: (requestId: string) => Promise<{
+  execute: (
+    requestId: string,
+    setOperationalAction: (action: IdentityAction) => void,
+  ) => Promise<{
     data: unknown;
     operationalOutcome?: "accepted" | "rejected" | "unavailable" | undefined;
     responseHeaders?: HeadersInit | undefined;
@@ -26,13 +29,16 @@ export async function runIdentityPostRoute(
   const requestId = requestIdFrom(request);
   let status = 503;
   let outcome: "accepted" | "rejected" | "unavailable" = "unavailable";
+  let operationalAction = action;
   try {
     assertTrustedRequestOrigin(request);
     enforceIdentityRateLimit(`${action}.request`, requestRateLimitDiscriminator(request), {
       limit: 300,
       windowMs: 60_000,
     });
-    const result = await execute(requestId);
+    const result = await execute(requestId, (nextAction) => {
+      operationalAction = nextAction;
+    });
     status = result.status ?? 200;
     outcome = result.operationalOutcome ?? "accepted";
     return apiSuccessResponse(result.data, requestId, status, result.responseHeaders);
@@ -43,7 +49,7 @@ export async function runIdentityPostRoute(
     return response;
   } finally {
     writeSafeOperationalEvent({
-      action,
+      action: operationalAction,
       durationMs: performance.now() - startedAt,
       outcome,
       requestId,

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import {
   cleanupFeat002QaIdentity,
@@ -44,6 +44,44 @@ async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], e
     .toBe(expected);
 }
 
+const loginFormRedactionMarker = "sl-qa-f002-login-form-redacted";
+
+async function armLoginFormRedactionObservation(page: Page) {
+  await page
+    .getByRole("button", { name: "Entrar", exact: true })
+    .evaluate((submitButton, marker) => {
+      const form = submitButton.closest("form");
+      const emailControl = form?.elements.namedItem("email");
+      const passwordControl = form?.elements.namedItem("password");
+      if (
+        form === null ||
+        !(emailControl instanceof HTMLInputElement) ||
+        !(passwordControl instanceof HTMLInputElement)
+      ) {
+        throw new Error("O formulário de login QA não atende ao contrato observado.");
+      }
+
+      window.sessionStorage.removeItem(marker);
+      window.addEventListener(
+        "pagehide",
+        () => {
+          const wasRedacted =
+            form.hidden && emailControl.value === "" && passwordControl.value === "";
+          window.sessionStorage.setItem(marker, wasRedacted ? "yes" : "no");
+        },
+        { once: true },
+      );
+    }, loginFormRedactionMarker);
+}
+
+async function expectLoginFormRedactedBeforeReload(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate((marker) => window.sessionStorage.getItem(marker), loginFormRedactionMarker),
+    )
+    .toBe("yes");
+}
+
 test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos", async ({
   page,
 }, testInfo) => {
@@ -72,7 +110,7 @@ test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos"
 test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const identity = createFeat002QaIdentity(testInfo, "002");
 
   try {
@@ -80,20 +118,91 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     const confirmedSession = await confirmFeat002Registration(page, identity, notBefore);
     await logoutFeat002Identity(page);
 
+    let serverPublishedLoginSession = false;
+    await page.route(
+      "**/api/auth/login",
+      async (route) => {
+        try {
+          const response = await route.fetch();
+          if (response.status() !== 200) {
+            await route.abort("failed");
+            return;
+          }
+          serverPublishedLoginSession = true;
+          await route.fulfill({ body: "{}", response });
+        } catch {
+          await route.abort("failed");
+        }
+      },
+      { times: 1 },
+    );
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
     await stageFeat002PasswordForSubmission(
       getFeat002PasswordControl(page, "Senha"),
       identity.password,
     );
+    await armLoginFormRedactionObservation(page);
+    const publishedSessionReload = page.waitForRequest((request) => {
+      const address = new URL(request.url());
+      return (
+        request.method() === "GET" &&
+        request.resourceType() === "document" &&
+        address.pathname === "/entrar" &&
+        address.search === "?entrada=verificar"
+      );
+    });
     await page.getByRole("button", { name: "Entrar" }).click();
 
-    await expectCurrentPath(page, "/entrar?sessao=ativa");
+    await publishedSessionReload;
+    expect(serverPublishedLoginSession).toBe(true);
+    await expectCurrentPath(page, "/entrar?entrada=verificar");
+    await expectLoginFormRedactedBeforeReload(page);
+    await expect(page.getByRole("button", { name: "Entrar", exact: true })).toHaveCount(0);
+    await expect(getFeat002PasswordControl(page, "Senha")).toHaveCount(0);
+    await expect(page.getByText("Não foi possível entrar", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("status")).toContainText("Sessão ativa");
     const loggedInSession = await readFeat002AuthenticatedSession(page);
     expect(loggedInSession.userId).toBe(confirmedSession.userId);
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
 
     await logoutFeat002Identity(page);
+    expectUnauthenticatedSession(await readFeat002IdentitySession(page));
+
+    await page.route(
+      "**/api/auth/login",
+      async (route) => {
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+    await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
+    await stageFeat002PasswordForSubmission(
+      getFeat002PasswordControl(page, "Senha"),
+      identity.password,
+    );
+    await armLoginFormRedactionObservation(page);
+    const absentSessionReload = page.waitForRequest((request) => {
+      const address = new URL(request.url());
+      return (
+        request.method() === "GET" &&
+        request.resourceType() === "document" &&
+        address.pathname === "/entrar" &&
+        address.search === "?entrada=verificar"
+      );
+    });
+    await page.getByRole("button", { name: "Entrar" }).click();
+
+    await absentSessionReload;
+    await expectCurrentPath(page, "/entrar?entrada=verificar");
+    await expectLoginFormRedactedBeforeReload(page);
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ has: page.getByText("Entrada não confirmada", { exact: true }) }),
+    ).toContainText("A revalidação confirmou que não há uma sessão ativa");
+    await expect(page.getByRole("textbox", { name: "E-mail" })).toHaveValue("");
+    await expect(getFeat002PasswordControl(page, "Senha")).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Entrar", exact: true })).toBeVisible();
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
   } finally {
     await cleanupFeat002QaIdentity(identity);
@@ -150,6 +259,50 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     }
 
     await expect(newPasswordInput).toBeEnabled();
+    const saveNewPassword = page.getByRole("button", { name: "Salvar nova senha" });
+    const recoveryStatusRefetchStarted = createDeferredSignal();
+    const releaseRecoveryStatusRefetch = createDeferredSignal();
+    await page.route(
+      "**/api/auth/recovery/status",
+      async (route) => {
+        recoveryStatusRefetchStarted.resolve();
+        await releaseRecoveryStatusRefetch.promise;
+        await route.continue();
+      },
+      { times: 1 },
+    );
+    const rejectedPasswordUpdate = page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return (
+        address.pathname === "/api/auth/recovery/update" && response.request().method() === "POST"
+      );
+    });
+    await stageFeat002PasswordForSubmission(newPasswordInput, identity.password);
+    await stageFeat002PasswordForSubmission(confirmNewPasswordInput, identity.password);
+    await saveNewPassword.click();
+    expect((await rejectedPasswordUpdate).status()).toBe(400);
+
+    await recoveryStatusRefetchStarted.promise;
+    try {
+      await expect(page.getByRole("status")).toContainText(
+        "Verificando se o link de recuperação é válido",
+      );
+      await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
+      await expect(saveNewPassword).toHaveCount(0);
+    } finally {
+      releaseRecoveryStatusRefetch.resolve();
+    }
+
+    await expect(newPasswordInput).toBeEnabled();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ has: page.getByText("Não foi possível atualizar a senha", { exact: true }) }),
+    ).toContainText("Revise os campos destacados");
+    await expect(
+      page.getByText("A nova senha não atende aos requisitos de segurança.", { exact: true }),
+    ).toBeVisible();
+
     const passwordToggles = page.getByRole("button", { name: "Mostrar senha" });
     await newPasswordInput.focus();
     await expect(newPasswordInput).toBeFocused();
@@ -162,7 +315,6 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     await page.keyboard.press("Tab");
     await expect(passwordToggles.last()).toBeFocused();
     await page.keyboard.press("Tab");
-    const saveNewPassword = page.getByRole("button", { name: "Salvar nova senha" });
     await expect(saveNewPassword).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("status")).toContainText("Senha atualizada");

@@ -1,16 +1,51 @@
 import "server-only";
 
-import type { IdentityCommand } from "@set-livre/contracts";
+import type { IdentityCommand, IdentitySession } from "@set-livre/contracts";
+
+import { ApiRouteError } from "@/lib/server/api-route";
 
 import { registerIdentity } from "./identity-service";
+import { completeProfile, updateProfile } from "./profile-service";
 
-type CommandContext = Readonly<{ requestId: string; userAgent: string | null }>;
-type CommandHandler = (command: IdentityCommand, context: CommandContext) => Promise<unknown>;
+type AuthenticatedIdentitySession = Extract<IdentitySession, { authenticated: true }>;
+type CommandContext = Readonly<{
+  requestId: string;
+  session?: AuthenticatedIdentitySession | undefined;
+  userAgent: string | null;
+}>;
 
-const commandHandlers = {
-  "identity.register": (command, context) => registerIdentity(command.payload, context),
-} satisfies Record<IdentityCommand["action"], CommandHandler>;
+function authenticatedSession(context: CommandContext) {
+  if (context.session === undefined) {
+    throw new Error("O registry recebeu um comando privado sem sessão autenticada.");
+  }
+  return context.session;
+}
+
+function authenticatedSessionForExpectedScope(context: CommandContext, expectedScope: string) {
+  const session = authenticatedSession(context);
+  if (session.userId !== expectedScope) {
+    throw new ApiRouteError(
+      409,
+      "SESSION_CHANGED",
+      "Sua sessão mudou. Recarregue a página antes de continuar.",
+    );
+  }
+  return session;
+}
 
 export function executeIdentityCommand(command: IdentityCommand, context: CommandContext) {
-  return commandHandlers[command.action](command, context);
+  switch (command.action) {
+    case "identity.register":
+      return registerIdentity(command.payload, context);
+    case "profile.complete":
+      return completeProfile(
+        command.payload,
+        authenticatedSessionForExpectedScope(context, command.expectedScope),
+      );
+    case "profile.update":
+      return updateProfile(
+        command.payload,
+        authenticatedSessionForExpectedScope(context, command.expectedScope),
+      );
+  }
 }

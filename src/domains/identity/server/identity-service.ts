@@ -8,6 +8,7 @@ import {
   identityRegisterResultSchema,
   resolveAuthenticatedReturnTo,
   type IdentityLoginPayload,
+  type IdentityLogoutPayload,
   type IdentityRegistrationPayload,
   type IdentitySession,
 } from "@set-livre/contracts";
@@ -46,6 +47,12 @@ import {
   handleRegistrationProviderError,
   isPasswordUpdateProviderErrorSafeToRetry,
 } from "./identity-provider-errors";
+import {
+  profilePreferenceCookieName,
+  writeProfilePreferenceCookie,
+  type ProfilePreferenceCookieWriter,
+} from "./profile-preference-cookie";
+import { readOwnProfile } from "./profile-read-model";
 import { readIdentitySessionWithClient } from "./identity-read-model";
 import {
   recoveryGrantCookieName,
@@ -56,6 +63,7 @@ import {
 } from "./recovery-grant";
 
 const databaseErrorSchema = z.object({ code: z.string().optional() });
+const loginProfilePreferenceDeadlineMs = 1_000;
 
 function userAgentEvidence(userAgent: string | null) {
   return userAgent === null ? null : createHash("sha256").update(userAgent).digest("hex");
@@ -95,6 +103,67 @@ async function closeCurrentRecoveryBindingBestEffort(auth: IdentitySupabaseAuth)
     }
   } catch {
     // O tombstone continua detectável; as credenciais locais ainda serão substituídas/removidas.
+  }
+}
+
+async function assertLogoutExpectedScope(
+  auth: IdentitySupabaseAuth,
+  expectedScope: IdentityLogoutPayload["expectedScope"],
+) {
+  let claimsResult: Awaited<ReturnType<IdentitySupabaseAuth["getClaims"]>>;
+  try {
+    claimsResult = await auth.getClaims();
+  } catch {
+    throw new ApiRouteError(
+      503,
+      "SERVICE_UNAVAILABLE",
+      "Não foi possível validar sua sessão agora. Tente novamente.",
+    );
+  }
+  if (claimsResult.error !== null) {
+    throw new ApiRouteError(401, "UNAUTHENTICATED", "Faça login novamente para continuar.");
+  }
+  const authenticatedUserId = parseAuthSessionContext(claimsResult.data?.claims)?.userId;
+  if (authenticatedUserId === undefined) {
+    throw new ApiRouteError(401, "UNAUTHENTICATED", "Faça login novamente para continuar.");
+  }
+  if (authenticatedUserId !== expectedScope) {
+    throw new ApiRouteError(
+      409,
+      "SESSION_CHANGED",
+      "Sua sessão mudou. Recarregue a página antes de continuar.",
+    );
+  }
+}
+
+async function syncAuthenticatedProfilePreferenceBestEffort(
+  cookieStore: ProfilePreferenceCookieWriter,
+  userId: string,
+) {
+  const abortController = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const preference = await Promise.race([
+      readOwnProfile(userId, abortController.signal).then(
+        (profile) => profile.profile.colorScheme,
+        () => undefined,
+      ),
+      new Promise<undefined>((resolveDeadline) => {
+        deadline = setTimeout(() => {
+          abortController.abort();
+          resolveDeadline(undefined);
+        }, loginProfilePreferenceDeadlineMs);
+      }),
+    ]);
+    if (preference !== undefined) {
+      writeProfilePreferenceCookie(cookieStore, preference);
+    }
+  } catch {
+    // A sessão continua canônica; sem projeção confiável, o layout usa o tema system.
+  } finally {
+    if (deadline !== undefined) {
+      clearTimeout(deadline);
+    }
   }
 }
 
@@ -219,6 +288,7 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
   await closeCurrentRecoveryBindingBestEffort(route.client.auth);
   deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
   deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
+  deleteCookieBestEffort(cookieStore, profilePreferenceCookieName);
   let publishError: unknown = null;
   try {
     const publishResult = await route.client.auth.setSession({
@@ -240,8 +310,13 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
     } catch {
       // A sessão nunca foi aceita como publicada; o erro público permanece genérico.
     }
-    handleLoginProviderError(publishError);
+    throw new ApiRouteError(
+      503,
+      "AUTH_SESSION_RECHECK_REQUIRED",
+      "Não foi possível confirmar a entrada. Verifique sua sessão.",
+    );
   }
+  await syncAuthenticatedProfilePreferenceBestEffort(cookieStore, session.userId);
   return {
     data: identityLoginResultSchema.parse({
       redirectTo: resolveAuthenticatedReturnTo(payload.returnTo),
@@ -251,12 +326,14 @@ export async function loginIdentity(payload: IdentityLoginPayload) {
   };
 }
 
-export async function logoutIdentity() {
+export async function logoutIdentity(expectedScope: IdentityLogoutPayload["expectedScope"]) {
   const route = await createRouteSupabaseClient();
+  await assertLogoutExpectedScope(route.client.auth, expectedScope);
   const cookieStore = await cookies();
   await closeCurrentRecoveryBindingBestEffort(route.client.auth);
   deleteCookieBestEffort(cookieStore, recoveryGrantCookieName);
   deleteCookieBestEffort(cookieStore, recoverySessionCookieName);
+  deleteCookieBestEffort(cookieStore, profilePreferenceCookieName);
   await signOutLocalOrProveAbsent(route.client.auth);
   return { data: { signedOut: true as const }, responseHeaders: route.responseHeaders };
 }
@@ -354,6 +431,7 @@ export async function verifyIdentityCallback(input: {
     } else {
       deleteCookieBestEffort(callbackContext.cookieStore, recoveryGrantCookieName);
       deleteCookieBestEffort(callbackContext.cookieStore, recoverySessionCookieName);
+      deleteCookieBestEffort(callbackContext.cookieStore, profilePreferenceCookieName);
     }
 
     const redirectTo =

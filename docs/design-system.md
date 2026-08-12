@@ -14,9 +14,9 @@
 
 ## 1.1 Estado implementado
 
-A superfície técnica `FoundationStatus` continua exportada para comprovar a fundação nos dois apps. A primeira fatia real, FEAT-002, acrescenta somente as primitives compartilhadas consumidas pelos fluxos de autenticação: ações, campos, escolha PF/PJ, feedback e composição de página. Nenhuma delas antecipa home, dashboard ou domínio posterior.
+A superfície técnica `FoundationStatus` continua exportada para comprovar a fundação nos dois apps. A FEAT-002 acrescentou as primitives compartilhadas consumidas pelos fluxos de autenticação. A FEAT-003 reutiliza essa base para a conta e acrescenta somente o `Select` nativo já consumido pela preferência visual e pelas ações explícitas sobre documentos. Nenhuma delas antecipa home, dashboard ou domínio posterior.
 
-Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
+Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
 
 A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
 
@@ -144,6 +144,15 @@ Exemplo mínimo:
 ```
 
 O estado de formulário e de rota permanece no consumidor. Não usar `Alert` no lugar de erro de campo, `Panel` para envolver cada bloco, `ChoiceGroup` para valores fora de PF/PJ ou `PasswordInput` para definir a política do provider. Typecheck e lint validam a API compartilhada; teclado, axe, reflow e estados devem ser exercitados nos cenários Playwright SL-F002 da feature consumidora.
+
+### 3.2 Extensão implementada na FEAT-003
+
+- `Select`: elemento `select` nativo que preserva toda a API do HTML, compartilha altura, borda, erro, disabled, foco e forced colors de `Input` e permanece associado ao `Field` por label/descrição/erro. A aparência nativa é contida por um wrapper e uma seta decorativa `aria-hidden`, evitando que o texto intrínseco de uma opção aumente o `scrollWidth` no WebKit em reflow de 160 CSS px sem substituir a semântica do controle.
+- composição de conta: `PageFrame` e `Panel` existentes recebem uma navegação semântica com `aria-current`; o conteúdo usa duas colunas somente quando há espaço e passa a uma coluna em 320 px e no layout viewport de 160 CSS px.
+- aviso de privacidade: texto usa o token de tinta regular sobre a superfície suave de marca, preservando contraste textual WCAG AA nos temas claro e escuro.
+- tema: a seleção `system | light | dark` usa `Select`, não `ChoiceGroup`; a mudança reaproveita os tokens existentes e nunca aceita cor de marca ou valor arbitrário.
+
+Documentos continuam em inputs nativos não controlados e são limpos após qualquer desfecho remoto. Máscaras de CPF/CNPJ/telefone são somente apresentação; validação e normalização pertencem ao contrato tipado.
 
 ## 4. Contratos
 

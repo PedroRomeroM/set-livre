@@ -146,7 +146,7 @@ check(
 );
 
 const qaRows = parseQaRows(read("docs/qa-traceability.md"));
-check(qaRows.length === 194, `Esperados 194 cenários QA; encontrados ${qaRows.length}.`);
+check(qaRows.length === 198, `Esperados 198 cenários QA; encontrados ${qaRows.length}.`);
 check(findDuplicates(qaRows.map((row) => row.id)).length === 0, "Há IDs de cenário QA duplicados.");
 for (const row of qaRows) {
   check(

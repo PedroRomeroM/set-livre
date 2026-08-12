@@ -94,6 +94,17 @@ export function Input({ className, ...inputProps }: InputProps) {
   return <input {...inputProps} className={joinClassNames(styles.input, className)} />;
 }
 
+export type SelectProps = ComponentPropsWithRef<"select">;
+
+export function Select({ className, ...selectProps }: SelectProps) {
+  return (
+    <span className={styles.selectFrame}>
+      <select {...selectProps} className={joinClassNames(styles.select, className)} />
+      <span aria-hidden="true" className={styles.selectIndicator} />
+    </span>
+  );
+}
+
 export type CheckboxProps = Omit<ComponentPropsWithRef<"input">, "children" | "type"> & {
   description?: ReactNode;
   label: ReactNode;

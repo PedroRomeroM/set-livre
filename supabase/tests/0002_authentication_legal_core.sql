@@ -1,6 +1,13 @@
--- A fixture de concorrência é criada em sessão dblink e, portanto, vive fora
--- da transação pgTAP. O preflight exato torna a suíte recuperável mesmo após
--- uma execução interrompida antes do cleanup final.
+-- As fixtures de concorrência são criadas em sessões dblink e, portanto,
+-- vivem fora da transação pgTAP. O preflight exato torna a suíte recuperável
+-- mesmo após uma execução interrompida antes do cleanup final.
+with fixture(request_id) as (
+  values ('10000000-0000-4000-8000-000000000012'::uuid)
+)
+delete from private.signup_legal_intents as intent
+using fixture
+where intent.request_id = fixture.request_id;
+
 delete from auth.users
 where id = '20000000-0000-4000-8000-000000000008';
 
@@ -2343,8 +2350,8 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000400'),
-  'readiness permanece verde com dez dependências e nove rotinas DAL'
+  private.check_readiness('20260811000500'),
+  'readiness permanece verde com treze dependências e doze rotinas DAL'
 );
 
 select is(
@@ -2376,8 +2383,15 @@ select * from finish();
 
 rollback;
 
--- O DELETE exercitado dentro da transação é revertido junto dos demais dados
--- do teste. Esta limpeza exata remove de forma persistente a fixture dblink e
--- permite executar test:db novamente sem reset intermediário.
+-- Os DELETEs exercitados dentro da transação são revertidos junto dos demais
+-- dados do teste. Esta limpeza exata remove de forma persistente as fixtures
+-- dblink e permite executar test:db novamente sem reset intermediário.
+with fixture(request_id) as (
+  values ('10000000-0000-4000-8000-000000000012'::uuid)
+)
+delete from private.signup_legal_intents as intent
+using fixture
+where intent.request_id = fixture.request_id;
+
 delete from auth.users
 where id = '20000000-0000-4000-8000-000000000008';

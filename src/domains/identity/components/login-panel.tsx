@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { seedAuthoritativeIdentitySession } from "./account-query-keys";
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
 import {
   IdentityApiError,
@@ -17,6 +18,12 @@ import {
   logoutIdentity,
   readIdentitySession,
 } from "./identity-api";
+import {
+  handleAmbiguousLoginTransportError,
+  hideAndResetLoginCredentialForm,
+  loginSessionVerificationPath,
+  type AccountLoginReturnTarget,
+} from "./login-session-transition";
 import {
   IdentitySessionScopeChangedError,
   identityQueryKeys,
@@ -30,7 +37,9 @@ import styles from "./identity.module.css";
 
 type LoginPanelProps = {
   initialSession: IdentitySession;
+  loginNeedsVerification: boolean;
   logoutNeedsVerification: boolean;
+  returnTo?: AccountLoginReturnTarget | undefined;
 };
 
 function accountTypeLabel(session: Extract<IdentitySession, { authenticated: true }>) {
@@ -38,8 +47,7 @@ function accountTypeLabel(session: Extract<IdentitySession, { authenticated: tru
 }
 
 function replaceIdentitySessionCache(queryClient: QueryClient, session: IdentitySession) {
-  queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-  queryClient.setQueryData(identityQueryKeys.session(identitySessionScope(session)), session);
+  seedAuthoritativeIdentitySession(queryClient, session);
 }
 
 function redactIdentitySessionCacheForReload(
@@ -61,15 +69,16 @@ function AuthenticatedPanel({
 }) {
   const queryClient = useQueryClient();
   const logoutMutation = useMutation({
-    mutationFn: logoutIdentity,
+    mutationFn: () => logoutIdentity(session.userId),
+    networkMode: "always",
     onSuccess: () => {
       onSessionTransition();
-      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
+      queryClient.clear();
       window.location.replace("/entrar");
     },
     onError: () => {
       onSessionTransition();
-      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
+      queryClient.clear();
       window.location.replace("/entrar?saida=verificar");
     },
   });
@@ -118,10 +127,16 @@ function AuthenticatedPanel({
       ) : null}
 
       <div className={styles.actions}>
+        <Link className={styles.textLink} href="/conta">
+          Ir para minha conta
+        </Link>
         <Button
           loading={logoutMutation.isPending}
           loadingLabel="Saindo"
-          onClick={() => logoutMutation.mutate()}
+          onClick={() => {
+            onSessionTransition();
+            logoutMutation.mutate();
+          }}
           variant="secondary"
         >
           Sair
@@ -131,9 +146,20 @@ function AuthenticatedPanel({
   );
 }
 
-function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
+function LoginForm({
+  loginWasRevalidated,
+  logoutWasVerified,
+  onSessionTransition,
+  returnTo,
+}: {
+  loginWasRevalidated: boolean;
+  logoutWasVerified: boolean;
+  onSessionTransition: () => void;
+  returnTo?: AccountLoginReturnTarget | undefined;
+}) {
   const queryClient = useQueryClient();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const formRef = useRef<HTMLFormElement>(null);
   const pendingLogin = useRef<IdentityLoginPayload>(undefined);
   const mutation = useMutation({
     mutationFn: () => {
@@ -144,6 +170,23 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
     },
     onSettled: () => {
       pendingLogin.current = undefined;
+    },
+    onError: (error) => {
+      handleAmbiguousLoginTransportError(error, {
+        beginSessionTransition: onSessionTransition,
+        clearEphemeralCredentials: () => {
+          pendingLogin.current = undefined;
+        },
+        hideAndResetCredentialForm: () => {
+          hideAndResetLoginCredentialForm(formRef.current);
+        },
+        redactPrivateCaches: () => {
+          redactIdentitySessionCacheForReload(queryClient, "anonymous");
+        },
+        reloadAuthoritativeSession: () => {
+          window.location.replace(loginSessionVerificationPath(returnTo));
+        },
+      });
     },
     onSuccess: (result) => {
       replaceIdentitySessionCache(queryClient, result.session);
@@ -159,6 +202,7 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
     const parsed = identityLoginPayloadSchema.safeParse({
       email: formValue(form, "email"),
       password: formValue(form, "password"),
+      ...(returnTo === undefined ? {} : { returnTo }),
     });
     if (!parsed.success) {
       setFieldErrors(firstFieldErrors(parsed.error));
@@ -172,7 +216,13 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
   const visibleFieldErrors = apiError?.fieldErrors ?? fieldErrors;
 
   return (
-    <form className={styles.form} noValidate onSubmit={submitLogin}>
+    <form className={styles.form} noValidate onSubmit={submitLogin} ref={formRef}>
+      {loginWasRevalidated ? (
+        <Alert title="Entrada não confirmada" variant="error">
+          A revalidação confirmou que não há uma sessão ativa. Tente entrar novamente.
+        </Alert>
+      ) : null}
+
       {logoutWasVerified ? (
         <Alert title="Sessão encerrada">
           A revalidação confirmou que não há uma sessão ativa neste navegador.
@@ -225,7 +275,12 @@ function LoginForm({ logoutWasVerified }: { logoutWasVerified: boolean }) {
   );
 }
 
-function PreparedLoginPanel({ initialSession, logoutNeedsVerification }: LoginPanelProps) {
+function PreparedLoginPanel({
+  initialSession,
+  loginNeedsVerification,
+  logoutNeedsVerification,
+  returnTo,
+}: LoginPanelProps) {
   const queryClient = useQueryClient();
   const [sessionTransitionStarted, setSessionTransitionStarted] = useState(false);
   const sessionScope = identitySessionScope(initialSession);
@@ -299,21 +354,30 @@ function PreparedLoginPanel({ initialSession, logoutNeedsVerification }: LoginPa
       session={observedSession}
     />
   ) : (
-    <LoginForm logoutWasVerified={logoutNeedsVerification} />
+    <LoginForm
+      loginWasRevalidated={loginNeedsVerification}
+      logoutWasVerified={logoutNeedsVerification}
+      onSessionTransition={() => {
+        setSessionTransitionStarted(true);
+      }}
+      returnTo={returnTo}
+    />
   );
 }
 
-export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPanelProps) {
+export function LoginPanel({
+  initialSession,
+  loginNeedsVerification,
+  logoutNeedsVerification,
+  returnTo,
+}: LoginPanelProps) {
   const queryClient = useQueryClient();
-  const sessionScope = identitySessionScope(initialSession);
-  const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
   const [preparedInitialSession, setPreparedInitialSession] = useState<IdentitySession>();
   const seedIsCurrent = preparedInitialSession === initialSession;
 
   useEffect(() => {
     let active = true;
-    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-    queryClient.setQueryData(sessionQueryKey, initialSession);
+    seedAuthoritativeIdentitySession(queryClient, initialSession);
     queueMicrotask(() => {
       if (active) {
         setPreparedInitialSession(initialSession);
@@ -322,7 +386,7 @@ export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPan
     return () => {
       active = false;
     };
-  }, [initialSession, queryClient, sessionQueryKey]);
+  }, [initialSession, queryClient]);
 
   if (!seedIsCurrent) {
     return <Alert>Validando sua sessão…</Alert>;
@@ -331,7 +395,9 @@ export function LoginPanel({ initialSession, logoutNeedsVerification }: LoginPan
   return (
     <PreparedLoginPanel
       initialSession={preparedInitialSession}
+      loginNeedsVerification={loginNeedsVerification}
       logoutNeedsVerification={logoutNeedsVerification}
+      returnTo={returnTo}
     />
   );
 }

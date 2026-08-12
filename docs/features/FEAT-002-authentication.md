@@ -54,13 +54,17 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - O tipo de cadastro usa o rádio nativo como fonte única: o valor vem do `FormData`, passa pelo Zod estrito e não pode divergir de um estado React durante a hidratação.
 - Cadastro não considera perfil concluído até FEAT-003.
 - Recuperação retorna resposta genérica.
-- Logout invalida caches privados.
+- Logout invalida caches privados. Nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, a mutation executa uma closure sem `variables`, usa `networkMode: "always"` e carrega `expectedScope` UUID somente como asserção do recorte SSR, nunca como autoridade.
+- O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`; resultado com erro ou contexto assinado ausente retorna `401 UNAUTHENTICATED`; somente um `userId` válido diferente de `expectedScope` retorna `409 SESSION_CHANGED`. Os três ramos têm zero efeitos destrutivos explícitos de logout e conduzem o browser ao boundary fechado, `QueryClient.clear()` e recomposição SSR.
 - Se a resposta de logout for perdida ou ambígua, a UI oculta imediatamente os dados privados e recarrega a rota SSR; a tela então informa se a sessão continua ativa ou se a ausência local foi confirmada.
+- Se o cliente perder ou não conseguir validar a resposta do login, e portanto não puder saber se cookies já foram publicados, a UI apaga a referência efêmera e o formulário de credenciais, limpa o cache privado e recarrega `/entrar` para uma decisão SSR autoritativa. Falha/throw depois de iniciar `setSession` recebe `AUTH_SESSION_RECHECK_REQUIRED` e segue a mesma transição, mesmo se o cleanup exato falhar; somente rejeições API comprovadamente anteriores à publicação permanecem recuperáveis no formulário.
+- A projeção da preferência após `setSession` chama `get_my_profile()` com `AbortSignal` e deadline server-side de um segundo. Timeout ou falha usa `system`; resolver a RPC depois do deadline não pode publicar cookie de tema nem acionar `signOut` após a resposta.
 - Token inválido/expirado não mostra formulário funcional.
 - Em callbacks de signup e recovery, somente uma resposta API válida `SERVICE_UNAVAILABLE` emitida antes de iniciar `verifyOtp` permite retry. Depois do envio, falha de rede, timeout, resposta inválida, erro desconhecido do provider ou publicação ambígua encerram a tentativa com `AUTH_RESTART_REQUIRED`/`RECOVERY_RESTART_REQUIRED`, limpam cookies e sessão Auth exatos e orientam solicitar novo link sem reutilizar o OTP possivelmente consumido.
 - Cada callback de recovery cria uma binding/tombstone privada pelo `session_id` do JWT assinado e pela linha canônica de `auth.sessions`; a sessão nunca pode ser promovida a login comum. O grant adicional fica vinculado à mesma binding, expira em 15 minutos e é one-shot: uma claim exclusiva precede o provider; somente rejeição explicitamente sem efeito e ocorrida antes da expiração permite release e retry.
 - O cookie `sl-recovery-session` carrega somente um UUID público, opaco e não autoritativo para escopar SSR/cache. Perda, expiração ou remoção desse marker não remove a classificação durável da sessão Auth.
 - O formulário de nova senha não é montado durante `fetching` nem `paused`; somente `allowed=true`, scope correspondente e `fetchStatus=idle` autorizam a interface. Após consumo, expiração, ausência canônica ou saída da superfície de recovery, a binding é fechada, o grant é invalidado e a sessão/cookies Auth exatos são encerrados.
+- Uma rejeição pública e retryable da troca de senha é copiada somente como mensagem, scope público de origem e erros dos campos `password | confirmPassword` para o boundary de recovery. Esse feedback sobrevive ao refetch autoritativo que desmonta o formulário, reaparece apenas no mesmo scope ainda autorizado e é descartado em nova submissão, sucesso, negação ou troca de scope.
 - Um refetch de sessão valida o usuário/escopo antes de publicar o payload no TanStack; uma troca autoritativa limpa a família e recarrega SSR sem gravar B sob a key de A.
 - Uma conta suspensa pode autenticar no provider, mas não acessa o produto.
 
@@ -91,6 +95,7 @@ Permitir autenticação segura por e-mail/senha e criar uma sessão server-side 
 - PasswordInput com mostrar/ocultar e requisitos.
 - Os callbacks de signup e recovery apresentam carregamento e falha recuperável somente quando a repetição é comprovadamente segura; qualquer resultado ambíguo após o envio encerra o payload one-shot e exige novo link.
 - A verificação inicial e todo refetch de recovery apresentam somente loading durante `fetching` ou `paused`; um estado `allowed` em cache não mantém o formulário no DOM.
+- Um login com desfecho de transporte ambíguo apresenta somente o boundary de verificação até o hard reload; a composição SSR seguinte mostra a sessão autenticada caso os cookies tenham sido publicados ou uma cópia explícita de entrada não confirmada caso permaneça anônima.
 - Toda request interativa expira em dez segundos e reabilita uma recuperação acionável.
 - ReturnTo não permite URL externa.
 - O título canônico da página permanece como único `h1`; um `#` inicial igual ao título do documento é omitido e os demais headings preservam a hierarquia a partir de `h2`.
@@ -106,6 +111,7 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 - O limiter in-memory mantém no máximo 10.000 buckets exatos e nunca remove um bucket vivo. Depois da saturação, chaves inéditas compartilham um contador overflow sticky por ação; até 64 partíções ficam limitadas e uma partíção adicional falha fechado, sem resetar a cota de um discriminador por churn. A borda Nginx continua obrigatória em produção.
 - Sessão sempre validada no servidor para comando.
 - E-mails, senhas e o `TokenHash` de cadastro, login, callback e recovery usam refs one-shot e não são persistidos como `variables` no MutationCache.
+- Logout também chama `mutate()` sem `variables`; sua closure one-shot é apagada em todo settle, e `networkMode: "always"` impede fila offline retomável depois de uma troca de identidade.
 - O conteúdo jurídico não usa `dangerouslySetInnerHTML`: somente o subset explicitamente reconhecido vira elementos React, e sintaxe/HTML não suportados permanecem texto escapado. Links aceitam apenas path interno absoluto sem destino protocol-relative/barra invertida ou URL `https:` sem credenciais; um destino rejeitado perde o link e preserva somente o rótulo.
 
 ## Critérios de aceitação
@@ -141,7 +147,7 @@ Regras:
 
 ## Testes unitários, integração e banco
 
-- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter sem evicção viva e overflow limitado, cache recovery escopado/pausado, binding da sessão, fronteira retryable/terminal dos callbacks, publicação parcial, cleanup exato, templates, parser Markdown jurídico e helpers QA;
+- unitário: contratos Auth, allowlist de `returnTo`, erros públicos, limites, rate limiter sem evicção viva e overflow limitado, cache recovery escopado/pausado, binding da sessão, fronteira retryable/terminal dos callbacks, publicação parcial, cleanup exato, classificação fail-closed do logout antes de obter explicitamente o cookie store e antes dos efeitos destrutivos explícitos de recovery, deleção de cookies ou `signOut`, deadline/abort da projeção de preferência, templates, parser Markdown jurídico e helpers QA;
 - banco/RLS: perfil e aceites próprios para usuários A/B, intenção expirada/replay/concorrência, trigger atômico, metadata scrub, binding/tombstone recovery, grant com claim/release/consume concorrente, expiração e ausência canônica, retenção conservadora, pin `jwt_exp=3600`, grants e readiness;
 - segurança: cookies, origem/request host, corpo limitado, callback em fragmento, redaction e cleanup local exato;
 - Playwright: os sete IDs possuem specs físicas; 23 execuções Auth e a matriz integral de 59 casos passaram depois da ampliação de `SL-F002-E2E-003`, sem criar ID nem alterar o catálogo de 194 cenários.
