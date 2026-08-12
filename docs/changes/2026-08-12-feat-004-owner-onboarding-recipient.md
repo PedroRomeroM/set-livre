@@ -80,6 +80,10 @@ Os builds Next.js de web e backoffice passaram sem warning ou erro. Manifests, r
 
 O boundary guest standalone da FEAT-004 também passou: exatamente um `POST /api/commands` em `127.0.0.1:3000`, com `Host`/`Origin` naturais exatos, sem cookies e comando sintético válido de início de recebedor, retornou `401 UNAUTHENTICATED`. O `requestId` UUID-v4 coincidiu no header e body; as oito contagens owner/Auth/audit ficaram em zero antes/depois. Porta, temporário e PGID terminaram em zero, e o log redigido possui SHA-256 `af8d01d798739f14d1e060b30314e72fb3c1cda7a793b90a81dd4299b259c36b`.
 
+O snapshot funcional foi congelado no commit `c115dcd726929f289777cd897cccc97d33a179ee` e gerou `set-livre-c115dcd726929f289777cd897cccc97d33a179ee.tar.gz`, com 24.891.031 bytes e SHA-256 `484d60e67f17768688619acf58b998a43fabc2420e9dd8b221f17a112e9aaa6c`. A árvore contém 2.859 payloads: web 1.568, backoffice 1.276, migrations 13, lockfile 1 e manifesto 1. O manifesto possui 678.902 bytes e SHA-256 `a62f1d4c4aaf317ce5d74232a959adff01367f863efe8f7b8de3fb17b89ee018`; os `BUILD_ID` equivalem ao commit, e o head empacotado é `20260812000100_owner_onboarding_recipient.sql`.
+
+O smoke padrão do gerador passou. A auditoria integral encontrou correspondência exata entre tar, staging e manifesto e terminou `NO-BLOCKER` somente para a release local Linux x64, Node 24.18/npm 11.19. As varreduras canônicas do gerador antes e depois do smoke não encontraram segredo de runtime nem PII de cliente/QA. Esta evidência não aprova produção ou ARM64: o smoke nativo ARM64 e PEND-003 — Nginx, TLS e trusted proxy — permanecem pendentes. Publicação, review e merge também ainda não ocorreram.
+
 ## Observabilidade e operação
 
 Eventos allowlisted registram ação, resultado, duração e `requestId`, sem PII nem payload externo. O adapter e o contrato `local_fixture` são recusados fora de local/test; PEND-004/PEND-006 continuam como bloqueadores explícitos de produção.
@@ -94,4 +98,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Contratos, backend, UI, migration, reset, geração e banco estão implementados; o pgTAP passou em 355/355 no head `20260812000100`, com cleanup exato e zero resíduo final. Unitários finais passaram em 707/707, os gates não-browser citados estão verdes, a matriz específica FEAT-004 passou em 23/23, a integral limpa em 114/114, e builds, smoke padrão e boundary guest standalone ficaram verdes. A feature permanece **Em implementação**: empacotamento, review e release desta branch ainda não são alegados por este registro.
+Contratos, backend, UI, migration, reset, geração e banco estão implementados; o pgTAP passou em 355/355 no head `20260812000100`, com cleanup exato e zero resíduo final. Unitários finais passaram em 707/707, os gates não-browser citados estão verdes, a matriz específica FEAT-004 passou em 23/23, a integral limpa em 114/114, e builds, smoke padrão, boundary guest standalone e release local canônica x64 ficaram verdes. A feature permanece **Em implementação**: publicação, review e merge desta branch ainda não ocorreram, e a evidência local x64 não substitui PEND-003 nem o smoke ARM64 nativo.
