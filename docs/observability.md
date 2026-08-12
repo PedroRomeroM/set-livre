@@ -18,6 +18,8 @@ A evidência browser pós-review foi aceita sem exposição observável: a focad
 
 O build canônico pós-review terminou com exit `0` e log SHA-256 `ae46bace1364f77876042025799515a6be0f78ef48afea0d6f343c12ed0d7e68`. O smoke runtime final autorizado terminou com exit `0`, log SHA-256 `85db0dad1e7cbd999e4427222fdd1b685a3747ffde154eb5a46b444e9cf8f735` e server log redigido `4da1f9af3e0bb34285be99be0ef71d4cefa22108bbe817c23c4c8983828755bf`. Todos os boundaries guest FEAT-004 devolveram `requestId` UUID-v4 sem registrar PII ou payload; PIDs, portas e temporários terminaram em zero.
 
+O gerador da release local canônica do commit `79376b62bdce788c9eb7e1f1696d5acfde0cb215` terminou com exit `0` em uma única invocação; log SHA-256 `1e8f5bf3d472f2000d8b32d53b0dca2165ec72513f79f407800e4d8d9d56afba`. O smoke embutido e as varreduras de segurança, secrets e PII ficaram verdes, e o cleanup terminou sem resíduo. Esse registro é local Linux x64, não telemetria de ARM64 ou produção.
+
 ## 2. Logs
 
 Formato JSON:
