@@ -86,7 +86,7 @@ O smoke padrão do gerador passou. A auditoria integral encontrou correspondênc
 
 ## Publicação
 
-A branch `feat/feat-004-owner-onboarding-recipient` foi publicada, e o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) está `OPEN`, em draft e com base `main`. O HEAD remoto `4bf6ec51ce27486f274dcad1f708372947055240` contém o commit funcional `c115dcd726929f289777cd897cccc97d33a179ee` e o commit de documentação de release `4bf6ec51ce27486f274dcad1f708372947055240`. A publicação está concluída; review, promoção para ready e merge permanecem pendentes.
+A branch `feat/feat-004-owner-onboarding-recipient` foi publicada, e o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) está `OPEN`, em draft e com base `main`. O snapshot de release já publicado reúne o commit funcional `c115dcd726929f289777cd897cccc97d33a179ee` e a evidência documental `4bf6ec51ce27486f274dcad1f708372947055240`; commits documentais posteriores não alteram o archive. A publicação está concluída; review, promoção para ready e merge permanecem pendentes.
 
 ## Observabilidade e operação
 
