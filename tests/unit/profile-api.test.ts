@@ -1,10 +1,15 @@
-import type { MyProfileResult, ProfileCompletePayload } from "@set-livre/contracts";
+import type {
+  MyProfileResult,
+  ProfileCompletePayload,
+  ProfileUpdatePayload,
+} from "@set-livre/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ProfileApiError,
   completeOwnProfile,
   readOwnProfile,
+  updateOwnProfile,
 } from "../../src/domains/identity/components/profile-api";
 
 const requestId = "11111111-1111-4111-8111-111111111111";
@@ -33,6 +38,11 @@ const completePayload = {
   phone: "+5541999991234",
   taxId: "52998224725",
 } satisfies ProfileCompletePayload;
+const updatePayload = {
+  colorScheme: "dark",
+  expectedPreferencesVersion: 0,
+  section: "appearance",
+} satisfies ProfileUpdatePayload;
 
 describe("profile browser API", () => {
   afterEach(() => {
@@ -83,8 +93,10 @@ describe("profile browser API", () => {
   });
 
   it("maps a version conflict to a recoverable redacted error", async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json(
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      void _input;
+      void _init;
+      return Response.json(
         {
           error: {
             code: "CONFLICT",
@@ -93,14 +105,36 @@ describe("profile browser API", () => {
           },
         },
         { status: 409 },
-      ),
-    );
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
-    await expect(completeOwnProfile(completePayload)).rejects.toMatchObject({
+    await expect(completeOwnProfile(userId, completePayload)).rejects.toMatchObject({
       code: "CONFLICT",
       message: "O perfil foi alterado. Carregue a versão atual.",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      action: "profile.complete",
+      expectedScope: userId,
+      payload: completePayload,
+    });
+  });
+
+  it("serializes the SSR scope assertion for profile updates", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      void _input;
+      void _init;
+      return Response.json({ data: profileResult, requestId }, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    await expect(updateOwnProfile(userId, updatePayload)).resolves.toEqual(profileResult);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      action: "profile.update",
+      expectedScope: userId,
+      payload: updatePayload,
     });
   });
 
@@ -119,7 +153,7 @@ describe("profile browser API", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
-    const outcome = completeOwnProfile(completePayload).catch((error: unknown) => error);
+    const outcome = completeOwnProfile(userId, completePayload).catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(10_000);
     const error = await outcome;
 

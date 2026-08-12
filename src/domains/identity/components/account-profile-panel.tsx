@@ -9,7 +9,6 @@ import {
   profileAppearanceUpdatePayloadSchema,
   profileCompletePayloadSchema,
   profileIdentityUpdatePayloadSchema,
-  type IdentitySession,
   type MyProfileResult,
   type PersonType,
   type ProfileCompletePayload,
@@ -18,7 +17,16 @@ import {
 } from "@set-livre/contracts";
 import { Alert, Button, ChoiceGroup, Field, Input, Select, Stack } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { flushSync } from "react-dom";
 
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
 import {
@@ -27,17 +35,27 @@ import {
   accountProfileMatchesScope,
   accountQueryKeys,
   clearIdentityAndAccountQueryCache,
-  newestAccountProfileResult,
+  publishNewestAccountProfileMutationResult,
   readNewestAccountProfileResult,
+  seedAuthoritativeAccountProfile,
 } from "./account-query-keys";
 import styles from "./account.module.css";
-import { identityQueryKeys } from "./identity-query-keys";
 import {
   ProfileApiError,
   completeOwnProfile,
   readOwnProfile,
   updateOwnProfile,
 } from "./profile-api";
+import {
+  beginProfileScopeTransitionOnce,
+  cleanupProfileMutationAttemptOnce,
+  isProfileSessionChangedError,
+  profileMutationResultCanPublish,
+  profileMutationNetworkMode,
+  requireProfileMutationAttempt,
+  type ProfileMutationAttempt,
+  type ProfileScopeTransitionGuard,
+} from "./profile-mutation";
 import { applyVisualPreference, visualPreferenceOptions } from "./visual-preference";
 
 type AccountProfilePanelProps = {
@@ -136,30 +154,52 @@ function ConflictRecoveryAction({
 }
 
 function CompletionForm({
+  expectedScope,
   onRefresh,
   onSave,
+  onSessionChanged,
   profile,
+  scopeTransitionGuard,
 }: {
+  expectedScope: string;
   onRefresh: RefreshProfile;
   onSave: SaveProfile;
+  onSessionChanged: () => void;
   profile: Extract<ProfileSnapshot, { completed: false }>;
+  scopeTransitionGuard: ProfileScopeTransitionGuard;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const pendingProfile = useRef<ProfileCompletePayload>(undefined);
+  const pendingProfile = useRef<ProfileMutationAttempt<ProfileCompletePayload>>(undefined);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [personType, setPersonType] = useState<PersonType>(profile.personType);
+  function cleanupAttemptOnce() {
+    cleanupProfileMutationAttemptOnce(
+      pendingProfile.current,
+      () => {
+        pendingProfile.current = undefined;
+      },
+      () => {
+        clearSensitiveInputs(formRef.current);
+      },
+    );
+  }
   const mutation = useMutation({
     mutationFn: () => {
-      if (pendingProfile.current === undefined) {
-        throw new Error("A conclusão do perfil não possui payload efêmero.");
-      }
-      return completeOwnProfile(pendingProfile.current);
+      const attempt = requireProfileMutationAttempt(
+        pendingProfile.current,
+        "A conclusão do perfil não possui payload efêmero.",
+      );
+      return completeOwnProfile(attempt.expectedScope, attempt.payload);
     },
-    onSettled: () => {
-      pendingProfile.current = undefined;
-      clearSensitiveInputs(formRef.current);
+    networkMode: profileMutationNetworkMode,
+    onError: (error) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
+      if (isProfileSessionChangedError(error)) onSessionChanged();
     },
     onSuccess: (result) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
       onSave(result, "Perfil concluído com segurança.");
     },
   });
@@ -182,7 +222,7 @@ function CompletionForm({
       setFieldErrors(firstFieldErrors(parsed.error));
       return;
     }
-    pendingProfile.current = parsed.data;
+    pendingProfile.current = { expectedScope, payload: parsed.data };
     mutation.mutate();
   }
 
@@ -329,31 +369,53 @@ function CompletedProfileSummary({
 }
 
 function IdentityUpdateForm({
+  expectedScope,
   onRefresh,
   onSave,
+  onSessionChanged,
   profile,
+  scopeTransitionGuard,
 }: {
+  expectedScope: string;
   onRefresh: RefreshProfile;
   onSave: SaveProfile;
+  onSessionChanged: () => void;
   profile: Extract<ProfileSnapshot, { completed: true }>;
+  scopeTransitionGuard: ProfileScopeTransitionGuard;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const pendingUpdate = useRef<ProfileUpdatePayload>(undefined);
+  const pendingUpdate = useRef<ProfileMutationAttempt<ProfileUpdatePayload>>(undefined);
   const [documentAction, setDocumentAction] = useState<"clear" | "keep" | "replace">("keep");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [taxIdAction, setTaxIdAction] = useState<"keep" | "replace">("keep");
+  function cleanupAttemptOnce() {
+    cleanupProfileMutationAttemptOnce(
+      pendingUpdate.current,
+      () => {
+        pendingUpdate.current = undefined;
+      },
+      () => {
+        clearSensitiveInputs(formRef.current);
+      },
+    );
+  }
   const mutation = useMutation({
     mutationFn: () => {
-      if (pendingUpdate.current === undefined) {
-        throw new Error("A atualização do perfil não possui payload efêmero.");
-      }
-      return updateOwnProfile(pendingUpdate.current);
+      const attempt = requireProfileMutationAttempt(
+        pendingUpdate.current,
+        "A atualização do perfil não possui payload efêmero.",
+      );
+      return updateOwnProfile(attempt.expectedScope, attempt.payload);
     },
-    onSettled: () => {
-      pendingUpdate.current = undefined;
-      clearSensitiveInputs(formRef.current);
+    networkMode: profileMutationNetworkMode,
+    onError: (error) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
+      if (isProfileSessionChangedError(error)) onSessionChanged();
     },
     onSuccess: (result) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
       setDocumentAction("keep");
       setTaxIdAction("keep");
       onSave(result, "Dados do perfil atualizados.");
@@ -394,7 +456,7 @@ function IdentityUpdateForm({
       setFieldErrors(nestedProfileFieldErrors(firstFieldErrors(parsed.error)));
       return;
     }
-    pendingUpdate.current = parsed.data;
+    pendingUpdate.current = { expectedScope, payload: parsed.data };
     mutation.mutate();
   }
 
@@ -541,28 +603,49 @@ function IdentityUpdateForm({
 }
 
 function AppearanceForm({
+  expectedScope,
   onRefresh,
   onSave,
+  onSessionChanged,
   profile,
+  scopeTransitionGuard,
 }: {
+  expectedScope: string;
   onRefresh: RefreshProfile;
   onSave: SaveProfile;
+  onSessionChanged: () => void;
   profile: ProfileSnapshot;
+  scopeTransitionGuard: ProfileScopeTransitionGuard;
 }) {
-  const pendingUpdate = useRef<ProfileUpdatePayload>(undefined);
+  const pendingUpdate = useRef<ProfileMutationAttempt<ProfileUpdatePayload>>(undefined);
   const [colorScheme, setColorScheme] = useState(profile.colorScheme);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  function cleanupAttemptOnce() {
+    cleanupProfileMutationAttemptOnce(
+      pendingUpdate.current,
+      () => {
+        pendingUpdate.current = undefined;
+      },
+      () => undefined,
+    );
+  }
   const mutation = useMutation({
     mutationFn: () => {
-      if (pendingUpdate.current === undefined) {
-        throw new Error("A preferência visual não possui payload efêmero.");
-      }
-      return updateOwnProfile(pendingUpdate.current);
+      const attempt = requireProfileMutationAttempt(
+        pendingUpdate.current,
+        "A preferência visual não possui payload efêmero.",
+      );
+      return updateOwnProfile(attempt.expectedScope, attempt.payload);
     },
-    onSettled: () => {
-      pendingUpdate.current = undefined;
+    networkMode: profileMutationNetworkMode,
+    onError: (error) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
+      if (isProfileSessionChangedError(error)) onSessionChanged();
     },
     onSuccess: (result) => {
+      cleanupAttemptOnce();
+      if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
       onSave(result, "Preferência visual atualizada.");
     },
   });
@@ -581,7 +664,7 @@ function AppearanceForm({
       setFieldErrors(firstFieldErrors(parsed.error));
       return;
     }
-    pendingUpdate.current = parsed.data;
+    pendingUpdate.current = { expectedScope, payload: parsed.data };
     mutation.mutate();
   }
 
@@ -639,16 +722,23 @@ function AppearanceForm({
 }
 
 function ProfileContent({
+  expectedScope,
   onSave,
+  onSessionChanged,
   profileResult,
   refreshProfile,
+  scopeTransitionGuard,
 }: {
+  expectedScope: string;
   onSave: SaveProfile;
+  onSessionChanged: () => void;
   profileResult: MyProfileResult;
   refreshProfile: RefreshProfile;
+  scopeTransitionGuard: ProfileScopeTransitionGuard;
 }) {
   const [successMessage, setSuccessMessage] = useState<string>();
   const saveProfile: SaveProfile = (profile, message) => {
+    if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
     setSuccessMessage(message);
     onSave(profile, message);
   };
@@ -672,24 +762,33 @@ function ProfileContent({
       )}
       {profile.completed ? (
         <IdentityUpdateForm
+          expectedScope={expectedScope}
           key={`identity-${profile.profileVersion}`}
           onRefresh={refreshProfile}
           onSave={saveProfile}
+          onSessionChanged={onSessionChanged}
           profile={profile}
+          scopeTransitionGuard={scopeTransitionGuard}
         />
       ) : (
         <CompletionForm
+          expectedScope={expectedScope}
           key={`completion-${profile.profileVersion}`}
           onRefresh={refreshProfile}
           onSave={saveProfile}
+          onSessionChanged={onSessionChanged}
           profile={profile}
+          scopeTransitionGuard={scopeTransitionGuard}
         />
       )}
       <AppearanceForm
+        expectedScope={expectedScope}
         key={`appearance-${profile.preferencesVersion}`}
         onRefresh={refreshProfile}
         onSave={saveProfile}
+        onSessionChanged={onSessionChanged}
         profile={profile}
+        scopeTransitionGuard={scopeTransitionGuard}
       />
     </Stack>
   );
@@ -699,48 +798,22 @@ function publishProfileResult(
   queryClient: QueryClient,
   expectedUserId: string,
   result: MyProfileResult,
+  scopeTransitionGuard: ProfileScopeTransitionGuard,
   onScopeTransition: () => void,
 ) {
-  if (!accountProfileMatchesScope(result, expectedUserId)) {
-    onScopeTransition();
-    clearIdentityAndAccountQueryCache(queryClient);
-    window.location.reload();
-    return;
-  }
-  const queryKey = accountQueryKeys.profile(expectedUserId);
-  const current = queryClient.getQueryData<MyProfileResult>(queryKey);
-  let next: MyProfileResult;
+  if (!profileMutationResultCanPublish(scopeTransitionGuard)) return;
   try {
-    next = newestAccountProfileResult(current, result, expectedUserId);
+    publishNewestAccountProfileMutationResult(queryClient, expectedUserId, result);
   } catch {
     onScopeTransition();
-    clearIdentityAndAccountQueryCache(queryClient);
-    window.location.reload();
-    return;
   }
-  if (next !== result) {
-    void queryClient.invalidateQueries({ queryKey });
-    return;
-  }
-  queryClient.setQueryData(queryKey, result);
-  queryClient.setQueryData<IdentitySession>(
-    identityQueryKeys.session(expectedUserId),
-    (session) => {
-      if (session?.authenticated !== true || session.userId !== expectedUserId) return session;
-      return {
-        ...session,
-        personType: result.profile.personType,
-        profileCompleted: result.profile.completed,
-        status: result.profile.status,
-      };
-    },
-  );
 }
 
 function PreparedAccountProfilePanel({ initialProfile, userId }: AccountProfilePanelProps) {
   const queryClient = useQueryClient();
   const queryKey = useMemo(() => accountQueryKeys.profile(userId), [userId]);
   const [scopeTransitionStarted, setScopeTransitionStarted] = useState(false);
+  const scopeTransitionGuard = useRef(false);
   const profileQuery = useQuery({
     initialData: initialProfile,
     queryFn: async () => readNewestAccountProfileResult(queryClient, userId, readOwnProfile),
@@ -757,16 +830,46 @@ function PreparedAccountProfilePanel({ initialProfile, userId }: AccountProfileP
   const observedScopeChanged =
     observedProfile !== undefined && !accountProfileMatchesScope(observedProfile, userId);
   const authoritativeScopeChanged = profileQuery.error instanceof AccountProfileScopeChangedError;
+  const scopeTransitionRequired = observedScopeChanged || authoritativeScopeChanged;
   const renderablePreference =
     profileCanRender && observedProfile !== undefined && !profileQuery.isError
       ? observedProfile.profile.colorScheme
       : undefined;
 
-  useEffect(() => {
-    if (!observedScopeChanged && !authoritativeScopeChanged) return;
-    clearIdentityAndAccountQueryCache(queryClient);
-    window.location.reload();
-  }, [authoritativeScopeChanged, observedScopeChanged, queryClient]);
+  const executeScopeTransition = useCallback(
+    (commitBoundary: () => void) => {
+      beginProfileScopeTransitionOnce(
+        scopeTransitionGuard,
+        commitBoundary,
+        () => {
+          clearIdentityAndAccountQueryCache(queryClient);
+        },
+        () => {
+          window.location.reload();
+        },
+      );
+    },
+    [queryClient],
+  );
+
+  const beginMutationScopeTransition = useCallback(() => {
+    executeScopeTransition(() => {
+      flushSync(() => {
+        setScopeTransitionStarted(true);
+      });
+    });
+  }, [executeScopeTransition]);
+
+  const beginObservedScopeTransition = useCallback(() => {
+    executeScopeTransition(() => {
+      setScopeTransitionStarted(true);
+    });
+  }, [executeScopeTransition]);
+
+  useLayoutEffect(() => {
+    if (!scopeTransitionRequired) return;
+    beginObservedScopeTransition();
+  }, [beginObservedScopeTransition, scopeTransitionRequired]);
 
   useEffect(() => {
     if (renderablePreference !== undefined) {
@@ -774,7 +877,11 @@ function PreparedAccountProfilePanel({ initialProfile, userId }: AccountProfileP
     }
   }, [renderablePreference]);
 
-  if (scopeTransitionStarted || (observedProfile !== undefined && !profileCanRender)) {
+  if (
+    scopeTransitionStarted ||
+    scopeTransitionRequired ||
+    (observedProfile !== undefined && !profileCanRender)
+  ) {
     return <Alert>Validando seus dados privados…</Alert>;
   }
 
@@ -806,20 +913,26 @@ function PreparedAccountProfilePanel({ initialProfile, userId }: AccountProfileP
 
   return (
     <ProfileContent
+      expectedScope={userId}
       onSave={(result) =>
-        publishProfileResult(queryClient, userId, result, () => {
-          setScopeTransitionStarted(true);
-        })
+        publishProfileResult(
+          queryClient,
+          userId,
+          result,
+          scopeTransitionGuard,
+          beginMutationScopeTransition,
+        )
       }
+      onSessionChanged={beginMutationScopeTransition}
       profileResult={observedProfile}
       refreshProfile={() => profileQuery.refetch()}
+      scopeTransitionGuard={scopeTransitionGuard}
     />
   );
 }
 
 export function AccountProfilePanel({ initialProfile, userId }: AccountProfilePanelProps) {
   const queryClient = useQueryClient();
-  const queryKey = useMemo(() => accountQueryKeys.profile(userId), [userId]);
   const [preparedInitialProfile, setPreparedInitialProfile] = useState<MyProfileResult>();
   const seedIsCurrent = preparedInitialProfile === initialProfile;
 
@@ -833,15 +946,14 @@ export function AccountProfilePanel({ initialProfile, userId }: AccountProfilePa
       };
     }
     applyVisualPreference(document.documentElement, initialProfile.profile.colorScheme);
-    queryClient.removeQueries({ queryKey: accountQueryKeys.profiles });
-    queryClient.setQueryData(queryKey, initialProfile);
+    seedAuthoritativeAccountProfile(queryClient, userId, initialProfile);
     queueMicrotask(() => {
       if (active) setPreparedInitialProfile(initialProfile);
     });
     return () => {
       active = false;
     };
-  }, [initialProfile, queryClient, queryKey, userId]);
+  }, [initialProfile, queryClient, userId]);
 
   if (!seedIsCurrent) {
     return <Alert>Validando seus dados privados…</Alert>;

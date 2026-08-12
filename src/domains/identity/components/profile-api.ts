@@ -98,25 +98,26 @@ async function requestProfile<TData>(
 
 function profileCommandBody(
   action: "profile.complete" | "profile.update",
+  expectedScope: string,
   payload: ProfileCompletePayload | ProfileUpdatePayload,
 ) {
-  return JSON.stringify({ action, payload });
+  return JSON.stringify({ action, expectedScope, payload });
 }
 
 export function readOwnProfile() {
   return requestProfile("/api/account/profile", myProfileResultSchema);
 }
 
-export function completeOwnProfile(payload: ProfileCompletePayload) {
+export function completeOwnProfile(expectedScope: string, payload: ProfileCompletePayload) {
   return requestProfile("/api/commands", myProfileResultSchema, {
-    body: profileCommandBody("profile.complete", payload),
+    body: profileCommandBody("profile.complete", expectedScope, payload),
     method: "POST",
   });
 }
 
-export function updateOwnProfile(payload: ProfileUpdatePayload) {
+export function updateOwnProfile(expectedScope: string, payload: ProfileUpdatePayload) {
   return requestProfile("/api/commands", myProfileResultSchema, {
-    body: profileCommandBody("profile.update", payload),
+    body: profileCommandBody("profile.update", expectedScope, payload),
     method: "POST",
   });
 }

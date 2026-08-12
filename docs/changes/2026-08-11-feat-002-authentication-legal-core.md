@@ -56,7 +56,7 @@ O comando de cadastro aplica origem e host da request, limite de corpo, rate lim
 
 ## Read models, comandos e invalidação
 
-- comando visitante `identity.register` em `POST /api/commands`;
+- comando visitante `identity.register`, originalmente compartilhado em `POST /api/commands` e agora isolado em `POST /api/auth/register`; a rota privada autentica antes de consumir o body;
 - métodos Auth server-side para login, logout, callback e recovery;
 - read models explícitos para documentos legais vigentes e contexto da própria identidade;
 - sessão usa key por `userId`/anônimo; Query preexistente, refetch ativo/pausado, observer antigo ou troca de usuário bloqueiam PII até remover a família, semear o SSR atual ou recarregar a rota;

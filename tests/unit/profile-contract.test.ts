@@ -191,7 +191,8 @@ describe("profile contracts", () => {
     }
   });
 
-  it("normalizes complete commands and rejects status or userId", () => {
+  it("requires a strict SSR scope assertion and rejects status or userId as authority", () => {
+    const expectedScope = "11111111-1111-4111-8111-111111111111";
     const payload = {
       additionalDocument: "RG 12.345-6",
       expectedProfileVersion: 0,
@@ -206,15 +207,35 @@ describe("profile contracts", () => {
       taxId: "52998224725",
     });
     expect(
+      identityCommandSchema.parse({
+        action: "profile.complete",
+        expectedScope,
+        payload,
+      }),
+    ).toMatchObject({ action: "profile.complete", expectedScope });
+    expect(identityCommandSchema.safeParse({ action: "profile.complete", payload }).success).toBe(
+      false,
+    );
+    expect(
       identityCommandSchema.safeParse({
         action: "profile.complete",
+        expectedScope,
         payload: { ...payload, status: "active" },
       }).success,
     ).toBe(false);
     expect(
       identityCommandSchema.safeParse({
         action: "profile.complete",
+        expectedScope,
         payload: { ...payload, userId: "11111111-1111-4111-8111-111111111111" },
+      }).success,
+    ).toBe(false);
+    expect(
+      identityCommandSchema.safeParse({
+        action: "profile.complete",
+        expectedScope,
+        payload,
+        userId: expectedScope,
       }).success,
     ).toBe(false);
   });

@@ -6,7 +6,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { clearIdentityAndAccountQueryCache } from "./account-query-keys";
+import {
+  clearIdentityAndAccountQueryCache,
+  seedAuthoritativeIdentitySession,
+} from "./account-query-keys";
 import styles from "./account.module.css";
 import { IdentityApiError, logoutIdentity, readIdentitySession } from "./identity-api";
 import {
@@ -162,25 +165,20 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
 
 export function AccountSecurityPanel({ initialSession }: AccountSecurityPanelProps) {
   const queryClient = useQueryClient();
-  const queryKey = useMemo(
-    () => identityQueryKeys.session(initialSession.userId),
-    [initialSession.userId],
-  );
   const [preparedInitialSession, setPreparedInitialSession] =
     useState<AuthenticatedIdentitySession>();
   const seedIsCurrent = preparedInitialSession === initialSession;
 
   useEffect(() => {
     let active = true;
-    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-    queryClient.setQueryData(queryKey, initialSession);
+    seedAuthoritativeIdentitySession(queryClient, initialSession);
     queueMicrotask(() => {
       if (active) setPreparedInitialSession(initialSession);
     });
     return () => {
       active = false;
     };
-  }, [initialSession, queryClient, queryKey]);
+  }, [initialSession, queryClient]);
 
   if (!seedIsCurrent) {
     return <Alert>Validando sua sessão antes de exibir dados privados…</Alert>;

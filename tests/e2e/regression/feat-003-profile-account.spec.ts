@@ -197,27 +197,39 @@ test("SL-F003-E2E-008 @p1 persiste o tema e o projeta no HTML antes da hidrataç
   }
 });
 
-test("SL-F003-E2E-009 @p1 fecha PII em fetching/paused e recupera timeout/conflito", async ({
+test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/conflito", async ({
   page,
 }, testInfo) => {
-  test.setTimeout(150_000);
+  test.setTimeout(180_000);
   const identity = createFeat003QaIdentity(testInfo, "009_estados");
   const secrets = createFeat003ProfileSecrets("individual");
+  const offlineSecrets = createFeat003ProfileSecrets("individual");
   const profileName = "Pessoa QA Boundary Privado";
   const profilePhone = "+55 (41) 99999-1009";
+  const offlineName = "Pessoa QA Alteração Offline";
+  const offlinePhone = "+55 (41) 99999-2009";
+  const recoveredName = "Pessoa QA Recuperação Online";
+  const recoveredPhone = "+55 (41) 99999-3009";
   const fetchRequestStarted = createDeferredSignal();
   const releaseFetchRequest = createDeferredSignal();
   const timeoutRequestStarted = createDeferredSignal();
   const releaseTimeoutRequest = createDeferredSignal();
+  let profileCommandRequests = 0;
 
   try {
     await registerAndConfirmFeat003Identity(page, identity, "individual");
     await gotoExpectedPage(page, "/conta", "Minha conta");
-    await completeFeat003Profile(page, {
+    const initialProfile = await completeFeat003Profile(page, {
       name: profileName,
       personType: "individual",
       phone: profilePhone,
       secrets,
+    });
+    page.on("request", (request) => {
+      const address = new URL(request.url());
+      if (address.pathname === "/api/commands" && request.method() === "POST") {
+        profileCommandRequests += 1;
+      }
     });
     const privateValues = [
       profileName,
@@ -266,6 +278,115 @@ test("SL-F003-E2E-009 @p1 fecha PII em fetching/paused e recupera timeout/confli
     }
     await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
 
+    await page.getByRole("textbox", { name: "Nome completo" }).fill(offlineName);
+    await page.getByRole("textbox", { name: "Telefone" }).fill(offlinePhone);
+    await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("replace");
+    const replacementTaxId = page.getByRole("textbox", { name: "Novo CPF" });
+    await stageFeat003SensitiveValue(replacementTaxId, offlineSecrets.taxId);
+    await page
+      .getByRole("combobox", { name: "Alterar documento adicional" })
+      .selectOption("replace");
+    const replacementDocument = page.getByRole("textbox", {
+      name: "Novo documento adicional",
+    });
+    await stageFeat003SensitiveValue(replacementDocument, offlineSecrets.additionalDocument);
+    await page.context().setOffline(true);
+    let commandsAfterOfflineFailure = 0;
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+      });
+      await page.getByRole("button", { name: "Salvar alterações" }).click();
+      await expect(
+        page
+          .getByRole("alert")
+          .filter({ has: page.getByText("Não foi possível salvar", { exact: true }) }),
+      ).toContainText("Não foi possível conectar. Verifique sua internet e tente novamente.");
+      await expect(page.getByRole("button", { name: "Salvar alterações" })).toBeEnabled();
+      await expect(replacementTaxId).toHaveValue("");
+      await expect(replacementDocument).toHaveValue("");
+      await assertFeat003SecretsAbsentFromDom(page, [
+        secrets.taxId,
+        secrets.additionalDocument,
+        offlineSecrets.taxId,
+        offlineSecrets.additionalDocument,
+      ]);
+      commandsAfterOfflineFailure = profileCommandRequests;
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("online"));
+      });
+    }
+    const reconnectBarrier = await page.evaluate(async () => {
+      try {
+        const response = await fetch("/api/account/profile", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        return response.status;
+      } catch {
+        return 0;
+      }
+    });
+    if (reconnectBarrier !== 200) {
+      throw new Error("A barreira de rede após o reconnect da mutação não foi concluída.");
+    }
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    if (profileCommandRequests !== commandsAfterOfflineFailure) {
+      throw new Error("Uma mutação pausada enviou POST tardio após o reconnect.");
+    }
+    await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
+    await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("keep");
+    await page.getByRole("combobox", { name: "Alterar documento adicional" }).selectOption("keep");
+    await page.getByRole("textbox", { name: "Nome completo" }).fill(recoveredName);
+    await page.getByRole("textbox", { name: "Telefone" }).fill(recoveredPhone);
+    const recoveryResponsePromise = page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return address.pathname === "/api/commands" && response.request().method() === "POST";
+    });
+    await page.getByRole("button", { name: "Salvar alterações" }).click();
+    const recoveryResponse = await recoveryResponsePromise;
+    if (recoveryResponse.status() !== 200) {
+      throw new Error("A recuperação online da mutação de perfil não foi aceita.");
+    }
+    const recoveryPayload: unknown = await recoveryResponse.json();
+    const recoveredProfile = assertFeat003SafeProfileResult(
+      apiSuccessSchema(myProfileResultSchema).parse(recoveryPayload).data,
+      [
+        secrets.taxId,
+        secrets.additionalDocument,
+        offlineSecrets.taxId,
+        offlineSecrets.additionalDocument,
+      ],
+    );
+    if (
+      profileCommandRequests !== commandsAfterOfflineFailure + 1 ||
+      recoveredProfile.profile.profileVersion !== initialProfile.profile.profileVersion + 1
+    ) {
+      throw new Error("A tentativa offline foi retomada ou alterou a versão autoritativa.");
+    }
+    await expect(page.getByText("Dados do perfil atualizados.", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(recoveredName);
+    await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(offlineName);
+    const recoveredPrivateValues = [
+      recoveredName,
+      formatFeat003PhoneForDisplay(recoveredPhone),
+      `***.***.***-${secrets.taxId.slice(-2)}`,
+      maskedFeat003AdditionalDocument(secrets.additionalDocument),
+    ];
+    await assertFeat003SecretsAbsentFromDom(page, [
+      secrets.taxId,
+      secrets.additionalDocument,
+      offlineSecrets.taxId,
+      offlineSecrets.additionalDocument,
+    ]);
+
     await page.evaluate(() => {
       const nativeSetTimeout = window.setTimeout.bind(window);
       Object.defineProperty(window, "setTimeout", {
@@ -292,15 +413,25 @@ test("SL-F003-E2E-009 @p1 fecha PII em fetching/paused e recupera timeout/confli
     });
     await timeoutRequestStarted.promise;
     await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
-    await assertFeat003PrivateValuesAbsentFromDom(page, privateValues);
-    await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+    await assertFeat003PrivateValuesAbsentFromDom(page, recoveredPrivateValues);
+    await assertFeat003SecretsAbsentFromDom(page, [
+      secrets.taxId,
+      secrets.additionalDocument,
+      offlineSecrets.taxId,
+      offlineSecrets.additionalDocument,
+    ]);
     await expect(
       page
         .getByRole("alert")
         .filter({ has: page.getByText("Perfil indisponível", { exact: true }) }),
     ).toContainText("A solicitação demorou mais que o esperado");
-    await assertFeat003PrivateValuesAbsentFromDom(page, privateValues);
-    await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+    await assertFeat003PrivateValuesAbsentFromDom(page, recoveredPrivateValues);
+    await assertFeat003SecretsAbsentFromDom(page, [
+      secrets.taxId,
+      secrets.additionalDocument,
+      offlineSecrets.taxId,
+      offlineSecrets.additionalDocument,
+    ]);
     releaseTimeoutRequest.resolve();
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -332,7 +463,12 @@ test("SL-F003-E2E-009 @p1 fecha PII em fetching/paused e recupera timeout/confli
       0,
     );
     await expect(page.getByRole("combobox", { name: "Tema da interface" })).toHaveValue("system");
-    await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+    await assertFeat003SecretsAbsentFromDom(page, [
+      secrets.taxId,
+      secrets.additionalDocument,
+      offlineSecrets.taxId,
+      offlineSecrets.additionalDocument,
+    ]);
     await expectNoHorizontalOverflow(page);
   } finally {
     releaseFetchRequest.resolve();

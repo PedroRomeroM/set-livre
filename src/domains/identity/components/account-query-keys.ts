@@ -1,7 +1,11 @@
-import type { MyProfileResult } from "@set-livre/contracts";
+import type { IdentitySession, MyProfileResult } from "@set-livre/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
-import { identityQueryKeys } from "./identity-query-keys";
+import {
+  identityQueryKeys,
+  identitySessionQueryScope,
+  identitySessionScope,
+} from "./identity-query-keys";
 
 type AccountFetchStatus = "fetching" | "idle" | "paused";
 
@@ -61,6 +65,17 @@ export function newestAccountProfileResult(
   return scopedCandidate;
 }
 
+export function newestAccountProfileMutationResult(
+  current: MyProfileResult | undefined,
+  candidate: MyProfileResult,
+  expectedUserId: string,
+) {
+  if (current === undefined) {
+    throw new AccountProfileScopeChangedError();
+  }
+  return newestAccountProfileResult(current, candidate, expectedUserId);
+}
+
 export async function readNewestAccountProfileResult(
   queryClient: QueryClient,
   expectedUserId: string,
@@ -86,4 +101,77 @@ export function clearIdentityAndAccountQueryCache(queryClient: QueryClient) {
   queryClient.getMutationCache().clear();
   queryClient.removeQueries({ queryKey: accountQueryKeys.profiles });
   queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+}
+
+export function seedAuthoritativeAccountProfile(
+  queryClient: QueryClient,
+  expectedUserId: string,
+  profile: MyProfileResult,
+) {
+  const scopedProfile = accountProfileForScope(profile, expectedUserId);
+  clearIdentityAndAccountQueryCache(queryClient);
+  queryClient.setQueryData(accountQueryKeys.profile(expectedUserId), scopedProfile);
+}
+
+export function publishAuthoritativeAccountProfile(
+  queryClient: QueryClient,
+  expectedUserId: string,
+  profile: MyProfileResult,
+  session?: IdentitySession | undefined,
+) {
+  const scopedProfile = accountProfileForScope(profile, expectedUserId);
+  if (session !== undefined && identitySessionScope(session) !== expectedUserId) {
+    throw new AccountProfileScopeChangedError();
+  }
+  queryClient.getMutationCache().clear();
+  queryClient.removeQueries({
+    predicate: (query) => accountProfileQueryScope(query.queryKey) !== expectedUserId,
+    queryKey: accountQueryKeys.profiles,
+  });
+  queryClient.removeQueries({
+    predicate: (query) =>
+      session === undefined || identitySessionQueryScope(query.queryKey) !== expectedUserId,
+    queryKey: identityQueryKeys.sessions,
+  });
+  queryClient.setQueryData(accountQueryKeys.profile(expectedUserId), scopedProfile);
+  if (session !== undefined) {
+    queryClient.setQueryData(identityQueryKeys.session(expectedUserId), session);
+  }
+}
+
+export function publishNewestAccountProfileMutationResult(
+  queryClient: QueryClient,
+  expectedUserId: string,
+  candidate: MyProfileResult,
+) {
+  const queryKey = accountQueryKeys.profile(expectedUserId);
+  const current = queryClient.getQueryData<MyProfileResult>(queryKey);
+  const next = newestAccountProfileMutationResult(current, candidate, expectedUserId);
+  if (next !== candidate) {
+    queryClient.getMutationCache().clear();
+    void queryClient.invalidateQueries({ queryKey });
+    return false;
+  }
+  const currentSession = queryClient.getQueryData<IdentitySession>(
+    identityQueryKeys.session(expectedUserId),
+  );
+  let synchronizedSession: Extract<IdentitySession, { authenticated: true }> | undefined;
+  if (currentSession?.authenticated === true && currentSession.userId === expectedUserId) {
+    synchronizedSession = {
+      ...currentSession,
+      personType: candidate.profile.personType,
+      profileCompleted: candidate.profile.completed,
+      status: candidate.profile.status,
+    } satisfies Extract<IdentitySession, { authenticated: true }>;
+  }
+  publishAuthoritativeAccountProfile(queryClient, expectedUserId, candidate, synchronizedSession);
+  return true;
+}
+
+export function seedAuthoritativeIdentitySession(
+  queryClient: QueryClient,
+  session: IdentitySession,
+) {
+  clearIdentityAndAccountQueryCache(queryClient);
+  queryClient.setQueryData(identityQueryKeys.session(identitySessionScope(session)), session);
 }

@@ -12,11 +12,28 @@ function componentSource(fileName: string) {
 describe("profile UI privacy guards", () => {
   it("keeps raw tax and document fields in uncontrolled forms and one-shot refs", () => {
     const content = componentSource("account-profile-panel.tsx");
+    const mutationBoundary = componentSource("profile-mutation.ts");
 
-    expect(content).toContain("const pendingProfile = useRef<ProfileCompletePayload>(undefined);");
-    expect(content).toContain("const pendingUpdate = useRef<ProfileUpdatePayload>(undefined);");
-    expect(content).toContain("pendingProfile.current = undefined;");
-    expect(content.match(/pendingUpdate\.current = undefined;/gu)).toHaveLength(2);
+    expect(content).toContain(
+      "const pendingProfile = useRef<ProfileMutationAttempt<ProfileCompletePayload>>(undefined);",
+    );
+    expect(
+      content.match(
+        /const pendingUpdate = useRef<ProfileMutationAttempt<ProfileUpdatePayload>>\(undefined\);/gu,
+      ),
+    ).toHaveLength(2);
+    expect(
+      content.match(
+        /pending(?:Profile|Update)\.current = \{ expectedScope, payload: parsed\.data \};/gu,
+      ),
+    ).toHaveLength(3);
+    expect(mutationBoundary).toContain('profileMutationNetworkMode = "always"');
+    expect(content.match(/networkMode: profileMutationNetworkMode/gu)).toHaveLength(3);
+    expect(content.match(/pending(?:Profile|Update)\.current = undefined;/gu)).toHaveLength(3);
+    expect(mutationBoundary).toContain("clearAttempt();");
+    expect(content.indexOf("cleanupAttemptOnce();")).toBeLessThan(
+      content.indexOf("onSessionChanged();"),
+    );
     expect(content).toContain("clearSensitiveInputs(formRef.current);");
     expect(content.match(/mutation\.mutate\(\);/gu)).toHaveLength(3);
     expect(content).not.toMatch(/mutation\.mutate\((?:parsed\.data|taxId|additionalDocument)/u);
@@ -41,6 +58,8 @@ describe("profile UI privacy guards", () => {
 
   it("uses a closed profile boundary and hides PII during every non-idle fetch", () => {
     const content = componentSource("account-profile-panel.tsx");
+    const cache = componentSource("account-query-keys.ts");
+    const mutationBoundary = componentSource("profile-mutation.ts");
     const boundary = content.slice(content.indexOf("export function AccountProfilePanel"));
 
     expect(content).toContain(
@@ -57,14 +76,42 @@ describe("profile UI privacy guards", () => {
       "applyVisualPreference(document.documentElement, renderablePreference)",
     );
     expect(content).toContain("clearIdentityAndAccountQueryCache(queryClient)");
-    expect(content).toContain("newestAccountProfileResult(");
+    expect(content).toContain(
+      "seedAuthoritativeAccountProfile(queryClient, userId, initialProfile)",
+    );
+    expect(content).toContain("publishNewestAccountProfileMutationResult(");
     expect(content).toContain(
       "readNewestAccountProfileResult(queryClient, userId, readOwnProfile)",
     );
-    expect(content).toContain("void queryClient.invalidateQueries({ queryKey });");
+    expect(cache).toContain("void queryClient.invalidateQueries({ queryKey });");
     expect(content).toContain("onScopeTransition();");
     expect(content).toContain("setScopeTransitionStarted(true);");
-    expect(content).toContain("scopeTransitionStarted ||");
+    expect(content).toContain("const scopeTransitionRequired =");
+    expect(content).toContain("scopeTransitionStarted ||\n    scopeTransitionRequired ||");
+    expect(
+      content.match(/if \(!profileMutationResultCanPublish\(scopeTransitionGuard\)\) return;/gu),
+    ).toHaveLength(8);
+    expect(content).toContain('import { flushSync } from "react-dom";');
+    expect(content).toContain("const executeScopeTransition = useCallback(");
+    expect(content).toContain("const beginMutationScopeTransition = useCallback(() => {");
+    expect(content).toContain("flushSync(() => {");
+    expect(content).toContain("const beginObservedScopeTransition = useCallback(() => {");
+    expect(content).toContain("beginObservedScopeTransition();");
+    expect(content).toContain("useLayoutEffect(() => {");
+    expect(content).toContain("if (!scopeTransitionRequired) return;");
+    const observedTransition = content.slice(
+      content.indexOf("const beginObservedScopeTransition"),
+      content.indexOf("useEffect(() =>", content.indexOf("const beginObservedScopeTransition")),
+    );
+    expect(observedTransition).not.toContain("flushSync");
+    expect(content).not.toContain("scopeTransitionBoundaryRef");
+    expect(content).not.toContain("privateContentRef");
+    expect(content).not.toContain("showProfileScopeTransitionBoundary");
+    expect(mutationBoundary).not.toContain("replaceChildren");
+    expect(mutationBoundary).toContain("guard.current = true;\n  try {\n    showBoundary();");
+    expect(mutationBoundary).toContain(
+      "} finally {\n    try {\n      clearPrivateCache();\n    } finally {\n      reload();",
+    );
     expect(content).not.toContain(
       "applyVisualPreference(document.documentElement, result.profile.colorScheme)",
     );
@@ -97,6 +144,27 @@ describe("profile UI privacy guards", () => {
     expect(mutation.lastIndexOf("queryClient.clear();")).toBeLessThan(
       mutation.indexOf('window.location.replace("/entrar")'),
     );
+  });
+
+  it("clears mutations and private query families in all three authoritative reseeds", () => {
+    const cache = componentSource("account-query-keys.ts");
+    const login = componentSource("login-panel.tsx");
+    const profile = componentSource("account-profile-panel.tsx");
+    const security = componentSource("account-security-panel.tsx");
+
+    expect(cache.indexOf("clearIdentityAndAccountQueryCache(queryClient);")).toBeLessThan(
+      cache.indexOf("queryClient.setQueryData(accountQueryKeys.profile(expectedUserId)"),
+    );
+    expect(cache.lastIndexOf("clearIdentityAndAccountQueryCache(queryClient);")).toBeLessThan(
+      cache.indexOf(
+        "queryClient.setQueryData(identityQueryKeys.session(identitySessionScope(session))",
+      ),
+    );
+    expect(profile).toContain(
+      "seedAuthoritativeAccountProfile(queryClient, userId, initialProfile)",
+    );
+    expect(login).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
+    expect(security).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
   });
 
   it("keeps the account composition usable at 320px and the 200% reflow viewport", () => {

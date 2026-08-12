@@ -236,6 +236,7 @@ export const profileCompletePayloadSchema = z.discriminatedUnion("personType", [
 
 export const profileCompleteCommandSchema = z.strictObject({
   action: z.literal("profile.complete"),
+  expectedScope: z.uuid(),
   payload: profileCompletePayloadSchema,
 });
 
@@ -272,6 +273,7 @@ export const profileUpdatePayloadSchema = z.discriminatedUnion("section", [
 
 export const profileUpdateCommandSchema = z.strictObject({
   action: z.literal("profile.update"),
+  expectedScope: z.uuid(),
   payload: profileUpdatePayloadSchema,
 });
 

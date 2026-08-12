@@ -1,5 +1,5 @@
 import type { MyProfileResult } from "@set-livre/contracts";
-import { onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query";
+import { MutationObserver, onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,8 +8,13 @@ import {
   accountProfileQueryScope,
   accountQueryKeys,
   clearIdentityAndAccountQueryCache,
+  newestAccountProfileMutationResult,
   newestAccountProfileResult,
+  publishAuthoritativeAccountProfile,
+  publishNewestAccountProfileMutationResult,
   readNewestAccountProfileResult,
+  seedAuthoritativeAccountProfile,
+  seedAuthoritativeIdentitySession,
 } from "../../src/domains/identity/components/account-query-keys";
 import { identityQueryKeys } from "../../src/domains/identity/components/identity-query-keys";
 
@@ -35,6 +40,15 @@ const profileB = {
   profile: { ...profileA.profile, name: "Pessoa B" },
   scope: userB,
 } satisfies MyProfileResult;
+const sessionB = {
+  authenticated: true as const,
+  email: "qa-profile-b@example.test",
+  personType: "individual" as const,
+  profileCompleted: true,
+  status: "active" as const,
+  userId: userB,
+};
+const sessionA = { ...sessionB, email: "qa-profile-a@example.test", userId: userA };
 
 describe("account profile cache", () => {
   it("scopes keys only by the authenticated UUID", () => {
@@ -123,6 +137,9 @@ describe("account profile cache", () => {
     expect(() => newestAccountProfileResult(profileB, newest, userA)).toThrow(
       "O perfil autoritativo mudou de escopo.",
     );
+    expect(() => newestAccountProfileMutationResult(undefined, newest, userA)).toThrow(
+      "O perfil autoritativo mudou de escopo.",
+    );
   });
 
   it("reads the cache after an in-flight request resolves", async () => {
@@ -165,5 +182,110 @@ describe("account profile cache", () => {
     expect(queryClient.getQueryData(sessionKey)).toBeUndefined();
     expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
     expect(queryClient.getMutationCache().getAll()).toEqual([]);
+  });
+
+  it("clears mutations and both private families before every authoritative reseed", async () => {
+    const queryClient = new QueryClient();
+    const publicKey = ["public", "legal"] as const;
+    queryClient.setQueryData(publicKey, { published: true });
+    queryClient.setQueryData(accountQueryKeys.profile(userA), profileA);
+    queryClient.setQueryData(identityQueryKeys.session(userA), { authenticated: true });
+    const firstMutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: async () => profileA,
+    });
+    await firstMutation.execute(undefined);
+
+    seedAuthoritativeAccountProfile(queryClient, userB, profileB);
+
+    expect(queryClient.getMutationCache().getAll()).toEqual([]);
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(identityQueryKeys.session(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userB))).toEqual(profileB);
+    expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
+
+    const secondMutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: async () => sessionB,
+    });
+    await secondMutation.execute(undefined);
+    queryClient.setQueryData(accountQueryKeys.profile(userA), profileA);
+
+    seedAuthoritativeIdentitySession(queryClient, sessionB);
+
+    expect(queryClient.getMutationCache().getAll()).toEqual([]);
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userB))).toBeUndefined();
+    expect(queryClient.getQueryData(identityQueryKeys.session(userB))).toEqual(sessionB);
+    expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
+  });
+
+  it("publishes a mutation result through the active profile query without detaching its observer", async () => {
+    const queryClient = new QueryClient();
+    const key = accountQueryKeys.profile(userA);
+    const publicKey = ["public", "legal"] as const;
+    queryClient.setQueryData(key, profileA);
+    queryClient.setQueryData(identityQueryKeys.session(userA), sessionA);
+    queryClient.setQueryData(publicKey, { published: true });
+    const mutation = queryClient.getMutationCache().build(queryClient, {
+      mutationFn: async () => profileA,
+    });
+    await mutation.execute(undefined);
+    const observer = new QueryObserver<MyProfileResult>(queryClient, {
+      queryFn: async () => profileA,
+      queryKey: key,
+      staleTime: 30_000,
+    });
+    const observed: MyProfileResult[] = [];
+    const unsubscribe = observer.subscribe((result) => {
+      if (result.data !== undefined) observed.push(result.data);
+    });
+    const updated = {
+      ...profileA,
+      profile: { ...profileA.profile, name: "Pessoa A atual", profileVersion: 2 },
+    } satisfies MyProfileResult;
+
+    publishAuthoritativeAccountProfile(queryClient, userA, updated, sessionA);
+
+    expect(observer.getCurrentResult().data).toEqual(updated);
+    expect(observed.at(-1)).toEqual(updated);
+    expect(queryClient.getMutationCache().getAll()).toEqual([]);
+    expect(queryClient.getQueryData(identityQueryKeys.session(userA))).toEqual(sessionA);
+    expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
+    unsubscribe();
+  });
+
+  it("does not republish A when an in-flight mutation resolves after authoritative reseed B", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(accountQueryKeys.profile(userA), profileA);
+    let resolveMutation: ((profile: MyProfileResult) => void) | undefined;
+    const remoteResult = new Promise<MyProfileResult>((resolve) => {
+      resolveMutation = resolve;
+    });
+    let transitionStarted = false;
+    const mutationObserver = new MutationObserver(queryClient, {
+      mutationFn: async () => remoteResult,
+      networkMode: "always",
+      onSuccess: (result) => {
+        try {
+          publishNewestAccountProfileMutationResult(queryClient, userA, result);
+        } catch {
+          transitionStarted = true;
+        }
+      },
+    });
+
+    const pending = mutationObserver.mutate(undefined);
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+    seedAuthoritativeAccountProfile(queryClient, userB, profileB);
+    expect(queryClient.getMutationCache().getAll()).toEqual([]);
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userB))).toEqual(profileB);
+
+    resolveMutation?.(profileA);
+    await expect(pending).resolves.toEqual(profileA);
+
+    expect(transitionStarted).toBe(true);
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(accountQueryKeys.profile(userB))).toEqual(profileB);
   });
 });

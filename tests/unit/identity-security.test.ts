@@ -167,10 +167,7 @@ describe("identity mutation cache security", () => {
     expect(content).toContain("function PreparedLoginPanel");
     expect(content).not.toContain("useSyncExternalStore");
     expect(content).not.toContain("getQueryCache().subscribe");
-    expect(content).toContain(
-      "queryClient.removeQueries({ queryKey: identityQueryKeys.sessions })",
-    );
-    expect(content).toContain("queryClient.setQueryData(sessionQueryKey, initialSession)");
+    expect(content).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
     expect(content).toContain("queueMicrotask(() => {");
     expect(content).toContain(
       "identitySessionCanRender(observedSession, sessionScope, sessionQuery.fetchStatus)",
@@ -182,6 +179,13 @@ describe("identity mutation cache security", () => {
     expect(content).toContain("queryClient.clear();");
     expect(content).toContain(
       "queryClient.setQueryData(identityQueryKeys.session(previousScope), { authenticated: false });",
+    );
+    const redaction = content.slice(
+      content.indexOf("function redactIdentitySessionCacheForReload"),
+      content.indexOf("function AuthenticatedPanel"),
+    );
+    expect(redaction.indexOf("queryClient.clear();")).toBeLessThan(
+      redaction.indexOf("queryClient.setQueryData"),
     );
     expect(content).toContain('window.location.replace("/entrar")');
     expect(content).toContain("Validando sua sessão…");

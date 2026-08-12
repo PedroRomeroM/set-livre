@@ -3,7 +3,7 @@
 ## 1. Princípios
 
 - rotas representam intenções;
-- comandos críticos entram por `POST /api/commands`;
+- comandos críticos autenticados entram por `POST /api/commands`; Auth convidada usa endpoint especializado e fechado;
 - action names são estáveis e versionadas por contrato;
 - payload é Zod `strict`;
 - resposta nunca vaza provider/SQL;
@@ -14,12 +14,22 @@
 ## 2. Envelope de comando
 
 ```ts
-type CommandEnvelope = {
-  action: CommandAction;
+type BaseCommandEnvelope<TAction extends CommandAction> = {
+  action: TAction;
   payload: unknown;
   idempotencyKey?: string;
 };
+
+type ProfileCommandEnvelope = BaseCommandEnvelope<"profile.complete" | "profile.update"> & {
+  expectedScope: string;
+};
+
+type GuestRegistrationEnvelope = BaseCommandEnvelope<"identity.register"> & {
+  expectedScope?: never;
+};
 ```
+
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. `expectedScope` pertence aos dois comandos de perfil e é validado como UUID; não é um campo genérico aceito silenciosamente por todo envelope.
 
 Headers:
 
@@ -33,6 +43,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 
 ### 2.1 Superfície implementada na FEAT-002
 
+- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os comandos de perfil implementados;
 - todos os `POST` exigem `Origin` e `Host` exatos de `NEXT_PUBLIC_APP_URL`; em produção, `X-Forwarded-Host` e `X-Forwarded-Proto=https` também precisam ter sido sobrescritos pela borda confiável;
 - um bucket de fachada é consumido antes do parse/Zod; depois do parse, cadastro/login/recovery/callback usam somente hashes de e-mail, usuário ou token. Em produção, a fachada exige um único IP canônico em `X-Forwarded-For`, sobrescrito pelo Nginx da borda confiável previsto em PEND-003; header ausente, composto ou inválido falha fechado;
 - somente `application/json` e schemas Zod `strict` são aceitos;
@@ -55,26 +66,28 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 
 ## 3. Códigos de erro
 
-| Código                          | HTTP | Uso                         |
-| ------------------------------- | ---: | --------------------------- |
-| `AUTH_REQUIRED`                 |  401 | sem sessão                  |
-| `AUTH_RESTART_REQUIRED`         |  503 | signup OTP ambíguo          |
-| `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua |
-| `FORBIDDEN`                     |  403 | papel/ownership             |
-| `ACCOUNT_SUSPENDED`             |  403 | conta suspensa              |
-| `VALIDATION_FAILED`             |  422 | campos                      |
-| `NOT_FOUND`                     |  404 | recurso não visível         |
-| `CONFLICT`                      |  409 | estado concorrente          |
-| `SLOT_UNAVAILABLE`              |  409 | calendário                  |
-| `QUOTE_EXPIRED`                 |  409 | cotação                     |
-| `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                  |
-| `PAYMENT_NOT_STARTED`           |  409 | provider não confirmou      |
-| `PAYMENT_MISMATCH`              |  409 | valor/moeda                 |
-| `RATE_LIMITED`                  |  429 | abuso                       |
-| `PAYLOAD_TOO_LARGE`             |  413 | limite                      |
-| `RECOVERY_INVALID`              |  403 | recovery inválido/expirado  |
-| `RECOVERY_RESTART_REQUIRED`     |  503 | OTP ambíguo ou consumido    |
-| `INTERNAL_ERROR`                |  500 | inesperado com requestId    |
+| Código                          | HTTP | Uso                             |
+| ------------------------------- | ---: | ------------------------------- |
+| `AUTH_REQUIRED`                 |  401 | sem sessão                      |
+| `AUTH_RESTART_REQUIRED`         |  503 | signup OTP ambíguo              |
+| `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua     |
+| `FORBIDDEN`                     |  403 | papel/ownership                 |
+| `ACCOUNT_SUSPENDED`             |  403 | conta suspensa                  |
+| `VALIDATION_FAILED`             |  422 | campos                          |
+| `NOT_FOUND`                     |  404 | recurso não visível             |
+| `CONFLICT`                      |  409 | estado concorrente              |
+| `SLOT_UNAVAILABLE`              |  409 | calendário                      |
+| `QUOTE_EXPIRED`                 |  409 | cotação                         |
+| `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                      |
+| `PAYMENT_NOT_STARTED`           |  409 | provider não confirmou          |
+| `PAYMENT_MISMATCH`              |  409 | valor/moeda                     |
+| `RATE_LIMITED`                  |  429 | abuso                           |
+| `PAYLOAD_TOO_LARGE`             |  413 | limite                          |
+| `RECOVERY_INVALID`              |  403 | recovery inválido/expirado      |
+| `RECOVERY_RESTART_REQUIRED`     |  503 | OTP ambíguo ou consumido        |
+| `SESSION_CHANGED`               |  409 | recorte SSR diverge da sessão   |
+| `UNAUTHENTICATED`               |  401 | sessão privada ausente/expirada |
+| `INTERNAL_ERROR`                |  500 | inesperado com requestId        |
 
 Mensagens de usuário são traduzidas por código. Não usar mensagem SQL.
 
@@ -95,16 +108,18 @@ Registry não contém lógica de domínio. Cada handler vive no domínio.
 
 ### 5.1 Perfil e conta
 
-| Action                     | Autorização                    | Efeito                                                                                                         |
-| -------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `identity.register`        | visitante com origem confiável | cria intenção jurídica opaca e inicia signup Auth; perfil mínimo e dois aceites nascem atomicamente no trigger |
-| `profile.complete`         | authenticated                  | completa o perfil mínimo já criado no cadastro, sem reescrever os aceites jurídicos                            |
-| `profile.update`           | titular da própria linha       | altera somente identidade editável ou preferência visual allowlisted                                           |
-| `account.export.request`   | owner                          | agenda exportação                                                                                              |
-| `account.deletion.request` | owner                          | inicia exclusão/análise                                                                                        |
-| `account.deletion.cancel`  | owner                          | cancela se ainda possível                                                                                      |
+| Action                     | Autorização                                                  | Efeito                                                                                                         |
+| -------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `identity.register`        | visitante com origem confiável via `POST /api/auth/register` | cria intenção jurídica opaca e inicia signup Auth; perfil mínimo e dois aceites nascem atomicamente no trigger |
+| `profile.complete`         | authenticated                                                | completa o perfil mínimo já criado no cadastro, sem reescrever os aceites jurídicos                            |
+| `profile.update`           | titular da própria linha                                     | altera somente identidade editável ou preferência visual allowlisted                                           |
+| `account.export.request`   | owner                                                        | agenda exportação                                                                                              |
+| `account.deletion.request` | owner                                                        | inicia exclusão/análise                                                                                        |
+| `account.deletion.cancel`  | owner                                                        | cancela se ainda possível                                                                                      |
 
 Campos de CPF/CNPJ nunca são aceitos como ownership. CPF é normalizado em onze dígitos; CNPJ aceita a forma numérica legada e a forma alfanumérica oficial de quatorze posições definida na OPEN-009.
+
+Na FEAT-003, os envelopes Zod estritos de `profile.complete` e `profile.update` exigem `expectedScope` UUID no nível superior. Esse valor repete apenas o usuário do recorte SSR que originou o formulário; é uma asserção do cliente, nunca ownership ou substituto da sessão. Depois das validações globais de origem e fachada, a rota privada autentica a sessão antes de consumir o corpo; então o registry compara `expectedScope` com o `session.userId` autoritativo. Divergência retorna `409 SESSION_CHANGED` antes do limiter específico de perfil, serviço e DAL. Envelope sem a asserção, com UUID inválido ou campo extra retorna `422 VALIDATION_FAILED` e também não alcança o serviço.
 
 ### 5.2 Dono/recebedor
 
@@ -383,6 +398,8 @@ Documento/código devem manter mapa único. Regras:
 Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação e `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada. Recovery usa o prefixo `identityQueryKeys.recoveryStatuses = ["identity", "recovery", "status"]` e a factory `identityQueryKeys.recoveryStatus(scope)`, em que `scope` é o UUID público/opaco recebido pelo Server Component ou `anonymous`. O normalizer rejeita uma resposta cujo scope não corresponda antes de publicá-la no cache. O formulário de nova senha só monta com `allowed=true`, scope correspondente e `fetchStatus="idle"`; `fetching` ou `paused` mantém a verificação fechada, e uma troca de scope remove as famílias recovery/session e recompõe a rota no servidor.
 
 Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; recovery remove a família privada e logout limpa integralmente o `QueryClient` antes da navegação SSR. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
+
+Na FEAT-003, cada mutation sensível envia `{ action, expectedScope, payload }` a partir de uma ref one-shot e usa `networkMode: "always"`; ausência de rede é executada como erro e nunca vira fila pausada retomável sob outra sessão. `SESSION_CHANGED` ou `UNAUTHENTICATED` fecham o DOM privado, limpam `MutationCache` e as famílias `account/profile` + `identity/session` e forçam nova composição SSR. Reseeds autoritativos normais em login, perfil e segurança fazem a mesma limpeza privada preservando queries públicas; logout e estado ambíguo de login mantêm a limpeza integral do `QueryClient`. No sucesso do perfil, a publicação sobrescreve a query observada sem removê-la, descarta scopes privados incompatíveis e rejeita callback tardio se a key esperada já tiver sido removida por uma transição A→B.
 
 ## 10. Rate limits iniciais
 

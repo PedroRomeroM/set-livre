@@ -4,6 +4,7 @@ import {
   IdentityApiError,
   isRetryableIdentityCallbackError,
   loginIdentity,
+  registerIdentity,
 } from "../../src/domains/identity/components/identity-api";
 
 describe("identity browser API", () => {
@@ -46,6 +47,35 @@ describe("identity browser API", () => {
     expect(serializedError).not.toContain(privatePassword);
     expect(serializedError).not.toContain("provider-secret");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends guest registration only to its dedicated public route", async () => {
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    const fetchMock = vi.fn(async () =>
+      Response.json({ data: { confirmationRequired: true }, requestId }, { status: 202 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+    const payload = {
+      acceptPrivacy: true,
+      acceptTerms: true,
+      email: "qa_register_route@example.test",
+      password: "ValidPassword9",
+      personType: "individual",
+      privacyVersionId: "22222222-2222-4222-8222-222222222222",
+      termsVersionId: "33333333-3333-4333-8333-333333333333",
+    } as const;
+
+    await expect(registerIdentity(payload)).resolves.toEqual({ confirmationRequired: true });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/register",
+      expect.objectContaining({
+        body: JSON.stringify({ action: "identity.register", payload }),
+        method: "POST",
+      }),
+    );
   });
 
   it("retries only a valid pre-OTP service response for signup and recovery callbacks", () => {

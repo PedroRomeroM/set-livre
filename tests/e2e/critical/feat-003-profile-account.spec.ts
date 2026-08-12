@@ -1,8 +1,15 @@
+import {
+  apiErrorSchema,
+  apiSuccessSchema,
+  myProfileResultSchema,
+  profileUpdateCommandSchema,
+} from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
 import { logoutFeat002Identity } from "../../helpers/feat-002-authentication";
 import {
   assertFeat003PrivateValuesAbsentFromDom,
+  assertFeat003SafeProfileResult,
   assertFeat003SecretsAbsentFromDom,
   cleanupFeat003QaIdentity,
   completeFeat003Profile,
@@ -12,6 +19,7 @@ import {
   loginFeat003Identity,
   maskedFeat003AdditionalDocument,
   registerAndConfirmFeat003Identity,
+  stageFeat003SensitiveValue,
   switchFeat003SessionWithoutNavigation,
 } from "../../helpers/feat-003-profile-account";
 import { gotoExpectedPage } from "../../helpers/expected-page";
@@ -113,18 +121,35 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
   browser,
   page,
 }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const identityA = createFeat003QaIdentity(testInfo, "004_a");
   const identityB = createFeat003QaIdentity(testInfo, "004_b");
   const secretsA = createFeat003ProfileSecrets("individual");
   const secretsB = createFeat003ProfileSecrets("company");
+  const staleSecretsA = createFeat003ProfileSecrets("individual");
   const nameA = "Pessoa QA Isolamento Alfa";
   const nameB = "Empresa QA Isolamento Beta";
+  const staleNameA = "Pessoa QA Alteração Stale";
   const phoneA = "+55 (41) 99999-1004";
   const phoneB = "+55 (41) 99999-2004";
+  const stalePhoneA = "+55 (41) 99999-3004";
   const transitionRequestStarted = createDeferredSignal();
   const releaseTransitionRequest = createDeferredSignal();
+  let pageErrorCount = 0;
+  let reactBoundaryConsoleErrorCount = 0;
   let contextB: BrowserContext | undefined;
+
+  page.on("pageerror", () => {
+    pageErrorCount += 1;
+  });
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      /flushSync|hydration|removeChild|not a child/iu.test(message.text())
+    ) {
+      reactBoundaryConsoleErrorCount += 1;
+    }
+  });
 
   try {
     const sessionA = await registerAndConfirmFeat003Identity(page, identityA, "individual");
@@ -136,7 +161,9 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       phone: phoneA,
       secrets: secretsA,
     });
-    expect(profileA.scope).toBe(sessionA.userId);
+    if (profileA.scope !== sessionA.userId) {
+      throw new Error("O perfil A não corresponde ao escopo local provisionado.");
+    }
 
     contextB = await browser.newContext({
       baseURL: localOrigin,
@@ -151,7 +178,9 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       phone: phoneB,
       secrets: secretsB,
     });
-    expect(profileB.scope).toBe(sessionB.userId);
+    if (profileB.scope !== sessionB.userId) {
+      throw new Error("O perfil B não corresponde ao escopo local provisionado.");
+    }
     await contextB.close();
     contextB = undefined;
 
@@ -178,12 +207,13 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       },
       { times: 1 },
     );
-
-    const switchedSession = await switchFeat003SessionWithoutNavigation(page, identityB);
-    expect(switchedSession.session).toMatchObject({
-      authenticated: true,
-      userId: sessionB.userId,
-    });
+    const transitionSession = await switchFeat003SessionWithoutNavigation(page, identityB);
+    if (
+      transitionSession.session.authenticated !== true ||
+      transitionSession.session.userId !== sessionB.userId
+    ) {
+      throw new Error("A sessão B não foi publicada para a revalidação do QueryClient.");
+    }
     await expectCurrentPath(page, "/conta");
     await page.evaluate(() => {
       window.dispatchEvent(new Event("visibilitychange"));
@@ -200,24 +230,55 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     await page.evaluate(
       (forbiddenValues) => {
         const key = "sl-qa-f003-scope-transition";
+        const forbiddenLabels = [
+          "scope-a-name",
+          "scope-a-phone",
+          "scope-a-tax-mask",
+          "scope-a-document-mask",
+          "scope-b-name",
+          "scope-b-phone",
+          "scope-b-tax-mask",
+          "scope-b-document-mask",
+        ];
         sessionStorage.setItem(key, "armed");
+        if (forbiddenValues.length !== forbiddenLabels.length) {
+          sessionStorage.setItem(key, "probe-error:value-catalog");
+          return;
+        }
+        const privateSurface = document.querySelector<HTMLElement>("main");
+        if (privateSurface === null) {
+          sessionStorage.setItem(key, "probe-error:surface-missing");
+          return;
+        }
+        privateSurface.dataset.slQaPrivateSurface = "scope-transition";
         const inspect = () => {
-          const text = document.body.textContent ?? "";
+          const renderedSurface = document.querySelector<HTMLElement>(
+            'main[data-sl-qa-private-surface="scope-transition"]',
+          );
+          if (renderedSurface === null) {
+            sessionStorage.setItem(key, "probe-error:surface-detached");
+            return;
+          }
+          const text = renderedSurface.textContent ?? "";
           const values = [
-            ...document.querySelectorAll<
+            ...renderedSurface.querySelectorAll<
               HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
             >("input, select, textarea"),
           ].map((control) => control.value);
-          if (
-            forbiddenValues.some(
-              (value) => text.includes(value) || values.some((entry) => entry.includes(value)),
-            )
-          ) {
-            sessionStorage.setItem(key, "leak");
+          const textLeak = forbiddenValues.findIndex((value) => text.includes(value));
+          if (textLeak !== -1) {
+            sessionStorage.setItem(key, `leak:value-text:${forbiddenLabels[textLeak]}`);
+            return;
+          }
+          const controlLeak = forbiddenValues.findIndex((value) =>
+            values.some((entry) => entry.includes(value)),
+          );
+          if (controlLeak !== -1) {
+            sessionStorage.setItem(key, `leak:value-control:${forbiddenLabels[controlLeak]}`);
           }
         };
         const observer = new MutationObserver(inspect);
-        observer.observe(document.documentElement, {
+        observer.observe(privateSurface, {
           attributeFilter: ["value"],
           attributes: true,
           characterData: true,
@@ -228,7 +289,7 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
           "pagehide",
           () => {
             inspect();
-            if (sessionStorage.getItem(key) !== "leak") {
+            if (sessionStorage.getItem(key) === "armed") {
               sessionStorage.setItem(key, "clear");
             }
             observer.disconnect();
@@ -238,10 +299,9 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       },
       [...privateValuesA, ...privateValuesB],
     );
-
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+    const transitionReload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseTransitionRequest.resolve();
-    await reload;
+    await transitionReload;
     await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
     await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameB);
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameA);
@@ -253,12 +313,239 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     });
     expect(transitionLeak).toBe("clear");
     await assertFeat003PrivateValuesAbsentFromDom(page, privateValuesA);
+
+    const returnedSession = await switchFeat003SessionWithoutNavigation(page, identityA);
+    if (
+      returnedSession.session.authenticated !== true ||
+      returnedSession.session.userId !== sessionA.userId
+    ) {
+      throw new Error("A sessão A não foi restaurada para preparar a tentativa stale.");
+    }
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
+    await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameA);
+    await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameB);
+
+    await page.getByRole("textbox", { name: "Nome completo" }).fill(staleNameA);
+    await page.getByRole("textbox", { name: "Telefone" }).fill(stalePhoneA);
+    await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("replace");
+    await stageFeat003SensitiveValue(
+      page.getByRole("textbox", { name: "Novo CPF" }),
+      staleSecretsA.taxId,
+    );
+    await page
+      .getByRole("combobox", { name: "Alterar documento adicional" })
+      .selectOption("replace");
+    await stageFeat003SensitiveValue(
+      page.getByRole("textbox", { name: "Novo documento adicional" }),
+      staleSecretsA.additionalDocument,
+    );
+
+    const switchedSession = await switchFeat003SessionWithoutNavigation(page, identityB);
+    if (
+      switchedSession.session.authenticated !== true ||
+      switchedSession.session.userId !== sessionB.userId
+    ) {
+      throw new Error("A sessão B não foi publicada antes da tentativa stale.");
+    }
+    await expectCurrentPath(page, "/conta");
+    await page.evaluate(
+      (forbiddenValues) => {
+        const key = "sl-qa-f003-stale-command-reload";
+        const forbiddenLabels = [
+          "scope-a-name",
+          "scope-a-phone",
+          "scope-a-tax-mask",
+          "scope-a-document-mask",
+          "scope-b-name",
+          "scope-b-phone",
+          "scope-b-tax-mask",
+          "scope-b-document-mask",
+          "stale-a-name",
+          "stale-a-phone",
+          "stale-a-tax-id",
+          "stale-a-document",
+        ];
+        sessionStorage.setItem(key, "armed");
+        if (forbiddenValues.length !== forbiddenLabels.length) {
+          sessionStorage.setItem(key, "probe-error:value-catalog");
+          return;
+        }
+        const privateSurface = document.querySelector<HTMLElement>("main");
+        const summary = privateSurface?.querySelector<HTMLElement>(
+          '[aria-label="Resumo do perfil salvo"]',
+        );
+        const profileSection = summary?.closest("section");
+        const heading = profileSection?.querySelector<HTMLHeadingElement>("h2");
+        const form = profileSection?.querySelector<HTMLFormElement>("form");
+        const controls =
+          form === null || form === undefined
+            ? []
+            : [
+                ...form.querySelectorAll<
+                  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+                >("input, select, textarea"),
+              ];
+        if (
+          privateSurface === null ||
+          summary === null ||
+          summary === undefined ||
+          profileSection === null ||
+          profileSection === undefined ||
+          heading === null ||
+          heading === undefined ||
+          heading.textContent?.trim() !== "Dados do perfil" ||
+          form === null ||
+          form === undefined ||
+          controls.length === 0
+        ) {
+          sessionStorage.setItem(key, "probe-error:profile-surface-missing");
+          return;
+        }
+        privateSurface.dataset.slQaPrivateSurface = "stale-command";
+        const inspect = () => {
+          const connectedNodes = [
+            heading.isConnected ? "heading" : undefined,
+            summary.isConnected ? "summary" : undefined,
+            form.isConnected ? "form" : undefined,
+            controls.some((control) => control.isConnected) ? "control" : undefined,
+          ].filter((node): node is string => node !== undefined);
+          if (connectedNodes.length > 0) {
+            sessionStorage.setItem(key, `leak:nodes:${connectedNodes.join(",")}`);
+            return;
+          }
+          const renderedSurface = document.querySelector<HTMLElement>(
+            'main[data-sl-qa-private-surface="stale-command"]',
+          );
+          if (renderedSurface === null) {
+            sessionStorage.setItem(key, "probe-error:surface-detached");
+            return;
+          }
+          const text = renderedSurface.textContent ?? "";
+          const values = [
+            ...renderedSurface.querySelectorAll<
+              HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+            >("input, select, textarea"),
+          ].map((control) => control.value);
+          const textLeak = forbiddenValues.findIndex((value) => text.includes(value));
+          if (textLeak !== -1) {
+            sessionStorage.setItem(key, `leak:value-text:${forbiddenLabels[textLeak]}`);
+            return;
+          }
+          const controlLeak = forbiddenValues.findIndex((value) =>
+            values.some((entry) => entry.includes(value)),
+          );
+          if (controlLeak !== -1) {
+            sessionStorage.setItem(key, `leak:value-control:${forbiddenLabels[controlLeak]}`);
+          }
+        };
+        window.addEventListener(
+          "pagehide",
+          () => {
+            inspect();
+            if (sessionStorage.getItem(key) === "armed") {
+              sessionStorage.setItem(key, "clear");
+            }
+          },
+          { once: true },
+        );
+      },
+      [
+        ...privateValuesA,
+        ...privateValuesB,
+        staleNameA,
+        formatFeat003PhoneForDisplay(stalePhoneA),
+        staleSecretsA.taxId,
+        staleSecretsA.additionalDocument,
+      ],
+    );
+
+    const staleCommandResponse = page
+      .waitForResponse((response) => {
+        const address = new URL(response.url());
+        return address.pathname === "/api/commands" && response.request().method() === "POST";
+      })
+      .then(async (response) => ({
+        payload: (await response.json()) as unknown,
+        response,
+      }));
+    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Salvar alterações" }).click();
+    const { payload: rejectedPayload, response: rejectedCommand } = await staleCommandResponse;
+    if (rejectedCommand.status() !== 409) {
+      throw new Error("O comando stale não foi rejeitado com conflito de sessão.");
+    }
+    let rejectedCommandBody: unknown;
+    try {
+      rejectedCommandBody = JSON.parse(rejectedCommand.request().postData() ?? "null") as unknown;
+    } catch {
+      throw new Error("O comando stale não publicou um envelope JSON válido.");
+    }
+    const submittedCommand = profileUpdateCommandSchema.safeParse(rejectedCommandBody);
+    if (
+      !submittedCommand.success ||
+      submittedCommand.data.expectedScope !== sessionA.userId ||
+      submittedCommand.data.payload.section !== "identity" ||
+      submittedCommand.data.payload.taxIdChange.action !== "replace" ||
+      submittedCommand.data.payload.taxIdChange.value !== staleSecretsA.taxId ||
+      submittedCommand.data.payload.documentChange.action !== "replace" ||
+      submittedCommand.data.payload.documentChange.value !== staleSecretsA.additionalDocument
+    ) {
+      throw new Error("O POST stale não preservou o escopo A e o payload one-shot esperado.");
+    }
+    const rejected = apiErrorSchema.safeParse(rejectedPayload);
+    if (!rejected.success || rejected.data.error.code !== "SESSION_CHANGED") {
+      throw new Error("O comando stale não retornou o erro público de sessão esperada.");
+    }
+    await reload;
+    await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
+    await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameB);
+    await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameA);
+    await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(staleNameA);
+    const reloadEvidence = await page.evaluate(() => {
+      const key = "sl-qa-f003-stale-command-reload";
+      const result = sessionStorage.getItem(key);
+      sessionStorage.removeItem(key);
+      return result;
+    });
+    expect(reloadEvidence).toBe("clear");
+    await assertFeat003PrivateValuesAbsentFromDom(page, [
+      ...privateValuesA,
+      staleNameA,
+      formatFeat003PhoneForDisplay(stalePhoneA),
+    ]);
     await assertFeat003SecretsAbsentFromDom(page, [
       secretsA.taxId,
       secretsA.additionalDocument,
       secretsB.taxId,
       secretsB.additionalDocument,
+      staleSecretsA.taxId,
+      staleSecretsA.additionalDocument,
     ]);
+    const currentProfileResponse = await page.request.get("/api/account/profile");
+    if (currentProfileResponse.status() !== 200) {
+      throw new Error("O perfil B não pôde ser relido após a recomposição SSR.");
+    }
+    const currentProfilePayload: unknown = await currentProfileResponse.json();
+    const currentProfileEnvelope =
+      apiSuccessSchema(myProfileResultSchema).safeParse(currentProfilePayload);
+    if (!currentProfileEnvelope.success) {
+      throw new Error("O perfil B recomposto não atende ao contrato público.");
+    }
+    const currentProfile = assertFeat003SafeProfileResult(currentProfileEnvelope.data.data, [
+      secretsA.taxId,
+      secretsA.additionalDocument,
+      secretsB.taxId,
+      secretsB.additionalDocument,
+      staleSecretsA.taxId,
+      staleSecretsA.additionalDocument,
+    ]);
+    if (JSON.stringify(currentProfile) !== JSON.stringify(profileB)) {
+      throw new Error("O comando stale alterou o estado autoritativo do perfil B.");
+    }
+    expect(pageErrorCount).toBe(0);
+    expect(reactBoundaryConsoleErrorCount).toBe(0);
+    await assertFeat003PrivateValuesAbsentFromDom(page, privateValuesA);
   } finally {
     releaseTransitionRequest.resolve();
     await contextB?.close();

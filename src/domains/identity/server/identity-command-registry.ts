@@ -2,6 +2,8 @@ import "server-only";
 
 import type { IdentityCommand, IdentitySession } from "@set-livre/contracts";
 
+import { ApiRouteError } from "@/lib/server/api-route";
+
 import { registerIdentity } from "./identity-service";
 import { completeProfile, updateProfile } from "./profile-service";
 
@@ -19,13 +21,31 @@ function authenticatedSession(context: CommandContext) {
   return context.session;
 }
 
+function authenticatedSessionForExpectedScope(context: CommandContext, expectedScope: string) {
+  const session = authenticatedSession(context);
+  if (session.userId !== expectedScope) {
+    throw new ApiRouteError(
+      409,
+      "SESSION_CHANGED",
+      "Sua sessão mudou. Recarregue a página antes de continuar.",
+    );
+  }
+  return session;
+}
+
 export function executeIdentityCommand(command: IdentityCommand, context: CommandContext) {
   switch (command.action) {
     case "identity.register":
       return registerIdentity(command.payload, context);
     case "profile.complete":
-      return completeProfile(command.payload, authenticatedSession(context));
+      return completeProfile(
+        command.payload,
+        authenticatedSessionForExpectedScope(context, command.expectedScope),
+      );
     case "profile.update":
-      return updateProfile(command.payload, authenticatedSession(context));
+      return updateProfile(
+        command.payload,
+        authenticatedSessionForExpectedScope(context, command.expectedScope),
+      );
   }
 }

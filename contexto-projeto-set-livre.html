@@ -647,9 +647,13 @@
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>1/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>538</strong><span>unitários do snapshot corrente</span></div>
-          <div class="stat"><strong>284</strong><span>asserts pgTAP da árvore atual</span></div>
-          <div class="stat"><strong>91</strong><span>execuções browser do snapshot</span></div>
+          <div class="stat">
+            <strong>563</strong><span>unitários em 59 arquivos correntes</span>
+          </div>
+          <div class="stat">
+            <strong>293</strong><span>asserts pgTAP do snapshot corrente</span>
+          </div>
+          <div class="stat"><strong>91</strong><span>execuções browser correntes</span></div>
           <div class="stat"><strong>12</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
@@ -710,11 +714,13 @@
               <p>
                 Perfil PF/PJ completo, telefone brasileiro sem truncar prefixos estrangeiros, conta,
                 segurança e preferência visual já atravessam contratos, banco, DAL, comandos, read
-                model e interface. O snapshot passou em 538/538 unitários, 284/284 asserts pgTAP,
-                91/91 execuções Playwright/axe, builds e smokes dos dois apps. O índice foi
-                auditado, o commit funcional é <code>727eecd</code> e a release por SHA foi emitida.
-                O draft <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> está
-                aberto; review e merge ainda precisam fechar antes de qualquer conclusão.
+                model e interface. O hardening P0 local vincula cada mutation ao escopo SSR, impede
+                fila offline, bloqueia callback tardio entre identidades e fecha o boundary por
+                commit React síncrono seguro. O snapshot corrente passou em 563/563 unitários em 59
+                arquivos, 293/293 asserts pgTAP e 91/91 Playwright/axe, incluindo 32/32 da FEAT-003.
+                Builds e smokes standalone passaram sem warnings; release, commit/push, novo review
+                e merge ainda estão pendentes no draft
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
               </p>
             </article>
             <article class="card">
@@ -750,13 +756,22 @@
               <code>token_hash</code>, usuário QA ou mensagem QA residual. Instalação limpa,
               formatação, lint, typecheck, documentação, builds, audit e Knip também passaram. O
               commit <code>da34f46</code> passou nos smokes standalone e originou release imutável
-              local com 2.756 artefatos e SHA-256 <code>33f0289b…7e47</code>. Na FEAT-003, reset,
-              geração determinística, 538/538 unitários, 284/284 asserts pgTAP e 91/91 execuções
-              Playwright/axe passaram. A auditoria dos artefatos encontrou somente fixtures locais
-              <code>qa_f002|qa_f003_*@example.test</code> nos títulos automáticos allowlisted dos
-              steps; sentinelas, tokens, documentos, cookies Auth, Bearer, erros finais/de execução
-              e anexos ficaram ausentes. O commit <code>727eecd</code> originou uma release imutável
-              com 2.801 artefatos e SHA-256 <code>2f1dafc6…f490</code>.
+              local com 2.756 artefatos e SHA-256 <code>33f0289b…7e47</code>. Na FEAT-003, o
+              snapshot corrente passou em 563/563 unitários distribuídos por 59 arquivos, 293/293
+              asserts pgTAP e 91/91 execuções Playwright/axe, sendo 32/32 da feature nos IDs
+              001–009. O ID 004 passou em três projeções com <code>pagehide=clear</code>, zero
+              <code>pageerror</code>, zero erro React no console e B inalterado; o ID 009 passou nas
+              quatro projeções. Um run diagnóstico anterior havia encontrado o snapshot SSR de A em
+              scripts Flight/RSC ao varrer <code>body.textContent</code>, fora da UI e sem comprovar
+              vazamento visual. O boundary agora fecha por commit React, sem mutar imperativamente
+              os filhos pertencentes ao framework; o probe varre somente <code>main</code> e exige
+              heading, resumo, formulário e controles antigos desconectados. A auditoria não
+              encontrou erros finais, attachments, segredos ou resíduos; os 62 e-mails QA únicos
+              apareceram em 102 ocorrências exclusivamente nos títulos automáticos allowlisted:
+              <code>Fill</code> 84, <code>Visible</code> 10 e <code>Type</code> 8. O commit
+              <code>727eecd</code> permanece como a última release imutável, com 2.801 artefatos e
+              SHA-256 <code>2f1dafc6…f490</code>. Os builds e smokes standalone correntes passaram
+              sem warnings; nova release, commit/push e novo review ainda não foram concluídos.
             </p>
           </div>
         </section>
@@ -883,8 +898,9 @@
           </div>
 
           <div class="pipeline" aria-label="Pipeline normativo de escrita crítica" tabindex="0">
-            POST /api/commands → sessão/origem/limites → Zod → registry → DAL server-only → função
-            SQL privada → transação/lock → retorno autoritativo → invalidação
+            POST /api/commands privado → origem/fachada → sessão → body/Zod → registry → DAL;
+            cadastro convidado → POST /api/auth/register fechado → DAL server-only → função SQL
+            privada → transação/lock → retorno autoritativo → invalidação
           </div>
 
           <div class="grid" style="margin-top: 0.9rem">
@@ -1033,13 +1049,14 @@
               Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
-              adversos; a suíte integral corrente passou em 91/91.
+              adversos. O snapshot corrente passou em 91/91, incluindo 32/32 da FEAT-003 nos nove
+              IDs estáveis.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">538 aprovados</span>
+              <span class="tag done">563 aprovados · 59 arquivos</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1048,17 +1065,18 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">284 aprovados</span>
+              <span class="tag done">293 aprovados</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
                 <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados,
                 binding/tombstone por sessão, pin JWT, ausência canônica, retenção em duas fases,
-                perfil PF/PJ, máscaras, versões independentes e concorrência otimista.
+                perfil PF/PJ, máscaras, versões independentes, concorrência otimista e personas
+                adversariais owner/admin sem bypass nem autoridade antecipada.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">91 aprovados</span>
+              <span class="tag done">91 aprovados no snapshot corrente</span>
               <h3>Playwright + axe</h3>
               <p>
                 36 execuções técnicas da fundação, 23 da FEAT-002 e 32 da FEAT-003, cobrindo smoke,
@@ -1085,13 +1103,15 @@
             <strong>Evidência local incorporada e trabalho corrente:</strong>
             <p>
               A FEAT-002 conserva 236/236 asserts pgTAP, 458/458 unitários e 59/59 execuções browser
-              verdes no histórico incorporado. O snapshot corrente da FEAT-003 passou em 538/538
-              unitários, 284/284 asserts pgTAP e 91/91 execuções browser, com schema/tipos gerados,
-              builds e smokes standalone conferidos. O índice de 85 paths foi auditado, o commit
-              funcional <code>727eecd</code> foi criado e sua release por SHA foi verificada. A
-              branch foi publicada no draft
-              <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>; falta concluir
-              review/merge.
+              verdes no histórico incorporado. O snapshot corrente da FEAT-003 passou em 563/563
+              unitários distribuídos por 59 arquivos, 293/293 asserts pgTAP e 91/91 execuções
+              browser/axe, incluindo 32/32 da feature. Os IDs 004 e 009 passaram respectivamente em
+              três e quatro projeções, e a auditoria terminou sem erros finais, attachments,
+              segredos ou resíduos. Os builds e smokes standalone correntes também passaram sem
+              warnings. O snapshot anterior <code>727eecd</code> teve release por SHA verificada,
+              mas não valida o pacote do patch atual. Nova release, commit/push, review e merge
+              ainda estão pendentes no draft
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
             </p>
           </div>
 
@@ -1099,13 +1119,13 @@
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. No snapshot corrente, format,
-              lint, typecheck, 538 unitários, reset/284 pgTAP, docs, 91 execuções browser, builds,
-              smokes, audit e Knip ficaram verdes. A release imutável do commit
-              <code>727eecd</code> foi verificada por manifesto/archive, contém 2.801 artefatos e
-              possui SHA-256 <code>2f1dafc6…f490</code>. Historicamente, o índice técnico da
-              FEAT-002 foi auditado, os standalones passaram nos smokes e a release do commit
-              <code>da34f46</code> foi verificada antes do merge <code>d272657</code>.
+              → docs → Playwright completo → builds → audit → Knip. O patch corrente registra
+              formatação, lint, typecheck, 563 unitários em 59 arquivos, reset/293 pgTAP, docs,
+              91/91 execuções browser, builds/smokes, audit e Knip verdes. A release imutável
+              histórica do commit <code>727eecd</code> foi verificada por manifesto/archive, contém
+              2.801 artefatos e possui SHA-256 <code>2f1dafc6…f490</code>. Historicamente, o índice
+              técnico da FEAT-002 foi auditado, os standalones passaram nos smokes e a release do
+              commit <code>da34f46</code> foi verificada antes do merge <code>d272657</code>.
             </p>
           </div>
         </section>
@@ -1143,10 +1163,16 @@
                 parcial e sign-out final limpam apenas cookies Auth exatos. A binding impede que uma
                 sessão de recovery abandonada vire login comum mesmo sem marker. O cache de sessão
                 fica escopado por identidade; o de recovery usa scope UUID público não autoritativo
-                e mostra somente verificação durante refetch ativo ou offline pausado. Uma resposta
-                de transporte ambígua no login apaga refs, formulário e caches antes da revalidação
-                SSR; feedback retryable de senha fica no boundary externo e nunca carrega
-                credenciais ou o objeto de erro.
+                e mostra somente verificação durante refetch ativo ou offline pausado. Nas mutations
+                de perfil, <code>expectedScope</code> repete o UUID do recorte SSR sem substituir a
+                autoridade de <code>session.userId</code>; divergência recebe
+                <code>409 SESSION_CHANGED</code> antes do limiter específico, serviço e DAL. O modo
+                de rede <code>always</code> impede fila offline, e transições de sessão apagam refs,
+                mutations, perfil/sessão e DOM antes da recomposição SSR. Reseeds normais preservam
+                cache público, enquanto logout e login ambíguo limpam o QueryClient integral. Uma
+                resposta de transporte ambígua no login também apaga refs e formulário; feedback
+                retryable de senha fica no boundary externo e nunca carrega credenciais ou o objeto
+                de erro.
               </p>
             </article>
             <article class="card">
@@ -1314,9 +1340,10 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Solicitar e atender o review do draft
-                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, então
-                  concluir o merge sem antecipar a FEAT-004 ou qualquer feature posterior.
+                  Gerar a nova release do snapshot já aprovado em 91/91 Playwright/axe e nos
+                  builds/smokes, então fazer commit/push, solicitar e atender o novo review do draft
+                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> antes do
+                  merge, sem antecipar a FEAT-004 ou qualquer feature posterior.
                 </li>
               </ol>
             </article>

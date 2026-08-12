@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
-import { accountQueryKeys } from "./account-query-keys";
+import { seedAuthoritativeIdentitySession } from "./account-query-keys";
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
 import {
   IdentityApiError,
@@ -47,9 +47,7 @@ function accountTypeLabel(session: Extract<IdentitySession, { authenticated: tru
 }
 
 function replaceIdentitySessionCache(queryClient: QueryClient, session: IdentitySession) {
-  queryClient.removeQueries({ queryKey: accountQueryKeys.profiles });
-  queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-  queryClient.setQueryData(identityQueryKeys.session(identitySessionScope(session)), session);
+  seedAuthoritativeIdentitySession(queryClient, session);
 }
 
 function redactIdentitySessionCacheForReload(
@@ -370,15 +368,12 @@ export function LoginPanel({
   returnTo,
 }: LoginPanelProps) {
   const queryClient = useQueryClient();
-  const sessionScope = identitySessionScope(initialSession);
-  const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
   const [preparedInitialSession, setPreparedInitialSession] = useState<IdentitySession>();
   const seedIsCurrent = preparedInitialSession === initialSession;
 
   useEffect(() => {
     let active = true;
-    queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
-    queryClient.setQueryData(sessionQueryKey, initialSession);
+    seedAuthoritativeIdentitySession(queryClient, initialSession);
     queueMicrotask(() => {
       if (active) {
         setPreparedInitialSession(initialSession);
@@ -387,7 +382,7 @@ export function LoginPanel({
     return () => {
       active = false;
     };
-  }, [initialSession, queryClient, sessionQueryKey]);
+  }, [initialSession, queryClient]);
 
   if (!seedIsCurrent) {
     return <Alert>Validando sua sessão…</Alert>;

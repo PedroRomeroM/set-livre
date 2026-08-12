@@ -209,6 +209,10 @@
 | SL-F034-E2E-005 | FEAT-034 |     P0     | critical      | desktop             | exclusão elegível anonimiza e revoga acesso preservando histórico financeiro   |  planejado   | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`            |
 | SL-F034-E2E-006 | FEAT-034 |     P1     | regression    | mobile              | páginas legais, consentimento e confirmação são acessíveis                     |  planejado   | `tests/e2e/regression/feat-034-lgpd-legal-data-rights.spec.ts`          |
 
+## Extensão P0 corrente da FEAT-003
+
+O catálogo e suas contagens permanecem inalterados. O hardening local foi absorvido pelos IDs existentes: `SL-F003-E2E-004` cobre a submissão antiga de A sob sessão B com `409 SESSION_CHANGED`, boundary fechado e B inalterado; `SL-F003-E2E-009` cobre a submissão sensível offline sem mutation pausada, payload retido ou POST tardio após reconexão. A matriz corrente passou em 91/91 execuções Playwright/axe, incluindo 32/32 da FEAT-003 nos IDs `SL-F003-E2E-001` a `009`: o ID 004 ficou verde nas três projeções com `pagehide=clear`, zero `pageerror`/erro React no console e B inalterado, e o ID 009 ficou verde nas quatro projeções. A auditoria terminou sem erros finais, attachments, segredos ou resíduos, com os 62 e-mails QA únicos restritos às 102 ocorrências em títulos automáticos allowlisted (`Fill` 84, `Visible` 10 e `Type` 8).
+
 ## Totais atuais do catálogo 1.1
 
 - Total: **198** cenários.

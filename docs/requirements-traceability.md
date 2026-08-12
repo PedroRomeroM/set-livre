@@ -6,26 +6,26 @@ Este documento comprova onde cada requisito central foi transformado em decisão
 
 ## 2. Mudanças arquiteturais solicitadas
 
-| ID       | Requisito                                              | Decisão/documento                                         | Evidência de implementação           |
-| -------- | ------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------ |
-| ARCH-001 | Blueprint → ADRs → especificação → docs vivas → código | `00-source-of-truth.md`, ADR-001, `AGENTS.md`             | `docs:check` e revisão de PR         |
-| ARCH-002 | npm em vez de pnpm                                     | `repository-rules.md`, `tooling.md`, ADR-002              | `package-lock.json`, `npm ci`        |
-| ARCH-003 | CSS Modules, CSS variables e primitives próprias       | ADR-013, `design-system.md`                               | lint/visual/Playwright               |
-| ARCH-004 | TanStack Query com query keys, cursores e invalidação  | ADR-003, `query-cache-invalidation.md`                    | unitários e testes de UI             |
-| ARCH-005 | `POST /api/commands` central para escritas críticas    | ADR-004, `api-contracts.md`                               | testes de comando/segurança          |
-| ARCH-006 | DAL `server-only` com role restrita                    | ADR-005, `architecture.md`, `security-privacy.md`         | grants manifest e testes             |
-| ARCH-007 | migrations append-only, grants mínimos e RLS           | ADR-005, `database.md`, `migration-plan.md`               | reset, schema guard, RLS A/B         |
-| ARCH-008 | read models pequenos, tipados e filtrados              | ADR-003, `api-contracts.md`, `database.md`                | testes de DTO/ownership              |
-| ARCH-009 | paginação keyset                                       | ADR-012, `api-contracts.md`                               | cursor estável/sem duplicação        |
-| ARCH-010 | índices somente estruturais ou provados por EXPLAIN    | ADR-012, `database.md`                                    | evidência em `docs/changes/`         |
-| ARCH-011 | status `text` com `check`                              | ADR-011, `domain-model.md`, `database.md`                 | schema guard e transições            |
-| ARCH-012 | backoffice separado                                    | ADR-002, `backoffice.md`                                  | smoke que prova ausência de `/admin` |
-| ARCH-013 | standalone, systemd, Nginx e release por SHA           | ADR-014, `infrastructure.md`, `release-runbook.md`        | smoke/rollback de release            |
-| ARCH-014 | mobile 320 px, safe areas e toque 44 px                | `design-system.md`, `ux-blueprint.md`, `accessibility.md` | matriz Playwright responsiva         |
-| ARCH-015 | WCAG 2.2 AA, teclado, foco, zoom 200% e axe            | `accessibility.md`, `qa-test-plan.md`                     | axe e testes manuais catalogados     |
-| ARCH-016 | QA com IDs, prioridade, suíte e rastreabilidade        | ADR-015, `qa-traceability.md`                             | `docs:check` e specs Playwright      |
-| ARCH-017 | dívida técnica com impacto/evidência/responsável/saída | `technical-debt.md`, template                             | gate de PR                           |
-| ARCH-018 | documentação dividida por responsabilidade             | ADR-015, `docs/README.md`                                 | atualização no mesmo PR              |
+| ID       | Requisito                                                 | Decisão/documento                                         | Evidência de implementação           |
+| -------- | --------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------ |
+| ARCH-001 | Blueprint → ADRs → especificação → docs vivas → código    | `00-source-of-truth.md`, ADR-001, `AGENTS.md`             | `docs:check` e revisão de PR         |
+| ARCH-002 | npm em vez de pnpm                                        | `repository-rules.md`, `tooling.md`, ADR-002              | `package-lock.json`, `npm ci`        |
+| ARCH-003 | CSS Modules, CSS variables e primitives próprias          | ADR-013, `design-system.md`                               | lint/visual/Playwright               |
+| ARCH-004 | TanStack Query com query keys, cursores e invalidação     | ADR-003, `query-cache-invalidation.md`                    | unitários e testes de UI             |
+| ARCH-005 | `/api/commands` privado + endpoint Auth convidado fechado | ADR-004, `api-contracts.md`                               | testes de ordem, comando e segurança |
+| ARCH-006 | DAL `server-only` com role restrita                       | ADR-005, `architecture.md`, `security-privacy.md`         | grants manifest e testes             |
+| ARCH-007 | migrations append-only, grants mínimos e RLS              | ADR-005, `database.md`, `migration-plan.md`               | reset, schema guard, RLS A/B         |
+| ARCH-008 | read models pequenos, tipados e filtrados                 | ADR-003, `api-contracts.md`, `database.md`                | testes de DTO/ownership              |
+| ARCH-009 | paginação keyset                                          | ADR-012, `api-contracts.md`                               | cursor estável/sem duplicação        |
+| ARCH-010 | índices somente estruturais ou provados por EXPLAIN       | ADR-012, `database.md`                                    | evidência em `docs/changes/`         |
+| ARCH-011 | status `text` com `check`                                 | ADR-011, `domain-model.md`, `database.md`                 | schema guard e transições            |
+| ARCH-012 | backoffice separado                                       | ADR-002, `backoffice.md`                                  | smoke que prova ausência de `/admin` |
+| ARCH-013 | standalone, systemd, Nginx e release por SHA              | ADR-014, `infrastructure.md`, `release-runbook.md`        | smoke/rollback de release            |
+| ARCH-014 | mobile 320 px, safe areas e toque 44 px                   | `design-system.md`, `ux-blueprint.md`, `accessibility.md` | matriz Playwright responsiva         |
+| ARCH-015 | WCAG 2.2 AA, teclado, foco, zoom 200% e axe               | `accessibility.md`, `qa-test-plan.md`                     | axe e testes manuais catalogados     |
+| ARCH-016 | QA com IDs, prioridade, suíte e rastreabilidade           | ADR-015, `qa-traceability.md`                             | `docs:check` e specs Playwright      |
+| ARCH-017 | dívida técnica com impacto/evidência/responsável/saída    | `technical-debt.md`, template                             | gate de PR                           |
+| ARCH-018 | documentação dividida por responsabilidade                | ADR-015, `docs/README.md`                                 | atualização no mesmo PR              |
 
 ## 3. Produto público e identidade
 

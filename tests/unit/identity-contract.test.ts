@@ -40,6 +40,7 @@ describe("identity contracts", () => {
     expect(
       identityCommandSchema.safeParse({
         action: "profile.complete",
+        expectedScope: "11111111-1111-4111-8111-111111111111",
         payload: validRegistration,
       }).success,
     ).toBe(false);

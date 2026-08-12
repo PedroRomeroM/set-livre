@@ -149,7 +149,7 @@ create temporary table feat003_concurrency_results (
   error_message text
 ) on commit drop;
 
-select plan(48);
+select plan(57);
 
 select ok(
   pg_catalog.to_regclass('public.user_preferences') is not null,
@@ -468,6 +468,51 @@ select private.feat003_create_user(
   'individual',
   '31000000-0000-4000-8000-000000000005'
 );
+select private.feat003_create_user(
+  '30000000-0000-4000-8000-000000000006',
+  'qa-feat003-owner@setlivre.local',
+  'individual',
+  '31000000-0000-4000-8000-000000000006'
+);
+select private.feat003_create_user(
+  '30000000-0000-4000-8000-000000000007',
+  'qa-feat003-application-admin@setlivre.local',
+  'individual',
+  '31000000-0000-4000-8000-000000000007'
+);
+
+-- FEAT-004 e FEAT-031 ainda são donas, respectivamente, de owner_profiles e
+-- platform_roles. Estes marcadores existem somente na fixture Auth para provar
+-- que metadata com aparência de privilégio de negócio nunca amplia ACL/RLS.
+update auth.users
+set raw_app_meta_data = raw_app_meta_data ||
+  '{"set_livre_test_persona":"owner"}'::jsonb
+where id = '30000000-0000-4000-8000-000000000006';
+
+update auth.users
+set raw_app_meta_data = raw_app_meta_data ||
+  '{"set_livre_test_persona":"application_admin"}'::jsonb
+where id = '30000000-0000-4000-8000-000000000007';
+
+select is(
+  (
+    select pg_catalog.jsonb_object_agg(
+      auth_user.id::text,
+      auth_user.raw_app_meta_data->>'set_livre_test_persona'
+      order by auth_user.id
+    )
+    from auth.users as auth_user
+    where auth_user.id in (
+      '30000000-0000-4000-8000-000000000006',
+      '30000000-0000-4000-8000-000000000007'
+    )
+  ),
+  '{
+    "30000000-0000-4000-8000-000000000006": "owner",
+    "30000000-0000-4000-8000-000000000007": "application_admin"
+  }'::jsonb,
+  'fixtures Auth reais distinguem owner e admin sem criar papel canônico antecipado'
+);
 
 select ok(
   not exists (
@@ -545,6 +590,431 @@ select is(
   '{"count":1,"ownsAll":true}'::jsonb,
   'RPC invoker e RLS deixam usuário B ver somente o próprio perfil'
 );
+
+-- O postgres local conserva ADMIN sem SET no manifesto. O teste habilita SET
+-- apenas nesta transação, exerce a role efetiva da DAL e restaura a membership
+-- exata antes de consultar readiness.
+grant app_dal to postgres with inherit false, set true;
+set local role app_dal;
+
+select pg_catalog.set_config(
+  'set_livre.test.owner_complete_version',
+  (
+    select profile.profile_version::text
+    from private.complete_profile(
+      '30000000-0000-4000-8000-000000000006',
+      0,
+      'individual',
+      'Pessoa Dona de Estúdio',
+      '+5541991112233',
+      '28001238938',
+      null
+    ) as profile
+  ),
+  true
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.owner_dal_result',
+  (
+    select pg_catalog.jsonb_build_object(
+      'userId', profile.user_id,
+      'name', profile.name,
+      'profileVersion', profile.profile_version,
+      'preferencesVersion', profile.preferences_version
+    )::text
+    from private.update_profile_identity(
+      '30000000-0000-4000-8000-000000000006',
+      1,
+      'Pessoa Dona Atualizada',
+      '+5541991112233',
+      false,
+      null,
+      false,
+      null
+    ) as profile
+  ),
+  true
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.admin_complete_version',
+  (
+    select profile.profile_version::text
+    from private.complete_profile(
+      '30000000-0000-4000-8000-000000000007',
+      0,
+      'individual',
+      'Pessoa Administradora',
+      '+5541992223344',
+      '52998224725',
+      null
+    ) as profile
+  ),
+  true
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.admin_dal_result',
+  (
+    select pg_catalog.jsonb_build_object(
+      'userId', profile.user_id,
+      'colorScheme', profile.color_scheme,
+      'profileVersion', profile.profile_version,
+      'preferencesVersion', profile.preferences_version
+    )::text
+    from private.update_profile_appearance(
+      '30000000-0000-4000-8000-000000000007',
+      0,
+      'dark'
+    ) as profile
+  ),
+  true
+);
+
+reset role;
+grant app_dal to postgres with inherit false, set false;
+
+-- authenticated não possui USAGE em private, portanto o nome qualificado não
+-- pode ser resolvido sob essa role. Os OIDs são congelados antes da troca para
+-- provar o EXECUTE efetivo sem transformar a própria introspecção em acesso.
+select pg_catalog.set_config(
+  'set_livre.test.complete_profile_oid',
+  pg_catalog.to_regprocedure(
+    'private.complete_profile(uuid,bigint,text,text,text,text,text)'
+  )::pg_catalog.oid::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.update_profile_identity_oid',
+  pg_catalog.to_regprocedure(
+    'private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'
+  )::pg_catalog.oid::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.update_profile_appearance_oid',
+  pg_catalog.to_regprocedure(
+    'private.update_profile_appearance(uuid,bigint,text)'
+  )::pg_catalog.oid::text,
+  true
+);
+
+select is(
+  pg_catalog.current_setting('set_livre.test.owner_complete_version'),
+  '1',
+  'app_dal conclui perfil da persona owner pelo boundary autorizado'
+);
+
+select is(
+  pg_catalog.current_setting('set_livre.test.owner_dal_result')::jsonb,
+  '{
+    "userId": "30000000-0000-4000-8000-000000000006",
+    "name": "Pessoa Dona Atualizada",
+    "profileVersion": 2,
+    "preferencesVersion": 0
+  }'::jsonb,
+  'app_dal atualiza identidade owner sem ampliar a versão de aparência'
+);
+
+select is(
+  pg_catalog.current_setting('set_livre.test.admin_complete_version'),
+  '1',
+  'app_dal conclui perfil da persona admin pelo boundary autorizado'
+);
+
+select is(
+  pg_catalog.current_setting('set_livre.test.admin_dal_result')::jsonb,
+  '{
+    "userId": "30000000-0000-4000-8000-000000000007",
+    "colorScheme": "dark",
+    "profileVersion": 1,
+    "preferencesVersion": 1
+  }'::jsonb,
+  'app_dal atualiza aparência admin sem ampliar a versão de identidade'
+);
+
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000006',
+  true
+);
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  pg_catalog.jsonb_build_object(
+    'sub', '30000000-0000-4000-8000-000000000006',
+    'role', 'authenticated',
+    'app_metadata', (
+      select auth_user.raw_app_meta_data
+      from auth.users as auth_user
+      where auth_user.id = '30000000-0000-4000-8000-000000000006'
+    )
+  )::text,
+  true
+);
+
+set local role authenticated;
+
+select pg_catalog.set_config(
+  'set_livre.test.owner_rls',
+  pg_catalog.jsonb_build_object(
+    'persona',
+      pg_catalog.current_setting('request.jwt.claims')::jsonb
+        #>> '{app_metadata,set_livre_test_persona}',
+    'authUid', auth.uid(),
+    'profiles', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(profile.id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            profile.id = '30000000-0000-4000-8000-000000000006'
+          ),
+          false
+        )
+      )
+      from public.profiles as profile
+    ),
+    'preferences', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(preference.user_id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            preference.user_id = '30000000-0000-4000-8000-000000000006'
+          ),
+          false
+        )
+      )
+      from public.user_preferences as preference
+    ),
+    'readModel', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(profile.user_id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            profile.user_id = '30000000-0000-4000-8000-000000000006'
+          ),
+          false
+        )
+      )
+      from public.get_my_profile() as profile
+    )
+  )::text,
+  true
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.owner_command_boundary',
+  pg_catalog.jsonb_build_object(
+    'privateSchemaUsage', pg_catalog.has_schema_privilege(
+      current_user,
+      'private',
+      'USAGE'
+    ),
+    'completeExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.complete_profile_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'identityExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.update_profile_identity_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'appearanceExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.update_profile_appearance_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'profileWrite', pg_catalog.has_table_privilege(
+      current_user,
+      'public.profiles',
+      'INSERT,UPDATE,DELETE'
+    ),
+    'preferenceWrite', pg_catalog.has_table_privilege(
+      current_user,
+      'public.user_preferences',
+      'INSERT,UPDATE,DELETE'
+    )
+  )::text,
+  true
+);
+
+reset role;
+
+select is(
+  pg_catalog.current_setting('set_livre.test.owner_rls')::jsonb,
+  '{
+    "persona": "owner",
+    "authUid": "30000000-0000-4000-8000-000000000006",
+    "profiles": {"count": 1, "ownsAll": true},
+    "preferences": {"count": 1, "ownsAll": true},
+    "readModel": {"count": 1, "ownsAll": true}
+  }'::jsonb,
+  'owner lê perfil, preferência e read model próprios sem atravessar ownership'
+);
+
+select is(
+  pg_catalog.current_setting(
+    'set_livre.test.owner_command_boundary'
+  )::jsonb,
+  '{
+    "privateSchemaUsage": false,
+    "completeExecute": false,
+    "identityExecute": false,
+    "appearanceExecute": false,
+    "profileWrite": false,
+    "preferenceWrite": false
+  }'::jsonb,
+  'owner autenticado não contorna tabela nem comandos privados pela persona'
+);
+
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '30000000-0000-4000-8000-000000000007',
+  true
+);
+select pg_catalog.set_config(
+  'request.jwt.claims',
+  pg_catalog.jsonb_build_object(
+    'sub', '30000000-0000-4000-8000-000000000007',
+    'role', 'authenticated',
+    'app_metadata', (
+      select auth_user.raw_app_meta_data
+      from auth.users as auth_user
+      where auth_user.id = '30000000-0000-4000-8000-000000000007'
+    )
+  )::text,
+  true
+);
+
+set local role authenticated;
+
+select pg_catalog.set_config(
+  'set_livre.test.admin_rls',
+  pg_catalog.jsonb_build_object(
+    'persona',
+      pg_catalog.current_setting('request.jwt.claims')::jsonb
+        #>> '{app_metadata,set_livre_test_persona}',
+    'authUid', auth.uid(),
+    'profiles', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(profile.id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            profile.id = '30000000-0000-4000-8000-000000000007'
+          ),
+          false
+        )
+      )
+      from public.profiles as profile
+    ),
+    'preferences', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(preference.user_id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            preference.user_id = '30000000-0000-4000-8000-000000000007'
+          ),
+          false
+        )
+      )
+      from public.user_preferences as preference
+    ),
+    'readModel', (
+      select pg_catalog.jsonb_build_object(
+        'count', pg_catalog.count(profile.user_id),
+        'ownsAll', coalesce(
+          pg_catalog.bool_and(
+            profile.user_id = '30000000-0000-4000-8000-000000000007'
+          ),
+          false
+        )
+      )
+      from public.get_my_profile() as profile
+    )
+  )::text,
+  true
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.admin_command_boundary',
+  pg_catalog.jsonb_build_object(
+    'privateSchemaUsage', pg_catalog.has_schema_privilege(
+      current_user,
+      'private',
+      'USAGE'
+    ),
+    'completeExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.complete_profile_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'identityExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.update_profile_identity_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'appearanceExecute', pg_catalog.has_function_privilege(
+      current_user,
+      pg_catalog.current_setting(
+        'set_livre.test.update_profile_appearance_oid'
+      )::pg_catalog.oid,
+      'EXECUTE'
+    ),
+    'profileWrite', pg_catalog.has_table_privilege(
+      current_user,
+      'public.profiles',
+      'INSERT,UPDATE,DELETE'
+    ),
+    'preferenceWrite', pg_catalog.has_table_privilege(
+      current_user,
+      'public.user_preferences',
+      'INSERT,UPDATE,DELETE'
+    )
+  )::text,
+  true
+);
+
+reset role;
+
+select is(
+  pg_catalog.current_setting('set_livre.test.admin_rls')::jsonb,
+  '{
+    "persona": "application_admin",
+    "authUid": "30000000-0000-4000-8000-000000000007",
+    "profiles": {"count": 1, "ownsAll": true},
+    "preferences": {"count": 1, "ownsAll": true},
+    "readModel": {"count": 1, "ownsAll": true}
+  }'::jsonb,
+  'admin de aplicação lê somente a própria conta na superfície FEAT-003'
+);
+
+select is(
+  pg_catalog.current_setting(
+    'set_livre.test.admin_command_boundary'
+  )::jsonb,
+  '{
+    "privateSchemaUsage": false,
+    "completeExecute": false,
+    "identityExecute": false,
+    "appearanceExecute": false,
+    "profileWrite": false,
+    "preferenceWrite": false
+  }'::jsonb,
+  'admin de aplicação não herda bypass RLS, escrita direta ou execute DAL'
+);
+
+select pg_catalog.set_config('request.jwt.claims', '', true);
 
 select pg_catalog.set_config(
   'request.jwt.claim.sub',

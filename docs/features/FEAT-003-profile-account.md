@@ -83,9 +83,12 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 - RLS próprio.
 - Documento mascarado após salvar.
 - Logs sem PII.
-- Comando não aceita status/userId e `profile.update` significa exclusivamente o titular autenticado da própria linha.
+- O envelope estrito de `profile.complete`/`profile.update` exige `expectedScope` UUID como asserção do recorte SSR; ele não aceita `userId` como ownership e `session.userId` continua sendo a única autoridade. Divergência retorna `409 SESSION_CHANGED` antes do limiter específico de perfil, serviço e DAL, sem ignorar as proteções globais anteriores da rota.
 - CPF/CNPJ e documento adicional nunca retornam em claro no DTO; substituições usam campo novo vazio e ação explícita `manter | substituir | remover` quando aplicável.
-- respostas concorrentes só entram no cache se `profileVersion` e `preferencesVersion` não regredirem; divergência de escopo descarta mutations/queries privadas antes da recomposição SSR.
+- Mutations de perfil usam `networkMode: "always"`: uma submissão offline executa e falha sem entrar na fila pausada. O escopo e o payload existem juntos apenas em uma ref one-shot, limpa em sucesso, erro ou settle.
+- `SESSION_CHANGED` e `UNAUTHENTICATED` são terminais no browser: fecham o boundary/DOM privado, descartam mutations e as famílias `account/profile` + `identity/session` e recompõem a rota por SSR.
+- Reseeds autoritativos normais de perfil/sessão limpam `MutationCache` e as duas famílias privadas, preservando cache público; logout e login ambíguo continuam limpando o `QueryClient` integralmente.
+- Respostas concorrentes só entram no cache se `profileVersion` e `preferencesVersion` não regredirem. A publicação autoritativa mantém o observer da query atual; um callback tardio de A, depois de reseed B, não pode recriar a key removida nem publicar PII de A.
 
 ## Critérios de aceitação
 
@@ -121,13 +124,15 @@ Regras:
 - CPF, CNPJ e documento adicional usam staging `formdata` one-shot em campos allowlisted, nunca `fill`, `type` ou `keyboard`;
 - dados com namespace QA.
 
+O hardening P0 local ampliou, sem criar IDs ou alterar contagens, as provas dos cenários `SL-F003-E2E-004` e `SL-F003-E2E-009`: respectivamente, submissão antiga de A após a sessão mudar para B e submissão offline sem mutation pausada ou POST tardio após reconexão. A matriz corrente passou em 91/91 execuções Playwright/axe, incluindo 32/32 da FEAT-003 nos IDs `SL-F003-E2E-001` a `009`. O ID 004 passou nas três projeções com marcador `pagehide=clear`, zero `pageerror`, zero erro React no console e B inalterado; o ID 009 passou nas quatro projeções. A auditoria terminou sem erros finais, attachments, segredos ou resíduos e restringiu os 62 e-mails QA únicos às 102 ocorrências em títulos automáticos allowlisted: `Fill` 84, `Visible` 10 e `Type` 8.
+
 ## Testes unitários, integração e banco
 
 - unitário: CPF, CNPJ numérico, CNPJ alfanumérico e normalização de telefone
-- banco: checks e RLS A/B
+- banco: checks, RLS A/B e personas adversariais owner/admin sem bypass ou autoridade antecipada
 - unitário: DTO redaction
 
-Evidência corrente: 538/538 testes unitários, 284/284 asserts pgTAP e 91/91 execuções Playwright/axe integrais passaram. As 32 execuções próprias da FEAT-003 cobrem os nove IDs nos projetos previstos. Builds e smokes standalone dos dois apps também passaram; o índice de 85 paths foi auditado, o commit funcional é `727eecd` e sua release imutável contém 2.801 artefatos. O draft [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4) está aberto e o status permanece `Em implementação` até review e merge.
+Evidência corrente do hardening P0 local: 563/563 testes unitários distribuídos por 59 arquivos, 293/293 asserts pgTAP e 91/91 execuções Playwright/axe passaram, sem alterar os nove IDs ou as 32 execuções da FEAT-003. Os 57 asserts do perfil incluem personas adversariais owner/admin ainda sob `authenticated`, sem bypass de RLS/ACL; os marcadores de fixture não antecipam as autoridades canônicas das FEAT-004/031. Os novos builds e smokes standalone também passaram sem warnings; a nova release, commit/push e o novo review deste snapshot ainda estão pendentes. O commit/release `727eecd`, com 2.801 artefatos, permanece apenas como evidência histórica. O draft [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4) permanece aberto e o status continua `Em implementação` até review e merge.
 
 ## Documentação viva afetada
 
