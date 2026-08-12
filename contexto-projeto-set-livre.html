@@ -723,7 +723,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Release local canônica · publicação pendente</span>
+              <span class="tag review">Novo HEAD publicado · threads abertas</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
@@ -736,7 +736,7 @@
                 <code>PRR_kwDOTyzZrs8AAAABJQvhhQ</code>, concluído em
                 <code>2026-08-12T12:32:57Z</code> sobre o HEAD <code>07dcbb06b4</code>, abriu dois
                 P2: a leitura de recebimentos carregava o documento jurídico inteiro e validação
-                stale podia permitir nova tentativa sem releitura. As correções locais separam
+                stale podia permitir nova tentativa sem releitura. As correções publicadas separam
                 ativação em 21 colunas com documento, por <code>GET /api/owner/activation</code>, de
                 recebimentos em 16 colunas sem título, versão textual, hash ou corpo, por
                 <code>GET /api/owner/recipient</code>. Conflito e validação sem erro de campo exigem
@@ -747,10 +747,10 @@
                 114/114, com privacidade e cleanup aceitos. O
                 <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> da branch
                 publicada está <code>OPEN</code>/draft contra <code>main</code>. Build, smoke e a
-                release local canônica <code>79376b62...</code> também passaram; publicação do novo
-                HEAD, resolução dos P2, re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo
-                permanecem pendentes. PEND-004 e PEND-006 continuam bloqueando produção, não a
-                implementação local.
+                release canônica <code>79376b62...</code> passaram, e o remoto avançou para
+                <code>e828f389...</code>. As duas threads continuam sem resposta ou resolução;
+                re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo permanecem pendentes.
+                PEND-004 e PEND-006 continuam bloqueando produção, não a implementação local.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -1209,9 +1209,9 @@
               warnings, typecheck integral, 716/716 unitários em 74 arquivos, docs:check 34/200/18,
               audit zero, Knip e diff-check passaram. A evidência antiga de 707/707, browser,
               builds, smokes e release x64 permanece histórica do snapshot anterior aos dois P2.
-              Build, smoke e release local canônica atuais ficaram verdes; publicação do novo HEAD,
-              resolução das threads, re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo
-              permanecem pendentes.
+              Build, smoke, release canônica e publicação do novo HEAD ficaram verdes; resolução das
+              threads, re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo permanecem
+              pendentes.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1307,17 +1307,23 @@
               <code>NO-BLOCKER</code> somente no escopo local Linux x64, Node 24.18/npm 11.19; as
               varreduras canônicas antes e depois do smoke não encontraram segredo de runtime nem
               PII de cliente/QA. A fotografia permanece stale e não descreve a release atual.
-              Naquele snapshot, a publicação foi concluída; o primeiro review abriu dois P2, e a
-              publicação do novo HEAD, novo review, promoção para ready e merge ainda não ocorreram.
+              Naquele snapshot, a publicação foi concluída; o primeiro review abriu dois P2. O novo
+              HEAD já foi publicado, mas respostas/resolução, novo review, promoção para ready e
+              merge ainda não ocorreram.
             </p>
             <p>
               A branch <code>feat/feat-004-owner-onboarding-recipient</code> foi publicada, e o
               <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> está
-              <code>OPEN</code>, em draft e com base <code>main</code>. O snapshot remoto ainda
-              contém o commit funcional <code>c115dcd726929f289777cd897cccc97d33a179ee</code> e o
-              commit de documentação de release
-              <code>4bf6ec51ce27486f274dcad1f708372947055240</code>; commits documentais posteriores
-              não alteram seus bytes.
+              <code>OPEN</code>, em draft e com base <code>main</code>, observada em
+              <code>174ee163…</code>. O remoto avançou de <code>07dcbb0</code> para
+              <code>e828f3899a98414bee53e7c1de28fd1760273580</code>, publicando o commit funcional
+              <code>79376b62bdce788c9eb7e1f1696d5acfde0cb215</code> e a documentação de release
+              <code>e828f3899a98414bee53e7c1de28fd1760273580</code>. O
+              <code>statusCheckRollup</code> estava vazio e mergeability/state apareciam
+              <code>UNKNOWN</code> na leitura imediata, sem sustentar claim de checks remotos ou
+              mergeabilidade. A thread de projeção continua atual e ancorada na migration
+              <code>20260812000100</code>; a de recovery stale está <code>outdated=true</code>.
+              Ambas permanecem sem resposta ou resolução.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1521,8 +1527,9 @@
                 cleanup ficaram verdes em Linux x64, Node 24.18/npm 11.19; a auditoria final
                 independente terminou <code>NO-BLOCKER</code>. A release <code>c115dcd...</code>, de
                 2.859 payloads e 13 migrations, permanece histórica e stale. Esta prova não é ARM64
-                ou produção; PEND-003 e o smoke ARM64 nativo seguem pendentes. Publicação do novo
-                HEAD, resolução dos dois P2, re-review, promoção e merge também seguem pendentes.
+                ou produção; PEND-003 e o smoke ARM64 nativo seguem pendentes. A publicação do novo
+                HEAD está concluída; resolução dos dois P2, re-review, promoção e merge seguem
+                pendentes.
               </p>
             </article>
             <article class="card">
@@ -1680,13 +1687,13 @@
               <ol class="step-list">
                 <li>
                   Concluir os dois P2 do PR #6, ainda <code>OPEN</code>/draft: banco, gates,
-                  browser, build, smoke e release local canônica pós-review já estão verdes; agora
-                  faltam publicação do novo HEAD, resposta e resolução das threads, re-review,
-                  promoção para ready e merge. Os hashes antigos e a release
-                  <code>c115dcd...</code> são históricos do snapshot anterior; a release atual
-                  <code>79376b62...</code> permanece local. PEND-003, trusted proxy e o smoke ARM64
-                  nativo continuam bloqueando produção. Gateway externo, checkout, fallback
-                  administrativo e dados bancários permanecem fora desta fatia.
+                  browser, build, smoke, release canônica e publicação do novo HEAD já estão verdes;
+                  agora faltam resposta e resolução das threads, re-review, promoção para ready e
+                  merge. Os hashes antigos e a release <code>c115dcd...</code> são históricos do
+                  snapshot anterior; a release atual permanece vinculada ao commit funcional
+                  publicado <code>79376b62...</code>. PEND-003, trusted proxy e o smoke ARM64 nativo
+                  continuam bloqueando produção. Gateway externo, checkout, fallback administrativo
+                  e dados bancários permanecem fora desta fatia.
                 </li>
               </ol>
             </article>
