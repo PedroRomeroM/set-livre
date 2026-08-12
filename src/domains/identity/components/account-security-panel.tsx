@@ -40,7 +40,8 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
     staleTime: 30_000,
   });
   const logoutMutation = useMutation({
-    mutationFn: logoutIdentity,
+    mutationFn: () => logoutIdentity(userId),
+    networkMode: "always",
     onError: () => {
       queryClient.clear();
       window.location.replace("/entrar?saida=verificar");

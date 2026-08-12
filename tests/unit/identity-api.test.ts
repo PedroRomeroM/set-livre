@@ -4,6 +4,7 @@ import {
   IdentityApiError,
   isRetryableIdentityCallbackError,
   loginIdentity,
+  logoutIdentity,
   registerIdentity,
 } from "../../src/domains/identity/components/identity-api";
 
@@ -76,6 +77,54 @@ describe("identity browser API", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("binds logout to the authenticated SSR scope", async () => {
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    const expectedScope = "22222222-2222-4222-8222-222222222222";
+    const fetchMock = vi.fn(async () =>
+      Response.json({ data: { signedOut: true }, requestId }, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    await expect(logoutIdentity(expectedScope)).resolves.toEqual({ signedOut: true });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/logout",
+      expect.objectContaining({
+        body: JSON.stringify({ expectedScope }),
+        method: "POST",
+      }),
+    );
+  });
+
+  it("aborts a timed-out logout without losing its scope binding", async () => {
+    vi.useFakeTimers();
+    const expectedScope = "22222222-2222-4222-8222-222222222222";
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("private-logout-transport", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    const outcome = logoutIdentity(expectedScope).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(outcome).resolves.toMatchObject({ code: "REQUEST_TIMEOUT" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/logout",
+      expect.objectContaining({ body: JSON.stringify({ expectedScope }), method: "POST" }),
+    );
+    expect(JSON.stringify(await outcome)).not.toContain("private-logout-transport");
   });
 
   it("retries only a valid pre-OTP service response for signup and recovery callbacks", () => {

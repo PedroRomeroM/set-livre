@@ -137,12 +137,17 @@ describe("profile UI privacy guards", () => {
     const content = componentSource("account-security-panel.tsx");
     const mutation = content.slice(content.indexOf("const logoutMutation = useMutation"));
 
+    expect(mutation).toContain("mutationFn: () => logoutIdentity(userId)");
+    expect(mutation).toContain('networkMode: "always"');
     expect(mutation.match(/queryClient\.clear\(\);/gu)).toHaveLength(2);
     expect(mutation.indexOf("queryClient.clear();")).toBeLessThan(
       mutation.indexOf('window.location.replace("/entrar?saida=verificar")'),
     );
     expect(mutation.lastIndexOf("queryClient.clear();")).toBeLessThan(
       mutation.indexOf('window.location.replace("/entrar")'),
+    );
+    expect(mutation.indexOf("setSessionTransitionStarted(true);")).toBeLessThan(
+      mutation.indexOf("logoutMutation.mutate();"),
     );
   });
 

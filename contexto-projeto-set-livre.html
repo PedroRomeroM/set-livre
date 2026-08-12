@@ -648,12 +648,14 @@
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>1/34</strong><span>features de produto concluídas</span></div>
           <div class="stat">
-            <strong>563</strong><span>unitários em 59 arquivos correntes</span>
+            <strong>578</strong><span>unitários correntes em 60 arquivos</span>
           </div>
           <div class="stat">
-            <strong>293</strong><span>asserts pgTAP do snapshot corrente</span>
+            <strong>293</strong><span>asserts pgTAP do snapshot P2 corrente</span>
           </div>
-          <div class="stat"><strong>91</strong><span>execuções browser correntes</span></div>
+          <div class="stat">
+            <strong>91</strong><span>execuções Playwright do snapshot P2 corrente</span>
+          </div>
           <div class="stat"><strong>12</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
@@ -714,15 +716,18 @@
               <p>
                 Perfil PF/PJ completo, telefone brasileiro sem truncar prefixos estrangeiros, conta,
                 segurança e preferência visual já atravessam contratos, banco, DAL, comandos, read
-                model e interface. O hardening P0 local vincula cada mutation ao escopo SSR, impede
-                fila offline, bloqueia callback tardio entre identidades e fecha o boundary por
-                commit React síncrono seguro. O snapshot corrente passou em 563/563 unitários em 59
-                arquivos, 293/293 asserts pgTAP e 91/91 Playwright/axe, incluindo 32/32 da FEAT-003.
-                Builds e smokes standalone passaram sem warnings. O snapshot funcional
-                <code>f4f3b1d</code> e o commit documental <code>9c23ef3</code> foram publicados; as
-                três threads foram resolvidas e a segunda revisão não encontrou problema relevante.
-                O draft <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>
-                permanece aberto e somente o merge está pendente.
+                model e interface. O hardening local vincula cada mutation ao escopo SSR, impede
+                fila offline e bloqueia callback tardio entre identidades. O PR foi marcado ready no
+                HEAD <code>9531815</code>; a revisão Codex das <code>03:45Z</code> abriu dois P2
+                adicionais, sobre logout offline/obsoleto e timeout da projeção de preferência no
+                login. As correções ainda locais usam closure de logout sem variables, modo de rede
+                always e classificação autoritativa antes dos efeitos destrutivos explícitos de
+                recovery, deleção de cookies ou sign-out; <code>getClaims</code> pode renovar ou
+                manter a sessão internamente. A projeção possui deadline server-side de um segundo
+                com fallback <code>system</code>. A suíte unitária integral passou em 578/578 testes
+                de 60 arquivos, o banco em 293/293 asserts e uma matriz Playwright/axe em 91/91, com
+                32/32 da feature. Builds e smokes de web/backoffice também ficaram verdes; nova
+                release, publicação e nova revisão continuam pendentes.
               </p>
             </article>
             <article class="card">
@@ -759,28 +764,44 @@
               formatação, lint, typecheck, documentação, builds, audit e Knip também passaram. O
               commit <code>da34f46</code> passou nos smokes standalone e originou release imutável
               local com 2.756 artefatos e SHA-256 <code>33f0289b…7e47</code>. Na FEAT-003, o
-              snapshot corrente passou em 563/563 unitários distribuídos por 59 arquivos, 293/293
-              asserts pgTAP e 91/91 execuções Playwright/axe, sendo 32/32 da feature nos IDs
-              001–009. O ID 004 passou em três projeções com <code>pagehide=clear</code>, zero
-              <code>pageerror</code>, zero erro React no console e B inalterado; o ID 009 passou nas
-              quatro projeções. Um run diagnóstico anterior havia encontrado o snapshot SSR de A em
-              scripts Flight/RSC ao varrer <code>body.textContent</code>, fora da UI e sem comprovar
-              vazamento visual. O boundary agora fecha por commit React, sem mutar imperativamente
-              os filhos pertencentes ao framework; o probe varre somente <code>main</code> e exige
-              heading, resumo, formulário e controles antigos desconectados. A auditoria não
-              encontrou erros finais, attachments, segredos ou resíduos; os 62 e-mails QA únicos
-              apareceram em 102 ocorrências exclusivamente nos títulos automáticos allowlisted:
-              <code>Fill</code> 84, <code>Visible</code> 10 e <code>Type</code> 8. O commit
-              <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> congelou o snapshot funcional
-              local e gerou a release canônica com 2.809 artefatos. O archive
+              snapshot integral publicado anterior passou em 563/563 unitários distribuídos por 59
+              arquivos, 293/293 asserts pgTAP e 91/91 execuções Playwright/axe, sendo 32/32 da
+              feature nos IDs 001–009. Um run diagnóstico anterior havia encontrado o snapshot SSR
+              de A em scripts Flight/RSC ao varrer <code>body.textContent</code>, fora da UI e sem
+              comprovar vazamento visual. O boundary agora fecha por commit React, sem mutar
+              imperativamente os filhos pertencentes ao framework; o probe varre somente
+              <code>main</code> e exige heading, resumo, formulário e controles antigos
+              desconectados. A auditoria histórica encontrou zero erro final, attachment, segredo ou
+              resíduo; os 62 e-mails QA únicos apareceram em 102 títulos automáticos allowlisted. O
+              commit <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> congelou o snapshot
+              funcional local e gerou a release canônica com 2.809 artefatos. O archive
               <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
               <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. O
-              commit documental <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code> é o HEAD
-              remoto revisado. Depois do trigger <code>5261407908</code> às <code>02:29:08Z</code> e
-              da espera integral de 60 minutos, a inspeção confirmou a resposta
-              <code>5261469771</code>, publicada às <code>02:35:40Z</code> sobre
-              <code>9c23ef3f08</code>: “Didn't find any major issues”. As três threads estão
-              resolvidas, zero permanece aberta e apenas o merge continua pendente.
+              commit documental <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code> foi o HEAD
+              remoto da segunda revisão. Depois do trigger <code>5261407908</code> às
+              <code>02:29:08Z</code> e da espera integral de 60 minutos, a inspeção confirmou a
+              resposta <code>5261469771</code>, publicada às <code>02:35:40Z</code> sobre
+              <code>9c23ef3f08</code>: “Didn't find any major issues”. Esse registro de três threads
+              resolvidas e zero aberta é histórico: depois de o PR ficar ready no HEAD
+              <code>9531815</code>, a revisão das <code>03:45Z</code> abriu dois P2. O snapshot P2
+              corrente passou em 578/578 unitários de 60 arquivos e, após reset e geração, em
+              293/293 asserts pgTAP (158 + 78 + 57), com head <code>20260811000500</code> e zero
+              resíduo. Uma matriz Playwright/axe integral passou em 91/91 numa única execução de 3,9
+              minutos, incluindo 32/32 da FEAT-003. O ID 004 passou em 3/3 projeções com
+              <code>409</code> para logout stale, sessão e perfil de B intactos e zero
+              <code>pageerror</code> ou erro React; o ID 009 passou em 4/4 com falha offline
+              imediata, exatamente uma request e nenhum POST tardio após reconexão. Não houve
+              resultado inesperado, flake, skip, erro ou attachment, nem ocorrência de sentinelas,
+              tokens, cookies Auth ou documentos crus. Os 62 e-mails QA únicos apareceram em 114
+              títulos allowlisted: <code>Fill</code> 84, <code>Visible</code> 18,
+              <code>Count</code> 4 e <code>Type</code> 8; banco, Mailpit, portas e processos ficaram
+              sem resíduo. Os builds Next.js 16.3 de web/backoffice passaram sem warnings, com
+              manifests standalone, 17 arquivos obrigatórios e <code>BUILD_ID</code> local em cada
+              app. Os smokes aprovaram live/ready/root, CSP, <code>no-store</code>, assets, nonces e
+              probes adversariais, incluindo <code>/entrar</code> 200 no web e 404 no backoffice.
+              Lockfile e gerados permaneceram inalterados, portas/processos ficaram limpos e os logs
+              têm hashes <code>2e3b…4310</code> e <code>c9e5…da97</code>. Nova release, publicação e
+              nova revisão continuam pendentes.
             </p>
           </div>
         </section>
@@ -1058,14 +1079,14 @@
               Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
-              adversos. O snapshot corrente passou em 91/91, incluindo 32/32 da FEAT-003 nos nove
-              IDs estáveis.
+              adversos. O snapshot P2 corrente passou em 91/91 numa única execução de 3,9 minutos,
+              incluindo 32/32 da FEAT-003 nos nove IDs estáveis e sem alterar o catálogo.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">563 aprovados · 59 arquivos</span>
+              <span class="tag done">578 aprovados · 60 arquivos</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1074,7 +1095,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">293 aprovados</span>
+              <span class="tag done">293 · snapshot P2 corrente</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
@@ -1085,7 +1106,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">91 aprovados no snapshot corrente</span>
+              <span class="tag done">91 · snapshot P2 corrente</span>
               <h3>Playwright + axe</h3>
               <p>
                 36 execuções técnicas da fundação, 23 da FEAT-002 e 32 da FEAT-003, cobrindo smoke,
@@ -1112,20 +1133,34 @@
             <strong>Evidência local incorporada e trabalho corrente:</strong>
             <p>
               A FEAT-002 conserva 236/236 asserts pgTAP, 458/458 unitários e 59/59 execuções browser
-              verdes no histórico incorporado. O snapshot corrente da FEAT-003 passou em 563/563
-              unitários distribuídos por 59 arquivos, 293/293 asserts pgTAP e 91/91 execuções
-              browser/axe, incluindo 32/32 da feature. Os IDs 004 e 009 passaram respectivamente em
-              três e quatro projeções, e a auditoria terminou sem erros finais, attachments,
-              segredos ou resíduos. Os builds e smokes standalone correntes também passaram sem
-              warnings. O snapshot funcional foi congelado no commit local
+              verdes no histórico incorporado. O snapshot integral publicado anterior da FEAT-003
+              passou em 563/563 unitários de 59 arquivos, 293/293 asserts pgTAP e 91/91 execuções
+              browser/axe, incluindo 32/32 da feature; seus builds e smokes também passaram. O
+              snapshot funcional histórico foi congelado no commit
               <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local canônica
               com 2.809 artefatos; o archive possui SHA-256
               <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. O HEAD
-              remoto revisado é <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code>; as três
-              threads estão resolvidas, zero permanece aberta e a segunda revisão não encontrou
-              problema relevante. O draft
-              <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> segue aberto e
-              somente o merge está pendente.
+              <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code> recebeu a segunda revisão limpa.
+              Depois, o <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> ficou
+              ready no HEAD <code>9531815</code> e a revisão das <code>03:45Z</code> abriu dois P2.
+              Para as correções locais, 578/578 unitários em 60 arquivos, lint, typecheck, audit e
+              Knip passaram, além das rodadas focadas 37/37, 96/96 e 65/65. Reset, geração e banco
+              passaram em 293/293 asserts pgTAP (158 + 78 + 57), com head
+              <code>20260811000500</code> e zero resíduo. Uma matriz Playwright/axe integral passou
+              em 91/91 em 3,9 minutos, com 32/32 da FEAT-003; o ID 004 passou em 3/3 projeções com
+              <code>409</code> para logout stale, B intacto e zero erro de página/React, e o ID 009
+              passou em 4/4 com falha offline imediata, exatamente uma request e nenhum POST tardio.
+              O run teve zero resultado inesperado, flake, skip, erro ou attachment e varredura
+              negativa de sentinelas, tokens, cookies Auth e documentos crus. Os 62 e-mails QA
+              únicos ficaram em 114 títulos allowlisted (<code>Fill</code> 84,
+              <code>Visible</code> 18, <code>Count</code> 4 e <code>Type</code> 8), e banco,
+              Mailpit, portas e processos ficaram sem resíduo. Os builds Next.js 16.3 de
+              web/backoffice passaram sem warnings, com manifests standalone, 17 arquivos
+              obrigatórios e <code>BUILD_ID</code> local em cada app; os smokes aprovaram
+              live/ready/root, CSP, <code>no-store</code>, assets, nonces, probes adversariais,
+              <code>/entrar</code> 200 no web e 404 no backoffice. Lockfile e gerados não mudaram,
+              portas/processos ficaram limpos e os logs têm hashes <code>2e3b…4310</code> e
+              <code>c9e5…da97</code>. Nova release, publicação e revisão permanecem pendentes.
             </p>
           </div>
 
@@ -1133,9 +1168,11 @@
             <strong>Gates canônicos:</strong>
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
-              → docs → Playwright completo → builds → audit → Knip. O patch corrente registra
-              formatação, lint, typecheck, 563 unitários em 59 arquivos, reset/293 pgTAP, docs,
-              91/91 execuções browser, builds/smokes, audit e Knip verdes. O commit funcional local
+              → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde no
+              snapshot publicado anterior. No snapshot local posterior aos dois P2, unitários
+              578/578 em 60 arquivos, banco 293/293, Playwright/axe 91/91, lint, typecheck, audit
+              com zero vulnerabilidade, Knip, builds e smokes já passaram; somente nova release
+              ainda não. O commit funcional
               <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> gerou a release local canônica
               com 2.809 artefatos; o archive
               <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
@@ -1189,7 +1226,15 @@
                 cache público, enquanto logout e login ambíguo limpam o QueryClient integral. Uma
                 resposta de transporte ambígua no login também apaga refs e formulário; feedback
                 retryable de senha fica no boundary externo e nunca carrega credenciais ou o objeto
-                de erro.
+                de erro. Nas duas superfícies de logout, uma closure sem variables e sem fila leva
+                somente a asserção UUID. <code>getClaims</code> pode renovar ou manter a sessão
+                internamente; depois dele, a classificação termina antes de obter explicitamente o
+                cookie store e antes de fechar recovery, deletar cookies ou chamar sign-out. Throw
+                gera indisponibilidade, ausência/erro assinado gera não autenticado, e apenas UUID
+                válido divergente gera sessão alterada. Os três ramos têm zero efeitos destrutivos
+                explícitos de logout. A projeção de preferência do login recebe AbortSignal, expira
+                em um segundo e usa <code>system</code>; resolução tardia não escreve cookie nem
+                inicia sign-out.
               </p>
             </article>
             <article class="card">
@@ -1227,15 +1272,16 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Implementado localmente</span>
-              <h3>Artefato por SHA</h3>
+              <span class="tag done">Última release local publicada</span>
+              <h3>Artefato histórico por SHA</h3>
               <p>
                 O snapshot funcional da FEAT-003 foi congelado no commit local
                 <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local
                 canônica com 2.809 artefatos. O archive
                 <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui
                 SHA-256
-                <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>.
+                <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Essa
+                release precede os dois P2; o novo empacotamento permanece pendente.
               </p>
               <p>
                 A FEAT-002 foi reempacotada após o quarto review no commit
@@ -1365,11 +1411,10 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Integrar o draft
-                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, cujo
-                  snapshot publicado passou em 91/91 Playwright/axe, builds/smokes e segunda revisão
-                  sem problema relevante, mantendo a FEAT-003 em implementação até o merge e sem
-                  antecipar a FEAT-004 ou qualquer feature posterior.
+                  Gerar a release das correções locais; publicar o novo snapshot do
+                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, responder os
+                  dois P2 da revisão das <code>03:45Z</code> e obter nova revisão antes do merge,
+                  mantendo a FEAT-003 em implementação e sem antecipar a FEAT-004.
                 </li>
               </ol>
             </article>

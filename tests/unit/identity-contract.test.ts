@@ -5,6 +5,7 @@ import {
   identityCallbackPayloadSchema,
   identityCommandSchema,
   identityEmailSchema,
+  identityLogoutPayloadSchema,
   identityPasswordSchema,
   identityRegistrationFormSchema,
   resolveAuthenticatedReturnTo,
@@ -65,6 +66,19 @@ describe("identity contracts", () => {
         acceptPrivacy: false,
         confirmPassword: "OutraSenha1",
       }).success,
+    ).toBe(false);
+  });
+
+  it("requires an exact UUID scope assertion for logout", () => {
+    const expectedScope = "11111111-1111-4111-8111-111111111111";
+
+    expect(identityLogoutPayloadSchema.parse({ expectedScope })).toEqual({ expectedScope });
+    expect(identityLogoutPayloadSchema.safeParse({}).success).toBe(false);
+    expect(identityLogoutPayloadSchema.safeParse({ expectedScope: "anonymous" }).success).toBe(
+      false,
+    );
+    expect(
+      identityLogoutPayloadSchema.safeParse({ expectedScope, userId: expectedScope }).success,
     ).toBe(false);
   });
 

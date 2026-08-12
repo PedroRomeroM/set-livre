@@ -52,14 +52,20 @@ export function mapOwnProfileRow(row: ProfileDalRow, userId: string) {
   return profile;
 }
 
-async function readOwnProfileWithClient(client: SupabaseClient<Database>, userId: string) {
-  const { data, error } = await client.rpc("get_my_profile").maybeSingle();
+async function readOwnProfileWithClient(
+  client: SupabaseClient<Database>,
+  userId: string,
+  signal?: AbortSignal,
+) {
+  const query = client.rpc("get_my_profile");
+  const abortableQuery = signal === undefined ? query : query.abortSignal(signal);
+  const { data, error } = await abortableQuery.maybeSingle();
   if (error !== null) {
     throw new Error("Não foi possível carregar o perfil autenticado.");
   }
   return mapOwnProfileRow(parseProfileDalRow(data), userId);
 }
 
-export async function readOwnProfile(userId: string) {
-  return readOwnProfileWithClient(await createComponentSupabaseClient(), userId);
+export async function readOwnProfile(userId: string, signal?: AbortSignal) {
+  return readOwnProfileWithClient(await createComponentSupabaseClient(), userId, signal);
 }

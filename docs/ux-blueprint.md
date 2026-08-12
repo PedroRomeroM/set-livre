@@ -184,6 +184,8 @@ Ao clicar:
 
 Durante carregamento inicial, refetch, pausa offline ou divergência de escopo, nome, telefone, e-mail e documentos mascarados ficam ocultos por inteiro. Conflito oferece carregar a versão atual; timeout e erro mantêm recuperação explícita. CPF/CNPJ e documento novo vivem somente no formulário/ref efêmero, são apagados após todo desfecho remoto e nunca voltam em claro no DTO.
 
+O logout de `/entrar` autenticado e `/conta/seguranca` usa o mesmo comportamento: a ação fecha imediatamente a superfície privada, nunca fica aguardando em fila offline e termina com limpeza integral do cache e composição SSR. Se a sessão mudou de A para B antes do servidor decidir, a ação antiga não encerra B; `getClaims` pode renovar ou manter a sessão internamente, mas a classificação de indisponibilidade, ausência e divergência termina antes de o fluxo obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`. Esses ramos têm zero efeitos destrutivos explícitos de logout. Durante login, a preferência visual pode aguardar no máximo um segundo no servidor; falha ou timeout usa `Dispositivo`, sem alterar o cookie tardiamente.
+
 ## 8. Checkout
 
 ### Cartão

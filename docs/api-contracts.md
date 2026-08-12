@@ -27,9 +27,13 @@ type ProfileCommandEnvelope = BaseCommandEnvelope<"profile.complete" | "profile.
 type GuestRegistrationEnvelope = BaseCommandEnvelope<"identity.register"> & {
   expectedScope?: never;
 };
+
+type LogoutRequest = {
+  expectedScope: string;
+};
 ```
 
-Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. `expectedScope` pertence aos dois comandos de perfil e é validado como UUID; não é um campo genérico aceito silenciosamente por todo envelope.
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry de comandos, `expectedScope` pertence aos dois comandos de perfil. A rota Auth especializada de logout recebe a mesma asserção em seu schema próprio. Em ambos os casos ela é UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
 Headers:
 
@@ -61,33 +65,35 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - depois que `setSession` começa, qualquer erro/throw de publicação retorna `AUTH_SESSION_RECHECK_REQUIRED`, inclusive se o cleanup exato também falhar; o cliente trata esse código como desfecho ambíguo, apaga controles/refs/cache e força `/entrar?entrada=verificar` para leitura SSR. Falha de rede, timeout ou envelope inválido depois do `POST` segue a mesma transição. O parâmetro é aceito somente por igualdade literal e não carrega identidade ou credencial;
 - uma sessão Auth vinculada a recovery nunca é publicada como login comum. Expiração/consumo do grant, binding fechada, marcador ausente/divergente ou navegação fora das superfícies autorizadas fecham a binding, removem o grant e encerram a sessão local; a tombstone persiste para classificar replay pelo `session_id` mesmo sem cookies auxiliares;
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
-- logout só aceita erro do provider como concluído quando o cliente server-side comprova que a sessão local já não existe;
+- nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, logout usa uma closure one-shot sem `variables`, `networkMode: "always"` e `expectedScope` UUID como asserção do recorte SSR. O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`, `claimsResult.error` ou contexto assinado ausente retorna `401 UNAUTHENTICATED`, e somente um `userId` válido divergente retorna `409 SESSION_CHANGED`; os três ramos têm zero efeitos destrutivos explícitos de logout. Um erro posterior do provider só pode equivaler a logout concluído quando o cliente server-side comprova ausência da sessão local;
+- depois de `setSession`, a projeção de preferência chama `get_my_profile()` com o `AbortSignal` da operação e deadline server-side de um segundo. Timeout ou falha usa `system`; uma resolução tardia é ignorada e não pode publicar cookie nem iniciar `signOut` depois da resposta;
 - `returnTo` possui allowlist literal: `/entrar?sessao=ativa`, `/conta` e `/conta/seguranca`. Qualquer outro valor é descartado no Server Component antes de alcançar o payload efêmero de login.
 
 ## 3. Códigos de erro
 
-| Código                          | HTTP | Uso                             |
-| ------------------------------- | ---: | ------------------------------- |
-| `AUTH_REQUIRED`                 |  401 | sem sessão                      |
-| `AUTH_RESTART_REQUIRED`         |  503 | signup OTP ambíguo              |
-| `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua     |
-| `FORBIDDEN`                     |  403 | papel/ownership                 |
-| `ACCOUNT_SUSPENDED`             |  403 | conta suspensa                  |
-| `VALIDATION_FAILED`             |  422 | campos                          |
-| `NOT_FOUND`                     |  404 | recurso não visível             |
-| `CONFLICT`                      |  409 | estado concorrente              |
-| `SLOT_UNAVAILABLE`              |  409 | calendário                      |
-| `QUOTE_EXPIRED`                 |  409 | cotação                         |
-| `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                      |
-| `PAYMENT_NOT_STARTED`           |  409 | provider não confirmou          |
-| `PAYMENT_MISMATCH`              |  409 | valor/moeda                     |
-| `RATE_LIMITED`                  |  429 | abuso                           |
-| `PAYLOAD_TOO_LARGE`             |  413 | limite                          |
-| `RECOVERY_INVALID`              |  403 | recovery inválido/expirado      |
-| `RECOVERY_RESTART_REQUIRED`     |  503 | OTP ambíguo ou consumido        |
-| `SESSION_CHANGED`               |  409 | recorte SSR diverge da sessão   |
-| `UNAUTHENTICATED`               |  401 | sessão privada ausente/expirada |
-| `INTERNAL_ERROR`                |  500 | inesperado com requestId        |
+| Código                          | HTTP | Uso                                           |
+| ------------------------------- | ---: | --------------------------------------------- |
+| `AUTH_REQUIRED`                 |  401 | sem sessão                                    |
+| `AUTH_RESTART_REQUIRED`         |  503 | signup OTP ambíguo                            |
+| `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua                   |
+| `FORBIDDEN`                     |  403 | papel/ownership                               |
+| `ACCOUNT_SUSPENDED`             |  403 | conta suspensa                                |
+| `VALIDATION_FAILED`             |  422 | campos                                        |
+| `NOT_FOUND`                     |  404 | recurso não visível                           |
+| `CONFLICT`                      |  409 | estado concorrente                            |
+| `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
+| `QUOTE_EXPIRED`                 |  409 | cotação                                       |
+| `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                                    |
+| `PAYMENT_NOT_STARTED`           |  409 | provider não confirmou                        |
+| `PAYMENT_MISMATCH`              |  409 | valor/moeda                                   |
+| `RATE_LIMITED`                  |  429 | abuso                                         |
+| `PAYLOAD_TOO_LARGE`             |  413 | limite                                        |
+| `RECOVERY_INVALID`              |  403 | recovery inválido/expirado                    |
+| `RECOVERY_RESTART_REQUIRED`     |  503 | OTP ambíguo ou consumido                      |
+| `SERVICE_UNAVAILABLE`           |  503 | claims/provider indisponíveis                 |
+| `SESSION_CHANGED`               |  409 | UUID SSR diverge do usuário válido nas claims |
+| `UNAUTHENTICATED`               |  401 | sessão privada ausente/expirada               |
+| `INTERNAL_ERROR`                |  500 | inesperado com requestId                      |
 
 Mensagens de usuário são traduzidas por código. Não usar mensagem SQL.
 
@@ -329,6 +335,8 @@ Cada um retorna somente campos de tela:
 - `list_owner_payments`;
 - `get_owner_recipient_status`.
 
+Durante o login, `get_my_profile()` também fornece somente a projeção allowlisted de aparência. Essa leitura recebe `AbortSignal`, tem deadline server-side de um segundo e degrada para `system`; retorno posterior ao encerramento da operação não pode escrever cookie nem disparar cleanup Auth.
+
 ## 7. Webhook de pagamento
 
 Rota:
@@ -399,7 +407,7 @@ Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo
 
 Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; recovery remove a família privada e logout limpa integralmente o `QueryClient` antes da navegação SSR. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
 
-Na FEAT-003, cada mutation sensível envia `{ action, expectedScope, payload }` a partir de uma ref one-shot e usa `networkMode: "always"`; ausência de rede é executada como erro e nunca vira fila pausada retomável sob outra sessão. `SESSION_CHANGED` ou `UNAUTHENTICATED` fecham o DOM privado, limpam `MutationCache` e as famílias `account/profile` + `identity/session` e forçam nova composição SSR. Reseeds autoritativos normais em login, perfil e segurança fazem a mesma limpeza privada preservando queries públicas; logout e estado ambíguo de login mantêm a limpeza integral do `QueryClient`. No sucesso do perfil, a publicação sobrescreve a query observada sem removê-la, descarta scopes privados incompatíveis e rejeita callback tardio se a key esperada já tiver sido removida por uma transição A→B.
+Na FEAT-003, cada mutation sensível de perfil envia `{ action, expectedScope, payload }` a partir de uma ref one-shot e usa `networkMode: "always"`; ausência de rede é executada como erro e nunca vira fila pausada retomável sob outra sessão. `SESSION_CHANGED` ou `UNAUTHENTICATED` fecham o DOM privado, limpam `MutationCache` e as famílias `account/profile` + `identity/session` e forçam nova composição SSR. O logout repete o fence com closure sem `variables` nas duas superfícies, mas limpa integralmente o `QueryClient` antes do reload SSR em qualquer resposta terminal ou incerta. Uma closure stale de A não encerra B: após `getClaims`, a classificação termina antes de o fluxo obter explicitamente o cookie store e antes dos efeitos destrutivos explícitos de recovery, deleção de cookies ou `signOut`; a tentativa offline executa uma única request sem retomada tardia. Reseeds autoritativos normais em login, perfil e segurança fazem a limpeza privada preservando queries públicas. No sucesso do perfil, a publicação sobrescreve a query observada sem removê-la, descarta scopes privados incompatíveis e rejeita callback tardio se a key esperada já tiver sido removida por uma transição A→B.
 
 ## 10. Rate limits iniciais
 

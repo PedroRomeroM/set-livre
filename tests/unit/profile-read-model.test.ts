@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const mocks = vi.hoisted(() => ({ maybeSingle: vi.fn(), rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ abortSignal: vi.fn(), maybeSingle: vi.fn(), rpc: vi.fn() }));
 const client = {
   rpc: mocks.rpc,
 };
@@ -22,7 +22,8 @@ const userId = "11111111-1111-4111-8111-111111111111";
 describe("profile read model", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.rpc.mockReturnValue({ maybeSingle: mocks.maybeSingle });
+    mocks.abortSignal.mockReturnValue({ maybeSingle: mocks.maybeSingle });
+    mocks.rpc.mockReturnValue({ abortSignal: mocks.abortSignal, maybeSingle: mocks.maybeSingle });
   });
 
   it("maps a complete row without any raw document field", () => {
@@ -117,6 +118,33 @@ describe("profile read model", () => {
 
     await expect(readOwnProfile(userId)).resolves.toMatchObject({ scope: userId });
     expect(mocks.rpc).toHaveBeenCalledWith("get_my_profile");
+    expect(mocks.abortSignal).not.toHaveBeenCalled();
+  });
+
+  it("forwards an optional abort signal to the authenticated profile RPC", async () => {
+    const abortController = new AbortController();
+    mocks.maybeSingle.mockResolvedValue({
+      data: {
+        additional_document_masked: null,
+        color_scheme: "system",
+        name: null,
+        person_type: "individual",
+        phone_e164: null,
+        preferences_version: 0,
+        profile_completed: false,
+        profile_version: 0,
+        status: "active",
+        tax_id_masked: null,
+        user_id: userId,
+      },
+      error: null,
+    });
+
+    await expect(readOwnProfile(userId, abortController.signal)).resolves.toMatchObject({
+      scope: userId,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("get_my_profile");
+    expect(mocks.abortSignal).toHaveBeenCalledWith(abortController.signal);
   });
 
   it("fails closed when the authenticated RPC errors or returns no row", async () => {

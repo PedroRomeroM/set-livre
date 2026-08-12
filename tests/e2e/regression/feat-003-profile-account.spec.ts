@@ -214,7 +214,10 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   const releaseFetchRequest = createDeferredSignal();
   const timeoutRequestStarted = createDeferredSignal();
   const releaseTimeoutRequest = createDeferredSignal();
+  const logoutRequestStarted = createDeferredSignal();
+  const releaseLogoutRequest = createDeferredSignal();
   let profileCommandRequests = 0;
+  let logoutRequests = 0;
 
   try {
     await registerAndConfirmFeat003Identity(page, identity, "individual");
@@ -469,10 +472,85 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       offlineSecrets.taxId,
       offlineSecrets.additionalDocument,
     ]);
+
+    await gotoExpectedPage(page, "/conta/seguranca", "Segurança da conta");
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    page.on("request", (request) => {
+      const address = new URL(request.url());
+      if (address.pathname === "/api/auth/logout" && request.method() === "POST") {
+        logoutRequests += 1;
+      }
+    });
+    await page.route(
+      "**/api/auth/logout",
+      async (route) => {
+        logoutRequestStarted.resolve();
+        await releaseLogoutRequest.promise;
+        await route.fulfill({
+          body: JSON.stringify({
+            error: {
+              code: "SERVICE_UNAVAILABLE",
+              message: "Não foi possível confirmar a saída agora.",
+              requestId: "30000000-0000-4000-8000-000000000019",
+            },
+          }),
+          contentType: "application/json",
+          status: 503,
+        });
+      },
+      { times: 1 },
+    );
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    await page.getByRole("button", { name: "Sair desta conta" }).click();
+    await logoutRequestStarted.promise;
+    expect(logoutRequests).toBe(1);
+    await expect(
+      page.getByText("Validando sua sessão antes de exibir dados privados…", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(identity.email, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Saindo" })).toHaveCount(0);
+    releaseLogoutRequest.resolve();
+    await expect
+      .poll(() => {
+        const address = new URL(page.url());
+        return `${address.pathname}${address.search}`;
+      })
+      .toBe("/entrar?saida=verificar");
+    await expect(page.getByText("A sessão ainda está ativa", { exact: true })).toBeVisible();
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("online"));
+    });
+    const logoutReconnectBarrier = await page.evaluate(async () => {
+      try {
+        const response = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        return response.status;
+      } catch {
+        return 0;
+      }
+    });
+    if (logoutReconnectBarrier !== 200) {
+      throw new Error("A barreira de rede após o reconnect do logout não foi concluída.");
+    }
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    if (logoutRequests !== 1) {
+      throw new Error("Um logout pausado enviou POST tardio após o reconnect.");
+    }
     await expectNoHorizontalOverflow(page);
   } finally {
     releaseFetchRequest.resolve();
     releaseTimeoutRequest.resolve();
+    releaseLogoutRequest.resolve();
     await cleanupFeat003QaIdentity(identity);
   }
 });

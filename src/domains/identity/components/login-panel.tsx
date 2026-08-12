@@ -69,15 +69,16 @@ function AuthenticatedPanel({
 }) {
   const queryClient = useQueryClient();
   const logoutMutation = useMutation({
-    mutationFn: logoutIdentity,
+    mutationFn: () => logoutIdentity(session.userId),
+    networkMode: "always",
     onSuccess: () => {
       onSessionTransition();
-      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
+      queryClient.clear();
       window.location.replace("/entrar");
     },
     onError: () => {
       onSessionTransition();
-      redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));
+      queryClient.clear();
       window.location.replace("/entrar?saida=verificar");
     },
   });
@@ -132,7 +133,10 @@ function AuthenticatedPanel({
         <Button
           loading={logoutMutation.isPending}
           loadingLabel="Saindo"
-          onClick={() => logoutMutation.mutate()}
+          onClick={() => {
+            onSessionTransition();
+            logoutMutation.mutate();
+          }}
           variant="secondary"
         >
           Sair

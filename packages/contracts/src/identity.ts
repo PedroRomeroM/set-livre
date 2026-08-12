@@ -67,6 +67,10 @@ export const identityLoginPayloadSchema = z.strictObject({
   returnTo: z.string().optional(),
 });
 
+export const identityLogoutPayloadSchema = z.strictObject({
+  expectedScope: z.uuid(),
+});
+
 export const identityRecoveryRequestPayloadSchema = z.strictObject({
   email: identityEmailSchema,
 });
@@ -175,6 +179,7 @@ export type CurrentLegalDocuments = z.infer<typeof currentLegalDocumentsSchema>;
 export type IdentityCommand = z.infer<typeof identityCommandSchema>;
 export type IdentityCommandAction = z.infer<typeof identityCommandActionSchema>;
 export type IdentityLoginPayload = z.infer<typeof identityLoginPayloadSchema>;
+export type IdentityLogoutPayload = z.infer<typeof identityLogoutPayloadSchema>;
 export type IdentityRecoverySessionScope = z.infer<typeof identityRecoverySessionScopeSchema>;
 export type IdentityRecoveryStatusResult = z.infer<typeof identityRecoveryStatusResultSchema>;
 export type IdentityRegistrationPayload = z.infer<typeof identityRegistrationPayloadSchema>;

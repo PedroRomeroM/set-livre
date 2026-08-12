@@ -1,6 +1,7 @@
 import {
   apiErrorSchema,
   apiSuccessSchema,
+  identitySessionSchema,
   myProfileResultSchema,
   profileUpdateCommandSchema,
 } from "@set-livre/contracts";
@@ -542,6 +543,53 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     ]);
     if (JSON.stringify(currentProfile) !== JSON.stringify(profileB)) {
       throw new Error("O comando stale alterou o estado autoritativo do perfil B.");
+    }
+    const staleLogout = await page.evaluate(async (expectedScope) => {
+      const response = await fetch("/api/auth/logout", {
+        body: JSON.stringify({ expectedScope }),
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      return { payload: (await response.json()) as unknown, status: response.status };
+    }, sessionA.userId);
+    const staleLogoutError = apiErrorSchema.safeParse(staleLogout.payload);
+    if (
+      staleLogout.status !== 409 ||
+      !staleLogoutError.success ||
+      staleLogoutError.data.error.code !== "SESSION_CHANGED"
+    ) {
+      throw new Error("O logout stale de A não foi rejeitado antes de alcançar a sessão B.");
+    }
+    const sessionAfterStaleLogoutResponse = await page.request.get("/api/auth/session");
+    if (sessionAfterStaleLogoutResponse.status() !== 200) {
+      throw new Error("A sessão B foi encerrada pelo logout stale de A.");
+    }
+    const sessionAfterStaleLogoutPayload: unknown = await sessionAfterStaleLogoutResponse.json();
+    const sessionAfterStaleLogout = apiSuccessSchema(identitySessionSchema).safeParse(
+      sessionAfterStaleLogoutPayload,
+    );
+    if (
+      !sessionAfterStaleLogout.success ||
+      sessionAfterStaleLogout.data.data.authenticated !== true ||
+      sessionAfterStaleLogout.data.data.userId !== sessionB.userId
+    ) {
+      throw new Error("O logout stale de A alterou o escopo autoritativo de B.");
+    }
+    const profileAfterStaleLogoutResponse = await page.request.get("/api/account/profile");
+    if (profileAfterStaleLogoutResponse.status() !== 200) {
+      throw new Error("O perfil B ficou inacessível após o logout stale de A.");
+    }
+    const profileAfterStaleLogoutPayload: unknown = await profileAfterStaleLogoutResponse.json();
+    const profileAfterStaleLogout = apiSuccessSchema(myProfileResultSchema).safeParse(
+      profileAfterStaleLogoutPayload,
+    );
+    if (
+      !profileAfterStaleLogout.success ||
+      JSON.stringify(profileAfterStaleLogout.data.data) !== JSON.stringify(profileB)
+    ) {
+      throw new Error("O logout stale de A alterou o perfil autoritativo de B.");
     }
     expect(pageErrorCount).toBe(0);
     expect(reactBoundaryConsoleErrorCount).toBe(0);

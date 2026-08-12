@@ -144,14 +144,31 @@ describe("identity mutation cache security", () => {
     );
 
     expect(content).toContain("onError: () => {");
-    expect(content).toContain(
-      "redactIdentitySessionCacheForReload(queryClient, identitySessionScope(session));",
-    );
+    expect(content).toContain("mutationFn: () => logoutIdentity(session.userId)");
+    expect(content).toContain('networkMode: "always"');
     expect(content).toContain("if (logoutMutation.isError)");
     expect(content).toContain("antes de exibir dados privados");
     expect(content).toContain('window.location.replace("/entrar?saida=verificar")');
     expect(content).toContain("A sessão ainda está ativa");
     expect(content).toContain("A revalidação confirmou que não há uma sessão ativa");
+    const logout = content.slice(
+      content.indexOf("const logoutMutation = useMutation"),
+      content.indexOf("const apiError ="),
+    );
+    expect(logout.match(/queryClient\.clear\(\);/gu)).toHaveLength(2);
+    expect(logout.indexOf("queryClient.clear();")).toBeLessThan(
+      logout.indexOf('window.location.replace("/entrar")'),
+    );
+    expect(logout.lastIndexOf("queryClient.clear();")).toBeLessThan(
+      logout.indexOf('window.location.replace("/entrar?saida=verificar")'),
+    );
+    const logoutClick = content.slice(
+      content.indexOf('loadingLabel="Saindo"'),
+      content.indexOf('variant="secondary"', content.indexOf('loadingLabel="Saindo"')),
+    );
+    expect(logoutClick.indexOf("onSessionTransition();")).toBeLessThan(
+      logoutClick.indexOf("logoutMutation.mutate();"),
+    );
   });
 
   it("scopes session queries and hides PII throughout an authoritative transition", () => {

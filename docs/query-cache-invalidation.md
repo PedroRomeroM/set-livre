@@ -37,6 +37,7 @@ Famílias:
 - a resposta de status precisa repetir o scope esperado e é rejeitada antes de entrar no cache quando houver divergência;
 - o perfil próprio repete `scope=userId`; o normalizer rejeita divergência antes da escrita no QueryCache e a key nunca contém e-mail, nome, telefone ou documento;
 - `profile.complete` e `profile.update` repetem esse recorte como `expectedScope` UUID no envelope do comando. O valor é uma asserção client-side do SSR, não autoridade: o servidor sempre decide pelo `session.userId` e responde `409 SESSION_CHANGED` quando ambos divergem;
+- logout nas superfícies `/entrar` e `/conta/seguranca` também captura o UUID SSR como `expectedScope`, mas a rota decide exclusivamente pelas claims autoritativas. Depois de `getClaims`, classifica ausência/erro, indisponibilidade e divergência antes de obter explicitamente o cookie store e antes dos efeitos destrutivos explícitos de recovery, deleção de cookies ou `signOut`;
 - filtros canonicalizados;
 - cursor;
 - published revision/version quando relevante;
@@ -60,7 +61,7 @@ Medir; não usar Infinity em dado operacional.
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `identity.register`   | nenhuma key privada; sucesso aguarda confirmação Auth                                                                              |
 | login/callback        | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida                                       |
-| logout                | limpa integralmente o `QueryClient` antes da navegação SSR                                                                         |
+| logout                | closure sem `variables`, `networkMode: "always"`; limpa integralmente o `QueryClient`, fecha o boundary e recompõe SSR             |
 | recovery              | consulta `recoveryStatus(scope)`; remove scopes antigos; senha/token/e-mail/session_id ficam fora                                  |
 | `profile.*`           | publica o `account/profile` autoritativo mascarado; limpa mutations/outros scopes privados; invalida owner overview quando existir |
 | `recipient.*`         | recipient, owner overview, public eligibility                                                                                      |
@@ -93,6 +94,8 @@ Medir; não usar Infinity em dado operacional.
 - sucesso valida o scope e só publica o DTO mascarado se `profileVersion` e `preferencesVersion` não regredirem. A publicação limpa mutations e scopes privados incompatíveis, mas preserva a Query de perfil atual para não destacar seu observer antes de sobrescrever o resultado autoritativo. Se um reseed B já removeu a key de A, o callback tardio de A é rejeitado e não a recria; resposta apenas regressiva dispara refetch autoritativo. O snapshot aceito sincroniza somente `profileCompleted`, `personType` e `status` da sessão;
 - aparência possui `preferencesVersion` independente. Somente o snapshot monotônico aceito atualiza a key e o atributo allowlisted do documento; o cookie `HttpOnly` é projeção HTTP, não cache nem autoridade;
 - logout limpa integralmente o `QueryClient` antes da navegação SSR, inclusive quando a resposta é incerta;
+- as duas mutations de logout chamam `mutate()` sem `variables`; a closure one-shot contém somente o `expectedScope` UUID e usa `networkMode: "always"`. `getClaims` pode renovar ou manter a sessão internamente; depois dele, a classificação server-side termina antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw → `SERVICE_UNAVAILABLE`, erro ou contexto assinado ausente → `UNAUTHENTICATED`, UUID válido divergente → `SESSION_CHANGED`. Os três ramos têm zero efeitos destrutivos explícitos de logout. Qualquer desfecho terminal fecha o boundary e recompõe SSR depois de `QueryClient.clear()`;
+- a projeção de aparência do login não pertence ao cache interativo: `get_my_profile()` recebe `AbortSignal`, expira no servidor em um segundo e usa `system` como fallback. Resultado tardio não atualiza cookie nem aciona `signOut` após a resposta;
 - login com resposta de transporte ambígua reseta e oculta o formulário, limpa integralmente o `QueryClient`, semeia apenas a sessão anônima e força `/entrar?entrada=verificar`; a resposta SSR seguinte é a única autoridade para voltar a mostrar sessão ou credenciais;
 - troca de usuário ou divergência descartam primeiro o `MutationCache`, removem conjuntamente as famílias de perfil e sessão e só então fazem hard reload; cache público pode permanecer. Logout e resultado ambíguo de login são exceções deliberadas e limpam o `QueryClient` integralmente;
 - authoritative mutation success shown immediately;
