@@ -44,7 +44,7 @@ Cada feature possui documento próprio, cenários com IDs estáveis e um ou mais
 ## Resumo
 
 - Features: **34**.
-- Conclusão no repositório: **1/34**, com a FEAT-002 incorporada a `main` pelo PR #2.
+- Conclusão no repositório: **2/34**, com a FEAT-002 incorporada pelo PR #2 e a FEAT-003 pelo PR #4.
 - Cenários Playwright catalogados: **198**.
 - Prioridade: **134 P0**, **64 P1**, **0 P2**.
 - Suítes: **3 smoke**, **131 critical**, **61 regression**, **1 accessibility** e **2 reflow**.

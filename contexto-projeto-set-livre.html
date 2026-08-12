@@ -642,19 +642,19 @@
           <li>Atualizado em 12 de agosto de 2026</li>
           <li>Fundação local</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
-          <li>FEAT-003 · em implementação na branch própria</li>
+          <li>FEAT-003 · concluída e incorporada a main</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
-          <div class="stat"><strong>1/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
           <div class="stat">
-            <strong>578</strong><span>unitários correntes em 60 arquivos</span>
+            <strong>578</strong><span>unitários do snapshot funcional final</span>
           </div>
           <div class="stat">
-            <strong>293</strong><span>asserts pgTAP do snapshot P2 corrente</span>
+            <strong>293</strong><span>asserts pgTAP do snapshot funcional final</span>
           </div>
           <div class="stat">
-            <strong>91</strong><span>execuções Playwright do snapshot P2 corrente</span>
+            <strong>91</strong><span>execuções Playwright do snapshot funcional final</span>
           </div>
           <div class="stat"><strong>12</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
@@ -685,19 +685,14 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica foi incorporada a <code>main</code>. O quarto review da FEAT-002
-              abriu três threads acionáveis: preservar cotas vivas sob saturação do rate limiter,
-              encerrar a sessão Auth quando a autorização de recovery expira e escopar o cache dessa
-              autorização. As três correções passaram na cadeia canônica, foram publicadas no commit
-              <code>da34f46</code> e geraram release imutável local. As três threads receberam
-              respostas, foram resolvidas individualmente e a leitura thread-aware confirmou zero
-              aberta. O Codex revisou o snapshot final e não encontrou problema relevante. O PR #2
-              foi integrado a <code>main</code> no merge <code>d272657</code>; a FEAT-002 é a
-              primeira das 34 features concluídas no repositório. Uma revisão publicada depois do
-              merge apontou dois hardenings P2 adicionais: revalidar a sessão após resposta ambígua
-              de login e preservar feedback seguro da troca de senha através do refetch de recovery.
-              As correções passaram na suíte integral da branch da FEAT-003 antes de nova
-              publicação.
+              A fundação técnica, a FEAT-002 e a FEAT-003 foram incorporadas a
+              <code>main</code>. O PR #2 concluiu Auth e <code>legal-core</code> no merge
+              <code>d272657</code>. O PR #4 concluiu perfil PF/PJ, conta, segurança e preferência
+              visual no merge <code>465d195</code>, realizado em <code>2026-08-12T06:57:15Z</code>.
+              Seu HEAD final <code>1530f62589</code> recebeu a revisão Codex limpa
+              <code>5262964258</code> às <code>06:00:43Z</code>, e as cinco threads ficaram
+              resolvidas. Assim, duas das 34 features estão concluídas no repositório, sem atribuir
+              prontidão de produção às pendências externas.
             </p>
           </div>
 
@@ -711,25 +706,20 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag planned">Em implementação</span>
+              <span class="tag done">Concluída</span>
               <h3>FEAT-003 · Perfil e conta</h3>
               <p>
                 Perfil PF/PJ completo, telefone brasileiro sem truncar prefixos estrangeiros, conta,
                 segurança e preferência visual já atravessam contratos, banco, DAL, comandos, read
-                model e interface. O hardening local vincula cada mutation ao escopo SSR, impede
-                fila offline e bloqueia callback tardio entre identidades. O PR foi marcado ready no
-                HEAD <code>9531815</code>; a revisão Codex das <code>03:45Z</code> abriu dois P2
-                adicionais, sobre logout offline/obsoleto e timeout da projeção de preferência no
-                login. As correções congeladas localmente usam closure de logout sem variables, modo
-                de rede always e classificação autoritativa antes dos efeitos destrutivos explícitos
-                de recovery, deleção de cookies ou sign-out; <code>getClaims</code> pode renovar ou
-                manter a sessão internamente. A projeção possui deadline server-side de um segundo
-                com fallback <code>system</code>. A suíte unitária integral passou em 578/578 testes
-                de 60 arquivos, o banco em 293/293 asserts e uma matriz Playwright/axe em 91/91, com
-                32/32 da feature. Builds e smokes de web/backoffice também ficaram verdes. As
-                correções foram congeladas no commit local <code>e7cc8378</code>, e sua release
-                canônica foi gerada e auditada; publicação/push, respostas e resolução dos dois P2,
-                nova revisão e merge continuam pendentes.
+                model e interface. O hardening vincula cada mutation ao escopo SSR, impede fila
+                offline e bloqueia callback tardio entre identidades. O logout classifica o escopo
+                antes dos efeitos destrutivos explícitos, e a projeção de preferência possui
+                deadline server-side de um segundo com fallback <code>system</code>. O snapshot
+                funcional <code>e7cc8378</code> passou em 578/578 unitários, 293/293 asserts pgTAP e
+                91/91 execuções Playwright/axe, com 32/32 da feature; builds, smokes e a release
+                local também foram auditados. O HEAD final <code>1530f62589</code> recebeu revisão
+                Codex limpa, as cinco threads ficaram resolvidas e o PR #4 foi incorporado a
+                <code>main</code> no merge <code>465d195</code>.
               </p>
             </article>
             <article class="card">
@@ -785,8 +775,8 @@
               resposta <code>5261469771</code>, publicada às <code>02:35:40Z</code> sobre
               <code>9c23ef3f08</code>: “Didn't find any major issues”. Esse registro de três threads
               resolvidas e zero aberta é histórico: depois de o PR ficar ready no HEAD
-              <code>9531815</code>, a revisão das <code>03:45Z</code> abriu dois P2. O snapshot P2
-              corrente passou em 578/578 unitários de 60 arquivos e, após reset e geração, em
+              <code>9531815</code>, a revisão das <code>03:45Z</code> abriu dois P2. O snapshot
+              funcional final passou em 578/578 unitários de 60 arquivos e, após reset e geração, em
               293/293 asserts pgTAP (158 + 78 + 57), com head <code>20260811000500</code> e zero
               resíduo. Uma matriz Playwright/axe integral passou em 91/91 numa única execução de 3,9
               minutos, incluindo 32/32 da FEAT-003. O ID 004 passou em 3/3 projeções com
@@ -812,8 +802,11 @@
               <code>733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135</code>; ambos
               os <code>BUILD_ID</code> equivalem ao commit, em Linux x64 com Node 24.18/npm 11.19. A
               auditoria integral de tar, staging e manifesto terminou <code>NO-BLOCKER</code>, sem
-              segredo de runtime nem dado PII/QA e sem resíduo. Publicação/push, respostas e
-              resolução dos dois P2, nova revisão e merge continuam pendentes.
+              segredo de runtime nem dado PII/QA e sem resíduo. O HEAD final
+              <code>1530f62589ed9f823ca9c7356ad530ecda8a8d4b</code> recebeu a revisão Codex limpa
+              <code>5262964258</code> às <code>06:00:43Z</code>; as cinco threads ficaram
+              resolvidas, e o PR #4 foi incorporado a <code>main</code> no merge
+              <code>465d195</code>, em <code>2026-08-12T06:57:15Z</code>.
             </p>
           </div>
         </section>
@@ -1091,8 +1084,8 @@
               Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
-              adversos. O snapshot P2 corrente passou em 91/91 numa única execução de 3,9 minutos,
-              incluindo 32/32 da FEAT-003 nos nove IDs estáveis e sem alterar o catálogo.
+              adversos. O snapshot funcional final passou em 91/91 numa única execução de 3,9
+              minutos, incluindo 32/32 da FEAT-003 nos nove IDs estáveis e sem alterar o catálogo.
             </p>
           </div>
 
@@ -1107,7 +1100,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">293 · snapshot P2 corrente</span>
+              <span class="tag done">293 · snapshot funcional final</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
@@ -1118,7 +1111,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">91 · snapshot P2 corrente</span>
+              <span class="tag done">91 · snapshot funcional final</span>
               <h3>Playwright + axe</h3>
               <p>
                 36 execuções técnicas da fundação, 23 da FEAT-002 e 32 da FEAT-003, cobrindo smoke,
@@ -1142,7 +1135,7 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Evidência local incorporada e trabalho corrente:</strong>
+            <strong>Evidência incorporada da FEAT-003:</strong>
             <p>
               A FEAT-002 conserva 236/236 asserts pgTAP, 458/458 unitários e 59/59 execuções browser
               verdes no histórico incorporado. O snapshot integral publicado anterior da FEAT-003
@@ -1155,7 +1148,7 @@
               <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code> recebeu a segunda revisão limpa.
               Depois, o <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> ficou
               ready no HEAD <code>9531815</code> e a revisão das <code>03:45Z</code> abriu dois P2.
-              Para as correções locais, 578/578 unitários em 60 arquivos, lint, typecheck, audit e
+              Para as correções finais, 578/578 unitários em 60 arquivos, lint, typecheck, audit e
               Knip passaram, além das rodadas focadas 37/37, 96/96 e 65/65. Reset, geração e banco
               passaram em 293/293 asserts pgTAP (158 + 78 + 57), com head
               <code>20260811000500</code> e zero resíduo. Uma matriz Playwright/axe integral passou
@@ -1172,10 +1165,12 @@
               live/ready/root, CSP, <code>no-store</code>, assets, nonces, probes adversariais,
               <code>/entrar</code> 200 no web e 404 no backoffice. Lockfile e gerados não mudaram,
               portas/processos ficaram limpos e os logs têm hashes <code>2e3b…4310</code> e
-              <code>c9e5…da97</code>. As correções foram congeladas no commit local
+              <code>c9e5…da97</code>. As correções foram congeladas no commit funcional
               <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code>, cuja release canônica de 2.809
-              artefatos foi gerada e auditada integralmente. Publicação/push, respostas e resolução
-              dos dois P2, nova revisão e merge permanecem pendentes.
+              artefatos foi gerada e auditada integralmente. O HEAD final
+              <code>1530f62589ed9f823ca9c7356ad530ecda8a8d4b</code> recebeu a revisão Codex limpa
+              <code>5262964258</code>, as cinco threads ficaram resolvidas e o PR #4 foi incorporado
+              a <code>main</code> no merge <code>465d195</code>.
             </p>
           </div>
 
@@ -1184,14 +1179,14 @@
             <p>
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
               → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde no
-              snapshot publicado anterior. No snapshot local posterior aos dois P2, unitários
-              578/578 em 60 arquivos, banco 293/293, Playwright/axe 91/91, lint, typecheck, audit
-              com zero vulnerabilidade, Knip, builds e smokes já passaram. O commit funcional
-              <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> gerou a release local canônica
-              com 2.809 artefatos; o archive
+              snapshot publicado anterior. No snapshot funcional final posterior aos dois P2,
+              unitários 578/578 em 60 arquivos, banco 293/293, Playwright/axe 91/91, lint,
+              typecheck, audit com zero vulnerabilidade, Knip, builds e smokes já passaram. O commit
+              funcional <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> gerou a release local
+              canônica com 2.809 artefatos; o archive
               <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
               <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Essa é
-              a evidência histórica anterior aos P2. O commit corrente
+              a evidência histórica anterior aos P2. O commit funcional final
               <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code> gerou
               <code>set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz</code>, com 24.757.341
               bytes, SHA-256
@@ -1298,9 +1293,9 @@
           <div class="grid">
             <article class="card">
               <span class="tag done">Release local canônica P2</span>
-              <h3>Artefato corrente por SHA</h3>
+              <h3>Artefato final da feature por SHA</h3>
               <p>
-                O snapshot P2 da FEAT-003 foi congelado no commit local
+                O snapshot funcional final da FEAT-003 foi congelado no commit técnico
                 <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code>. O archive
                 <code>set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz</code> possui
                 24.757.341 bytes, SHA-256
@@ -1361,8 +1356,9 @@
             <h2>Features e roadmap</h2>
             <p>
               As 34 features estão especificadas com 198 cenários de produto. A FEAT-002 está
-              concluída e incorporada a <code>main</code>; a FEAT-003 está em implementação e as
-              demais continuam planejadas conforme a sequência executável do ADR-017.
+              concluída e incorporada a <code>main</code>; a FEAT-003 também está concluída e
+              incorporada, enquanto as demais continuam planejadas conforme a sequência executável
+              do ADR-017.
             </p>
           </div>
 
@@ -1390,7 +1386,7 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag planned">002 concluída · 003 em implementação</span></td>
+                  <td><span class="tag done">002 e 003 concluídas · 2/9</span></td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1447,11 +1443,9 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Fazer push e publicar o snapshot P2 e sua release canônica no
-                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, responder e
-                  resolver os dois P2 da revisão das <code>03:45Z</code>, obter nova revisão e só
-                  então fazer o merge, mantendo a FEAT-003 em implementação e sem antecipar a
-                  FEAT-004.
+                  Integrar o PR documental de fechamento da FEAT-003. Somente depois dessa
+                  consolidação iniciar a FEAT-004 em branch e PR próprios, sem antecipar seu schema,
+                  tela ou provider.
                 </li>
               </ol>
             </article>
