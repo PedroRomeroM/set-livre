@@ -720,14 +720,16 @@
                 fila offline e bloqueia callback tardio entre identidades. O PR foi marcado ready no
                 HEAD <code>9531815</code>; a revisão Codex das <code>03:45Z</code> abriu dois P2
                 adicionais, sobre logout offline/obsoleto e timeout da projeção de preferência no
-                login. As correções ainda locais usam closure de logout sem variables, modo de rede
-                always e classificação autoritativa antes dos efeitos destrutivos explícitos de
-                recovery, deleção de cookies ou sign-out; <code>getClaims</code> pode renovar ou
+                login. As correções congeladas localmente usam closure de logout sem variables, modo
+                de rede always e classificação autoritativa antes dos efeitos destrutivos explícitos
+                de recovery, deleção de cookies ou sign-out; <code>getClaims</code> pode renovar ou
                 manter a sessão internamente. A projeção possui deadline server-side de um segundo
                 com fallback <code>system</code>. A suíte unitária integral passou em 578/578 testes
                 de 60 arquivos, o banco em 293/293 asserts e uma matriz Playwright/axe em 91/91, com
-                32/32 da feature. Builds e smokes de web/backoffice também ficaram verdes; nova
-                release, publicação e nova revisão continuam pendentes.
+                32/32 da feature. Builds e smokes de web/backoffice também ficaram verdes. As
+                correções foram congeladas no commit local <code>e7cc8378</code>, e sua release
+                canônica foi gerada e auditada; publicação/push, respostas e resolução dos dois P2,
+                nova revisão e merge continuam pendentes.
               </p>
             </article>
             <article class="card">
@@ -800,8 +802,18 @@
               app. Os smokes aprovaram live/ready/root, CSP, <code>no-store</code>, assets, nonces e
               probes adversariais, incluindo <code>/entrar</code> 200 no web e 404 no backoffice.
               Lockfile e gerados permaneceram inalterados, portas/processos ficaram limpos e os logs
-              têm hashes <code>2e3b…4310</code> e <code>c9e5…da97</code>. Nova release, publicação e
-              nova revisão continuam pendentes.
+              têm hashes <code>2e3b…4310</code> e <code>c9e5…da97</code>. O snapshot P2 foi
+              congelado no commit <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code>. A release
+              <code>set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz</code> possui
+              24.757.341 bytes, SHA-256
+              <code>6edb2e246e0b3f46cf83f62ce8685e14b91cb31ac1437931f476fc649621273a</code>
+              e 2.809 artefatos: web 1.519, backoffice 1.276, migrations 12, lockfile 1 e manifesto
+              1. O manifesto possui 667.285 bytes e SHA-256
+              <code>733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135</code>; ambos
+              os <code>BUILD_ID</code> equivalem ao commit, em Linux x64 com Node 24.18/npm 11.19. A
+              auditoria integral de tar, staging e manifesto terminou <code>NO-BLOCKER</code>, sem
+              segredo de runtime nem dado PII/QA e sem resíduo. Publicação/push, respostas e
+              resolução dos dois P2, nova revisão e merge continuam pendentes.
             </p>
           </div>
         </section>
@@ -1160,7 +1172,10 @@
               live/ready/root, CSP, <code>no-store</code>, assets, nonces, probes adversariais,
               <code>/entrar</code> 200 no web e 404 no backoffice. Lockfile e gerados não mudaram,
               portas/processos ficaram limpos e os logs têm hashes <code>2e3b…4310</code> e
-              <code>c9e5…da97</code>. Nova release, publicação e revisão permanecem pendentes.
+              <code>c9e5…da97</code>. As correções foram congeladas no commit local
+              <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code>, cuja release canônica de 2.809
+              artefatos foi gerada e auditada integralmente. Publicação/push, respostas e resolução
+              dos dois P2, nova revisão e merge permanecem pendentes.
             </p>
           </div>
 
@@ -1171,12 +1186,22 @@
               → docs → Playwright completo → builds → audit → Knip. Essa cadeia ficou verde no
               snapshot publicado anterior. No snapshot local posterior aos dois P2, unitários
               578/578 em 60 arquivos, banco 293/293, Playwright/axe 91/91, lint, typecheck, audit
-              com zero vulnerabilidade, Knip, builds e smokes já passaram; somente nova release
-              ainda não. O commit funcional
+              com zero vulnerabilidade, Knip, builds e smokes já passaram. O commit funcional
               <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> gerou a release local canônica
               com 2.809 artefatos; o archive
               <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
-              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>.
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Essa é
+              a evidência histórica anterior aos P2. O commit corrente
+              <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code> gerou
+              <code>set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz</code>, com 24.757.341
+              bytes, SHA-256
+              <code>6edb2e246e0b3f46cf83f62ce8685e14b91cb31ac1437931f476fc649621273a</code>
+              e 2.809 artefatos: web 1.519, backoffice 1.276, migrations 12, lockfile 1 e manifesto
+              1. O manifesto possui 667.285 bytes e SHA-256
+              <code>733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135</code>; ambos
+              os <code>BUILD_ID</code> equivalem ao commit, em Linux x64 com Node 24.18/npm 11.19.
+              Tar, staging e manifesto foram auditados integralmente com resultado
+              <code>NO-BLOCKER</code>, sem segredo de runtime nem dado PII/QA e sem resíduo.
               Historicamente, o índice técnico da FEAT-002 foi auditado, os standalones passaram nos
               smokes e a release do commit <code>da34f46</code> foi verificada antes do merge
               <code>d272657</code>.
@@ -1272,16 +1297,27 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Última release local publicada</span>
-              <h3>Artefato histórico por SHA</h3>
+              <span class="tag done">Release local canônica P2</span>
+              <h3>Artefato corrente por SHA</h3>
               <p>
-                O snapshot funcional da FEAT-003 foi congelado no commit local
-                <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local
-                canônica com 2.809 artefatos. O archive
-                <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui
-                SHA-256
-                <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Essa
-                release precede os dois P2; o novo empacotamento permanece pendente.
+                O snapshot P2 da FEAT-003 foi congelado no commit local
+                <code>e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7</code>. O archive
+                <code>set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz</code> possui
+                24.757.341 bytes, SHA-256
+                <code>6edb2e246e0b3f46cf83f62ce8685e14b91cb31ac1437931f476fc649621273a</code>
+                e 2.809 artefatos: web 1.519, backoffice 1.276, migrations 12, lockfile 1 e
+                manifesto 1. O manifesto possui 667.285 bytes e SHA-256
+                <code>733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135</code>; os
+                <code>BUILD_ID</code> de ambos os apps equivalem ao commit. A geração ocorreu em
+                Linux x64 com Node 24.18/npm 11.19. A auditoria integral de tar, staging e manifesto
+                terminou <code>NO-BLOCKER</code>, sem segredo de runtime nem dado PII/QA e sem
+                resíduo.
+              </p>
+              <p>
+                A release anterior, do commit
+                <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code>, permanece como evidência
+                histórica do estado anterior aos dois P2: 2.809 artefatos e SHA-256
+                <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>.
               </p>
               <p>
                 A FEAT-002 foi reempacotada após o quarto review no commit
@@ -1411,10 +1447,11 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Gerar a release das correções locais; publicar o novo snapshot do
-                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, responder os
-                  dois P2 da revisão das <code>03:45Z</code> e obter nova revisão antes do merge,
-                  mantendo a FEAT-003 em implementação e sem antecipar a FEAT-004.
+                  Fazer push e publicar o snapshot P2 e sua release canônica no
+                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, responder e
+                  resolver os dois P2 da revisão das <code>03:45Z</code>, obter nova revisão e só
+                  então fazer o merge, mantendo a FEAT-003 em implementação e sem antecipar a
+                  FEAT-004.
                 </li>
               </ol>
             </article>
