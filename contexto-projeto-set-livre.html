@@ -718,9 +718,10 @@
                 fila offline, bloqueia callback tardio entre identidades e fecha o boundary por
                 commit React síncrono seguro. O snapshot corrente passou em 563/563 unitários em 59
                 arquivos, 293/293 asserts pgTAP e 91/91 Playwright/axe, incluindo 32/32 da FEAT-003.
-                Builds e smokes standalone passaram sem warnings; release, commit/push, novo review
-                e merge ainda estão pendentes no draft
-                <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
+                Builds e smokes standalone passaram sem warnings. O snapshot funcional foi congelado
+                no commit local <code>f4f3b1d</code> e gerou a release local canônica com 2.809
+                artefatos; push, resolução das threads, novo review e merge ainda estão pendentes no
+                draft <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
               </p>
             </article>
             <article class="card">
@@ -769,9 +770,11 @@
               encontrou erros finais, attachments, segredos ou resíduos; os 62 e-mails QA únicos
               apareceram em 102 ocorrências exclusivamente nos títulos automáticos allowlisted:
               <code>Fill</code> 84, <code>Visible</code> 10 e <code>Type</code> 8. O commit
-              <code>727eecd</code> permanece como a última release imutável, com 2.801 artefatos e
-              SHA-256 <code>2f1dafc6…f490</code>. Os builds e smokes standalone correntes passaram
-              sem warnings; nova release, commit/push e novo review ainda não foram concluídos.
+              <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> congelou o snapshot funcional
+              local e gerou a release canônica com 2.809 artefatos. O archive
+              <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Push,
+              resolução das threads e novo review ainda não foram concluídos.
             </p>
           </div>
         </section>
@@ -1108,9 +1111,11 @@
               browser/axe, incluindo 32/32 da feature. Os IDs 004 e 009 passaram respectivamente em
               três e quatro projeções, e a auditoria terminou sem erros finais, attachments,
               segredos ou resíduos. Os builds e smokes standalone correntes também passaram sem
-              warnings. O snapshot anterior <code>727eecd</code> teve release por SHA verificada,
-              mas não valida o pacote do patch atual. Nova release, commit/push, review e merge
-              ainda estão pendentes no draft
+              warnings. O snapshot funcional foi congelado no commit local
+              <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local canônica
+              com 2.809 artefatos; o archive possui SHA-256
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Push,
+              resolução das threads, review e merge ainda estão pendentes no draft
               <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
             </p>
           </div>
@@ -1121,11 +1126,14 @@
               <code>npm ci</code> → format → lint → typecheck → unit → Supabase reset → pgTAP/drift
               → docs → Playwright completo → builds → audit → Knip. O patch corrente registra
               formatação, lint, typecheck, 563 unitários em 59 arquivos, reset/293 pgTAP, docs,
-              91/91 execuções browser, builds/smokes, audit e Knip verdes. A release imutável
-              histórica do commit <code>727eecd</code> foi verificada por manifesto/archive, contém
-              2.801 artefatos e possui SHA-256 <code>2f1dafc6…f490</code>. Historicamente, o índice
-              técnico da FEAT-002 foi auditado, os standalones passaram nos smokes e a release do
-              commit <code>da34f46</code> foi verificada antes do merge <code>d272657</code>.
+              91/91 execuções browser, builds/smokes, audit e Knip verdes. O commit funcional local
+              <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> gerou a release local canônica
+              com 2.809 artefatos; o archive
+              <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>.
+              Historicamente, o índice técnico da FEAT-002 foi auditado, os standalones passaram nos
+              smokes e a release do commit <code>da34f46</code> foi verificada antes do merge
+              <code>d272657</code>.
             </p>
           </div>
         </section>
@@ -1212,6 +1220,14 @@
             <article class="card">
               <span class="tag done">Implementado localmente</span>
               <h3>Artefato por SHA</h3>
+              <p>
+                O snapshot funcional da FEAT-003 foi congelado no commit local
+                <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local
+                canônica com 2.809 artefatos. O archive
+                <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui
+                SHA-256
+                <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>.
+              </p>
               <p>
                 A FEAT-002 foi reempacotada após o quarto review no commit
                 <code>da34f46</code>: checkout limpo, builds e smokes de web/backoffice, 11
@@ -1340,8 +1356,9 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Gerar a nova release do snapshot já aprovado em 91/91 Playwright/axe e nos
-                  builds/smokes, então fazer commit/push, solicitar e atender o novo review do draft
+                  Fazer push do commit funcional já aprovado em 91/91 Playwright/axe, nos
+                  builds/smokes e empacotado na release local canônica; resolver as threads e então
+                  solicitar e atender o novo review do draft
                   <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> antes do
                   merge, sem antecipar a FEAT-004 ou qualquer feature posterior.
                 </li>
