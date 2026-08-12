@@ -639,7 +639,7 @@
           construído na plataforma de aluguel de estúdios audiovisuais.
         </p>
         <ul class="meta" aria-label="Fotografia atual do projeto">
-          <li>Atualizado em 11 de agosto de 2026</li>
+          <li>Atualizado em 12 de agosto de 2026</li>
           <li>Fundação local</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
           <li>FEAT-003 · em implementação na branch própria</li>
@@ -718,10 +718,11 @@
                 fila offline, bloqueia callback tardio entre identidades e fecha o boundary por
                 commit React síncrono seguro. O snapshot corrente passou em 563/563 unitários em 59
                 arquivos, 293/293 asserts pgTAP e 91/91 Playwright/axe, incluindo 32/32 da FEAT-003.
-                Builds e smokes standalone passaram sem warnings. O snapshot funcional foi congelado
-                no commit local <code>f4f3b1d</code> e gerou a release local canônica com 2.809
-                artefatos; push, resolução das threads, novo review e merge ainda estão pendentes no
-                draft <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
+                Builds e smokes standalone passaram sem warnings. O snapshot funcional
+                <code>f4f3b1d</code> e o commit documental <code>9c23ef3</code> foram publicados; as
+                três threads foram resolvidas e a segunda revisão não encontrou problema relevante.
+                O draft <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>
+                permanece aberto e somente o merge está pendente.
               </p>
             </article>
             <article class="card">
@@ -773,8 +774,13 @@
               <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> congelou o snapshot funcional
               local e gerou a release canônica com 2.809 artefatos. O archive
               <code>set-livre-f4f3b1d13238bdb67a2bc77bff55c119132040dc.tar.gz</code> possui SHA-256
-              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Push,
-              resolução das threads e novo review ainda não foram concluídos.
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. O
+              commit documental <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code> é o HEAD
+              remoto revisado. Depois do trigger <code>5261407908</code> às <code>02:29:08Z</code> e
+              da espera integral de 60 minutos, a inspeção confirmou a resposta
+              <code>5261469771</code>, publicada às <code>02:35:40Z</code> sobre
+              <code>9c23ef3f08</code>: “Didn't find any major issues”. As três threads estão
+              resolvidas, zero permanece aberta e apenas o merge continua pendente.
             </p>
           </div>
         </section>
@@ -1114,9 +1120,12 @@
               warnings. O snapshot funcional foi congelado no commit local
               <code>f4f3b1d13238bdb67a2bc77bff55c119132040dc</code> e gerou a release local canônica
               com 2.809 artefatos; o archive possui SHA-256
-              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. Push,
-              resolução das threads, review e merge ainda estão pendentes no draft
-              <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>.
+              <code>571a0dbdee91d17c47158e0b00aaa0c6bcd4ce6d2f4ffa7f06f1fb6afc4ff887</code>. O HEAD
+              remoto revisado é <code>9c23ef3f0818d60a84b4f6321905c389cff5b7fa</code>; as três
+              threads estão resolvidas, zero permanece aberta e a segunda revisão não encontrou
+              problema relevante. O draft
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> segue aberto e
+              somente o merge está pendente.
             </p>
           </div>
 
@@ -1356,11 +1365,11 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Fazer push do commit funcional já aprovado em 91/91 Playwright/axe, nos
-                  builds/smokes e empacotado na release local canônica; resolver as threads e então
-                  solicitar e atender o novo review do draft
-                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a> antes do
-                  merge, sem antecipar a FEAT-004 ou qualquer feature posterior.
+                  Integrar o draft
+                  <a href="https://github.com/PedroRomeroM/set-livre/pull/4">PR #4</a>, cujo
+                  snapshot publicado passou em 91/91 Playwright/axe, builds/smokes e segunda revisão
+                  sem problema relevante, mantendo a FEAT-003 em implementação até o merge e sem
+                  antecipar a FEAT-004 ou qualquer feature posterior.
                 </li>
               </ol>
             </article>
