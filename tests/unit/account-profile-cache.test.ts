@@ -170,6 +170,7 @@ describe("account profile cache", () => {
     const publicKey = ["public", "legal"] as const;
     queryClient.setQueryData(profileKey, profileA);
     queryClient.setQueryData(sessionKey, { authenticated: true });
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), { privateOwner: "full" });
     queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), { privateOwner: true });
     queryClient.setQueryData(publicKey, { published: true });
     const mutation = queryClient.getMutationCache().build(queryClient, {
@@ -182,6 +183,7 @@ describe("account profile cache", () => {
 
     expect(queryClient.getQueryData(profileKey)).toBeUndefined();
     expect(queryClient.getQueryData(sessionKey)).toBeUndefined();
+    expect(queryClient.getQueryData(ownerQueryKeys.activationStatus(userA))).toBeUndefined();
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toBeUndefined();
     expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
     expect(queryClient.getMutationCache().getAll()).toEqual([]);

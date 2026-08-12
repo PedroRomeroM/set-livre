@@ -2,27 +2,31 @@ import type { OwnerRecipientResult } from "@set-livre/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
 type OwnerFetchStatus = "fetching" | "idle" | "paused";
+type OwnerProjection = OwnerRecipientResult["projection"];
 
-const ownerRecipientQueryRoot = ["owner", "recipient", "status"] as const;
+const ownerPrivateQueryRoot = ["owner", "private"] as const;
+const ownerActivationQueryRoot = [...ownerPrivateQueryRoot, "activation"] as const;
+const ownerRecipientQueryRoot = [...ownerPrivateQueryRoot, "recipient"] as const;
 
-export class OwnerRecipientScopeChangedError extends Error {
+export class OwnerPrivateScopeChangedError extends Error {
   constructor() {
-    super("O cadastro de recebimentos mudou de escopo.");
-    this.name = "OwnerRecipientScopeChangedError";
+    super("O estado privado da área do dono mudou de escopo ou projeção.");
+    this.name = "OwnerPrivateScopeChangedError";
   }
 }
 
 export const ownerQueryKeys = {
+  activationStatus: (userId: string) => [...ownerActivationQueryRoot, userId] as const,
+  privateResults: ownerPrivateQueryRoot,
   recipientStatus: (userId: string) => [...ownerRecipientQueryRoot, userId] as const,
-  recipientStatuses: ownerRecipientQueryRoot,
 };
 
-export function ownerRecipientQueryScope(queryKey: readonly unknown[]): string | undefined {
+export function ownerPrivateQueryScope(queryKey: readonly unknown[]): string | undefined {
   if (
     queryKey.length !== 4 ||
-    queryKey[0] !== ownerRecipientQueryRoot[0] ||
-    queryKey[1] !== ownerRecipientQueryRoot[1] ||
-    queryKey[2] !== ownerRecipientQueryRoot[2] ||
+    queryKey[0] !== ownerPrivateQueryRoot[0] ||
+    queryKey[1] !== ownerPrivateQueryRoot[1] ||
+    (queryKey[2] !== "activation" && queryKey[2] !== "recipient") ||
     typeof queryKey[3] !== "string"
   ) {
     return undefined;
@@ -30,13 +34,27 @@ export function ownerRecipientQueryScope(queryKey: readonly unknown[]): string |
   return queryKey[3];
 }
 
-export function ownerRecipientMatchesScope(result: OwnerRecipientResult, expectedUserId: string) {
-  return result.scope === expectedUserId;
+export function ownerQueryKey(projection: OwnerProjection, userId: string) {
+  return projection === "activation"
+    ? ownerQueryKeys.activationStatus(userId)
+    : ownerQueryKeys.recipientStatus(userId);
 }
 
-export function ownerRecipientForScope(result: OwnerRecipientResult, expectedUserId: string) {
-  if (!ownerRecipientMatchesScope(result, expectedUserId)) {
-    throw new OwnerRecipientScopeChangedError();
+export function ownerPrivateMatchesBoundary(
+  result: OwnerRecipientResult,
+  expectedUserId: string,
+  expectedProjection: OwnerProjection,
+) {
+  return result.scope === expectedUserId && result.projection === expectedProjection;
+}
+
+export function ownerPrivateForBoundary(
+  result: OwnerRecipientResult,
+  expectedUserId: string,
+  expectedProjection: OwnerProjection,
+) {
+  if (!ownerPrivateMatchesBoundary(result, expectedUserId, expectedProjection)) {
+    throw new OwnerPrivateScopeChangedError();
   }
   return result;
 }
@@ -45,15 +63,16 @@ function ownerContractTimestamp(result: OwnerRecipientResult) {
   return new Date(result.ownerContract.effectiveAt).getTime();
 }
 
-export function newestOwnerRecipientResult(
+export function newestOwnerPrivateResult(
   current: OwnerRecipientResult | undefined,
   candidate: OwnerRecipientResult,
   expectedUserId: string,
+  expectedProjection: OwnerProjection,
 ) {
-  const scopedCandidate = ownerRecipientForScope(candidate, expectedUserId);
+  const scopedCandidate = ownerPrivateForBoundary(candidate, expectedUserId, expectedProjection);
   if (current === undefined) return scopedCandidate;
-  if (!ownerRecipientMatchesScope(current, expectedUserId)) {
-    throw new OwnerRecipientScopeChangedError();
+  if (!ownerPrivateMatchesBoundary(current, expectedUserId, expectedProjection)) {
+    throw new OwnerPrivateScopeChangedError();
   }
   if (
     candidate.ownerVersion < current.ownerVersion ||
@@ -66,57 +85,73 @@ export function newestOwnerRecipientResult(
   return scopedCandidate;
 }
 
-export function newestOwnerRecipientMutationResult(
+export function newestOwnerPrivateMutationResult(
   current: OwnerRecipientResult | undefined,
   candidate: OwnerRecipientResult,
   expectedUserId: string,
+  expectedProjection: OwnerProjection,
 ) {
   if (current === undefined) {
-    throw new OwnerRecipientScopeChangedError();
+    throw new OwnerPrivateScopeChangedError();
   }
-  return newestOwnerRecipientResult(current, candidate, expectedUserId);
+  return newestOwnerPrivateResult(current, candidate, expectedUserId, expectedProjection);
 }
 
-export async function readNewestOwnerRecipientResult(
+export async function readNewestOwnerPrivateResult(
   queryClient: QueryClient,
   expectedUserId: string,
-  readRecipient: () => Promise<OwnerRecipientResult>,
+  expectedProjection: OwnerProjection,
+  readResult: () => Promise<OwnerRecipientResult>,
 ) {
-  const candidate = ownerRecipientForScope(await readRecipient(), expectedUserId);
-  return newestOwnerRecipientResult(
-    queryClient.getQueryData<OwnerRecipientResult>(ownerQueryKeys.recipientStatus(expectedUserId)),
+  const candidate = ownerPrivateForBoundary(await readResult(), expectedUserId, expectedProjection);
+  return newestOwnerPrivateResult(
+    queryClient.getQueryData<OwnerRecipientResult>(
+      ownerQueryKey(expectedProjection, expectedUserId),
+    ),
     candidate,
     expectedUserId,
+    expectedProjection,
   );
 }
 
-export function ownerRecipientCanRender(
+export function ownerPrivateCanRender(
   result: OwnerRecipientResult,
   expectedUserId: string,
+  expectedProjection: OwnerProjection,
   fetchStatus: OwnerFetchStatus,
 ) {
-  return fetchStatus === "idle" && ownerRecipientMatchesScope(result, expectedUserId);
+  return (
+    fetchStatus === "idle" &&
+    ownerPrivateMatchesBoundary(result, expectedUserId, expectedProjection)
+  );
 }
 
-export function seedAuthoritativeOwnerRecipient(
+export function seedAuthoritativeOwnerPrivate(
   queryClient: QueryClient,
   expectedUserId: string,
+  expectedProjection: OwnerProjection,
   result: OwnerRecipientResult,
 ) {
-  const scopedResult = ownerRecipientForScope(result, expectedUserId);
+  const scopedResult = ownerPrivateForBoundary(result, expectedUserId, expectedProjection);
   queryClient.getMutationCache().clear();
-  queryClient.removeQueries({ queryKey: ownerQueryKeys.recipientStatuses });
-  queryClient.setQueryData(ownerQueryKeys.recipientStatus(expectedUserId), scopedResult);
+  queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });
+  queryClient.setQueryData(ownerQueryKey(expectedProjection, expectedUserId), scopedResult);
 }
 
-export function publishNewestOwnerRecipientMutationResult(
+export function publishNewestOwnerPrivateMutationResult(
   queryClient: QueryClient,
   expectedUserId: string,
+  expectedProjection: OwnerProjection,
   candidate: OwnerRecipientResult,
 ) {
-  const queryKey = ownerQueryKeys.recipientStatus(expectedUserId);
+  const queryKey = ownerQueryKey(expectedProjection, expectedUserId);
   const current = queryClient.getQueryData<OwnerRecipientResult>(queryKey);
-  const next = newestOwnerRecipientMutationResult(current, candidate, expectedUserId);
+  const next = newestOwnerPrivateMutationResult(
+    current,
+    candidate,
+    expectedUserId,
+    expectedProjection,
+  );
   if (next !== candidate) {
     queryClient.getMutationCache().clear();
     void queryClient.invalidateQueries({ queryKey });
@@ -124,8 +159,8 @@ export function publishNewestOwnerRecipientMutationResult(
   }
   queryClient.getMutationCache().clear();
   queryClient.removeQueries({
-    predicate: (query) => ownerRecipientQueryScope(query.queryKey) !== expectedUserId,
-    queryKey: ownerQueryKeys.recipientStatuses,
+    predicate: (query) => ownerPrivateQueryScope(query.queryKey) !== expectedUserId,
+    queryKey: ownerQueryKeys.privateResults,
   });
   queryClient.setQueryData(queryKey, next);
   return true;

@@ -306,7 +306,7 @@ export type Database = {
           user_id: string;
         }[];
       };
-      get_owner_recipient_status: {
+      get_owner_activation_status: {
         Args: never;
         Returns: {
           accepted_owner_contract_version_id: string;
@@ -320,6 +320,27 @@ export type Database = {
           owner_contract_source: string;
           owner_contract_title: string;
           owner_contract_version: string;
+          owner_status: string;
+          owner_version: number;
+          profile_version: number;
+          profile_version_synced: number;
+          provider_mode: string;
+          recipient_status: string;
+          recipient_version: number;
+          requirements: string[];
+          reservations_eligible: boolean;
+          scope: string;
+        }[];
+      };
+      get_owner_recipient_status: {
+        Args: never;
+        Returns: {
+          accepted_owner_contract_version_id: string;
+          next_action: string;
+          owner_contract_accepted: boolean;
+          owner_contract_effective_at: string;
+          owner_contract_id: string;
+          owner_contract_source: string;
           owner_status: string;
           owner_version: number;
           profile_version: number;

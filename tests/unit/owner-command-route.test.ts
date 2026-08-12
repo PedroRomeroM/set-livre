@@ -123,6 +123,31 @@ describe("owner command route", () => {
     expect(JSON.stringify(await response.json())).not.toContain("provider payload");
   });
 
+  it("publishes an authoritative stale-transition conflict as 409", async () => {
+    const { ApiRouteError } = await import("../../src/lib/server/api-route");
+    mocks.startRecipientOnboarding.mockRejectedValueOnce(
+      new ApiRouteError(
+        409,
+        "CONFLICT",
+        "O cadastro foi atualizado por outra solicitação. Recarregue o estado atual.",
+      ),
+    );
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { POST } = await import("../../src/app/api/commands/route");
+    const response = await POST(
+      commandRequest({
+        action: "recipient.onboarding.start",
+        expectedScope: userId,
+        idempotencyKey,
+        payload: {},
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("x-owner-session")).toBe("refreshed");
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "CONFLICT" } });
+  });
+
   it.each([
     ["missing key", { action: "recipient.onboarding.start", expectedScope: userId, payload: {} }],
     [

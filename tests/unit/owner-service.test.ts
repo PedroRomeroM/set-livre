@@ -42,6 +42,24 @@ const currentRow = {
   reservations_eligible: false,
   scope: userId,
 } as const;
+const currentStatusRow = {
+  accepted_owner_contract_version_id: currentRow.accepted_owner_contract_version_id,
+  next_action: currentRow.next_action,
+  owner_contract_accepted: currentRow.owner_contract_accepted,
+  owner_contract_effective_at: currentRow.owner_contract_effective_at,
+  owner_contract_id: currentRow.owner_contract_id,
+  owner_contract_source: currentRow.owner_contract_source,
+  owner_status: currentRow.owner_status,
+  owner_version: currentRow.owner_version,
+  profile_version: currentRow.profile_version,
+  profile_version_synced: currentRow.profile_version_synced,
+  provider_mode: currentRow.provider_mode,
+  recipient_status: currentRow.recipient_status,
+  recipient_version: currentRow.recipient_version,
+  requirements: currentRow.requirements,
+  reservations_eligible: currentRow.reservations_eligible,
+  scope: currentRow.scope,
+} as const;
 
 const activeOwnerRow = {
   ...currentRow,
@@ -52,8 +70,17 @@ const activeOwnerRow = {
   owner_version: 1,
 } as const;
 
+const activeOwnerStatusRow = {
+  ...currentStatusRow,
+  accepted_owner_contract_version_id: contractId,
+  next_action: "start_onboarding",
+  owner_contract_accepted: true,
+  owner_status: "active",
+  owner_version: 1,
+} as const;
+
 const pendingRecipientRow = {
-  ...activeOwnerRow,
+  ...activeOwnerStatusRow,
   next_action: "refresh_status",
   profile_version_synced: 4,
   recipient_status: "pending",
@@ -91,7 +118,7 @@ describe("owner service", () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     mocks.createProvider.mockReturnValue({ execute: mocks.providerExecute });
-    mocks.getOwnerRecipientStatusForUser.mockResolvedValue(currentRow);
+    mocks.getOwnerRecipientStatusForUser.mockResolvedValue(currentStatusRow);
     mocks.activateOwnerProfile.mockResolvedValue(activeOwnerRow);
     mocks.prepareOwnerRecipientOperation.mockResolvedValue({
       alreadyApplied: false,
@@ -152,7 +179,7 @@ describe("owner service", () => {
   it("allows a later approved contract and does not turn active owner into an unconditional no-op", async () => {
     process.env.APP_ENV = "production";
     mocks.getOwnerRecipientStatusForUser.mockResolvedValueOnce({
-      ...activeOwnerRow,
+      ...activeOwnerStatusRow,
       accepted_owner_contract_version_id: "66666666-6666-4666-8666-666666666666",
       next_action: "activate_owner",
       owner_contract_accepted: false,
@@ -343,28 +370,32 @@ describe("owner service", () => {
   });
 
   it.each([
-    ["22023", 422, "VALIDATION_FAILED"],
-    ["23514", 409, "CONFLICT"],
-    ["40001", 409, "CONFLICT"],
-    ["42501", 403, "FORBIDDEN"],
-    ["P0002", 409, "CONFLICT"],
-  ] as const)("maps SQLSTATE %s to a safe public error", async (sqlState, status, code) => {
-    mocks.prepareOwnerRecipientOperation.mockRejectedValueOnce({
-      code: sqlState,
-      detail: "provider-private-reference",
-    });
-    const error = await service()
-      .startRecipientOnboarding(
-        {
-          action: "recipient.onboarding.start",
-          expectedScope: userId,
-          idempotencyKey,
-          payload: {},
-        },
-        context,
-      )
-      .catch((caught: unknown) => caught);
-    expect(error).toMatchObject({ code, status });
-    expect(String(error)).not.toContain("provider-private-reference");
-  });
+    ["22023", "invalid_recipient_operation", 422, "VALIDATION_FAILED"],
+    ["23514", "recipient_start_transition_invalid", 409, "CONFLICT"],
+    ["40001", "recipient_operation_superseded", 409, "CONFLICT"],
+    ["42501", "recipient_blocked", 403, "FORBIDDEN"],
+    ["P0002", "recipient_state_missing", 409, "CONFLICT"],
+  ] as const)(
+    "maps SQLSTATE %s (%s) to a safe public error",
+    async (sqlState, databaseMessage, status, code) => {
+      mocks.prepareOwnerRecipientOperation.mockRejectedValueOnce({
+        code: sqlState,
+        detail: "provider-private-reference",
+        message: databaseMessage,
+      });
+      const error = await service()
+        .startRecipientOnboarding(
+          {
+            action: "recipient.onboarding.start",
+            expectedScope: userId,
+            idempotencyKey,
+            payload: {},
+          },
+          context,
+        )
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code, status });
+      expect(String(error)).not.toContain("provider-private-reference");
+    },
+  );
 });

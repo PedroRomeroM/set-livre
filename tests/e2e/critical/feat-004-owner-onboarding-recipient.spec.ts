@@ -1,7 +1,7 @@
 import {
   apiSuccessSchema,
   myProfileResultSchema,
-  ownerRecipientResultSchema,
+  ownerActivationResultSchema,
 } from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
@@ -71,7 +71,7 @@ test("SL-F004-E2E-001 @p0 ativa dono somente após aceite explícito do contrato
       page.getByRole("heading", { level: 2, name: "Perfil de dono ativo" }),
     ).toBeVisible();
 
-    const firstRenewal = ownerRecipientResultSchema.parse({
+    const firstRenewal = ownerActivationResultSchema.parse({
       ...result,
       acceptedOwnerContractVersionId: result.ownerContract.id,
       nextAction: "activate_owner",
@@ -84,7 +84,7 @@ test("SL-F004-E2E-001 @p0 ativa dono somente após aceite explícito do contrato
       ownerContractAccepted: false,
       reservationsEligible: false,
     });
-    const secondRenewal = ownerRecipientResultSchema.parse({
+    const secondRenewal = ownerActivationResultSchema.parse({
       ...firstRenewal,
       ownerContract: {
         ...firstRenewal.ownerContract,
@@ -97,7 +97,7 @@ test("SL-F004-E2E-001 @p0 ativa dono somente após aceite explícito do contrato
     });
     const publishRenewal = async (renewal: typeof firstRenewal, requestId: string) => {
       await page.route(
-        "**/api/owner/recipient",
+        "**/api/owner/activation",
         (route) =>
           route.fulfill({
             body: JSON.stringify({ data: renewal, requestId }),
@@ -109,7 +109,7 @@ test("SL-F004-E2E-001 @p0 ativa dono somente após aceite explícito do contrato
       const response = page.waitForResponse(
         (candidate) =>
           candidate.request().method() === "GET" &&
-          new URL(candidate.url()).pathname === "/api/owner/recipient",
+          new URL(candidate.url()).pathname === "/api/owner/activation",
       );
       await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
       await response;

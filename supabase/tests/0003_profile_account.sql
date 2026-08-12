@@ -1680,7 +1680,7 @@ select is(
 );
 
 select ok(
-  private.check_readiness('20260812000100'),
+  private.check_readiness('20260812000200'),
   'readiness permanece verde na head FEAT-003'
 );
 
@@ -1698,7 +1698,7 @@ grant execute on function private.feat003_readiness_probe()
   to app_dal;
 
 select ok(
-  not private.check_readiness('20260812000100'),
+  not private.check_readiness('20260812000200'),
   'readiness falha fechado com rotina DAL fora da allowlist'
 );
 
@@ -1706,7 +1706,7 @@ revoke all on function private.feat003_readiness_probe()
   from app_dal;
 
 select ok(
-  private.check_readiness('20260812000100'),
+  private.check_readiness('20260812000200'),
   'readiness recupera ao remover grant DAL indevido'
 );
 

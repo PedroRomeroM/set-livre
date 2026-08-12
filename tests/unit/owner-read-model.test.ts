@@ -9,7 +9,10 @@ vi.mock("../../src/lib/supabase/server", () => ({
   createComponentSupabaseClient: async () => client,
 }));
 
-import { readOwnerRecipient } from "../../src/domains/owners/server/owner-read-model";
+import {
+  readOwnerActivation,
+  readOwnerRecipient,
+} from "../../src/domains/owners/server/owner-read-model";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const row = {
@@ -34,6 +37,24 @@ const row = {
   requirements: [],
   reservations_eligible: false,
   scope: userId,
+};
+const recipientRow = {
+  accepted_owner_contract_version_id: row.accepted_owner_contract_version_id,
+  next_action: row.next_action,
+  owner_contract_accepted: row.owner_contract_accepted,
+  owner_contract_effective_at: row.owner_contract_effective_at,
+  owner_contract_id: row.owner_contract_id,
+  owner_contract_source: row.owner_contract_source,
+  owner_status: row.owner_status,
+  owner_version: row.owner_version,
+  profile_version: row.profile_version,
+  profile_version_synced: row.profile_version_synced,
+  provider_mode: row.provider_mode,
+  recipient_status: row.recipient_status,
+  recipient_version: row.recipient_version,
+  requirements: row.requirements,
+  reservations_eligible: row.reservations_eligible,
+  scope: row.scope,
 };
 
 function deferred<T>() {
@@ -67,7 +88,7 @@ describe("owner recipient read model", () => {
     vi.clearAllMocks();
     mocks.abortSignal.mockReturnValue({ maybeSingle: mocks.maybeSingle });
     mocks.rpc.mockReturnValue({ abortSignal: mocks.abortSignal, maybeSingle: mocks.maybeSingle });
-    mocks.maybeSingle.mockResolvedValue({ data: row, error: null });
+    mocks.maybeSingle.mockResolvedValue({ data: recipientRow, error: null });
   });
 
   afterEach(() => {
@@ -75,17 +96,34 @@ describe("owner recipient read model", () => {
   });
 
   it("reads the no-argument authenticated invoker RPC and maps only the safe DTO", async () => {
-    await expect(readOwnerRecipient(userId)).resolves.toMatchObject({
+    const result = await readOwnerRecipient(userId);
+    expect(result).toMatchObject({
       nextAction: "activate_owner",
-      ownerContract: { id: row.owner_contract_id, kind: "owner_contract" },
+      ownerContract: { id: row.owner_contract_id },
+      projection: "recipient",
       providerMode: "local",
       scope: userId,
     });
     expect(mocks.rpc).toHaveBeenCalledWith("get_owner_recipient_status");
     expect(mocks.abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
-    expect(JSON.stringify(await mocks.maybeSingle.mock.results[0]?.value)).not.toContain(
-      "provider_reference",
-    );
+    expect(Object.keys(result.ownerContract).sort()).toEqual(["effectiveAt", "id", "source"]);
+    expect(JSON.stringify(result)).not.toContain("provider_reference");
+    expect(JSON.stringify(result)).not.toContain("bodyMarkdown");
+    expect(JSON.stringify(result)).not.toContain("contentHash");
+  });
+
+  it("reads the full contract only from the activation RPC", async () => {
+    mocks.maybeSingle.mockResolvedValueOnce({ data: row, error: null });
+    await expect(readOwnerActivation(userId)).resolves.toMatchObject({
+      ownerContract: {
+        bodyMarkdown: row.owner_contract_body_markdown,
+        id: row.owner_contract_id,
+        kind: "owner_contract",
+      },
+      projection: "activation",
+      scope: userId,
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("get_owner_activation_status");
   });
 
   it("combines an external abort with the internal signal without passing a UUID to the RPC", async () => {
@@ -126,7 +164,7 @@ describe("owner recipient read model", () => {
     await vi.advanceTimersByTimeAsync(1);
     await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
     expect(internalSignal?.aborted).toBe(true);
-    pending.resolve({ data: row, error: null });
+    pending.resolve({ data: recipientRow, error: null });
     await Promise.resolve();
     expect(await outcome).toMatchObject({ name: "AbortError" });
   });
@@ -160,20 +198,20 @@ describe("owner recipient read model", () => {
     await startPendingOwnerRead();
     expect(vi.getTimerCount()).toBe(1);
 
-    pending.resolve({ data: row, error: null });
+    pending.resolve({ data: recipientRow, error: null });
     await expect(outcome).resolves.toMatchObject({ scope: userId });
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("fails closed on another scope, malformed/extra rows, absence and RPC errors", async () => {
     mocks.maybeSingle.mockResolvedValueOnce({
-      data: { ...row, scope: "22222222-2222-4222-8222-222222222222" },
+      data: { ...recipientRow, scope: "22222222-2222-4222-8222-222222222222" },
       error: null,
     });
     await expect(readOwnerRecipient(userId)).rejects.toThrow("não corresponde");
 
     mocks.maybeSingle.mockResolvedValueOnce({
-      data: { ...row, provider_reference: "private" },
+      data: { ...recipientRow, provider_reference: "private" },
       error: null,
     });
     await expect(readOwnerRecipient(userId)).rejects.toThrow();
@@ -185,14 +223,14 @@ describe("owner recipient read model", () => {
     await expect(readOwnerRecipient(userId)).rejects.toThrow("Não foi possível carregar");
   });
 
-  it("refuses a local fixture read in production without exposing its legal body", async () => {
+  it("refuses local fixtures in production without receiving a legal body on recipient reads", async () => {
     process.env.APP_ENV = "production";
     const error = await readOwnerRecipient(userId).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(Error);
-    expect(String(error)).not.toContain(row.owner_contract_body_markdown);
+    expect(JSON.stringify(recipientRow)).not.toContain(row.owner_contract_body_markdown);
 
     mocks.maybeSingle.mockResolvedValueOnce({
-      data: { ...row, owner_contract_source: "approved" },
+      data: { ...recipientRow, owner_contract_source: "approved" },
       error: null,
     });
     await expect(readOwnerRecipient(userId)).resolves.toMatchObject({

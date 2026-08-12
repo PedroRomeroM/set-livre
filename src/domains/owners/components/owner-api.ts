@@ -1,11 +1,14 @@
 import {
   apiErrorSchema,
   apiSuccessSchema,
-  ownerRecipientResultSchema,
+  ownerActivationResultSchema,
+  ownerRecipientStatusSchema,
   type OwnerCommand,
+  type OwnerActivationResult,
   type OwnerRecipientResult,
+  type OwnerRecipientStatus,
 } from "@set-livre/contracts";
-import type { z } from "zod";
+import { z } from "zod";
 
 const ownerRequestTimeoutMs = 10_000;
 
@@ -23,7 +26,7 @@ export class OwnerApiError extends Error {
 
 async function readPayload(response: Response): Promise<unknown> {
   try {
-    return (await response.json()) as unknown;
+    return z.unknown().parse(await response.json());
   } catch {
     throw new OwnerApiError(
       "RESPONSE_INVALID",
@@ -96,15 +99,30 @@ async function requestOwner<TData>(
   return parsedSuccess.data.data;
 }
 
+function ownerCommand(
+  command: Extract<OwnerCommand, { action: "owner.activate" }>,
+): Promise<OwnerActivationResult>;
+function ownerCommand(
+  command: Exclude<OwnerCommand, { action: "owner.activate" }>,
+): Promise<OwnerRecipientStatus>;
 function ownerCommand(command: OwnerCommand): Promise<OwnerRecipientResult> {
-  return requestOwner("/api/commands", ownerRecipientResultSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return command.action === "owner.activate"
+    ? requestOwner("/api/commands", ownerActivationResultSchema, {
+        body: JSON.stringify(command),
+        method: "POST",
+      })
+    : requestOwner("/api/commands", ownerRecipientStatusSchema, {
+        body: JSON.stringify(command),
+        method: "POST",
+      });
 }
 
 export function readOwnerRecipient() {
-  return requestOwner("/api/owner/recipient", ownerRecipientResultSchema);
+  return requestOwner("/api/owner/recipient", ownerRecipientStatusSchema);
+}
+
+export function readOwnerActivation() {
+  return requestOwner("/api/owner/activation", ownerActivationResultSchema);
 }
 
 export function activateOwner(

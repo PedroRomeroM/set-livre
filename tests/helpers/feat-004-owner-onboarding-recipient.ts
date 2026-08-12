@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
-  ownerRecipientResultSchema,
-  type OwnerRecipientResult,
+  ownerActivationResultSchema,
+  ownerRecipientStatusSchema,
+  type OwnerActivationResult,
+  type OwnerRecipientStatus,
   type PersonType,
 } from "@set-livre/contracts";
 import { expect, type Page } from "@playwright/test";
@@ -80,15 +82,28 @@ export function createFeat004QaIdentity(
   };
 }
 
-export function assertFeat004SafeOwnerResult(value: unknown): OwnerRecipientResult {
-  const parsed = ownerRecipientResultSchema.parse(value);
+export function assertFeat004SafeOwnerRecipient(value: unknown): OwnerRecipientStatus {
+  const parsed = ownerRecipientStatusSchema.parse(value);
+  const serialized = JSON.stringify(value);
+  if (
+    /"(?:bankAccount|bodyMarkdown|contentHash|kind|providerPayload|providerRecipientId|providerReference|routingNumber|title|version)"\s*:/u.test(
+      serialized,
+    )
+  ) {
+    throw new Error("A projeção de recebimentos expôs documento jurídico ou campo privado.");
+  }
+  return parsed;
+}
+
+export function assertFeat004SafeOwnerActivation(value: unknown): OwnerActivationResult {
+  const parsed = ownerActivationResultSchema.parse(value);
   const serialized = JSON.stringify(value);
   if (
     /providerRecipientId|providerReference|providerPayload|bankAccount|routingNumber/iu.test(
       serialized,
     )
   ) {
-    throw new Error("A projeção de dono expôs um campo privado do provider.");
+    throw new Error("A projeção de ativação expôs um campo privado do provider.");
   }
   return parsed;
 }
@@ -97,12 +112,36 @@ export async function readFeat004OwnerRecipient(page: Page) {
   const response = await page.request.get("/api/owner/recipient");
   expect(response.status()).toBe(200);
   const payload: unknown = await response.json();
-  return assertFeat004SafeOwnerResult(
-    apiSuccessSchema(ownerRecipientResultSchema).parse(payload).data,
+  return assertFeat004SafeOwnerRecipient(
+    apiSuccessSchema(ownerRecipientStatusSchema).parse(payload).data,
   );
 }
 
-async function expectOwnerCommand(page: Page, action: string, click: () => Promise<void>) {
+async function expectOwnerActivationCommand(page: Page, click: () => Promise<void>) {
+  const responsePromise = page.waitForResponse(async (response) => {
+    if (
+      new URL(response.url()).pathname !== "/api/commands" ||
+      response.request().method() !== "POST"
+    ) {
+      return false;
+    }
+    const body: unknown = response.request().postDataJSON();
+    return z.object({ action: z.string() }).safeParse(body).data?.action === "owner.activate";
+  });
+  await click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  const payload: unknown = await response.json();
+  return assertFeat004SafeOwnerActivation(
+    apiSuccessSchema(ownerActivationResultSchema).parse(payload).data,
+  );
+}
+
+async function expectOwnerRecipientCommand(
+  page: Page,
+  action: "recipient.onboarding.refresh" | "recipient.onboarding.start",
+  click: () => Promise<void>,
+) {
   const responsePromise = page.waitForResponse(async (response) => {
     if (
       new URL(response.url()).pathname !== "/api/commands" ||
@@ -117,8 +156,8 @@ async function expectOwnerCommand(page: Page, action: string, click: () => Promi
   const response = await responsePromise;
   expect(response.status()).toBe(200);
   const payload: unknown = await response.json();
-  return assertFeat004SafeOwnerResult(
-    apiSuccessSchema(ownerRecipientResultSchema).parse(payload).data,
+  return assertFeat004SafeOwnerRecipient(
+    apiSuccessSchema(ownerRecipientStatusSchema).parse(payload).data,
   );
 }
 
@@ -146,7 +185,7 @@ export async function activateFeat004Owner(page: Page) {
   const checkbox = page.getByRole("checkbox", { name: /Li e aceito o Contrato do Dono/iu });
   await expect(checkbox).not.toBeChecked();
   await checkbox.check();
-  const result = await expectOwnerCommand(page, "owner.activate", () =>
+  const result = await expectOwnerActivationCommand(page, () =>
     page.getByRole("button", { name: /Ativar perfil de dono|Aceitar contrato vigente/iu }).click(),
   );
   expect(result).toMatchObject({
@@ -161,7 +200,7 @@ export async function activateFeat004Owner(page: Page) {
 }
 
 export async function startFeat004Recipient(page: Page) {
-  const result = await expectOwnerCommand(page, "recipient.onboarding.start", () =>
+  const result = await expectOwnerRecipientCommand(page, "recipient.onboarding.start", () =>
     page.getByRole("button", { name: "Iniciar validação local" }).click(),
   );
   expect(result).toMatchObject({
@@ -174,7 +213,7 @@ export async function startFeat004Recipient(page: Page) {
 }
 
 export async function refreshFeat004Recipient(page: Page) {
-  const result = await expectOwnerCommand(page, "recipient.onboarding.refresh", () =>
+  const result = await expectOwnerRecipientCommand(page, "recipient.onboarding.refresh", () =>
     page.getByRole("button", { name: "Atualizar status" }).click(),
   );
   expect(result).toMatchObject({
@@ -190,7 +229,7 @@ export async function refreshFeat004RecipientToTestState(
   page: Page,
   expectedStatus: "blocked" | "refused" | "suspended",
 ) {
-  const result = await expectOwnerCommand(page, "recipient.onboarding.refresh", () =>
+  const result = await expectOwnerRecipientCommand(page, "recipient.onboarding.refresh", () =>
     page.getByRole("button", { name: "Atualizar status" }).click(),
   );
   expect(result).toMatchObject({

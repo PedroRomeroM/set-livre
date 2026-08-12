@@ -7,7 +7,9 @@ import {
   cleanupOwnerMutationAttemptOnce,
   isOwnerAmbiguousCommandError,
   isOwnerSessionChangedError,
+  isOwnerUnscopedValidationError,
   ownerMutationNetworkMode,
+  ownerMutationRequiresVerification,
   ownerMutationResultCanPublish,
   ownerReadRequiresScopeTransition,
   requireOwnerMutationAttempt,
@@ -196,5 +198,27 @@ describe("owner mutation boundary", () => {
 
   it("does not classify an explicit business conflict as an ambiguous provider outcome", () => {
     expect(isOwnerAmbiguousCommandError(new OwnerApiError("CONFLICT", "conflict"))).toBe(false);
+  });
+
+  it("requires an authoritative read for validation without a user-correctable field", () => {
+    const staleValidation = new OwnerApiError(
+      "VALIDATION_FAILED",
+      "O cadastro mudou. Atualize o estado atual.",
+    );
+
+    expect(isOwnerUnscopedValidationError(staleValidation)).toBe(true);
+    expect(ownerMutationRequiresVerification(staleValidation)).toBe(true);
+  });
+
+  it("keeps actual field validation editable without forcing an authoritative read", () => {
+    const fieldValidation = new OwnerApiError("VALIDATION_FAILED", "Revise os campos destacados.", {
+      acceptOwnerContract: "Aceite o contrato do dono para continuar.",
+    });
+
+    expect(isOwnerUnscopedValidationError(fieldValidation)).toBe(false);
+    expect(ownerMutationRequiresVerification(fieldValidation)).toBe(false);
+    expect(ownerMutationRequiresVerification(new OwnerApiError("CONFLICT", "Conflito."))).toBe(
+      true,
+    );
   });
 });

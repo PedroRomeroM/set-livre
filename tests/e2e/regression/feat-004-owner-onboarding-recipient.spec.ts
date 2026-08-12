@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type BrowserContext } from "@playwright/test";
 
 import {
   activateFeat004Owner,
@@ -13,7 +13,8 @@ import {
 
 test.use({ screenshot: "off", trace: "off", video: "off" });
 
-test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST", async ({
+test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repetir POST", async ({
+  browser,
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -24,6 +25,7 @@ test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST
     "narrow-chromium-320",
   ]).toContain(testInfo.project.name);
   const identity = createFeat004QaIdentity(testInfo, "004_provider_recovery");
+  let concurrentContext: BrowserContext | undefined;
   let ownerPostRequests = 0;
   let ownerGetRequests = 0;
 
@@ -34,12 +36,54 @@ test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST
     });
     await activateFeat004Owner(page);
     await gotoFeat004Recipient(page);
-    await startFeat004Recipient(page);
+    const recipientStartButton = page.getByRole("button", {
+      name: "Iniciar validação local",
+    });
+    await expect(recipientStartButton).toBeVisible();
+    await expect(recipientStartButton).toBeEnabled();
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path === "/api/commands") ownerPostRequests += 1;
       if (request.method() === "GET" && path === "/api/owner/recipient") ownerGetRequests += 1;
     });
+
+    concurrentContext = await browser.newContext({
+      baseURL: new URL(page.url()).origin,
+      storageState: await page.context().storageState(),
+    });
+    const concurrentPage = await concurrentContext.newPage();
+    const concurrentNavigation = await concurrentPage.goto("/dono/recebimentos");
+    expect(concurrentNavigation?.status()).toBe(200);
+    await expect(
+      concurrentPage.getByRole("heading", { level: 1, name: "Cadastro de recebimentos" }),
+    ).toBeVisible();
+    await startFeat004Recipient(concurrentPage);
+    expect(ownerGetRequests).toBe(0);
+
+    const conflictResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/commands",
+    );
+    await recipientStartButton.click();
+    const conflictResponse = await conflictResponsePromise;
+    expect(conflictResponse.status()).toBe(409);
+    expect(ownerGetRequests).toBe(0);
+
+    await expect(page.getByText("O cadastro mudou em outro lugar", { exact: true })).toBeVisible();
+    await expect(recipientStartButton).toBeDisabled();
+    expect(ownerPostRequests).toBe(1);
+
+    await page.getByRole("button", { name: "Verificar estado atual" }).click();
+    await expect(page.getByText("O cadastro mudou em outro lugar", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Atualizar status" })).toBeEnabled();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Etapas para receber reservas" }),
+    ).toBeFocused();
+    expect(ownerGetRequests).toBe(1);
+    expect(ownerPostRequests).toBe(1);
+
     await seedFeat004RecipientTestFixture(
       identity,
       testInfo.project.name === "narrow-chromium-320" ||
@@ -61,7 +105,7 @@ test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST
     ).toBeVisible();
     await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Atualizar status" })).toBeDisabled();
-    expect(ownerPostRequests).toBe(1);
+    expect(ownerPostRequests).toBe(2);
 
     await page.getByRole("button", { name: "Verificar estado atual" }).click();
     await expect(
@@ -72,8 +116,8 @@ test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST
     await expect(
       page.getByRole("heading", { level: 2, name: "Etapas para receber reservas" }),
     ).toBeFocused();
-    expect(ownerGetRequests).toBe(1);
-    expect(ownerPostRequests).toBe(1);
+    expect(ownerGetRequests).toBe(2);
+    expect(ownerPostRequests).toBe(2);
     await assertFeat004PrivateValuesAbsent(page);
 
     if (testInfo.project.name === "mobile-chromium-390") {
@@ -83,6 +127,7 @@ test("SL-F004-E2E-004 @p1 recupera falha ambígua do provider sem repetir o POST
       expect(page.viewportSize()).toEqual({ height: 720, width: 320 });
     }
   } finally {
+    await concurrentContext?.close();
     await cleanupFeat004QaIdentity(identity);
   }
 });

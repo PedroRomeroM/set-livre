@@ -8,7 +8,7 @@ import {
 } from "@/domains/owners/components/owner-access-state";
 import { OwnerPageFrame } from "@/domains/owners/components/owner-page-frame";
 import { OwnerRecipientPanel } from "@/domains/owners/components/owner-recipient-panel";
-import { readOwnerRecipient } from "@/domains/owners/server/owner-read-model";
+import { readOwnerActivation } from "@/domains/owners/server/owner-read-model";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +35,7 @@ export default async function OwnerPage() {
         <OwnerProfileRequiredState />
       ) : (
         <OwnerRecipientPanel
-          initialResult={await readOwnerRecipient(session.userId)}
+          initialResult={await readOwnerActivation(session.userId)}
           userId={session.userId}
           view="overview"
         />

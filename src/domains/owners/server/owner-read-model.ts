@@ -1,10 +1,15 @@
 import "server-only";
 
-import type { OwnerRecipientResult } from "@set-livre/contracts";
+import type { OwnerActivationResult, OwnerRecipientStatus } from "@set-livre/contracts";
 
 import { createComponentSupabaseClient } from "@/lib/supabase/server";
 
-import { mapOwnerRecipientDalRow, parseOwnerRecipientDalRow } from "./owner-dal";
+import {
+  mapOwnerActivationDalRow,
+  mapOwnerRecipientStatusDalRow,
+  parseOwnerActivationDalRow,
+  parseOwnerRecipientStatusDalRow,
+} from "./owner-dal";
 
 const ownerReadDeadlineMs = 2_000;
 
@@ -13,8 +18,9 @@ type ComponentSupabaseClient = Awaited<ReturnType<typeof createComponentSupabase
 async function readOwnerRecipientWithClient(
   client: ComponentSupabaseClient,
   userId: string,
+  projection: "activation" | "recipient",
   externalSignal?: AbortSignal,
-): Promise<OwnerRecipientResult> {
+): Promise<OwnerActivationResult | OwnerRecipientStatus> {
   const abortController = new AbortController();
   const abortError = new DOMException("A leitura do cadastro de dono expirou.", "AbortError");
   const abortOutcome = new Promise<never>((_resolve, reject) => {
@@ -24,14 +30,18 @@ async function readOwnerRecipientWithClient(
   let deadline: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    const query = client.rpc("get_owner_recipient_status");
+    const query = client.rpc(
+      projection === "activation" ? "get_owner_activation_status" : "get_owner_recipient_status",
+    );
     const rpcOutcome = Promise.resolve(
       query.abortSignal(abortController.signal).maybeSingle(),
     ).then(({ data, error }) => {
       if (error !== null) {
         throw new Error("Não foi possível carregar o cadastro de dono autenticado.");
       }
-      return mapOwnerRecipientDalRow(parseOwnerRecipientDalRow(data), userId);
+      return projection === "activation"
+        ? mapOwnerActivationDalRow(parseOwnerActivationDalRow(data), userId)
+        : mapOwnerRecipientStatusDalRow(parseOwnerRecipientStatusDalRow(data), userId);
     });
     const outcome = Promise.race([rpcOutcome, abortOutcome]);
 
@@ -49,5 +59,27 @@ async function readOwnerRecipientWithClient(
 }
 
 export async function readOwnerRecipient(userId: string, signal?: AbortSignal) {
-  return readOwnerRecipientWithClient(await createComponentSupabaseClient(), userId, signal);
+  const result = await readOwnerRecipientWithClient(
+    await createComponentSupabaseClient(),
+    userId,
+    "recipient",
+    signal,
+  );
+  if (result.projection !== "recipient") {
+    throw new Error("A leitura de recebimentos retornou uma projeção inesperada.");
+  }
+  return result;
+}
+
+export async function readOwnerActivation(userId: string, signal?: AbortSignal) {
+  const result = await readOwnerRecipientWithClient(
+    await createComponentSupabaseClient(),
+    userId,
+    "activation",
+    signal,
+  );
+  if (result.projection !== "activation") {
+    throw new Error("A leitura de ativação retornou uma projeção inesperada.");
+  }
+  return result;
 }

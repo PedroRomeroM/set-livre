@@ -12,8 +12,10 @@ import {
   activateOwnerProfile,
   applyOwnerRecipientOperation,
   getOwnerRecipientStatusForUser,
-  mapOwnerRecipientDalRow,
-  parseOwnerRecipientDalRow,
+  mapOwnerActivationDalRow,
+  mapOwnerRecipientStatusDalRow,
+  parseOwnerActivationDalRow,
+  parseOwnerRecipientStatusDalRow,
   prepareOwnerRecipientOperation,
 } from "../../src/domains/owners/server/owner-dal";
 
@@ -44,6 +46,24 @@ const row = {
   reservations_eligible: false,
   scope: userId,
 };
+const recipientRow = {
+  accepted_owner_contract_version_id: row.accepted_owner_contract_version_id,
+  next_action: row.next_action,
+  owner_contract_accepted: row.owner_contract_accepted,
+  owner_contract_effective_at: row.owner_contract_effective_at,
+  owner_contract_id: row.owner_contract_id,
+  owner_contract_source: row.owner_contract_source,
+  owner_status: row.owner_status,
+  owner_version: row.owner_version,
+  profile_version: row.profile_version,
+  profile_version_synced: row.profile_version_synced,
+  provider_mode: row.provider_mode,
+  recipient_status: row.recipient_status,
+  recipient_version: row.recipient_version,
+  requirements: row.requirements,
+  reservations_eligible: row.reservations_eligible,
+  scope: row.scope,
+};
 
 describe("owner DAL", () => {
   beforeEach(() => {
@@ -53,11 +73,13 @@ describe("owner DAL", () => {
   });
 
   it("calls the exact private read and activation signatures", async () => {
+    mocks.query.mockResolvedValueOnce({ rows: [recipientRow] });
     await getOwnerRecipientStatusForUser(userId);
     expect(mocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining("private.get_owner_recipient_status_for_user($1::uuid)"),
       [userId],
     );
+    expect(mocks.query.mock.calls[0]?.[0]).not.toContain("owner_contract_body_markdown");
 
     const userAgentHash = "b".repeat(64);
     await activateOwnerProfile({
@@ -109,7 +131,7 @@ describe("owner DAL", () => {
     mocks.query.mockResolvedValueOnce({
       rows: [
         {
-          ...row,
+          ...recipientRow,
           next_action: "refresh_status",
           owner_contract_accepted: true,
           accepted_owner_contract_version_id: contractId,
@@ -134,45 +156,55 @@ describe("owner DAL", () => {
       expect.stringContaining("private.apply_owner_recipient_operation"),
       [userId, operationId, "local", "private-reference", "pending", ["identity_review"]],
     );
+    expect(mocks.query.mock.calls.at(-1)?.[0]).not.toContain("owner_contract_body_markdown");
   });
 
-  it("maps the safe row and rejects scope/provider/column drift", () => {
-    const parsedRow = parseOwnerRecipientDalRow(row);
-    expect(mapOwnerRecipientDalRow(parsedRow, userId)).toMatchObject({
+  it("maps strict full/slim rows and rejects scope/provider/column drift", () => {
+    const parsedRecipientRow = parseOwnerRecipientStatusDalRow(recipientRow);
+    expect(mapOwnerRecipientStatusDalRow(parsedRecipientRow, userId)).toMatchObject({
       nextAction: "activate_owner",
       ownerVersion: 0,
       profileVersion: 4,
+      projection: "recipient",
       providerMode: "local",
       scope: userId,
     });
     expect(() =>
-      mapOwnerRecipientDalRow(parsedRow, "55555555-5555-4555-8555-555555555555"),
+      mapOwnerRecipientStatusDalRow(parsedRecipientRow, "55555555-5555-4555-8555-555555555555"),
     ).toThrow("não corresponde");
+    expect(mapOwnerActivationDalRow(parseOwnerActivationDalRow(row), userId)).toMatchObject({
+      ownerContract: { bodyMarkdown: row.owner_contract_body_markdown },
+      projection: "activation",
+    });
     for (const malformed of [
-      { ...row, provider_mode: "pagarme" },
-      { ...row, owner_contract_kind: "terms" },
-      { ...row, provider_reference: "private" },
-      { ...row, owner_version: "01" },
-      { ...row, owner_contract_effective_at: "12/08/2026" },
+      { ...recipientRow, provider_mode: "pagarme" },
+      { ...recipientRow, provider_reference: "private" },
+      { ...recipientRow, owner_contract_body_markdown: "# unexpected" },
+      { ...recipientRow, owner_version: "01" },
+      { ...recipientRow, owner_contract_effective_at: "12/08/2026" },
     ]) {
-      expect(() => parseOwnerRecipientDalRow(malformed)).toThrow();
+      expect(() => parseOwnerRecipientStatusDalRow(malformed)).toThrow();
     }
+    expect(() => parseOwnerActivationDalRow({ ...row, owner_contract_kind: "terms" })).toThrow();
   });
 
   it("fails closed on zero or multiple command rows", async () => {
     mocks.query.mockResolvedValueOnce({ rows: [] });
     await expect(getOwnerRecipientStatusForUser(userId)).rejects.toThrow("cardinalidade");
-    mocks.query.mockResolvedValueOnce({ rows: [row, row] });
+    mocks.query.mockResolvedValueOnce({ rows: [recipientRow, recipientRow] });
     await expect(getOwnerRecipientStatusForUser(userId)).rejects.toThrow("cardinalidade");
   });
 
   it("refuses a local fixture DTO outside local/test while allowing an approved contract", () => {
     process.env.APP_ENV = "production";
-    const parsedRow = parseOwnerRecipientDalRow(row);
-    expect(() => mapOwnerRecipientDalRow(parsedRow, userId)).toThrow("proibido");
+    const parsedRow = parseOwnerRecipientStatusDalRow(recipientRow);
+    expect(() => mapOwnerRecipientStatusDalRow(parsedRow, userId)).toThrow("proibido");
     expect(() =>
-      mapOwnerRecipientDalRow(
-        parseOwnerRecipientDalRow({ ...row, owner_contract_source: "approved" }),
+      mapOwnerRecipientStatusDalRow(
+        parseOwnerRecipientStatusDalRow({
+          ...recipientRow,
+          owner_contract_source: "approved",
+        }),
         userId,
       ),
     ).not.toThrow();

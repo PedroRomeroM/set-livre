@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
+  readOwnerActivation: vi.fn(),
   readOwnerRecipient: vi.fn(),
   readRouteIdentitySession: vi.fn(),
 }));
@@ -12,15 +13,42 @@ vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
 }));
 
 vi.mock("../../src/domains/owners/server/owner-read-model", () => ({
+  readOwnerActivation: mocks.readOwnerActivation,
   readOwnerRecipient: mocks.readOwnerRecipient,
 }));
 
 const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const userId = "11111111-1111-4111-8111-111111111111";
-const result = { scope: userId };
+const result = {
+  ownerContract: {
+    effectiveAt: "2026-08-12T00:00:00.000Z",
+    id: "33333333-3333-4333-8333-333333333333",
+    source: "local_fixture",
+  },
+  projection: "recipient",
+  scope: userId,
+};
+const activationResult = {
+  ...result,
+  ownerContract: {
+    ...result.ownerContract,
+    bodyMarkdown: "# Contrato integral somente na ativação",
+    contentHash: "a".repeat(64),
+    kind: "owner_contract",
+    title: "Contrato do dono",
+    version: "local-1",
+  },
+  projection: "activation",
+};
 
 function ownerRequest() {
   return new Request("http://127.0.0.1:3000/api/owner/recipient", {
+    headers: { "x-request-id": requestId },
+  });
+}
+
+function ownerActivationRequest() {
+  return new Request("http://127.0.0.1:3000/api/owner/activation", {
     headers: { "x-request-id": requestId },
   });
 }
@@ -41,6 +69,7 @@ describe("owner recipient read route", () => {
         userId,
       },
     });
+    mocks.readOwnerActivation.mockResolvedValue(activationResult);
     mocks.readOwnerRecipient.mockResolvedValue(result);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   });
@@ -50,8 +79,20 @@ describe("owner recipient read route", () => {
     const response = await GET(ownerRequest());
     expect(response.status).toBe(200);
     expect(response.headers.get("x-owner-session")).toBe("refreshed");
-    await expect(response.json()).resolves.toMatchObject({ data: result, requestId });
+    const payload = await response.json();
+    expect(payload).toMatchObject({ data: result, requestId });
+    expect(JSON.stringify(payload)).not.toContain("bodyMarkdown");
+    expect(JSON.stringify(payload)).not.toContain("Contrato integral");
     expect(mocks.readOwnerRecipient).toHaveBeenCalledWith(userId);
+  });
+
+  it("returns the complete legal document only from the authenticated activation route", async () => {
+    const { GET } = await import("../../src/app/api/owner/activation/route");
+    const response = await GET(ownerActivationRequest());
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ data: activationResult, requestId });
+    expect(mocks.readOwnerActivation).toHaveBeenCalledWith(userId);
+    expect(mocks.readOwnerRecipient).not.toHaveBeenCalled();
   });
 
   it("rejects guests before reading owner data", async () => {

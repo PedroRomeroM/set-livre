@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { OwnerRecipientResult } from "@set-livre/contracts";
+import type { OwnerActivationResult } from "@set-livre/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -13,7 +13,7 @@ import {
 const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const contractId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
-function activeOwner(overrides: Partial<OwnerRecipientResult> = {}): OwnerRecipientResult {
+function activeOwner(overrides: Partial<OwnerActivationResult> = {}): OwnerActivationResult {
   return {
     acceptedOwnerContractVersionId: contractId,
     nextAction: "start_onboarding",
@@ -32,6 +32,7 @@ function activeOwner(overrides: Partial<OwnerRecipientResult> = {}): OwnerRecipi
     ownerVersion: 1,
     profileVersion: 1,
     profileVersionSynced: null,
+    projection: "activation",
     providerMode: "local",
     recipientStatus: "not_started",
     recipientVersion: 0,
@@ -98,38 +99,39 @@ describe("FEAT-004 owner UI", () => {
 
     for (const page of [overview, recipient]) {
       expect(page).toContain("await readComponentIdentitySession()");
-      expect(page.indexOf("!session.authenticated")).toBeLessThan(
-        page.indexOf("await readOwnerRecipient(session.userId)"),
-      );
       expect(page).toContain('session.status === "suspended"');
       expect(page).toContain("!session.profileCompleted");
     }
+    expect(overview.indexOf("!session.authenticated")).toBeLessThan(
+      overview.indexOf("await readOwnerActivation(session.userId)"),
+    );
+    expect(recipient.indexOf("!session.authenticated")).toBeLessThan(
+      recipient.indexOf("await readOwnerRecipient(session.userId)"),
+    );
   });
 
   it("implements closed, scope-bound TanStack reads and authoritative publications", () => {
     const panel = ownerComponent("owner-recipient-panel.tsx");
     const cache = ownerComponent("owner-query-keys.ts");
 
-    expect(panel).toContain(
-      "readNewestOwnerRecipientResult(queryClient, userId, readOwnerRecipient)",
-    );
-    expect(panel).toContain(
-      "ownerRecipientCanRender(observedResult, userId, resultQuery.fetchStatus)",
-    );
+    expect(panel).toContain("readNewestOwnerPrivateResult(");
+    expect(panel).toContain("readOwnerActivation");
+    expect(panel).toContain("readOwnerRecipient");
+    expect(panel).toContain("ownerPrivateCanRender(");
     expect(panel).toContain('refetchOnMount: "always"');
     expect(panel).toContain('refetchOnWindowFocus: "always"');
     expect(panel).toContain("retry: false");
     expect(panel).toContain("staleTime: 0");
     expect(panel.match(/networkMode: ownerMutationNetworkMode/gu)).toHaveLength(2);
     expect(panel.match(/idempotencyKey: createIdempotencyKey\(\)/gu)).toHaveLength(2);
-    expect(panel).toContain("publishNewestOwnerRecipientMutationResult(");
+    expect(panel).toContain("publishNewestOwnerPrivateMutationResult(");
     expect(panel).toContain("flushSync(() => setScopeTransitionStarted(true))");
     expect(panel).toContain("ownerReadRequiresScopeTransition({");
     expect(panel).toContain("error: resultQuery.error");
     expect(panel).toContain("ownerMutationResultCanPublish(scopeTransitionGuard)");
-    expect(cache).toContain(
-      'const ownerRecipientQueryRoot = ["owner", "recipient", "status"] as const;',
-    );
+    expect(cache).toContain('const ownerPrivateQueryRoot = ["owner", "private"] as const;');
+    expect(cache).toContain('ownerActivationQueryRoot = [...ownerPrivateQueryRoot, "activation"]');
+    expect(cache).toContain('ownerRecipientQueryRoot = [...ownerPrivateQueryRoot, "recipient"]');
     expect(cache).not.toContain("setQueriesData");
   });
 
@@ -148,6 +150,10 @@ describe("FEAT-004 owner UI", () => {
     expect(panel).toContain("!result.reservationsEligible");
     expect(panel).toContain("Validação exclusiva do ambiente local");
     expect(panel).toContain("Contrato não aprovado para produção");
+    expect(panel).toContain('view: "overview"');
+    expect(panel).toContain('view: "recipient"');
+    expect(panel).toContain('result.projection === "activation"');
+    expect(panel).not.toMatch(/\sas\s+Owner(?:ActivationResult|RecipientStatus)/u);
     expect(combined).not.toMatch(/recipient\.bank\.update|bankAccount|routingNumber/iu);
     expect(combined).not.toMatch(/stripe|mercado\s*pago|pagar\.me|adyen/iu);
   });
@@ -184,6 +190,8 @@ describe("FEAT-004 owner UI", () => {
     expect(routeState).toContain("Não foi possível carregar a área do dono");
     expect(routeState).toContain("Tentar novamente");
     expect(panel).toContain('error.code === "CONFLICT"');
+    expect(panel.match(/isOwnerUnscopedValidationError\(error\)/gu)).toHaveLength(2);
+    expect(panel.match(/ownerMutationRequiresVerification\(apiError\)/gu)).toHaveLength(2);
     expect(panel).toContain("Verificar estado atual");
     expect(panel).toContain("key={result.ownerContract.id}");
     expect(panel.match(/void onRefresh\(\)\.then/gu)).toHaveLength(2);

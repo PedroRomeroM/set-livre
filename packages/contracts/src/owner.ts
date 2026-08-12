@@ -24,13 +24,17 @@ export const ownerNextActionSchema = z.enum([
 ]);
 export const ownerProviderModeSchema = z.literal("local");
 
-export const ownerContractSchema = z.strictObject({
-  bodyMarkdown: z.string().min(1),
-  contentHash: z.string().regex(/^[0-9a-f]{64}$/u),
+export const ownerContractReferenceSchema = z.strictObject({
   effectiveAt: z.iso.datetime(),
   id: z.uuid(),
-  kind: z.literal("owner_contract"),
   source: z.enum(["local_fixture", "approved"]),
+});
+
+export const ownerContractSchema = z.strictObject({
+  ...ownerContractReferenceSchema.shape,
+  bodyMarkdown: z.string().min(1),
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/u),
+  kind: z.literal("owner_contract"),
   title: z.string().min(1),
   version: z.string().min(1),
 });
@@ -42,132 +46,149 @@ const recipientRequirementsSchema = z
     message: "Os requisitos do recebedor não podem ser repetidos.",
   });
 
-export const ownerRecipientResultSchema = z
+const ownerRecipientStateShape = {
+  acceptedOwnerContractVersionId: z.uuid().nullable(),
+  nextAction: ownerNextActionSchema,
+  ownerContractAccepted: z.boolean(),
+  ownerStatus: ownerStatusSchema,
+  ownerVersion: profileVersionSchema,
+  profileVersion: profileVersionSchema,
+  profileVersionSynced: profileVersionSchema.nullable(),
+  providerMode: ownerProviderModeSchema,
+  recipientStatus: recipientStatusSchema,
+  recipientVersion: profileVersionSchema,
+  requirements: recipientRequirementsSchema,
+  reservationsEligible: z.boolean(),
+  scope: z.uuid(),
+} as const;
+
+type OwnerRecipientRelationalState = {
+  acceptedOwnerContractVersionId: string | null;
+  nextAction: OwnerNextAction;
+  ownerContract: OwnerContractReference;
+  ownerContractAccepted: boolean;
+  ownerStatus: OwnerStatus;
+  ownerVersion: number;
+  profileVersion: number;
+  profileVersionSynced: number | null;
+  providerMode: "local";
+  recipientStatus: RecipientStatus;
+  recipientVersion: number;
+  requirements: readonly RecipientRequirement[];
+  reservationsEligible: boolean;
+  scope: string;
+};
+type ReportOwnerRecipientIssue = (message: string, path: string) => void;
+
+function validateOwnerRecipientState(
+  value: OwnerRecipientRelationalState,
+  report: ReportOwnerRecipientIssue,
+) {
+  const recipientIsInitial =
+    value.recipientStatus === "not_started" &&
+    value.recipientVersion === 0 &&
+    value.profileVersionSynced === null &&
+    value.requirements.length === 0;
+  const ownerAuthorityExists = value.ownerVersion >= 1;
+
+  if (ownerAuthorityExists !== (value.acceptedOwnerContractVersionId !== null)) {
+    report("A versão do dono não corresponde à autoridade contratual persistida.", "ownerVersion");
+  }
+  if (!ownerAuthorityExists && !recipientIsInitial) {
+    report("Um recebedor não pode existir sem a autoridade persistida do dono.", "recipientStatus");
+  }
+  if (value.ownerStatus === "inactive" && value.ownerVersion !== 0) {
+    report("Um dono inativo não pode possuir uma versão persistida.", "ownerVersion");
+  }
+  if (value.ownerStatus === "active" && !ownerAuthorityExists) {
+    report("Um dono ativo exige autoridade persistida.", "ownerVersion");
+  }
+  if (value.recipientStatus === "not_started" && !recipientIsInitial) {
+    report("O recebedor ainda não iniciado deve permanecer no estado inicial.", "recipientStatus");
+  }
+  if (
+    value.recipientStatus !== "not_started" &&
+    (value.recipientVersion < 1 || value.profileVersionSynced === null)
+  ) {
+    report(
+      "Um recebedor iniciado exige versão e perfil sincronizado persistidos.",
+      "recipientVersion",
+    );
+  }
+  if (value.recipientStatus === "active" && value.requirements.length !== 0) {
+    report("Um recebedor ativo não pode conservar requisitos pendentes.", "requirements");
+  }
+
+  const profileIsSynced = value.profileVersionSynced === value.profileVersion;
+  const eligible =
+    value.ownerStatus === "active" &&
+    value.ownerContractAccepted &&
+    value.recipientStatus === "active" &&
+    profileIsSynced;
+  if (value.reservationsEligible !== eligible) {
+    report(
+      "A elegibilidade de reserva está incoerente com o estado canônico.",
+      "reservationsEligible",
+    );
+  }
+  if (
+    value.ownerContractAccepted !==
+    (value.acceptedOwnerContractVersionId === value.ownerContract.id)
+  ) {
+    report("O indicador de aceite não corresponde ao contrato atual.", "ownerContractAccepted");
+  }
+
+  let expectedNextAction: OwnerNextAction;
+  if (value.ownerStatus === "blocked" || value.recipientStatus === "blocked") {
+    expectedNextAction = "none";
+  } else if (value.ownerStatus === "inactive" || !value.ownerContractAccepted) {
+    expectedNextAction = "activate_owner";
+  } else if (value.recipientStatus === "not_started" || value.recipientStatus === "refused") {
+    expectedNextAction = "start_onboarding";
+  } else if (
+    value.recipientStatus === "pending" ||
+    value.recipientStatus === "suspended" ||
+    (value.recipientStatus === "active" && !profileIsSynced)
+  ) {
+    expectedNextAction = "refresh_status";
+  } else {
+    expectedNextAction = "none";
+  }
+  if (value.nextAction !== expectedNextAction) {
+    report("A próxima ação está incoerente com o estado canônico.", "nextAction");
+  }
+}
+
+const ownerRecipientStatusBaseSchema = z.strictObject({
+  ...ownerRecipientStateShape,
+  ownerContract: ownerContractReferenceSchema,
+  projection: z.literal("recipient"),
+});
+
+export const ownerRecipientStatusSchema = ownerRecipientStatusBaseSchema.superRefine(
+  (value, context) => {
+    validateOwnerRecipientState(value, (message, path) => {
+      context.addIssue({ code: "custom", message, path: [path] });
+    });
+  },
+);
+
+export const ownerActivationResultSchema = z
   .strictObject({
-    acceptedOwnerContractVersionId: z.uuid().nullable(),
-    nextAction: ownerNextActionSchema,
+    ...ownerRecipientStateShape,
     ownerContract: ownerContractSchema,
-    ownerContractAccepted: z.boolean(),
-    ownerStatus: ownerStatusSchema,
-    ownerVersion: profileVersionSchema,
-    profileVersion: profileVersionSchema,
-    profileVersionSynced: profileVersionSchema.nullable(),
-    providerMode: ownerProviderModeSchema,
-    recipientStatus: recipientStatusSchema,
-    recipientVersion: profileVersionSchema,
-    requirements: recipientRequirementsSchema,
-    reservationsEligible: z.boolean(),
-    scope: z.uuid(),
+    projection: z.literal("activation"),
   })
   .superRefine((value, context) => {
-    const recipientIsInitial =
-      value.recipientStatus === "not_started" &&
-      value.recipientVersion === 0 &&
-      value.profileVersionSynced === null &&
-      value.requirements.length === 0;
-    const ownerAuthorityExists = value.ownerVersion >= 1;
-
-    if (ownerAuthorityExists !== (value.acceptedOwnerContractVersionId !== null)) {
-      context.addIssue({
-        code: "custom",
-        message: "A versão do dono não corresponde à autoridade contratual persistida.",
-        path: ["ownerVersion"],
-      });
-    }
-    if (!ownerAuthorityExists && !recipientIsInitial) {
-      context.addIssue({
-        code: "custom",
-        message: "Um recebedor não pode existir sem a autoridade persistida do dono.",
-        path: ["recipientStatus"],
-      });
-    }
-    if (value.ownerStatus === "inactive" && value.ownerVersion !== 0) {
-      context.addIssue({
-        code: "custom",
-        message: "Um dono inativo não pode possuir uma versão persistida.",
-        path: ["ownerVersion"],
-      });
-    }
-    if (value.ownerStatus === "active" && !ownerAuthorityExists) {
-      context.addIssue({
-        code: "custom",
-        message: "Um dono ativo exige autoridade persistida.",
-        path: ["ownerVersion"],
-      });
-    }
-    if (value.recipientStatus === "not_started" && !recipientIsInitial) {
-      context.addIssue({
-        code: "custom",
-        message: "O recebedor ainda não iniciado deve permanecer no estado inicial.",
-        path: ["recipientStatus"],
-      });
-    }
-    if (
-      value.recipientStatus !== "not_started" &&
-      (value.recipientVersion < 1 || value.profileVersionSynced === null)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Um recebedor iniciado exige versão e perfil sincronizado persistidos.",
-        path: ["recipientVersion"],
-      });
-    }
-    if (value.recipientStatus === "active" && value.requirements.length !== 0) {
-      context.addIssue({
-        code: "custom",
-        message: "Um recebedor ativo não pode conservar requisitos pendentes.",
-        path: ["requirements"],
-      });
-    }
-
-    const profileIsSynced = value.profileVersionSynced === value.profileVersion;
-    const eligible =
-      value.ownerStatus === "active" &&
-      value.ownerContractAccepted &&
-      value.recipientStatus === "active" &&
-      profileIsSynced;
-    if (value.reservationsEligible !== eligible) {
-      context.addIssue({
-        code: "custom",
-        message: "A elegibilidade de reserva está incoerente com o estado canônico.",
-        path: ["reservationsEligible"],
-      });
-    }
-    if (
-      value.ownerContractAccepted !==
-      (value.acceptedOwnerContractVersionId === value.ownerContract.id)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "O indicador de aceite não corresponde ao contrato atual.",
-        path: ["ownerContractAccepted"],
-      });
-    }
-
-    let expectedNextAction: OwnerNextAction;
-    if (value.ownerStatus === "blocked" || value.recipientStatus === "blocked") {
-      expectedNextAction = "none";
-    } else if (value.ownerStatus === "inactive" || !value.ownerContractAccepted) {
-      expectedNextAction = "activate_owner";
-    } else if (value.recipientStatus === "not_started" || value.recipientStatus === "refused") {
-      expectedNextAction = "start_onboarding";
-    } else if (
-      value.recipientStatus === "pending" ||
-      value.recipientStatus === "suspended" ||
-      (value.recipientStatus === "active" && !profileIsSynced)
-    ) {
-      expectedNextAction = "refresh_status";
-    } else {
-      expectedNextAction = "none";
-    }
-    if (value.nextAction !== expectedNextAction) {
-      context.addIssue({
-        code: "custom",
-        message: "A próxima ação está incoerente com o estado canônico.",
-        path: ["nextAction"],
-      });
-    }
+    validateOwnerRecipientState(value, (message, path) => {
+      context.addIssue({ code: "custom", message, path: [path] });
+    });
   });
+
+export const ownerRecipientResultSchema = z.discriminatedUnion("projection", [
+  ownerRecipientStatusSchema,
+  ownerActivationResultSchema,
+]);
 
 const privateOwnerCommandEnvelope = {
   expectedScope: z.uuid(),
@@ -210,11 +231,14 @@ export const ownerCommandSchema = z.discriminatedUnion("action", [
 ]);
 
 export type OwnerActivatePayload = z.infer<typeof ownerActivatePayloadSchema>;
+export type OwnerActivationResult = z.infer<typeof ownerActivationResultSchema>;
 export type OwnerCommand = z.infer<typeof ownerCommandSchema>;
 export type OwnerCommandAction = z.infer<typeof ownerCommandActionSchema>;
 export type OwnerContract = z.infer<typeof ownerContractSchema>;
+export type OwnerContractReference = z.infer<typeof ownerContractReferenceSchema>;
 export type OwnerNextAction = z.infer<typeof ownerNextActionSchema>;
 export type OwnerRecipientResult = z.infer<typeof ownerRecipientResultSchema>;
+export type OwnerRecipientStatus = z.infer<typeof ownerRecipientStatusSchema>;
 export type OwnerStatus = z.infer<typeof ownerStatusSchema>;
 export type RecipientRequirement = z.infer<typeof recipientRequirementSchema>;
 export type RecipientStatus = z.infer<typeof recipientStatusSchema>;

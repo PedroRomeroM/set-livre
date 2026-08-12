@@ -2,9 +2,11 @@
 
 import {
   ownerActivatePayloadSchema,
+  type OwnerActivationResult,
   type OwnerContract,
   type OwnerNextAction,
   type OwnerRecipientResult,
+  type OwnerRecipientStatus,
   type RecipientRequirement,
   type RecipientStatus,
 } from "@set-livre/contracts";
@@ -29,6 +31,7 @@ import { LegalMarkdown } from "@/domains/legal/components/legal-markdown";
 import {
   activateOwner,
   OwnerApiError,
+  readOwnerActivation,
   readOwnerRecipient,
   refreshRecipientOnboarding,
   startRecipientOnboarding,
@@ -38,22 +41,23 @@ import {
   cleanupOwnerMutationAttemptOnce,
   isOwnerAmbiguousCommandError,
   isOwnerSessionChangedError,
+  isOwnerUnscopedValidationError,
   ownerMutationNetworkMode,
+  ownerMutationRequiresVerification,
   ownerMutationResultCanPublish,
   ownerReadRequiresScopeTransition,
   requireOwnerMutationAttempt,
   type OwnerMutationAttempt,
   type OwnerScopeTransitionGuard,
 } from "./owner-mutation";
-import type { OwnerPage } from "./owner-page-frame";
 import {
-  OwnerRecipientScopeChangedError,
-  ownerQueryKeys,
-  ownerRecipientCanRender,
-  ownerRecipientMatchesScope,
-  publishNewestOwnerRecipientMutationResult,
-  readNewestOwnerRecipientResult,
-  seedAuthoritativeOwnerRecipient,
+  OwnerPrivateScopeChangedError,
+  ownerPrivateCanRender,
+  ownerPrivateMatchesBoundary,
+  ownerQueryKey,
+  publishNewestOwnerPrivateMutationResult,
+  readNewestOwnerPrivateResult,
+  seedAuthoritativeOwnerPrivate,
 } from "./owner-query-keys";
 import {
   ownerHasCurrentContract,
@@ -63,11 +67,18 @@ import {
 } from "./owner-view-state";
 import styles from "./owner.module.css";
 
-type OwnerRecipientPanelProps = Readonly<{
-  initialResult: OwnerRecipientResult;
-  userId: string;
-  view: OwnerPage;
-}>;
+type OwnerRecipientPanelProps = Readonly<
+  | {
+      initialResult: OwnerActivationResult;
+      userId: string;
+      view: "overview";
+    }
+  | {
+      initialResult: OwnerRecipientStatus;
+      userId: string;
+      view: "recipient";
+    }
+>;
 
 type PublishOwnerResult = (result: OwnerRecipientResult, message: string) => void;
 type RefreshOwnerResult = Readonly<{ isSuccess: boolean }>;
@@ -279,7 +290,7 @@ function OwnerActivationForm({
   onRefresh: RefreshOwner;
   onSave: PublishOwnerResult;
   onSessionChanged: () => void;
-  result: OwnerRecipientResult;
+  result: OwnerActivationResult;
   scopeTransitionGuard: OwnerScopeTransitionGuard;
 }>) {
   const pendingActivation = useRef<
@@ -315,7 +326,9 @@ function OwnerActivationForm({
         onSessionChanged();
         return;
       }
-      setNeedsVerification(isOwnerAmbiguousCommandError(error));
+      setNeedsVerification(
+        isOwnerAmbiguousCommandError(error) || isOwnerUnscopedValidationError(error),
+      );
     },
     onSuccess: (updated) => {
       cleanupAttemptOnce();
@@ -327,10 +340,7 @@ function OwnerActivationForm({
 
   function submitActivation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (
-      needsVerification ||
-      (mutation.error instanceof OwnerApiError && mutation.error.code === "CONFLICT")
-    ) {
+    if (needsVerification || ownerMutationRequiresVerification(mutation.error)) {
       return;
     }
     mutation.reset();
@@ -355,7 +365,7 @@ function OwnerActivationForm({
 
   const apiError = mutation.error instanceof OwnerApiError ? mutation.error : undefined;
   const visibleFieldError = apiError?.fieldErrors.acceptOwnerContract ?? fieldError;
-  const verificationRequired = needsVerification || apiError?.code === "CONFLICT";
+  const verificationRequired = needsVerification || ownerMutationRequiresVerification(apiError);
 
   useEffect(() => {
     if (visibleFieldError !== undefined) fieldErrorRef.current?.focus();
@@ -426,7 +436,7 @@ function OwnerActivationSection({
   onRefresh: RefreshOwner;
   onSave: PublishOwnerResult;
   onSessionChanged: () => void;
-  result: OwnerRecipientResult;
+  result: OwnerActivationResult;
   scopeTransitionGuard: OwnerScopeTransitionGuard;
 }>) {
   if (result.ownerStatus === "blocked") {
@@ -548,7 +558,9 @@ function RecipientAction({
         onSessionChanged();
         return;
       }
-      setNeedsVerification(isOwnerAmbiguousCommandError(error));
+      setNeedsVerification(
+        isOwnerAmbiguousCommandError(error) || isOwnerUnscopedValidationError(error),
+      );
     },
     onSuccess: (updated) => {
       cleanupAttemptOnce();
@@ -564,7 +576,7 @@ function RecipientAction({
   });
 
   const apiError = mutation.error instanceof OwnerApiError ? mutation.error : undefined;
-  const verificationRequired = needsVerification || apiError?.code === "CONFLICT";
+  const verificationRequired = needsVerification || ownerMutationRequiresVerification(apiError);
   const label = action === "start_onboarding" ? "Iniciar validação local" : "Atualizar status";
   const loadingLabel =
     action === "start_onboarding" ? "Iniciando validação local" : "Atualizando status";
@@ -619,7 +631,7 @@ function OwnerRecipientSection({
   onRefresh: RefreshOwner;
   onSave: PublishOwnerResult;
   onSessionChanged: () => void;
-  result: OwnerRecipientResult;
+  result: OwnerRecipientStatus;
   scopeTransitionGuard: OwnerScopeTransitionGuard;
 }>) {
   if (!ownerRecipientActionsAvailable(result)) {
@@ -706,29 +718,30 @@ function OwnerRecipientSection({
   );
 }
 
-function OwnerContent({
-  expectedScope,
-  onSave,
-  onSessionChanged,
-  refreshResult,
-  result,
-  scopeTransitionGuard,
-  verificationFocusRef,
-  view,
-}: Readonly<{
-  expectedScope: string;
-  onSave: PublishOwnerResult;
-  onSessionChanged: () => void;
-  refreshResult: RefreshOwner;
-  result: OwnerRecipientResult;
-  scopeTransitionGuard: OwnerScopeTransitionGuard;
-  verificationFocusRef: RefObject<HTMLHeadingElement | null>;
-  view: OwnerPage;
-}>) {
+function OwnerContent(
+  props: Readonly<{
+    expectedScope: string;
+    onSave: PublishOwnerResult;
+    onSessionChanged: () => void;
+    refreshResult: RefreshOwner;
+    result: OwnerRecipientResult;
+    scopeTransitionGuard: OwnerScopeTransitionGuard;
+    verificationFocusRef: RefObject<HTMLHeadingElement | null>;
+  }>,
+) {
+  const {
+    expectedScope,
+    onSave,
+    onSessionChanged,
+    refreshResult,
+    result,
+    scopeTransitionGuard,
+    verificationFocusRef,
+  } = props;
   return (
     <Stack space={6}>
       <OwnerChecklist focusRef={verificationFocusRef} result={result} />
-      {view === "overview" ? (
+      {result.projection === "activation" ? (
         <OwnerActivationSection
           expectedScope={expectedScope}
           onRefresh={refreshResult}
@@ -760,7 +773,11 @@ function publishOwnerResult(
 ) {
   if (!ownerMutationResultCanPublish(scopeTransitionGuard)) return;
   try {
-    publishNewestOwnerRecipientMutationResult(queryClient, expectedUserId, result);
+    if (result.projection === "activation") {
+      publishNewestOwnerPrivateMutationResult(queryClient, expectedUserId, "activation", result);
+    } else {
+      publishNewestOwnerPrivateMutationResult(queryClient, expectedUserId, "recipient", result);
+    }
   } catch {
     onScopeTransition();
   }
@@ -768,7 +785,11 @@ function publishOwnerResult(
 
 function PreparedOwnerRecipientPanel({ initialResult, userId, view }: OwnerRecipientPanelProps) {
   const queryClient = useQueryClient();
-  const queryKey = useMemo(() => ownerQueryKeys.recipientStatus(userId), [userId]);
+  const expectedProjection = view === "overview" ? "activation" : "recipient";
+  const queryKey = useMemo(
+    () => ownerQueryKey(expectedProjection, userId),
+    [expectedProjection, userId],
+  );
   const [scopeTransitionStarted, setScopeTransitionStarted] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string>();
   const readErrorRef = useRef<HTMLDivElement>(null);
@@ -776,9 +797,12 @@ function PreparedOwnerRecipientPanel({ initialResult, userId, view }: OwnerRecip
   const verificationFocusRef = useRef<HTMLHeadingElement>(null);
   const verificationFocusRequested = useRef(false);
   const scopeTransitionGuard = useRef(false);
-  const resultQuery = useQuery({
+  const resultQuery = useQuery<OwnerRecipientResult>({
     initialData: initialResult,
-    queryFn: async () => readNewestOwnerRecipientResult(queryClient, userId, readOwnerRecipient),
+    queryFn: async () =>
+      view === "overview"
+        ? readNewestOwnerPrivateResult(queryClient, userId, "activation", readOwnerActivation)
+        : readNewestOwnerPrivateResult(queryClient, userId, "recipient", readOwnerRecipient),
     queryKey,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
@@ -788,10 +812,11 @@ function PreparedOwnerRecipientPanel({ initialResult, userId, view }: OwnerRecip
   const observedResult = resultQuery.data;
   const resultCanRender =
     observedResult !== undefined &&
-    ownerRecipientCanRender(observedResult, userId, resultQuery.fetchStatus);
+    ownerPrivateCanRender(observedResult, userId, expectedProjection, resultQuery.fetchStatus);
   const observedScopeChanged =
-    observedResult !== undefined && !ownerRecipientMatchesScope(observedResult, userId);
-  const authoritativeScopeChanged = resultQuery.error instanceof OwnerRecipientScopeChangedError;
+    observedResult !== undefined &&
+    !ownerPrivateMatchesBoundary(observedResult, userId, expectedProjection);
+  const authoritativeScopeChanged = resultQuery.error instanceof OwnerPrivateScopeChangedError;
   const scopeTransitionRequired = ownerReadRequiresScopeTransition({
     authoritativeScopeChanged,
     error: resultQuery.error,
@@ -911,20 +936,21 @@ function PreparedOwnerRecipientPanel({ initialResult, userId, view }: OwnerRecip
         result={observedResult}
         scopeTransitionGuard={scopeTransitionGuard}
         verificationFocusRef={verificationFocusRef}
-        view={view}
       />
     </Stack>
   );
 }
 
-export function OwnerRecipientPanel({ initialResult, userId, view }: OwnerRecipientPanelProps) {
+export function OwnerRecipientPanel(props: OwnerRecipientPanelProps) {
+  const { initialResult, userId, view } = props;
   const queryClient = useQueryClient();
   const [preparedInitialResult, setPreparedInitialResult] = useState<OwnerRecipientResult>();
   const seedIsCurrent = preparedInitialResult === initialResult;
+  const expectedProjection = view === "overview" ? "activation" : "recipient";
 
   useEffect(() => {
     let active = true;
-    if (!ownerRecipientMatchesScope(initialResult, userId)) {
+    if (!ownerPrivateMatchesBoundary(initialResult, userId, expectedProjection)) {
       clearOwnerPrivateCache(queryClient);
       window.location.reload();
       return () => {
@@ -932,24 +958,43 @@ export function OwnerRecipientPanel({ initialResult, userId, view }: OwnerRecipi
       };
     }
     clearOwnerPrivateCache(queryClient);
-    seedAuthoritativeOwnerRecipient(queryClient, userId, initialResult);
+    if (initialResult.projection === "activation") {
+      seedAuthoritativeOwnerPrivate(queryClient, userId, "activation", initialResult);
+    } else {
+      seedAuthoritativeOwnerPrivate(queryClient, userId, "recipient", initialResult);
+    }
     queueMicrotask(() => {
       if (active) setPreparedInitialResult(initialResult);
     });
     return () => {
       active = false;
     };
-  }, [initialResult, queryClient, userId]);
+  }, [expectedProjection, initialResult, queryClient, userId]);
 
   if (!seedIsCurrent) {
     return <Alert>Validando o estado privado da área do dono…</Alert>;
   }
 
+  if (props.view === "overview") {
+    if (preparedInitialResult.projection !== "activation") {
+      return <Alert>Validando o estado privado da área do dono…</Alert>;
+    }
+    return (
+      <PreparedOwnerRecipientPanel
+        initialResult={preparedInitialResult}
+        userId={userId}
+        view="overview"
+      />
+    );
+  }
+  if (preparedInitialResult.projection !== "recipient") {
+    return <Alert>Validando o estado privado da área do dono…</Alert>;
+  }
   return (
     <PreparedOwnerRecipientPanel
       initialResult={preparedInitialResult}
       userId={userId}
-      view={view}
+      view="recipient"
     />
   );
 }

@@ -1,4 +1,8 @@
-import type { MyProfileResult, OwnerRecipientResult } from "@set-livre/contracts";
+import type {
+  MyProfileResult,
+  OwnerActivationResult,
+  OwnerRecipientStatus,
+} from "@set-livre/contracts";
 import { onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -9,20 +13,21 @@ import {
 } from "../../src/domains/identity/components/account-query-keys";
 import { identityQueryKeys } from "../../src/domains/identity/components/identity-query-keys";
 import {
-  OwnerRecipientScopeChangedError,
-  newestOwnerRecipientMutationResult,
-  newestOwnerRecipientResult,
+  OwnerPrivateScopeChangedError,
+  newestOwnerPrivateMutationResult,
+  newestOwnerPrivateResult,
+  ownerPrivateCanRender,
+  ownerPrivateForBoundary,
+  ownerPrivateQueryScope,
   ownerQueryKeys,
-  ownerRecipientCanRender,
-  ownerRecipientForScope,
-  ownerRecipientQueryScope,
-  publishNewestOwnerRecipientMutationResult,
-  readNewestOwnerRecipientResult,
-  seedAuthoritativeOwnerRecipient,
+  publishNewestOwnerPrivateMutationResult,
+  readNewestOwnerPrivateResult,
+  seedAuthoritativeOwnerPrivate,
 } from "../../src/domains/owners/components/owner-query-keys";
 
 const userA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const userB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const contractId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const profileA = {
   profile: {
     additionalDocumentMasked: "*********-6",
@@ -47,10 +52,10 @@ const sessionA = {
   userId: userA,
 };
 
-function ownerResult(
+function activationResult(
   scope: string,
-  overrides: Partial<OwnerRecipientResult> = {},
-): OwnerRecipientResult {
+  overrides: Partial<OwnerActivationResult> = {},
+): OwnerActivationResult {
   return {
     acceptedOwnerContractVersionId: null,
     nextAction: "activate_owner",
@@ -58,7 +63,7 @@ function ownerResult(
       bodyMarkdown: "# Contrato local\n\nConteúdo.",
       contentHash: "a".repeat(64),
       effectiveAt: "2026-08-12T00:00:00.000Z",
-      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      id: contractId,
       kind: "owner_contract",
       source: "local_fixture",
       title: "Contrato local",
@@ -69,6 +74,7 @@ function ownerResult(
     ownerVersion: 0,
     profileVersion: 1,
     profileVersionSynced: null,
+    projection: "activation",
     providerMode: "local",
     recipientStatus: "not_started",
     recipientVersion: 0,
@@ -79,48 +85,79 @@ function ownerResult(
   };
 }
 
-describe("owner recipient query cache", () => {
+function recipientResult(
+  scope: string,
+  overrides: Partial<OwnerRecipientStatus> = {},
+): OwnerRecipientStatus {
+  return {
+    acceptedOwnerContractVersionId: null,
+    nextAction: "activate_owner",
+    ownerContract: {
+      effectiveAt: "2026-08-12T00:00:00.000Z",
+      id: contractId,
+      source: "local_fixture",
+    },
+    ownerContractAccepted: false,
+    ownerStatus: "inactive",
+    ownerVersion: 0,
+    profileVersion: 1,
+    profileVersionSynced: null,
+    projection: "recipient",
+    providerMode: "local",
+    recipientStatus: "not_started",
+    recipientVersion: 0,
+    requirements: [],
+    reservationsEligible: false,
+    scope,
+    ...overrides,
+  };
+}
+
+describe("owner private query cache", () => {
   afterEach(() => {
     onlineManager.setOnline(true);
   });
 
-  it("scopes keys only by authenticated UUID", () => {
-    const keyA = ownerQueryKeys.recipientStatus(userA);
-    const keyB = ownerQueryKeys.recipientStatus(userB);
+  it("separates activation and recipient projections under one scoped private root", () => {
+    const activationKey = ownerQueryKeys.activationStatus(userA);
+    const recipientKey = ownerQueryKeys.recipientStatus(userA);
 
-    expect(keyA).toEqual(["owner", "recipient", "status", userA]);
-    expect(keyB).toEqual(["owner", "recipient", "status", userB]);
-    expect(keyA).not.toEqual(keyB);
-    expect(ownerRecipientQueryScope(keyA)).toBe(userA);
-    expect(ownerRecipientQueryScope(ownerQueryKeys.recipientStatuses)).toBeUndefined();
+    expect(activationKey).toEqual(["owner", "private", "activation", userA]);
+    expect(recipientKey).toEqual(["owner", "private", "recipient", userA]);
+    expect(activationKey).not.toEqual(recipientKey);
+    expect(ownerPrivateQueryScope(activationKey)).toBe(userA);
+    expect(ownerPrivateQueryScope(recipientKey)).toBe(userA);
+    expect(ownerPrivateQueryScope(ownerQueryKeys.privateResults)).toBeUndefined();
   });
 
-  it("rejects scope B before it can enter the key of A", async () => {
+  it("rejects scope or projection drift before it can enter another private key", async () => {
     const queryClient = new QueryClient();
-    const resultA = ownerResult(userA);
-    const resultB = ownerResult(userB);
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), resultA);
+    const resultA = activationResult(userA);
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), resultA);
 
     await expect(
       queryClient.fetchQuery({
-        queryFn: async () => ownerRecipientForScope(resultB, userA),
-        queryKey: ownerQueryKeys.recipientStatus(userA),
+        queryFn: async () => ownerPrivateForBoundary(activationResult(userB), userA, "activation"),
+        queryKey: ownerQueryKeys.activationStatus(userA),
         staleTime: 0,
       }),
-    ).rejects.toBeInstanceOf(OwnerRecipientScopeChangedError);
-    expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toEqual(resultA);
+    ).rejects.toBeInstanceOf(OwnerPrivateScopeChangedError);
+    expect(() => ownerPrivateForBoundary(recipientResult(userA), userA, "activation")).toThrow(
+      OwnerPrivateScopeChangedError,
+    );
+    expect(queryClient.getQueryData(ownerQueryKeys.activationStatus(userA))).toEqual(resultA);
   });
 
-  it("hides the result during fetching and paused offline states", async () => {
+  it("hides the complete projection during fetching and paused offline states", async () => {
     const queryClient = new QueryClient();
     queryClient.mount();
-    const resultA = ownerResult(userA);
-    const observer = new QueryObserver<OwnerRecipientResult>(queryClient, {
+    const resultA = activationResult(userA);
+    const observer = new QueryObserver<OwnerActivationResult>(queryClient, {
       queryFn: async () => resultA,
-      queryKey: ownerQueryKeys.recipientStatus(userA),
+      queryKey: ownerQueryKeys.activationStatus(userA),
       staleTime: 30_000,
     });
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), resultA);
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), resultA);
     const unsubscribe = observer.subscribe(() => undefined);
     onlineManager.setOnline(false);
     const pendingRefetch = observer.refetch();
@@ -129,9 +166,9 @@ describe("owner recipient query cache", () => {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       const paused = observer.getCurrentResult();
       expect(paused.fetchStatus).toBe("paused");
-      expect(ownerRecipientCanRender(resultA, userA, paused.fetchStatus)).toBe(false);
-      expect(ownerRecipientCanRender(resultA, userA, "fetching")).toBe(false);
-      expect(ownerRecipientCanRender(resultA, userA, "idle")).toBe(true);
+      expect(ownerPrivateCanRender(resultA, userA, "activation", paused.fetchStatus)).toBe(false);
+      expect(ownerPrivateCanRender(resultA, userA, "activation", "fetching")).toBe(false);
+      expect(ownerPrivateCanRender(resultA, userA, "activation", "idle")).toBe(true);
     } finally {
       onlineManager.setOnline(true);
       await pendingRefetch;
@@ -140,8 +177,11 @@ describe("owner recipient query cache", () => {
     }
   });
 
-  it("keeps monotonic owner, profile and recipient versions", () => {
-    const current = ownerResult(userA, {
+  it("keeps owner, profile, recipient and contract versions monotonic per projection", () => {
+    const current = activationResult(userA, {
+      acceptedOwnerContractVersionId: contractId,
+      nextAction: "none",
+      ownerContractAccepted: true,
       ownerStatus: "active",
       ownerVersion: 3,
       profileVersion: 4,
@@ -150,45 +190,58 @@ describe("owner recipient query cache", () => {
       recipientVersion: 5,
       reservationsEligible: true,
     });
-    const lateOwner = ownerResult(userA, { ...current, ownerVersion: 2 });
-    const lateProfile = ownerResult(userA, { ...current, profileVersion: 3 });
-    const lateRecipient = ownerResult(userA, { ...current, recipientVersion: 4 });
+    const lateOwner = activationResult(userA, { ...current, ownerVersion: 2 });
+    const lateProfile = activationResult(userA, { ...current, profileVersion: 3 });
+    const lateRecipient = activationResult(userA, { ...current, recipientVersion: 4 });
 
-    expect(newestOwnerRecipientResult(current, lateOwner, userA)).toBe(current);
-    expect(newestOwnerRecipientResult(current, lateProfile, userA)).toBe(current);
-    expect(newestOwnerRecipientResult(current, lateRecipient, userA)).toBe(current);
-    expect(() => newestOwnerRecipientMutationResult(undefined, current, userA)).toThrow(
-      OwnerRecipientScopeChangedError,
+    expect(newestOwnerPrivateResult(current, lateOwner, userA, "activation")).toBe(current);
+    expect(newestOwnerPrivateResult(current, lateProfile, userA, "activation")).toBe(current);
+    expect(newestOwnerPrivateResult(current, lateRecipient, userA, "activation")).toBe(current);
+    expect(() => newestOwnerPrivateMutationResult(undefined, current, userA, "activation")).toThrow(
+      OwnerPrivateScopeChangedError,
     );
   });
 
-  it("reads the cache after an in-flight response resolves", async () => {
+  it("reads the active projection cache after an in-flight response resolves", async () => {
     const queryClient = new QueryClient();
-    const initial = ownerResult(userA);
-    const newer = ownerResult(userA, { ownerStatus: "active", ownerVersion: 1 });
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), initial);
-    let resolveRead: ((result: OwnerRecipientResult) => void) | undefined;
-    const read = new Promise<OwnerRecipientResult>((resolve) => {
+    const initial = activationResult(userA);
+    const newer = activationResult(userA, {
+      acceptedOwnerContractVersionId: contractId,
+      nextAction: "start_onboarding",
+      ownerContractAccepted: true,
+      ownerStatus: "active",
+      ownerVersion: 1,
+    });
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), initial);
+    let resolveRead: ((result: OwnerActivationResult) => void) | undefined;
+    const read = new Promise<OwnerActivationResult>((resolve) => {
       resolveRead = resolve;
     });
-    const pending = readNewestOwnerRecipientResult(queryClient, userA, async () => read);
+    const pending = readNewestOwnerPrivateResult(
+      queryClient,
+      userA,
+      "activation",
+      async () => read,
+    );
 
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), newer);
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), newer);
     resolveRead?.(initial);
 
     await expect(pending).resolves.toStrictEqual(newer);
   });
 
-  it("preserves the last snapshot after a provider failure until one read verifies state", async () => {
+  it("preserves recipient state after a command failure until one GET verifies it", async () => {
     const queryClient = new QueryClient();
-    const snapshot = ownerResult(userA, {
-      acceptedOwnerContractVersionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    const snapshot = recipientResult(userA, {
+      acceptedOwnerContractVersionId: contractId,
       nextAction: "refresh_status",
       ownerContractAccepted: true,
       ownerStatus: "active",
       ownerVersion: 1,
+      profileVersionSynced: 1,
       recipientStatus: "pending",
       recipientVersion: 1,
+      requirements: ["identity_review"],
     });
     queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), snapshot);
     const postCommand = vi.fn(async () => {
@@ -198,78 +251,98 @@ describe("owner recipient query cache", () => {
 
     await expect(postCommand()).rejects.toThrow("safe provider unavailable");
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toEqual(snapshot);
-
-    await expect(readNewestOwnerRecipientResult(queryClient, userA, getStatus)).resolves.toEqual(
-      snapshot,
-    );
+    await expect(
+      readNewestOwnerPrivateResult(queryClient, userA, "recipient", getStatus),
+    ).resolves.toEqual(snapshot);
     expect(postCommand).toHaveBeenCalledOnce();
     expect(getStatus).toHaveBeenCalledOnce();
   });
 
-  it("seeds owner state after clearing owner mutations/scopes and preserves public cache", async () => {
+  it("seeds one authoritative projection after clearing every private projection and mutation", async () => {
     const queryClient = new QueryClient();
     const publicKey = ["public", "legal"] as const;
     queryClient.setQueryData(publicKey, { published: true });
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userB), ownerResult(userB));
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userB), activationResult(userB));
+    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userB), recipientResult(userB));
     const mutation = queryClient.getMutationCache().build(queryClient, {
-      mutationFn: async () => ownerResult(userA),
+      mutationFn: async () => activationResult(userA),
     });
     await mutation.execute(undefined);
 
-    seedAuthoritativeOwnerRecipient(queryClient, userA, ownerResult(userA));
+    seedAuthoritativeOwnerPrivate(queryClient, userA, "recipient", recipientResult(userA));
 
     expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
+    expect(queryClient.getQueryData(ownerQueryKeys.activationStatus(userB))).toBeUndefined();
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userB))).toBeUndefined();
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toEqual(
-      ownerResult(userA),
+      recipientResult(userA),
     );
     expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
   });
 
+  it("does not let a slim result replace the full activation cache", () => {
+    const queryClient = new QueryClient();
+    const full = activationResult(userA);
+    seedAuthoritativeOwnerPrivate(queryClient, userA, "activation", full);
+
+    expect(() =>
+      publishNewestOwnerPrivateMutationResult(
+        queryClient,
+        userA,
+        "activation",
+        recipientResult(userA),
+      ),
+    ).toThrow(OwnerPrivateScopeChangedError);
+    expect(queryClient.getQueryData(ownerQueryKeys.activationStatus(userA))).toEqual(full);
+  });
+
   it("a late mutation from A cannot recreate its key after B is seeded", () => {
     const queryClient = new QueryClient();
-    const resultA = ownerResult(userA);
-    const resultB = ownerResult(userB);
-    seedAuthoritativeOwnerRecipient(queryClient, userA, resultA);
+    const resultA = recipientResult(userA);
+    const resultB = recipientResult(userB);
+    seedAuthoritativeOwnerPrivate(queryClient, userA, "recipient", resultA);
+    seedAuthoritativeOwnerPrivate(queryClient, userB, "recipient", resultB);
 
-    seedAuthoritativeOwnerRecipient(queryClient, userB, resultB);
-
-    expect(() => publishNewestOwnerRecipientMutationResult(queryClient, userA, resultA)).toThrow(
-      OwnerRecipientScopeChangedError,
-    );
+    expect(() =>
+      publishNewestOwnerPrivateMutationResult(queryClient, userA, "recipient", resultA),
+    ).toThrow(OwnerPrivateScopeChangedError);
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toBeUndefined();
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userB))).toEqual(resultB);
   });
 
-  it("clears the owner family with private identity cache and preserves public cache", () => {
+  it("clears both owner projections with private identity cache and preserves public cache", () => {
     const queryClient = new QueryClient();
     const publicKey = ["public", "legal"] as const;
     queryClient.setQueryData(publicKey, { published: true });
     queryClient.setQueryData(accountQueryKeys.profile(userA), profileA);
     queryClient.setQueryData(identityQueryKeys.session(userA), sessionA);
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), ownerResult(userA));
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), activationResult(userA));
+    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), recipientResult(userA));
 
     clearIdentityAndAccountQueryCache(queryClient);
 
     expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toBeUndefined();
     expect(queryClient.getQueryData(identityQueryKeys.session(userA))).toBeUndefined();
+    expect(queryClient.getQueryData(ownerQueryKeys.activationStatus(userA))).toBeUndefined();
     expect(queryClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toBeUndefined();
     expect(queryClient.getQueryData(publicKey)).toEqual({ published: true });
   });
 
-  it("profile publication invalidates only its scoped owner key without creating another", () => {
+  it("profile publication invalidates both owner projections without creating missing keys", () => {
     const queryClient = new QueryClient();
     const publicKey = ["public", "legal"] as const;
     queryClient.setQueryData(publicKey, { published: true });
     queryClient.setQueryData(accountQueryKeys.profile(userA), profileA);
     queryClient.setQueryData(identityQueryKeys.session(userA), sessionA);
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), ownerResult(userA));
-    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userB), ownerResult(userB));
+    queryClient.setQueryData(ownerQueryKeys.activationStatus(userA), activationResult(userA));
+    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userA), recipientResult(userA));
+    queryClient.setQueryData(ownerQueryKeys.recipientStatus(userB), recipientResult(userB));
 
     expect(publishNewestAccountProfileMutationResult(queryClient, userA, profileA)).toBe(true);
 
-    expect(queryClient.getQueryData(accountQueryKeys.profile(userA))).toEqual(profileA);
-    expect(queryClient.getQueryData(identityQueryKeys.session(userA))).toEqual(sessionA);
+    expect(queryClient.getQueryState(ownerQueryKeys.activationStatus(userA))?.isInvalidated).toBe(
+      true,
+    );
     expect(queryClient.getQueryState(ownerQueryKeys.recipientStatus(userA))?.isInvalidated).toBe(
       true,
     );
@@ -281,8 +354,8 @@ describe("owner recipient query cache", () => {
     const emptyOwnerClient = new QueryClient();
     emptyOwnerClient.setQueryData(accountQueryKeys.profile(userA), profileA);
     emptyOwnerClient.setQueryData(identityQueryKeys.session(userA), sessionA);
-
     expect(publishNewestAccountProfileMutationResult(emptyOwnerClient, userA, profileA)).toBe(true);
+    expect(emptyOwnerClient.getQueryData(ownerQueryKeys.activationStatus(userA))).toBeUndefined();
     expect(emptyOwnerClient.getQueryData(ownerQueryKeys.recipientStatus(userA))).toBeUndefined();
   });
 });

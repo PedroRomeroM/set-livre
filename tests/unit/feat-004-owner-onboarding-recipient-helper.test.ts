@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  assertFeat004SafeOwnerResult,
+  assertFeat004SafeOwnerActivation,
+  assertFeat004SafeOwnerRecipient,
   createFeat004QaIdentity,
   verifyFeat004CleanupWithDependencies,
   type Feat004CleanupPool,
@@ -39,6 +40,35 @@ function cleanupPool(
 }
 
 describe("FEAT-004 Playwright helper", () => {
+  it("accepts the compact recipient projection without mistaking state versions for legal fields", () => {
+    const result = assertFeat004SafeOwnerRecipient({
+      acceptedOwnerContractVersionId: null,
+      nextAction: "activate_owner",
+      ownerContract: {
+        effectiveAt: "2026-08-12T00:00:00.000Z",
+        id: "40000000-0000-4000-8000-000000000004",
+        source: "local_fixture",
+      },
+      ownerContractAccepted: false,
+      ownerStatus: "inactive",
+      ownerVersion: 0,
+      profileVersion: 1,
+      profileVersionSynced: null,
+      projection: "recipient",
+      providerMode: "local",
+      recipientStatus: "not_started",
+      recipientVersion: 0,
+      requirements: [],
+      reservationsEligible: false,
+      scope: "10000000-0000-4000-8000-000000000004",
+    });
+
+    expect(result.projection).toBe("recipient");
+    expect(result.ownerVersion).toBe(0);
+    expect(result.profileVersion).toBe(1);
+    expect(result.recipientVersion).toBe(0);
+  });
+
   it("creates a dedicated namespace and keeps the report sentinel out of titles", () => {
     const qaIdentity = createFeat004QaIdentity(
       { project: { name: "critical-chromium" } },
@@ -54,7 +84,12 @@ describe("FEAT-004 Playwright helper", () => {
   it("rejects private provider fields and references from the public projection", () => {
     const privateReference = "local-test-fixture:unavailable";
     expect(() =>
-      assertFeat004SafeOwnerResult({
+      assertFeat004SafeOwnerRecipient({
+        providerReference: privateReference,
+      }),
+    ).toThrow();
+    expect(() =>
+      assertFeat004SafeOwnerActivation({
         providerReference: privateReference,
       }),
     ).toThrow();
@@ -70,7 +105,10 @@ describe("FEAT-004 Playwright helper", () => {
     expect(helper).toContain("bank_account");
     expect(helper).toContain("routing_number");
     expect(helper).toContain('querySelectorAll<HTMLElement>("a, button, input, select, textarea")');
-    expect(helper).toContain("A projeção de dono expôs um campo privado do provider.");
+    expect(helper).toContain(
+      "A projeção de recebimentos expôs documento jurídico ou campo privado.",
+    );
+    expect(helper).toContain("A projeção de ativação expôs um campo privado do provider.");
     expect(helper).not.toMatch(/delete from public\.terms_acceptances/iu);
     expect(helper).toMatch(/actor_user_id = \$1::uuid\s+or target_id = \$1::uuid/iu);
   });

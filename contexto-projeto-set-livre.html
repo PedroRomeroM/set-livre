@@ -653,8 +653,10 @@
           <div class="stat">
             <strong>91</strong><span>execuções Playwright históricas da FEAT-003</span>
           </div>
-          <div class="stat"><strong>23/23</strong><span>matriz específica da FEAT-004</span></div>
-          <div class="stat"><strong>13</strong><span>migrations append-only na árvore</span></div>
+          <div class="stat">
+            <strong>23/23</strong><span>matriz FEAT-004 pós-review aceita</span>
+          </div>
+          <div class="stat"><strong>14</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -721,7 +723,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag">Código + banco implementados</span>
+              <span class="tag review">P2 verdes localmente · publicação pendente</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
@@ -730,17 +732,24 @@
                 elegibilidade derivada da versão atual do perfil. O adapter determinístico realiza
                 somente <code>start → pending → active</code>, sem SDK, HTTP, credencial, gateway
                 externo, checkout, fallback administrativo ou dados bancários. Contratos, comandos,
-                DAL, read model, UI e specs existem; reset/geração e 355/355 asserts pgTAP passaram
-                no head <code>20260812000100</code>. As quatro specs passaram em 23/23 numa única
-                invocação pós-correções, automatizando os sete IDs. Após redigir telefones QA, a
-                suíte integral limpa também passou em 114/114. Builds web/backoffice, smoke padrão,
-                boundary guest standalone e release local canônica x64 passaram. O commit funcional
-                <code>c115dcd726929f289777cd897cccc97d33a179ee</code> gerou 2.859 payloads. A branch
-                foi publicada, e o
-                <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> está
-                <code>OPEN</code>/draft contra <code>main</code>; review, promoção para ready,
-                merge, PEND-003 e o smoke ARM64 nativo permanecem pendentes. PEND-004 e PEND-006
-                continuam bloqueando produção, não a implementação local.
+                DAL, read models, UI e specs existem. O primeiro review draft
+                <code>PRR_kwDOTyzZrs8AAAABJQvhhQ</code>, concluído em
+                <code>2026-08-12T12:32:57Z</code> sobre o HEAD <code>07dcbb06b4</code>, abriu dois
+                P2: a leitura de recebimentos carregava o documento jurídico inteiro e validação
+                stale podia permitir nova tentativa sem releitura. As correções locais separam
+                ativação em 21 colunas com documento, por <code>GET /api/owner/activation</code>, de
+                recebimentos em 16 colunas sem título, versão textual, hash ou corpo, por
+                <code>GET /api/owner/recipient</code>. Conflito e validação sem erro de campo exigem
+                GET autoritativo e não repetem o POST. A árvore possui 14 migrations no head
+                <code>20260812000200</code>; reset, geração e 355/355 asserts pgTAP passaram em Node
+                24, com readiness atual verde, head anterior recusado e cleanup zero. Gates e
+                browser pós-review passaram: 716/716 unitários, matriz focada 23/23 e integral
+                114/114, com privacidade e cleanup aceitos. O
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> da branch
+                publicada está <code>OPEN</code>/draft contra <code>main</code>. Build e smoke
+                pós-review também passaram; publicação do novo HEAD/release, resolução dos P2,
+                re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo permanecem pendentes.
+                PEND-004 e PEND-006 continuam bloqueando produção, não a implementação local.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -749,7 +758,8 @@
                 <code>Verificar estado atual</code> fecha a superfície privada durante o GET e
                 restaura o foco no heading do checklist em sucesso ou no alerta seguro em falha.
                 Nesse alerta, <code>Tentar novamente</code> repete o boundary e devolve foco ao
-                heading somente depois do novo GET 200.
+                heading somente depois do novo GET 200. Erro realmente associado ao checkbox
+                continua editável no próprio formulário.
               </p>
             </article>
             <article class="card">
@@ -843,15 +853,16 @@
           <div class="callout info" style="margin-top: 0.9rem">
             <strong>Evidência atual do banco da FEAT-004:</strong>
             <p>
-              A árvore possui 13 migrations e head <code>20260812000100</code>. Reset e geração
-              passaram; as quatro suítes pgTAP somaram 355/355 asserts (<code
-                >158 + 78 + 57 + 62</code
-              >). A <code>0004</code> prova ACL/RLS, isolamento A/B, personas owner/admin sem
-              bypass, ativação, prepare/apply, renovação, drift, concorrência com a mesma chave e
-              replay. A inspeção final encontrou zero resíduo nas relações, fixtures, órfãos e
-              sessões dblink; uma mensagem Mailpit da fixture concorrente foi removida por ID exato,
-              terminando em 0/0. Esta prova do banco é independente da matriz específica browser
-              23/23 descrita abaixo e não antecipa build ou release da FEAT-004.
+              A árvore possui 14 migrations e head <code>20260812000200</code>. Reset, geração e
+              <code>test:db</code> passaram em Node 24; as quatro suítes pgTAP somaram 355/355
+              asserts (<code>158 + 78 + 57 + 62</code>). A <code>0004</code> prova ACL/RLS,
+              isolamento A/B, personas owner/admin sem bypass, ativação, prepare/apply, renovação,
+              drift, concorrência com a mesma chave e replay. O probe transacional e o pgTAP
+              comprovam ativação com 21 colunas e corpo e recebimentos com 16 sem corpo. Readiness
+              aceita o head atual e recusa <code>20260812000100</code>; os gerados estão
+              sincronizados. A inspeção final encontrou zero resíduo nas 15 relações, dez fixtures,
+              quatro classes de órfão, sessões dblink e Mailpit. A matriz browser pós-review também
+              passou e foi aceita; esta prova continua sendo a autoridade específica do banco.
             </p>
           </div>
         </section>
@@ -1133,9 +1144,11 @@
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
               adversos. O snapshot histórico da FEAT-003 passou em 91/91 numa única execução de 3,9
-              minutos, incluindo 32/32 da feature. As quatro specs da FEAT-004 passaram em 23/23
-              numa única invocação de cerca de 2,0 minutos, automatizando seus sete IDs; o catálogo
-              possui agora 23 automatizados e 177 planejados.
+              minutos, incluindo 32/32 da feature. Antes do primeiro review draft, as quatro specs
+              da FEAT-004 passaram em 23/23; essa evidência permanece histórica. A fotografia
+              pós-review aceita passou novamente em 23/23 na focada e em 114/114 na integral,
+              automatizando seus sete IDs; o catálogo possui agora 23 automatizados e 177
+              planejados.
             </p>
           </div>
 
@@ -1162,12 +1175,13 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">23/23 · FEAT-004</span>
+              <span class="tag done">23/23 · pós-review aceito</span>
               <h3>Playwright + axe</h3>
               <p>
-                A matriz específica final da FEAT-004 cobriu quatro specs, 14 projetos e sete IDs,
-                com distribuição <code>3 + 3 + 3 + 4 + 3 + 4 + 3</code>. A matriz integral limpa
-                posterior passou em 114/114 numa única invocação, cobrindo 17 specs e 16 projetos.
+                A matriz específica atual da FEAT-004 cobriu quatro specs, 14 projetos e sete IDs,
+                com distribuição <code>3 + 3 + 3 + 4 + 3 + 4 + 3</code>, em 126,0 segundos. O guard
+                integral coletou 114 testes em 17 specs, e a execução passou em 114/114 por 16
+                projetos, em cerca de 5,7 minutos.
               </p>
             </article>
           </div>
@@ -1189,16 +1203,14 @@
             <strong>Estado dos gates da FEAT-004:</strong>
             <p>
               Supabase reset, geração e pgTAP estão verdes em 355/355 no head
-              <code>20260812000100</code>, com zero resíduo final. A suíte unitária final pós-código
-              passou em 707/707; a prova estática de privacidade passou em 11/11, e format, lint,
-              typechecks, docs:check, audit com zero vulnerabilidade, Knip e diff-check também
-              passaram. Uma única invocação pós-correções das quatro specs FEAT-004 passou em 23/23,
-              exit <code>0</code>, em cerca de 2,0 minutos e por 14 projetos, automatizando os IDs
-              001–007. Foram zero resultado inesperado, skip, flake, erro ou attachment. A integral
-              limpa posterior passou em 114/114. Builds web/backoffice, o smoke padrão
-              release-equivalent, o boundary guest standalone e a release local canônica x64 também
-              passaram. A publicação foi concluída no PR #6; review, promoção para ready, merge,
-              PEND-003 e o smoke ARM64 nativo permanecem pendentes.
+              <code>20260812000200</code>, com 14 migrations, readiness atual verde, head anterior
+              recusado, gerados sincronizados e zero resíduo final. Em Node 24, format, lint sem
+              warnings, typecheck integral, 716/716 unitários em 74 arquivos, docs:check 34/200/18,
+              audit zero, Knip e diff-check passaram. A evidência antiga de 707/707, browser,
+              builds, smokes e release x64 permanece histórica do snapshot anterior aos dois P2.
+              Build e smoke atuais também ficaram verdes; nova release/publicação, resolução das
+              threads, re-review, promoção, merge, PEND-003 e o smoke ARM64 nativo permanecem
+              pendentes.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1208,37 +1220,55 @@
               sites foram redigidos. Esse run permanece somente como diagnóstico histórico.
             </p>
             <p>
-              A nova integral limpa rodou em uma única invocação Node 24, <code>workers=1</code>,
-              <code>max-failures=1</code> e <code>retries=0</code>: 114/114, exit <code>0</code>,
-              cerca de 5,9 minutos, 17 specs e 16 projetos, sem resultado inesperado, skip, flake,
-              erro, attachment ou mídia. O relatório tem SHA-256
-              <code>b20aafd7e0dd…3a5ebb6076</code>; <code>.last-run.json</code>, SHA-256
-              <code>91d1c4300480…13b2f561bc00903</code>.
+              A integral limpa anterior ao review rodou em 114/114 e permanece histórica. Na rodada
+              pós-review, a focada passou em uma única execução: 23/23, quatro specs, 14 projetos,
+              126,0 segundos e IDs <code>3 + 3 + 3 + 4 + 3 + 4 + 3</code>, sem resultado inesperado,
+              flake, skip, erro, retry ou attachment. SHA-256: relatório
+              <code>64f80b00b8846a8157fe31708f95c28203ec5a843d383a75ae5b846e823c6df5</code>,
+              <code>.last-run.json</code>
+              <code>91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903</code>
+              e stdout
+              <code>9937c3af59131be284ad176f49c289cc6e713e77e20bc015c436f42c06abf757</code>.
             </p>
             <p>
-              A auditoria encontrou zero ocorrência dos 28 telefones QA, inclusive formatos e
-              sequências, zero step sensível
-              <code>Fill</code>/<code>Type</code>/<code>PressSequentially</code>, e zero sentinela,
-              token, cookie Auth, URL de banco, referência privada do provider ou documento QA. Os
-              88 e-mails QA únicos tiveram 140 ocorrências somente em títulos allowlisted: FEAT-002
-              60, FEAT-003 54, FEAT-004 26; <code>Fill</code> 110, <code>Type</code> 8 e
-              <code>Expect</code> 22. Banco, Mailpit, portas e processos terminaram em zero.
+              O guard integral coletou 114 testes em 17 specs; a execução única passou em 114/114
+              por 16 projetos, em cerca de 5,7 minutos, sem resultado inesperado, flake, skip, erro,
+              retry ou attachment. A FEAT-004 manteve 23/23. SHA-256: relatório
+              <code>c2143d928e122aef944ead5c5999287828446c5f1d081c11daa0a33240f7f66f</code>, stdout
+              <code>27092f939a36f3dde07eeb3c27ec3bf52cace5d034243591ad04748b0f3fe559</code>
+              e lista
+              <code>322ae32bc132bca0afcd30d4af55d37d4ec31977742e9d721999ab2664e924c6</code>. A
+              auditoria encontrou zero dado sensível e zero telefone; os 88 e-mails QA tiveram 140
+              ocorrências somente em títulos allowlisted: FEAT-002 60, FEAT-003 54, FEAT-004 26;
+              <code>Fill</code> 110, <code>Type</code> 8 e <code>Expect</code> 22. As 15 relações do
+              banco, Mailpit, dblink, portas, processos e temporários terminaram em zero.
             </p>
             <p>
-              Os builds Next.js de web e backoffice passaram sem warning ou erro; manifests, rotas,
-              standalone e <code>next-env.d.ts</code> canônico foram validados. O smoke padrão
-              release-equivalent aprovou roots, prefetch, erros globais, live/ready, assets, CSP,
-              nonces, probes adversariais, isolamento e redirects streaming da área do dono. Log
-              SHA-256 <code>dbbaff2344e7841a12c4489e0a669a681ecd90755afc9649b1db723679b80ca1</code>.
+              O build canônico pós-review rodou uma única vez em Node 24:
+              <code>npm run build</code> terminou com exit <code>0</code>, 26 rotas web e quatro do
+              backoffice, sem rerun. Log SHA-256
+              <code>ae46bace1364f77876042025799515a6be0f78ef48afea0d6f343c12ed0d7e68</code>.
+              Artefatos: web <code>1.576 + 1</code>, hash <code>e62803b6…</code>; backoffice
+              <code>1.275 + 1</code>, hash <code>a905ef2f…</code>; agregado técnico estável
+              <code>960cc18a…</code>.
             </p>
             <p>
-              O boundary guest standalone passou: exatamente um
-              <code>POST /api/commands</code> em <code>127.0.0.1:3000</code>, com Host/Origin
-              naturais exatos, sem cookies e comando sintético válido de início de recebedor,
-              retornou <code>401 UNAUTHENTICATED</code>. O <code>requestId</code> UUID-v4 coincidiu
-              no header/body; as oito contagens owner/Auth/audit ficaram em zero antes/depois, e
-              porta, temporário e PGID terminaram em zero. Log redigido SHA-256
-              <code>af8d01d798739f14d1e060b30314e72fb3c1cda7a793b90a81dd4299b259c36b</code>.
+              O smoke runtime final autorizado terminou com exit <code>0</code>; log SHA-256
+              <code>85db0dad1e7cbd999e4427222fdd1b685a3747ffde154eb5a46b444e9cf8f735</code>
+              e server log redigido
+              <code>4da1f9af3e0bb34285be99be0ef71d4cefa22108bbe817c23c4c8983828755bf</code>.
+              Root/prefetch, API, erros globais, live/ready, estáticos, adversarial, CSP/nonces,
+              admin e isolamento ficaram verdes, com 14 nonces web e 11 backoffice únicos. Os dois
+              GETs guest retornaram <code>401</code>/UUID, as rotas do dono emitiram redirects
+              streaming exatos e o POST sintético com Host/Origin exatos, sem cookie, retornou
+              <code>401</code>/UUID. As 15 relações ficaram <code>0 → 0</code>; secrets, PIDs,
+              portas e temporários terminaram em zero.
+            </p>
+            <p>
+              Duas tentativas customizadas foram recusadas antes de spawn, servidor ou request:
+              primeiro por <code>E2E_BASE_URL</code> pública, depois pela ocorrência rastreada de
+              <code>E2E_DATABASE_URL</code> em <code>package.json</code>. O scanner final path-aware
+              e canônico passou; esses rejects são diagnósticos do harness, não runs de smoke.
             </p>
             <p>
               O snapshot funcional foi congelado no commit
@@ -1255,7 +1285,8 @@
               <code>NO-BLOCKER</code> somente no escopo local Linux x64, Node 24.18/npm 11.19; as
               varreduras canônicas antes e depois do smoke não encontraram segredo de runtime nem
               PII de cliente/QA. Isso não comprova produção ou ARM64: PEND-003, trusted proxy e o
-              smoke ARM64 nativo continuam pendentes. A publicação foi concluída; review, promoção
+              smoke ARM64 nativo continuam pendentes. Naquela fotografia, a publicação foi
+              concluída; o primeiro review abriu dois P2, e nova publicação, novo review, promoção
               para ready e merge ainda não ocorreram.
             </p>
             <p>
@@ -1382,10 +1413,11 @@
                 <code>session_id</code> assinado ficam vinculados; o grant é one-shot por 15 minutos
                 e a tombstone sobrevive a grant/cookies. A décima segunda completa perfil e
                 preferências; a décima terceira cria contrato, autoridade, recebedor, operações e
-                auditoria mínima da FEAT-004. A DAL expõe dezesseis rotinas privadas em dezessete
-                dependências ACL exatas. As leituras de perfil e dono usam RPCs públicos
-                <code>security invoker</code> com <code>auth.uid()</code> + RLS, e readiness exige
-                <code>jwt_exp=3600</code>.
+                auditoria mínima da FEAT-004; a décima quarta separa, de forma append-only, a
+                leitura completa de ativação da leitura compacta de recebimentos. A DAL expõe
+                dezesseis rotinas privadas em dezessete dependências ACL exatas. As leituras de
+                perfil e dono usam RPCs públicos <code>security invoker</code> com
+                <code>auth.uid()</code> + RLS, e readiness exige <code>jwt_exp=3600</code>.
               </p>
             </article>
             <article class="card">
@@ -1452,7 +1484,7 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Release local canônica FEAT-004</span>
+              <span class="tag review">Release histórica anterior aos P2</span>
               <h3>Snapshot funcional x64 por SHA</h3>
               <p>
                 O commit <code>c115dcd726929f289777cd897cccc97d33a179ee</code> gerou
@@ -1464,9 +1496,10 @@
                 <code>BUILD_ID</code> igual ao commit nos dois apps e 13 migrations no head
                 <code>20260812000100_owner_onboarding_recipient.sql</code>. O smoke padrão passou e
                 a auditoria estrutural integral terminou <code>NO-BLOCKER</code> no escopo Linux
-                x64, Node 24.18/npm 11.19. A feature continua em implementação: esta prova não é
-                ARM64 ou produção; PEND-003 segue pendente. A publicação foi concluída no PR #6;
-                review, promoção para ready e merge seguem pendentes.
+                x64, Node 24.18/npm 11.19. O artefato está stale em relação ao head local
+                <code>20260812000200</code>, ao novo GET de ativação e à recuperação concorrente;
+                nova release e publicação são obrigatórias. Esta prova não é ARM64 ou produção;
+                PEND-003 segue pendente. Os dois P2, re-review, promoção e merge seguem pendentes.
               </p>
             </article>
             <article class="card">
@@ -1623,15 +1656,13 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Concluir review, promoção para ready e merge do PR #6, já publicado e ainda
-                  <code>OPEN</code>/draft contra <code>main</code>; a matriz específica 23/23, a
-                  integral limpa 114/114, os builds, o smoke padrão, o boundary guest standalone e a
-                  release local canônica x64 já estão verdes. PEND-003, trusted proxy e o smoke
-                  ARM64 nativo continuam bloqueando produção. O run contaminado anterior permanece
-                  somente como diagnóstico histórico. O contrato, a autoridade, o recebedor local
-                  determinístico, a elegibilidade e as rotas já estão implementados; gateway
-                  externo, checkout, fallback administrativo e dados bancários permanecem fora desta
-                  fatia.
+                  Concluir os dois P2 do PR #6, ainda <code>OPEN</code>/draft: banco, gates,
+                  browser, build e smoke pós-review já estão verdes e aceitos; agora faltam nova
+                  release e publicação, resposta e resolução das threads, re-review, promoção para
+                  ready e merge. Os hashes antigos e a release <code>c115dcd...</code> são
+                  históricos do snapshot anterior. PEND-003, trusted proxy e o smoke ARM64 nativo
+                  continuam bloqueando produção. Gateway externo, checkout, fallback administrativo
+                  e dados bancários permanecem fora desta fatia.
                 </li>
               </ol>
             </article>

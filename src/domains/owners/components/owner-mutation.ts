@@ -83,3 +83,19 @@ export function isOwnerAmbiguousCommandError(error: unknown) {
       error.code === "SERVICE_UNAVAILABLE")
   );
 }
+
+export function isOwnerUnscopedValidationError(error: unknown) {
+  return (
+    error instanceof OwnerApiError &&
+    error.code === "VALIDATION_FAILED" &&
+    Object.keys(error.fieldErrors).length === 0
+  );
+}
+
+export function ownerMutationRequiresVerification(error: unknown) {
+  return (
+    isOwnerAmbiguousCommandError(error) ||
+    isOwnerUnscopedValidationError(error) ||
+    (error instanceof OwnerApiError && error.code === "CONFLICT")
+  );
+}

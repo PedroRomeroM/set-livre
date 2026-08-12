@@ -1,7 +1,9 @@
 import {
+  ownerActivationResultSchema,
   ownerActivateCommandSchema,
   ownerCommandSchema,
   ownerRecipientResultSchema,
+  ownerRecipientStatusSchema,
   recipientOnboardingRefreshCommandSchema,
   recipientOnboardingStartCommandSchema,
 } from "@set-livre/contracts";
@@ -76,6 +78,7 @@ describe("owner and recipient contracts", () => {
       ownerVersion: 1,
       profileVersion: 4,
       profileVersionSynced: 4,
+      projection: "activation",
       providerMode: "local",
       recipientStatus: "active",
       recipientVersion: 2,
@@ -93,6 +96,50 @@ describe("owner and recipient contracts", () => {
     ).toBe(false);
   });
 
+  it("discriminates the full activation document from the compact recipient projection", () => {
+    const state = {
+      acceptedOwnerContractVersionId: null,
+      nextAction: "activate_owner",
+      ownerContractAccepted: false,
+      ownerStatus: "inactive",
+      ownerVersion: 0,
+      profileVersion: 4,
+      profileVersionSynced: null,
+      providerMode: "local",
+      recipientStatus: "not_started",
+      recipientVersion: 0,
+      requirements: [],
+      reservationsEligible: false,
+      scope,
+    } as const;
+    const activation = { ...state, ownerContract, projection: "activation" } as const;
+    const recipient = {
+      ...state,
+      ownerContract: {
+        effectiveAt: ownerContract.effectiveAt,
+        id: ownerContract.id,
+        source: ownerContract.source,
+      },
+      projection: "recipient",
+    } as const;
+
+    expect(ownerActivationResultSchema.safeParse(activation).success).toBe(true);
+    expect(ownerRecipientStatusSchema.safeParse(recipient).success).toBe(true);
+    expect(ownerRecipientResultSchema.safeParse(activation).success).toBe(true);
+    expect(ownerRecipientResultSchema.safeParse(recipient).success).toBe(true);
+    expect(ownerRecipientStatusSchema.safeParse(activation).success).toBe(false);
+    expect(ownerActivationResultSchema.safeParse(recipient).success).toBe(false);
+    expect(
+      ownerRecipientStatusSchema.safeParse({
+        ...recipient,
+        ownerContract: { ...recipient.ownerContract, bodyMarkdown: "# não permitido" },
+      }).success,
+    ).toBe(false);
+    expect(
+      ownerRecipientResultSchema.safeParse({ ...activation, projection: "recipient" }).success,
+    ).toBe(false);
+  });
+
   it("fails closed on raw requirements, provider mode drift and inconsistent primitives", () => {
     const base = {
       acceptedOwnerContractVersionId: null,
@@ -103,6 +150,7 @@ describe("owner and recipient contracts", () => {
       ownerVersion: 0,
       profileVersion: 0,
       profileVersionSynced: null,
+      projection: "activation",
       providerMode: "local",
       recipientStatus: "not_started",
       recipientVersion: 0,
@@ -135,6 +183,7 @@ describe("owner and recipient contracts", () => {
       ownerVersion: 0,
       profileVersion: 4,
       profileVersionSynced: null,
+      projection: "activation",
       providerMode: "local",
       recipientStatus: "not_started",
       recipientVersion: 0,
@@ -214,6 +263,7 @@ describe("owner and recipient contracts", () => {
       ownerVersion: 1,
       profileVersion: 4,
       profileVersionSynced: 4,
+      projection: "activation",
       providerMode: "local",
       recipientStatus: "active",
       recipientVersion: 2,
@@ -250,6 +300,7 @@ describe("owner and recipient contracts", () => {
         ownerVersion: 2,
         profileVersion: 4,
         profileVersionSynced: 4,
+        projection: "activation",
         providerMode: "local",
         recipientStatus: "active",
         recipientVersion: 2,
@@ -270,6 +321,7 @@ describe("owner and recipient contracts", () => {
       ownerVersion: 2,
       profileVersion: 4,
       profileVersionSynced: 4,
+      projection: "activation",
       providerMode: "local",
       recipientStatus: "active",
       recipientVersion: 2,
@@ -303,6 +355,7 @@ describe("owner and recipient contracts", () => {
         ownerVersion: ownerContractAccepted ? 1 : 0,
         profileVersion: 4,
         profileVersionSynced: states.recipientStatus === "not_started" ? null : 4,
+        projection: "activation",
         providerMode: "local",
         recipientStatus: states.recipientStatus,
         recipientVersion: states.recipientStatus === "not_started" ? 0 : 1,

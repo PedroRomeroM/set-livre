@@ -171,7 +171,7 @@ describe("profile UI privacy guards", () => {
     expect(login).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
     expect(security).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
     expect(cache).toContain(
-      "queryClient.removeQueries({ queryKey: ownerQueryKeys.recipientStatuses });",
+      "queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });",
     );
   });
 

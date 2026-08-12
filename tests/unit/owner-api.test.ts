@@ -1,9 +1,10 @@
-import type { OwnerRecipientResult } from "@set-livre/contracts";
+import type { OwnerActivationResult, OwnerRecipientStatus } from "@set-livre/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   activateOwner,
   OwnerApiError,
+  readOwnerActivation,
   readOwnerRecipient,
   refreshRecipientOnboarding,
   startRecipientOnboarding,
@@ -31,13 +32,35 @@ const ownerResult = {
   ownerVersion: 0,
   profileVersion: 1,
   profileVersionSynced: null,
+  projection: "activation",
   providerMode: "local",
   recipientStatus: "not_started",
   recipientVersion: 0,
   requirements: [],
   reservationsEligible: false,
   scope: userId,
-} satisfies OwnerRecipientResult;
+} satisfies OwnerActivationResult;
+const recipientResult = {
+  acceptedOwnerContractVersionId: ownerResult.acceptedOwnerContractVersionId,
+  nextAction: ownerResult.nextAction,
+  ownerContract: {
+    effectiveAt: ownerResult.ownerContract.effectiveAt,
+    id: ownerResult.ownerContract.id,
+    source: ownerResult.ownerContract.source,
+  },
+  ownerContractAccepted: ownerResult.ownerContractAccepted,
+  ownerStatus: ownerResult.ownerStatus,
+  ownerVersion: ownerResult.ownerVersion,
+  profileVersion: ownerResult.profileVersion,
+  profileVersionSynced: ownerResult.profileVersionSynced,
+  projection: "recipient",
+  providerMode: ownerResult.providerMode,
+  recipientStatus: ownerResult.recipientStatus,
+  recipientVersion: ownerResult.recipientVersion,
+  requirements: ownerResult.requirements,
+  reservationsEligible: ownerResult.reservationsEligible,
+  scope: ownerResult.scope,
+} satisfies OwnerRecipientStatus;
 
 describe("owner browser API", () => {
   afterEach(() => {
@@ -47,14 +70,28 @@ describe("owner browser API", () => {
 
   it("reads only the strict scoped recipient projection", async () => {
     const fetchMock = vi.fn(async () =>
+      Response.json({ data: recipientResult, requestId }, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    await expect(readOwnerRecipient()).resolves.toEqual(recipientResult);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/owner/recipient",
+      expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
+    );
+  });
+
+  it("reads the full legal document only from the activation endpoint", async () => {
+    const fetchMock = vi.fn(async () =>
       Response.json({ data: ownerResult, requestId }, { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
-    await expect(readOwnerRecipient()).resolves.toEqual(ownerResult);
+    await expect(readOwnerActivation()).resolves.toEqual(ownerResult);
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/owner/recipient",
+      "/api/owner/activation",
       expect.objectContaining({ cache: "no-store", credentials: "same-origin" }),
     );
   });
@@ -64,7 +101,7 @@ describe("owner browser API", () => {
     const fetchMock = vi.fn(async () =>
       Response.json(
         {
-          data: { ...ownerResult, providerRecipientId: privateProviderId },
+          data: { ...recipientResult, providerRecipientId: privateProviderId },
           requestId,
         },
         { status: 200 },
@@ -88,6 +125,7 @@ describe("owner browser API", () => {
         idempotencyKey,
         payload: { acceptOwnerContract: true, ownerContractVersionId },
       },
+      ownerResult,
     ],
     [
       "recipient.onboarding.start",
@@ -98,6 +136,7 @@ describe("owner browser API", () => {
         idempotencyKey,
         payload: {},
       },
+      recipientResult,
     ],
     [
       "recipient.onboarding.refresh",
@@ -108,18 +147,22 @@ describe("owner browser API", () => {
         idempotencyKey,
         payload: {},
       },
+      recipientResult,
     ],
-  ] as const)("serializes strict %s command envelopes", async (_name, execute, expectedBody) => {
-    const fetchMock = vi.fn(async () =>
-      Response.json({ data: ownerResult, requestId }, { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("window", { clearTimeout, setTimeout });
+  ] as const)(
+    "serializes strict %s command envelopes",
+    async (_name, execute, expectedBody, responseData) => {
+      const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+        async () => Response.json({ data: responseData, requestId }, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("window", { clearTimeout, setTimeout });
 
-    await expect(execute()).resolves.toEqual(ownerResult);
-    const call = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit?];
-    expect(JSON.parse(String(call[1]?.body))).toEqual(expectedBody);
-  });
+      await expect(execute()).resolves.toEqual(responseData);
+      const call = fetchMock.mock.calls[0];
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual(expectedBody);
+    },
+  );
 
   it("maps timeout to a redacted verification-first error", async () => {
     vi.useFakeTimers();
@@ -163,14 +206,14 @@ describe("owner browser API", () => {
           { status: 503 },
         ),
       )
-      .mockResolvedValueOnce(Response.json({ data: ownerResult, requestId }, { status: 200 }));
+      .mockResolvedValueOnce(Response.json({ data: recipientResult, requestId }, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
     await expect(startRecipientOnboarding(userId, idempotencyKey)).rejects.toMatchObject({
       code: "PAYMENT_PROVIDER_UNAVAILABLE",
     });
-    await expect(readOwnerRecipient()).resolves.toEqual(ownerResult);
+    await expect(readOwnerRecipient()).resolves.toEqual(recipientResult);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");

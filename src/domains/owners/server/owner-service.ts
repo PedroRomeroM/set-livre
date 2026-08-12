@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { OwnerCommand, OwnerRecipientResult } from "@set-livre/contracts";
+import type {
+  OwnerActivationResult,
+  OwnerCommand,
+  OwnerRecipientStatus,
+} from "@set-livre/contracts";
 import { z } from "zod";
 
 import type { PrivateCommandContext } from "@/domains/commands/server/private-command-context";
@@ -12,7 +16,8 @@ import {
   activateOwnerProfile,
   applyOwnerRecipientOperation,
   getOwnerRecipientStatusForUser,
-  mapOwnerRecipientDalRow,
+  mapOwnerActivationDalRow,
+  mapOwnerRecipientStatusDalRow,
   prepareOwnerRecipientOperation,
   type PreparedRecipientOperation,
 } from "./owner-dal";
@@ -65,7 +70,11 @@ function assertMutableAccount(context: PrivateCommandContext) {
   }
 }
 
-function assertFixtureContractAllowed(source: OwnerRecipientResult["ownerContract"]["source"]) {
+function assertFixtureContractAllowed(
+  source:
+    | OwnerActivationResult["ownerContract"]["source"]
+    | OwnerRecipientStatus["ownerContract"]["source"],
+) {
   if (
     source === "local_fixture" &&
     process.env.APP_ENV !== "local" &&
@@ -130,8 +139,8 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
     try {
       const currentRow = await dependencies.getOwnerRecipientStatusForUser(context.session.userId);
       assertFixtureContractAllowed(currentRow.owner_contract_source);
-      mapOwnerRecipientDalRow(currentRow, context.session.userId);
-      return mapOwnerRecipientDalRow(
+      mapOwnerRecipientStatusDalRow(currentRow, context.session.userId);
+      return mapOwnerActivationDalRow(
         await dependencies.activateOwnerProfile({
           idempotencyKey: command.idempotencyKey,
           ownerContractVersionId: command.payload.ownerContractVersionId,
@@ -152,7 +161,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
   ) {
     if (prepared.alreadyApplied) {
       try {
-        return mapOwnerRecipientDalRow(
+        return mapOwnerRecipientStatusDalRow(
           await dependencies.getOwnerRecipientStatusForUser(context.session.userId),
           context.session.userId,
         );
@@ -202,7 +211,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
     }
 
     try {
-      return mapOwnerRecipientDalRow(
+      return mapOwnerRecipientStatusDalRow(
         await dependencies.applyOwnerRecipientOperation({
           operationId: prepared.operationId,
           provider: "local",

@@ -466,25 +466,36 @@ select ok(
 );
 
 select ok(
-  (
-    select not routine.prosecdef
-      and routine.provolatile = 's'
-      and routine.pronargs = 0
-      and 'search_path=""' = any(routine.proconfig)
-    from pg_catalog.pg_proc as routine
-    where routine.oid =
-      'public.get_owner_recipient_status()'::pg_catalog.regprocedure
-  )
-    and pg_catalog.has_function_privilege(
-      'authenticated', 'public.get_owner_recipient_status()', 'EXECUTE'
-    )
-    and not pg_catalog.has_function_privilege(
-      'public', 'public.get_owner_recipient_status()', 'EXECUTE'
-    )
-    and not pg_catalog.has_function_privilege(
-      'anon', 'public.get_owner_recipient_status()', 'EXECUTE'
-    ),
-  'read model owner é invoker sem UUID e executa somente autenticado'
+  not exists (
+    select 1
+    from (
+      values
+        ('public.get_owner_activation_status()'::text),
+        ('public.get_owner_recipient_status()'::text)
+    ) as projection(signature)
+    join pg_catalog.pg_proc as routine
+      on routine.oid = projection.signature::pg_catalog.regprocedure
+    where routine.prosecdef
+      or routine.provolatile <> 's'
+      or routine.pronargs <> 0
+      or not ('search_path=""' = any(routine.proconfig))
+      or not pg_catalog.has_function_privilege(
+        'authenticated', projection.signature, 'EXECUTE'
+      )
+      or pg_catalog.has_function_privilege(
+        'public', projection.signature, 'EXECUTE'
+      )
+      or pg_catalog.has_function_privilege(
+        'anon', projection.signature, 'EXECUTE'
+      )
+      or pg_catalog.has_function_privilege(
+        'service_role', projection.signature, 'EXECUTE'
+      )
+      or pg_catalog.has_function_privilege(
+        'app_dal', projection.signature, 'EXECUTE'
+      )
+  ),
+  'projeções activation/recipient são invoker sem UUID e somente authenticated'
 );
 
 select ok(
@@ -1714,12 +1725,12 @@ select is(
 );
 
 select ok(
-  private.check_readiness('20260812000100'),
+  private.check_readiness('20260812000200'),
   'readiness aceita head FEAT-004 e allowlist DAL ampliada exata'
 );
 
 select ok(
-  not private.check_readiness('20260811000500'),
+  not private.check_readiness('20260812000100'),
   'readiness rejeita head anterior'
 );
 
@@ -1729,9 +1740,7 @@ select ok(
       routine.proargnames = array[
         'scope','owner_status','owner_version',
         'accepted_owner_contract_version_id','owner_contract_accepted',
-        'owner_contract_id','owner_contract_kind','owner_contract_version',
-        'owner_contract_title','owner_contract_body_markdown',
-        'owner_contract_content_hash','owner_contract_source',
+        'owner_contract_id','owner_contract_source',
         'owner_contract_effective_at','recipient_status','requirements',
         'next_action','profile_version','profile_version_synced',
         'recipient_version','reservations_eligible','provider_mode'
@@ -1741,18 +1750,46 @@ select ok(
         from pg_catalog.unnest(routine.proallargtypes)
           with ordinality as argument(type_oid, position)
       ) = array[
-        'uuid','text','bigint','uuid','boolean','uuid','text','text','text',
-        'text','text','text','timestamp with time zone','text','text[]','text',
-        'bigint','bigint','bigint','boolean','text'
+        'uuid','text','bigint','uuid','boolean','uuid','text',
+        'timestamp with time zone','text','text[]','text','bigint','bigint',
+        'bigint','boolean','text'
       ]::text[]
       and routine.proargmodes = pg_catalog.array_fill(
-        't'::"char", array[21]
+        't'::"char", array[16]
       )
     from pg_catalog.pg_proc as routine
     where routine.oid =
       'public.get_owner_recipient_status()'::regprocedure
-  ),
-  'safe row mantém exatamente vinte e uma colunas e tipos congelados'
+  )
+    and (
+      select
+        routine.proargnames = array[
+          'scope','owner_status','owner_version',
+          'accepted_owner_contract_version_id','owner_contract_accepted',
+          'owner_contract_id','owner_contract_kind','owner_contract_version',
+          'owner_contract_title','owner_contract_body_markdown',
+          'owner_contract_content_hash','owner_contract_source',
+          'owner_contract_effective_at','recipient_status','requirements',
+          'next_action','profile_version','profile_version_synced',
+          'recipient_version','reservations_eligible','provider_mode'
+        ]::text[]
+        and (
+          select pg_catalog.array_agg(type_oid::regtype::text order by position)
+          from pg_catalog.unnest(routine.proallargtypes)
+            with ordinality as argument(type_oid, position)
+        ) = array[
+          'uuid','text','bigint','uuid','boolean','uuid','text','text','text',
+          'text','text','text','timestamp with time zone','text','text[]','text',
+          'bigint','bigint','bigint','boolean','text'
+        ]::text[]
+        and routine.proargmodes = pg_catalog.array_fill(
+          't'::"char", array[21]
+        )
+      from pg_catalog.pg_proc as routine
+      where routine.oid =
+        'public.get_owner_activation_status()'::regprocedure
+    ),
+  'recipient mantém 16 colunas sem documento e activation preserva 21 colunas completas'
 );
 
 select * from finish();
