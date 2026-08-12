@@ -2,8 +2,9 @@ import type { CurrentLegalDocuments } from "@set-livre/contracts";
 import { Alert, PageFrame, Panel, Stack } from "@set-livre/ui";
 import Link from "next/link";
 
+import { LegalMarkdown } from "@/domains/legal/components/legal-markdown";
+
 import styles from "./identity.module.css";
-import { LegalMarkdown } from "./legal-markdown";
 
 type LegalDocument = CurrentLegalDocuments["privacy"] | CurrentLegalDocuments["terms"];
 

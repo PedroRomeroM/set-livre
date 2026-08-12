@@ -33,7 +33,7 @@ type LogoutRequest = {
 };
 ```
 
-Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry de comandos, `expectedScope` pertence aos dois comandos de perfil. A rota Auth especializada de logout recebe a mesma asserção em seu schema próprio. Em ambos os casos ela é UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry implementado, `expectedScope` pertence aos dois comandos de perfil e aos três comandos de dono/recebedor; estes três também exigem `idempotencyKey`. A rota Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
 Headers:
 
@@ -47,7 +47,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 
 ### 2.1 Superfície implementada na FEAT-002
 
-- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os comandos de perfil implementados;
+- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os dois comandos de perfil e os três comandos de dono/recebedor registrados; action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
 - todos os `POST` exigem `Origin` e `Host` exatos de `NEXT_PUBLIC_APP_URL`; em produção, `X-Forwarded-Host` e `X-Forwarded-Proto=https` também precisam ter sido sobrescritos pela borda confiável;
 - um bucket de fachada é consumido antes do parse/Zod; depois do parse, cadastro/login/recovery/callback usam somente hashes de e-mail, usuário ou token. Em produção, a fachada exige um único IP canônico em `X-Forwarded-For`, sobrescrito pelo Nginx da borda confiável previsto em PEND-003; header ausente, composto ou inválido falha fechado;
 - somente `application/json` e schemas Zod `strict` são aceitos;
@@ -67,7 +67,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, logout usa uma closure one-shot sem `variables`, `networkMode: "always"` e `expectedScope` UUID como asserção do recorte SSR. O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`, `claimsResult.error` ou contexto assinado ausente retorna `401 UNAUTHENTICATED`, e somente um `userId` válido divergente retorna `409 SESSION_CHANGED`; os três ramos têm zero efeitos destrutivos explícitos de logout. Um erro posterior do provider só pode equivaler a logout concluído quando o cliente server-side comprova ausência da sessão local;
 - depois de `setSession`, a projeção de preferência chama `get_my_profile()` com o `AbortSignal` da operação e deadline server-side de um segundo. Timeout ou falha usa `system`; uma resolução tardia é ignorada e não pode publicar cookie nem iniciar `signOut` depois da resposta;
-- `returnTo` possui allowlist literal: `/entrar?sessao=ativa`, `/conta` e `/conta/seguranca`. Qualquer outro valor é descartado no Server Component antes de alcançar o payload efêmero de login.
+- o destino autenticado possui allowlist literal: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono` e `/dono/recebimentos`. A query da rota usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, valor codificado ou array falha fechado para o destino padrão.
 
 ## 3. Códigos de erro
 
@@ -129,14 +129,15 @@ Na FEAT-003, os envelopes Zod estritos de `profile.complete` e `profile.update` 
 
 ### 5.2 Dono/recebedor
 
-| Action                         | Efeito                                                     |
-| ------------------------------ | ---------------------------------------------------------- |
-| `owner.activate`               | cria owner profile e aceite                                |
-| `recipient.onboarding.start`   | cria/atualiza recipient no provider                        |
-| `recipient.onboarding.refresh` | consulta requisitos/status                                 |
-| `recipient.bank.update`        | atualiza via provider, sem persistir segredo desnecessário |
+| Action                         | Efeito                                                 |
+| ------------------------------ | ------------------------------------------------------ |
+| `owner.activate`               | cria owner profile e aceite vigente de forma atômica   |
+| `recipient.onboarding.start`   | inicia operação idempotente no adapter server-only     |
+| `recipient.onboarding.refresh` | consulta e aplica snapshot mapeado com fence de versão |
 
-A resposta contém status seguro e próximos passos, não payload bruto.
+Os três envelopes Zod estritos exigem `expectedScope` e `idempotencyKey` UUID, sem `ownerUserId`, status, provider ou referência externa fornecidos pelo cliente. `recipient.bank.update` permanece ausente até existir token ou handoff provider-owned aprovado. A resposta contém `scope`, contrato, status seguros, requisitos e próxima ação allowlisted, versões monotônicas e `reservationsEligible`; não contém PII, provider ID nem payload bruto.
+
+A leitura autenticada `get_owner_recipient_status()` aplica no servidor um deadline de 2.000 ms tanto nos Server Components quanto no `GET /api/owner/recipient`. O read model sempre encaminha um `AbortSignal` real à RPC e usa um race independente para encerrar no prazo mesmo se o cliente de transporte não cooperar; o timer é limpo em sucesso/erro, e resolução ou rejeição tardia não publica estado. Um signal externo também encerra a mesma operação. O GET traduz a indisponibilidade para `503` seguro; as rotas SSR permanecem sob seu estado de erro e recuperação, sem fallback factual inventado.
 
 ### 5.3 Estúdio e revisão
 

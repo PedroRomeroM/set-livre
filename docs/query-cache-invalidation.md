@@ -98,6 +98,9 @@ Medir; não usar Infinity em dado operacional.
 - a projeção de aparência do login não pertence ao cache interativo: `get_my_profile()` recebe `AbortSignal`, expira no servidor em um segundo e usa `system` como fallback. Resultado tardio não atualiza cookie nem aciona `signOut` após a resposta;
 - login com resposta de transporte ambígua reseta e oculta o formulário, limpa integralmente o `QueryClient`, semeia apenas a sessão anônima e força `/entrar?entrada=verificar`; a resposta SSR seguinte é a única autoridade para voltar a mostrar sessão ou credenciais;
 - troca de usuário ou divergência descartam primeiro o `MutationCache`, removem conjuntamente as famílias de perfil e sessão e só então fazem hard reload; cache público pode permanecer. Logout e resultado ambíguo de login são exceções deliberadas e limpam o `QueryClient` integralmente;
+- o read model de dono usa key privada `owner/recipient/status/<userId>`, `staleTime: 0`, refetch autoritativo em mount/foco e `retry: false`; `fetching`, pausa, erro de scope ou reseed ocultam status, elegibilidade e CTA privados;
+- `owner.activate` e `recipient.onboarding.*` mantêm `{ expectedScope, idempotencyKey }` em closure/ref one-shot, usam `networkMode: "always"`, não fazem optimistic update e só publicam DTO monotônico se a key/scope esperados ainda existirem;
+- alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

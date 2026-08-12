@@ -1,6 +1,23 @@
 import { IdentityApiError } from "./identity-api";
 
-export type AccountLoginReturnTarget = "/conta" | "/conta/seguranca";
+const accountLoginReturnTargets = [
+  "/conta",
+  "/conta/seguranca",
+  "/dono",
+  "/dono/recebimentos",
+] as const;
+
+export type AccountLoginReturnTarget = (typeof accountLoginReturnTargets)[number];
+
+export function resolveAccountLoginReturnTarget(
+  candidate: string | readonly string[] | undefined,
+): AccountLoginReturnTarget | undefined {
+  if (typeof candidate !== "string") return undefined;
+  for (const target of accountLoginReturnTargets) {
+    if (candidate === target) return target;
+  }
+  return undefined;
+}
 
 type LoginCredentialForm = {
   hidden: boolean;
@@ -35,13 +52,9 @@ export function hideAndResetLoginCredentialForm(form: LoginCredentialForm | null
 }
 
 export function loginSessionVerificationPath(returnTo?: AccountLoginReturnTarget | undefined) {
-  if (returnTo === "/conta") {
-    return "/entrar?entrada=verificar&retorno=%2Fconta";
-  }
-  if (returnTo === "/conta/seguranca") {
-    return "/entrar?entrada=verificar&retorno=%2Fconta%2Fseguranca";
-  }
-  return "/entrar?entrada=verificar";
+  return returnTo === undefined
+    ? "/entrar?entrada=verificar"
+    : `/entrar?entrada=verificar&retorno=${encodeURIComponent(returnTo)}`;
 }
 
 export function handleAmbiguousLoginTransportError(

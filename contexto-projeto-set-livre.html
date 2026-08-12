@@ -643,20 +643,18 @@
           <li>Fundação local</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
           <li>FEAT-003 · concluída e incorporada a main</li>
+          <li>FEAT-004 · em implementação local</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>578</strong><span>unitários históricos da FEAT-003</span></div>
+          <div class="stat"><strong>355</strong><span>asserts pgTAP no head atual</span></div>
           <div class="stat">
-            <strong>578</strong><span>unitários do snapshot funcional final</span>
+            <strong>91</strong><span>execuções Playwright históricas da FEAT-003</span>
           </div>
-          <div class="stat">
-            <strong>293</strong><span>asserts pgTAP do snapshot funcional final</span>
-          </div>
-          <div class="stat">
-            <strong>91</strong><span>execuções Playwright do snapshot funcional final</span>
-          </div>
-          <div class="stat"><strong>12</strong><span>migrations append-only na árvore</span></div>
+          <div class="stat"><strong>23/23</strong><span>matriz específica da FEAT-004</span></div>
+          <div class="stat"><strong>13</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -720,6 +718,33 @@
                 local também foram auditados. O HEAD final <code>1530f62589</code> recebeu revisão
                 Codex limpa, as cinco threads ficaram resolvidas e o PR #4 foi incorporado a
                 <code>main</code> no merge <code>465d195</code>.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag">Código + banco implementados</span>
+              <h3>FEAT-004 · Dono e recebedor</h3>
+              <p>
+                A rota canônica é <code>/dono</code>, acompanhada de
+                <code>/dono/recebimentos</code>. O recorte local cria aceite
+                <code>owner_contract</code>, autoridade de dono, status seguro do recebedor e
+                elegibilidade derivada da versão atual do perfil. O adapter determinístico realiza
+                somente <code>start → pending → active</code>, sem SDK, HTTP, credencial, gateway
+                externo, checkout, fallback administrativo ou dados bancários. Contratos, comandos,
+                DAL, read model, UI e specs existem; reset/geração e 355/355 asserts pgTAP passaram
+                no head <code>20260812000100</code>. As quatro specs passaram em 23/23 numa única
+                invocação pós-correções, automatizando os sete IDs. Após redigir telefones QA, a
+                suíte integral limpa também passou em 114/114. Builds web/backoffice, smoke padrão e
+                boundary guest standalone passaram; review e release permanecem pendentes. PEND-004
+                e PEND-006 continuam bloqueando release, não a implementação local.
+              </p>
+              <p>
+                O retorno pós-login aceita literalmente <code>/dono</code> e
+                <code>/dono/recebimentos</code>, preserva o destino em sucesso ou verificação
+                ambígua e recusa vetores de open redirect. Em resultado ambíguo,
+                <code>Verificar estado atual</code> fecha a superfície privada durante o GET e
+                restaura o foco no heading do checklist em sucesso ou no alerta seguro em falha.
+                Nesse alerta, <code>Tentar novamente</code> repete o boundary e devolve foco ao
+                heading somente depois do novo GET 200.
               </p>
             </article>
             <article class="card">
@@ -809,6 +834,21 @@
               <code>465d195</code>, em <code>2026-08-12T06:57:15Z</code>.
             </p>
           </div>
+
+          <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Evidência atual do banco da FEAT-004:</strong>
+            <p>
+              A árvore possui 13 migrations e head <code>20260812000100</code>. Reset e geração
+              passaram; as quatro suítes pgTAP somaram 355/355 asserts (<code
+                >158 + 78 + 57 + 62</code
+              >). A <code>0004</code> prova ACL/RLS, isolamento A/B, personas owner/admin sem
+              bypass, ativação, prepare/apply, renovação, drift, concorrência com a mesma chave e
+              replay. A inspeção final encontrou zero resíduo nas relações, fixtures, órfãos e
+              sessões dblink; uma mensagem Mailpit da fixture concorrente foi removida por ID exato,
+              terminando em 0/0. Esta prova do banco é independente da matriz específica browser
+              23/23 descrita abaixo e não antecipa build ou release da FEAT-004.
+            </p>
+          </div>
         </section>
 
         <section id="produto">
@@ -878,8 +918,10 @@
                 links seguros.
               </p>
               <p>
-                O primeiro comando real cria a intenção legal do cadastro; catálogo, conta completa,
-                dono, checkout e reserva continuam ausentes até suas próprias features.
+                Além do cadastro e dos comandos de perfil, o registry privado já executa
+                <code>owner.activate</code>, <code>recipient.onboarding.start</code> e
+                <code>recipient.onboarding.refresh</code>. Catálogo, checkout e reserva continuam
+                ausentes até suas próprias features.
               </p>
             </article>
             <article class="card">
@@ -898,9 +940,10 @@
               <span class="tag done">Implementado</span>
               <h3>packages/contracts</h3>
               <p>
-                Contratos Zod de health, release, URL DAL e identidade; readiness server-only; tipos
-                gerados do banco. O schema público contém somente perfil mínimo, versões e aceites
-                da FEAT-002.
+                Contratos Zod de health, release, URL DAL, identidade, perfil, dono e recebedor;
+                readiness server-only; tipos gerados do banco. A projeção pública inclui somente os
+                campos seguros de perfil/dono/recebedor e mantém PII e referências do provider fora
+                do DTO.
               </p>
             </article>
             <article class="card">
@@ -1050,7 +1093,7 @@
                   <td>Documentação</td>
                   <td><code>docs:check</code></td>
                   <td>
-                    Valida Blueprint, ADRs, 34 features, 198 cenários, sequência, links, registro de
+                    Valida Blueprint, ADRs, 34 features, 200 cenários, sequência, links, registro de
                     dependências, migrations imutáveis, change records e atualização deste resumo
                     executivo.
                   </td>
@@ -1084,14 +1127,16 @@
               Os sete cenários de Auth somam 23 execuções próprias; com as 36 execuções técnicas da
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
-              adversos. O snapshot funcional final passou em 91/91 numa única execução de 3,9
-              minutos, incluindo 32/32 da FEAT-003 nos nove IDs estáveis e sem alterar o catálogo.
+              adversos. O snapshot histórico da FEAT-003 passou em 91/91 numa única execução de 3,9
+              minutos, incluindo 32/32 da feature. As quatro specs da FEAT-004 passaram em 23/23
+              numa única invocação de cerca de 2,0 minutos, automatizando seus sete IDs; o catálogo
+              possui agora 23 automatizados e 177 planejados.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">578 aprovados · 60 arquivos</span>
+              <span class="tag done">578 · histórico FEAT-003</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1100,23 +1145,24 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">293 · snapshot funcional final</span>
+              <span class="tag done">355 · head atual</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
                 <code>pg_catalog</code>, <code>pg_net</code>, readiness, RLS dos estados privados,
                 binding/tombstone por sessão, pin JWT, ausência canônica, retenção em duas fases,
-                perfil PF/PJ, máscaras, versões independentes, concorrência otimista e personas
-                adversariais owner/admin sem bypass nem autoridade antecipada.
+                perfil PF/PJ, máscaras, autoridade de dono, recebedor versionado, renovação,
+                prepare/apply idempotente, concorrência com a mesma chave e personas adversariais
+                owner/admin sem bypass.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">91 · snapshot funcional final</span>
+              <span class="tag done">23/23 · FEAT-004</span>
               <h3>Playwright + axe</h3>
               <p>
-                36 execuções técnicas da fundação, 23 da FEAT-002 e 32 da FEAT-003, cobrindo smoke,
-                Auth real, perfil PF/PJ, cache privado, desktop/mobile, axe, teclado, safe area e
-                reflow/zoom nos três engines.
+                A matriz específica final da FEAT-004 cobriu quatro specs, 14 projetos e sete IDs,
+                com distribuição <code>3 + 3 + 3 + 4 + 3 + 4 + 3</code>. A matriz integral limpa
+                posterior passou em 114/114 numa única invocação, cobrindo 17 specs e 16 projetos.
               </p>
             </article>
           </div>
@@ -1132,6 +1178,85 @@
             <div>
               <strong>200%</strong><span>texto ampliado e reflow em viewport reduzido</span>
             </div>
+          </div>
+
+          <div class="callout info" style="margin-top: 0.9rem">
+            <strong>Estado dos gates da FEAT-004:</strong>
+            <p>
+              Supabase reset, geração e pgTAP estão verdes em 355/355 no head
+              <code>20260812000100</code>, com zero resíduo final. A suíte unitária final pós-código
+              passou em 707/707; a prova estática de privacidade passou em 11/11, e format, lint,
+              typechecks, docs:check, audit com zero vulnerabilidade, Knip e diff-check também
+              passaram. Uma única invocação pós-correções das quatro specs FEAT-004 passou em 23/23,
+              exit <code>0</code>, em cerca de 2,0 minutos e por 14 projetos, automatizando os IDs
+              001–007. Foram zero resultado inesperado, skip, flake, erro ou attachment. A integral
+              limpa posterior passou em 114/114. Builds web/backoffice, o smoke padrão
+              release-equivalent e o boundary guest standalone também passaram; empacotamento,
+              review e release permanecem pendentes.
+            </p>
+            <p>
+              A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
+              auditoria rejeitou a evidência: 18 telefones QA apareceram em 61 títulos
+              <code>Fill</code> e quatro snippets. O helper agora preenche via
+              <code>Locator.evaluate</code>, setter nativo e <code>InputEvent</code>; os sete call
+              sites foram redigidos. Esse run permanece somente como diagnóstico histórico.
+            </p>
+            <p>
+              A nova integral limpa rodou em uma única invocação Node 24, <code>workers=1</code>,
+              <code>max-failures=1</code> e <code>retries=0</code>: 114/114, exit <code>0</code>,
+              cerca de 5,9 minutos, 17 specs e 16 projetos, sem resultado inesperado, skip, flake,
+              erro, attachment ou mídia. O relatório tem SHA-256
+              <code>b20aafd7e0dd…3a5ebb6076</code>; <code>.last-run.json</code>, SHA-256
+              <code>91d1c4300480…13b2f561bc00903</code>.
+            </p>
+            <p>
+              A auditoria encontrou zero ocorrência dos 28 telefones QA, inclusive formatos e
+              sequências, zero step sensível
+              <code>Fill</code>/<code>Type</code>/<code>PressSequentially</code>, e zero sentinela,
+              token, cookie Auth, URL de banco, referência privada do provider ou documento QA. Os
+              88 e-mails QA únicos tiveram 140 ocorrências somente em títulos allowlisted: FEAT-002
+              60, FEAT-003 54, FEAT-004 26; <code>Fill</code> 110, <code>Type</code> 8 e
+              <code>Expect</code> 22. Banco, Mailpit, portas e processos terminaram em zero.
+            </p>
+            <p>
+              Os builds Next.js de web e backoffice passaram sem warning ou erro; manifests, rotas,
+              standalone e <code>next-env.d.ts</code> canônico foram validados. O smoke padrão
+              release-equivalent aprovou roots, prefetch, erros globais, live/ready, assets, CSP,
+              nonces, probes adversariais, isolamento e redirects streaming da área do dono. Log
+              SHA-256 <code>dbbaff2344e7841a12c4489e0a669a681ecd90755afc9649b1db723679b80ca1</code>.
+            </p>
+            <p>
+              O boundary guest standalone passou: exatamente um
+              <code>POST /api/commands</code> em <code>127.0.0.1:3000</code>, com Host/Origin
+              naturais exatos, sem cookies e comando sintético válido de início de recebedor,
+              retornou <code>401 UNAUTHENTICATED</code>. O <code>requestId</code> UUID-v4 coincidiu
+              no header/body; as oito contagens owner/Auth/audit ficaram em zero antes/depois, e
+              porta, temporário e PGID terminaram em zero. Log redigido SHA-256
+              <code>af8d01d798739f14d1e060b30314e72fb3c1cda7a793b90a81dd4299b259c36b</code>.
+            </p>
+            <p>
+              Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
+              retido na página e no QueryClient de A, boundary, desconexão de A no
+              <code>pagehide</code>, recomposição SSR somente com B e zero erros de página/React. A
+              prova complementar de callback tardio é unitária: usa <code>MutationObserver</code>
+              real com latch e confirma que a key de A não é recriada após o seed autoritativo de B.
+            </p>
+            <p>
+              As tentativas anteriores permanecem como diagnóstico: a primeira parou em uma falha e
+              22 testes não executados por locator ambíguo; a seguinte chegou ao ID 005 e encerrou
+              em 7 passados, uma falha e 15 não executados porque o oráculo tentou
+              <code>fulfill</code> do POST tratado após hard reload. Esses resultados inconclusivos
+              não substituem nem contradizem a execução final 23/23.
+            </p>
+            <p>
+              Por segurança de PII, trace, screenshot e vídeo permaneceram <code>off</code>. A
+              auditoria final encontrou zero sentinela, token, cookie Auth, URL de banco, documento
+              cru ou referência privada do provider. Os 26 e-mails QA únicos tiveram 26 ocorrências,
+              exclusivamente no campo <code>title</code> dos steps <code>Fill</code> do JSON ZIP.
+              Banco, Mailpit, portas e processos terminaram em zero. SHA-256 do
+              <code>index.html</code>: <code>69c9490980cf…23c212a075</code>; SHA-256 de
+              <code>.last-run.json</code>: <code>91d1c4300480…13b2f561bc00903</code>.
+            </p>
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
@@ -1208,9 +1333,9 @@
           <div class="section-head">
             <h2>Segurança e local-first</h2>
             <p>
-              A etapa atual usa somente a máquina local e Supabase via Docker. A FEAT-003 amplia a
-              identidade mínima para o perfil próprio completo, mantendo dados documentais na DAL
-              privada e expondo somente máscaras ao navegador.
+              A etapa atual usa somente a máquina local e Supabase via Docker. A FEAT-003 completa o
+              perfil próprio; a FEAT-004 acrescenta autoridade de dono e recebedor versionado,
+              mantendo documentos e referências do provider na fronteira privada.
             </p>
           </div>
 
@@ -1223,9 +1348,11 @@
                 binding/tombstone da sessão de recovery. Grant, usuário e
                 <code>session_id</code> assinado ficam vinculados; o grant é one-shot por 15 minutos
                 e a tombstone sobrevive a grant/cookies. A décima segunda completa perfil e
-                preferências. A DAL expõe doze rotinas privadas em treze dependências ACL exatas; a
-                leitura do perfil usa RPC público <code>security invoker</code> com
-                <code>auth.uid()</code> + RLS, e readiness exige <code>jwt_exp=3600</code>.
+                preferências; a décima terceira cria contrato, autoridade, recebedor, operações e
+                auditoria mínima da FEAT-004. A DAL expõe dezesseis rotinas privadas em dezessete
+                dependências ACL exatas. As leituras de perfil e dono usam RPCs públicos
+                <code>security invoker</code> com <code>auth.uid()</code> + RLS, e readiness exige
+                <code>jwt_exp=3600</code>.
               </p>
             </article>
             <article class="card">
@@ -1276,7 +1403,7 @@
             <li>E2E privado e psql isolado</li>
             <li>grants explícitos; RLS entra por tabela</li>
             <li>erros públicos seguros</li>
-            <li>artefatos E2E só em falha</li>
+            <li>artefatos E2E só em falha quando PII permite; FEAT-004 usa off</li>
             <li>sem API externa</li>
           </ul>
         </section>
@@ -1355,10 +1482,10 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 198 cenários de produto. A FEAT-002 está
+              As 34 features estão especificadas com 200 cenários de produto. A FEAT-002 está
               concluída e incorporada a <code>main</code>; a FEAT-003 também está concluída e
-              incorporada, enquanto as demais continuam planejadas conforme a sequência executável
-              do ADR-017.
+              incorporada. A FEAT-004 está em implementação local; as demais continuam planejadas
+              conforme a sequência executável do ADR-017.
             </p>
           </div>
 
@@ -1386,7 +1513,9 @@
                     Conta e dono; estúdio versionado; conteúdo/mídia; usuários/taxonomias; revisão e
                     publicação pelo backoffice
                   </td>
-                  <td><span class="tag done">002 e 003 concluídas · 2/9</span></td>
+                  <td>
+                    <span class="tag done">002 e 003 concluídas; 004 em implementação · 2/9</span>
+                  </td>
                 </tr>
                 <tr>
                   <td>Fase 2 · Disponibilidade e descoberta</td>
@@ -1443,9 +1572,12 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Integrar o PR documental de fechamento da FEAT-003. Somente depois dessa
-                  consolidação iniciar a FEAT-004 em branch e PR próprios, sem antecipar seu schema,
-                  tela ou provider.
+                  Concluir a revisão da FEAT-004; a matriz específica 23/23, a integral limpa
+                  114/114, os builds, o smoke padrão e o boundary guest standalone já estão verdes.
+                  O run contaminado anterior permanece somente como diagnóstico histórico. O
+                  contrato, a autoridade, o recebedor local determinístico, a elegibilidade e as
+                  rotas já estão implementados; gateway externo, checkout, fallback administrativo e
+                  dados bancários permanecem fora desta fatia.
                 </li>
               </ol>
             </article>

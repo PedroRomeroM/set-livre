@@ -3,6 +3,89 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      owner_payment_recipients: {
+        Row: {
+          created_at: string;
+          owner_user_id: string;
+          profile_version_synced: number | null;
+          recipient_version: number;
+          requirements: string[];
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          owner_user_id: string;
+          profile_version_synced?: number | null;
+          recipient_version?: number;
+          requirements?: string[];
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          owner_user_id?: string;
+          profile_version_synced?: number | null;
+          recipient_version?: number;
+          requirements?: string[];
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "owner_payment_recipients_owner_user_id_fkey";
+            columns: ["owner_user_id"];
+            isOneToOne: true;
+            referencedRelation: "owner_profiles";
+            referencedColumns: ["user_id"];
+          },
+        ];
+      };
+      owner_profiles: {
+        Row: {
+          accepted_owner_contract_version_id: string;
+          activated_at: string;
+          created_at: string;
+          owner_version: number;
+          status: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          accepted_owner_contract_version_id: string;
+          activated_at?: string;
+          created_at?: string;
+          owner_version?: number;
+          status?: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          accepted_owner_contract_version_id?: string;
+          activated_at?: string;
+          created_at?: string;
+          owner_version?: number;
+          status?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "owner_profiles_accepted_owner_contract_version_id_fkey";
+            columns: ["accepted_owner_contract_version_id"];
+            isOneToOne: false;
+            referencedRelation: "terms_versions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "owner_profiles_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           additional_document: string | null;
@@ -185,6 +268,19 @@ export type Database = {
           version: string;
         }[];
       };
+      get_current_owner_contract: {
+        Args: never;
+        Returns: {
+          body_markdown: string;
+          content_hash: string;
+          effective_at: string;
+          id: string;
+          kind: string;
+          source: string;
+          title: string;
+          version: string;
+        }[];
+      };
       get_my_profile: {
         Args: never;
         Returns: {
@@ -208,6 +304,32 @@ export type Database = {
           person_type: string;
           status: string;
           user_id: string;
+        }[];
+      };
+      get_owner_recipient_status: {
+        Args: never;
+        Returns: {
+          accepted_owner_contract_version_id: string;
+          next_action: string;
+          owner_contract_accepted: boolean;
+          owner_contract_body_markdown: string;
+          owner_contract_content_hash: string;
+          owner_contract_effective_at: string;
+          owner_contract_id: string;
+          owner_contract_kind: string;
+          owner_contract_source: string;
+          owner_contract_title: string;
+          owner_contract_version: string;
+          owner_status: string;
+          owner_version: number;
+          profile_version: number;
+          profile_version_synced: number;
+          provider_mode: string;
+          recipient_status: string;
+          recipient_version: number;
+          requirements: string[];
+          reservations_eligible: boolean;
+          scope: string;
         }[];
       };
     };

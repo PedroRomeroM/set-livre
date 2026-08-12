@@ -178,6 +178,11 @@ describe("profile command route", () => {
   });
 
   it("passes only the server session after matching the SSR scope assertion", async () => {
+    const events: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      events.push(String(chunk));
+      return true;
+    });
     const { POST } = await import("../../src/app/api/commands/route");
     const response = await POST(
       commandRequest({
@@ -191,6 +196,9 @@ describe("profile command route", () => {
       appearancePayload,
       expect.objectContaining({ userId }),
     );
+    expect(events.join("")).toContain('"event":"private.command"');
+    expect(events.join("")).toContain('"action":"profile.update"');
+    expect(events.join("")).not.toContain('"event":"owner.request"');
   });
 
   it.each([

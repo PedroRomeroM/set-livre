@@ -166,6 +166,8 @@ const allowedAuthenticatedReturnTos = new Set<string>([
   defaultAuthenticatedReturnTo,
   "/conta",
   "/conta/seguranca",
+  "/dono",
+  "/dono/recebimentos",
 ]);
 
 export function resolveAuthenticatedReturnTo(candidate: unknown) {

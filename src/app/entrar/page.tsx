@@ -2,6 +2,7 @@ import { AuthFrame } from "@set-livre/ui";
 import type { Metadata } from "next";
 
 import { LoginPanel } from "@/domains/identity/components/login-panel";
+import { resolveAccountLoginReturnTarget } from "@/domains/identity/components/login-session-transition";
 import { readComponentIdentitySession } from "@/domains/identity/server/identity-read-model";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +23,7 @@ export default async function LoginPage({
 }) {
   const query = await searchParams;
   const initialSession = await readComponentIdentitySession();
-  const returnTo =
-    query.retorno === "/conta" || query.retorno === "/conta/seguranca" ? query.retorno : undefined;
+  const returnTo = resolveAccountLoginReturnTarget(query.retorno);
 
   return (
     <AuthFrame

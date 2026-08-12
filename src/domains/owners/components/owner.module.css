@@ -1,0 +1,323 @@
+.ownerShell,
+.ownerHeader,
+.section,
+.sectionHeader,
+.checklist,
+.statusDetails,
+.contractDocument {
+  display: grid;
+  min-width: 0;
+}
+
+.form,
+.legalChoice {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-4);
+}
+
+.ownerShell {
+  gap: var(--sl-space-6);
+}
+
+.ownerHeader,
+.sectionHeader {
+  gap: var(--sl-space-3);
+}
+
+.eyebrow,
+.pageTitle,
+.pageDescription,
+.sectionTitle,
+.sectionDescription,
+.statusTitle,
+.statusDescription,
+.checklistTitle,
+.checklistDescription,
+.contractMeta {
+  margin: 0;
+}
+
+.eyebrow {
+  color: var(--sl-color-brand-strong);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pageTitle {
+  max-width: 20ch;
+  color: var(--sl-color-ink-strong);
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+}
+
+.pageDescription {
+  max-width: 62ch;
+  color: var(--sl-color-ink);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.ownerLayout {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.3fr) minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--sl-space-5);
+  align-items: start;
+}
+
+.ownerNav {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-2);
+}
+
+.ownerNavLink,
+.textLink {
+  display: inline-flex;
+  min-width: 0;
+  min-height: var(--sl-control-height);
+  align-items: center;
+  color: var(--sl-color-brand-strong);
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.2em;
+}
+
+.ownerNavLink {
+  width: 100%;
+  padding: var(--sl-space-3) var(--sl-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--sl-radius-sm);
+  text-decoration: none;
+}
+
+.ownerNavLink:hover,
+.ownerNavLink:focus-visible {
+  background: var(--sl-color-surface-soft);
+}
+
+.ownerNavLink[aria-current="page"] {
+  border-color: var(--sl-color-control-border);
+  background: var(--sl-color-brand-soft);
+  color: var(--sl-color-ink-strong);
+}
+
+.ownerContent {
+  width: 100%;
+}
+
+.section {
+  gap: var(--sl-space-5);
+}
+
+.section + .section {
+  padding-top: var(--sl-space-6);
+  border-top: 1px solid var(--sl-color-line);
+}
+
+.sectionTitle {
+  color: var(--sl-color-ink-strong);
+  font-size: clamp(1.25rem, 4vw, 1.6rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sectionDescription,
+.statusDescription,
+.checklistDescription,
+.contractMeta {
+  color: var(--sl-color-ink-muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.checklist {
+  gap: var(--sl-space-3);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.checklistItem {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr);
+  gap: var(--sl-space-3);
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface-soft);
+}
+
+.checklistStatus {
+  align-self: start;
+  color: var(--sl-color-ink-strong);
+  font-size: 0.875rem;
+  font-weight: 800;
+}
+
+.checklistCopy {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-1);
+}
+
+.checklistTitle,
+.statusTitle {
+  color: var(--sl-color-ink-strong);
+  font-weight: 800;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.statusDetails {
+  gap: var(--sl-space-3);
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface-soft);
+}
+
+.requirements {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-2);
+  padding-inline-start: var(--sl-space-5);
+  margin: 0;
+}
+
+.requirements li {
+  overflow-wrap: anywhere;
+}
+
+.contractDocument {
+  gap: var(--sl-space-4);
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+}
+
+.contractBody {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-3);
+  color: var(--sl-color-ink);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.contractBody :is(h2, h3, h4, h5, h6, p, ul, ol) {
+  margin: 0;
+}
+
+.contractBody :is(ul, ol) {
+  display: grid;
+  gap: var(--sl-space-2);
+  padding-inline-start: var(--sl-space-5);
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--sl-space-3);
+  align-items: center;
+}
+
+.feedbackFocus {
+  min-width: 0;
+  border-radius: var(--sl-radius-sm);
+}
+
+.feedbackFocus:focus {
+  outline: 0.2rem solid var(--sl-color-focus);
+  outline-offset: 0.2rem;
+}
+
+.actions > button,
+.actions > a {
+  flex: 1 1 13rem;
+}
+
+.routeState {
+  width: min(100%, var(--sl-content-narrow));
+}
+
+@media (max-width: 48rem) {
+  .ownerLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ownerNav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 24rem) {
+  .ownerShell {
+    gap: var(--sl-space-5);
+  }
+
+  .ownerNav,
+  .checklistItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions > button,
+  .actions > a {
+    width: 100%;
+    flex: 0 1 auto;
+  }
+}
+
+@media (max-width: 12rem) {
+  .ownerShell,
+  .ownerLayout,
+  .section,
+  .checklist,
+  .statusDetails,
+  .contractDocument {
+    gap: var(--sl-space-3);
+  }
+
+  .form,
+  .legalChoice {
+    gap: var(--sl-space-3);
+  }
+
+  .section + .section {
+    padding-top: var(--sl-space-4);
+  }
+
+  .ownerNavLink,
+  .checklistItem,
+  .statusDetails,
+  .contractDocument {
+    padding: var(--sl-space-3);
+  }
+
+  .pageTitle {
+    font-size: 1.75rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .ownerNavLink[aria-current="page"],
+  .checklistItem,
+  .statusDetails,
+  .contractDocument {
+    border-color: CanvasText;
+  }
+}

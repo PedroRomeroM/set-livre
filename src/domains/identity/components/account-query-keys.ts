@@ -1,6 +1,8 @@
 import type { IdentitySession, MyProfileResult } from "@set-livre/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
+import { ownerQueryKeys } from "@/domains/owners/components/owner-query-keys";
+
 import {
   identityQueryKeys,
   identitySessionQueryScope,
@@ -101,6 +103,7 @@ export function clearIdentityAndAccountQueryCache(queryClient: QueryClient) {
   queryClient.getMutationCache().clear();
   queryClient.removeQueries({ queryKey: accountQueryKeys.profiles });
   queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
+  queryClient.removeQueries({ queryKey: ownerQueryKeys.recipientStatuses });
 }
 
 export function seedAuthoritativeAccountProfile(
@@ -165,6 +168,9 @@ export function publishNewestAccountProfileMutationResult(
     } satisfies Extract<IdentitySession, { authenticated: true }>;
   }
   publishAuthoritativeAccountProfile(queryClient, expectedUserId, candidate, synchronizedSession);
+  void queryClient.invalidateQueries({
+    queryKey: ownerQueryKeys.recipientStatus(expectedUserId),
+  });
   return true;
 }
 

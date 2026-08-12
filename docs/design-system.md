@@ -154,6 +154,14 @@ O estado de formulário e de rota permanece no consumidor. Não usar `Alert` no 
 
 Documentos continuam em inputs nativos não controlados e são limpos após qualquer desfecho remoto. Máscaras de CPF/CNPJ/telefone são somente apresentação; validação e normalização pertencem ao contrato tipado.
 
+### 3.3 Composição da FEAT-004
+
+A área do dono reutiliza `PageFrame`, `Panel`, `Stack`, `Alert`, `Button` e `Checkbox`; não cria primitive ou sistema visual paralelo. `/dono` e `/dono/recebimentos` compartilham uma navegação semântica com `aria-current`, checklist factual e uma única superfície de conteúdo. A composição passa a uma coluna em mobile e no layout viewport de 160 CSS px, preserva alvos de 44 px e não usa cor como única indicação de estado.
+
+O contrato do dono reutiliza o renderer jurídico promovido ao domínio compartilhado `legal`: mantém um único `h1` da rota, restringe o corpo a `h2`–`h6`, parágrafos, listas, ênfase e links seguros e identifica `local_fixture` com `Alert` textual explícito. Checkbox de aceite nunca começa selecionado; erro de campo recebe foco e associação por `aria-describedby`/`aria-invalid`.
+
+Status de ativação e recebedor são texto factual, não badge ornamental nem simulação de gateway. Loading inicial, refetch e troca de escopo substituem toda a superfície privada por um boundary neutro; erro ambíguo conserva o último snapshot e oferece `Verificar estado atual`, sem reenviar o comando. Essa verificação fecha novamente a superfície enquanto o GET está ativo e, ao terminar, transfere foco programático ao heading do checklist no sucesso ou ao alerta seguro na falha. `Tentar novamente` reutiliza o mesmo intent e restaura o heading somente após o retry bem-sucedido. Sucesso de comando continua usando `Alert` focável, e estados bloqueado, suspenso, recusado ou com contrato/perfil divergente exibem somente a ação autorizada pelo read model.
+
 ## 4. Contratos
 
 ### 4.1 Botões

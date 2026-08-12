@@ -58,10 +58,14 @@ Onboarding precisa de dados exigidos pelo contrato. A plataforma não cria “ve
 - suspenso;
 - bloqueado.
 
+Enquanto o ADR-018 estiver vigente, “provider” nesta fatia significa somente uma interface server-only com adapter local determinístico, sem SDK, HTTP, credencial ou sandbox remoto. O fluxo nominal local faz `start -> pending` e `refresh -> active`; os estados restantes são exercitados por mapper e fixtures de teste, nunca por e-mail/UUID mágico.
+
+A projeção segura conserva `profile_version_synced`. A elegibilidade de reserva é verdadeira somente quando o dono está `active`, aceitou o `owner_contract` vigente, o recebedor está `active` e essa versão coincide com a versão canônica atual de `profiles`; qualquer ausência, refetch ou divergência falha fechada. Nova versão contratual preserva o histórico e exige novo aceite. O checkout real da FEAT-020 revalida o fato no banco antes de cobrar.
+
 Estúdio pode ser publicado sem recipient ativo? Baseline:
 
 - conteúdo pode ser aprovado;
-- `reservations_enabled=false` até recipient ativo ou fallback financeiro explicitamente liberado por admin;
+- `reservations_enabled=false` até recipient ativo e sincronizado; fallback financeiro pertence à FEAT-032 e não existe nesta fatia;
 - listagem pode exibir estúdio, mas CTA de reserva informa indisponibilidade operacional apenas se produto aprovar. Default seguro: não listar como disponível.
 
 ## 5. Valores

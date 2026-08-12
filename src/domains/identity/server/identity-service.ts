@@ -12,11 +12,12 @@ import {
   type IdentityRegistrationPayload,
   type IdentitySession,
 } from "@set-livre/contracts";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { z } from "zod";
 
 import { ApiRouteError, hashPrivateRateLimitValue } from "@/lib/server/api-route";
+import { hashOptionalPrivateEvidence } from "@/lib/server/private-evidence";
 import { enforceIdentityRateLimit } from "@/lib/server/rate-limit";
 import { readSupabaseEnvironment } from "@/lib/supabase/config";
 import { createAnonymousSupabaseClient, createRouteSupabaseClient } from "@/lib/supabase/server";
@@ -64,10 +65,6 @@ import {
 
 const databaseErrorSchema = z.object({ code: z.string().optional() });
 const loginProfilePreferenceDeadlineMs = 1_000;
-
-function userAgentEvidence(userAgent: string | null) {
-  return userAgent === null ? null : createHash("sha256").update(userAgent).digest("hex");
-}
 
 function isProvenCallbackRejection(error: unknown, type: "recovery" | "signup") {
   return (
@@ -216,7 +213,7 @@ export async function registerIdentity(
   let legalIntent: string;
   try {
     legalIntent = await createSignupLegalIntent({
-      evidence: { ipHash: null, userAgentHash: userAgentEvidence(context.userAgent) },
+      evidence: { ipHash: null, userAgentHash: hashOptionalPrivateEvidence(context.userAgent) },
       personType: payload.personType,
       privacyVersionId: payload.privacyVersionId,
       requestId: context.requestId,

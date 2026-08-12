@@ -15,6 +15,8 @@ O repositório materializa essa sequência por migrations timestampadas e append
 
 A FEAT-003 adiciona somente `20260811000500_profile_account.sql`: expande `profiles`, cria `user_preferences`, validadores documentais, máscaras, versões otimistas, o read model público invoker e três comandos privados. A allowlist DAL passa a doze rotinas/treze dependências; o helper de retorno dos comandos não recebe grant. Nenhuma migration aplicada anterior é alterada. Como a cadeia ainda não foi aplicada em ambiente remoto, o primeiro deploy executa todas as migrations antes de expor o app; links de recovery anteriores à binding exigem nova solicitação.
 
+A FEAT-004 acrescenta `20260812000100_owner_onboarding_recipient.sql` como a décima terceira migration append-only. Ela materializa `owner_contract`, autoridade de dono, projeção segura do recebedor, referências/operações privadas e auditoria mínima; preserva `get_current_legal_terms()` em exatamente `terms | privacy`, cria leitura autenticada específica do contrato do dono e amplia o manifesto DAL/readiness somente para dezesseis rotinas e dezessete dependências ACL. O adapter local é chamado fora da transação entre uma preparação idempotente e uma aplicação condicional cercada por sequência; nenhuma migration anterior foi editada. Reset e geração passaram no head novo, e as quatro suítes pgTAP passaram em 355/355 asserts (`158 + 78 + 57 + 62`).
+
 1. `0001_extensions_and_schemas`
 2. `0002_roles_and_security_baseline`
 3. `0003_profiles_owner_roles_terms`

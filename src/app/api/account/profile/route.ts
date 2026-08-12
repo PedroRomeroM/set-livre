@@ -38,6 +38,7 @@ export async function GET(request: Request) {
     writeSafeOperationalEvent({
       action: "profile.read",
       durationMs: performance.now() - startedAt,
+      event: "identity.request",
       outcome,
       requestId,
       status,

@@ -4,12 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { LegalMarkdown } from "../../src/domains/identity/components/legal-markdown";
+import { LegalMarkdown } from "../../src/domains/legal/components/legal-markdown";
 import {
   parseLegalMarkdown,
   parseLegalMarkdownInline,
   safeLegalMarkdownHref,
-} from "../../src/domains/identity/components/legal-markdown-parser";
+} from "../../src/domains/legal/components/legal-markdown-parser";
 
 describe("legal Markdown", () => {
   it("preserves the supported block semantics and omits the duplicated document title", () => {
@@ -140,7 +140,7 @@ describe("legal Markdown", () => {
     expect(html).not.toContain("<script>");
 
     const rendererSource = readFileSync(
-      new URL("../../src/domains/identity/components/legal-markdown.ts", import.meta.url),
+      new URL("../../src/domains/legal/components/legal-markdown.ts", import.meta.url),
       "utf8",
     );
     expect(rendererSource).not.toContain("dangerouslySetInnerHTML");

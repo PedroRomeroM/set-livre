@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `privacy` |
+| Campo            | Valor                                                                                                                          |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                      |
+| Prioridade       | P0                                                                                                                             |
+| Domínio          | `privacy`                                                                                                                      |
 | Specs Playwright | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`<br>`tests/e2e/regression/feat-034-lgpd-legal-data-rights.spec.ts` |
 
 ## Objetivo
@@ -30,6 +30,7 @@ Cumprir consentimento e direitos de dados com processo interno que preserve obri
 
 - FEAT-002
 - FEAT-003
+- FEAT-004
 - FEAT-032
 
 ## Incluído
@@ -55,6 +56,7 @@ Cumprir consentimento e direitos de dados com processo interno que preserve obri
 - A exportação é privada e expira em 7 dias.
 - A exclusão verifica reservas futuras e pagamentos.
 - Fatos históricos são retidos no mínimo necessário.
+- Exportação, anonimização, retenção e exclusão abrangem também autoridade de dono, aceite `owner_contract` e referências privadas do recebedor criadas pela FEAT-004.
 - Backups expiram conforme a política.
 - Uma conta anonimizada não pode entrar.
 
@@ -104,14 +106,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F034-E2E-001 | P0 | critical | desktop | cadastro registra as versões legais exatas | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts` |
-| SL-F034-E2E-002 | P0 | critical | desktop | solicitação de exportação gera pacote privado e expirável | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts` |
-| SL-F034-E2E-003 | P0 | critical | desktop | usuário B não baixa a exportação de A | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts` |
-| SL-F034-E2E-004 | P0 | critical | desktop | exclusão com reserva futura é bloqueada e apresenta ação possível | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts` |
-| SL-F034-E2E-005 | P0 | critical | desktop | exclusão elegível anonimiza e revoga acesso preservando histórico financeiro | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts` |
-| SL-F034-E2E-006 | P1 | regression | mobile | páginas legais, consentimento e confirmação são acessíveis | `tests/e2e/regression/feat-034-lgpd-legal-data-rights.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                                      | Spec                                                           |
+| --------------- | ---------- | ---------- | -------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| SL-F034-E2E-001 | P0         | critical   | desktop  | cadastro registra as versões legais exatas                                   | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`   |
+| SL-F034-E2E-002 | P0         | critical   | desktop  | solicitação de exportação gera pacote privado e expirável                    | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`   |
+| SL-F034-E2E-003 | P0         | critical   | desktop  | usuário B não baixa a exportação de A                                        | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`   |
+| SL-F034-E2E-004 | P0         | critical   | desktop  | exclusão com reserva futura é bloqueada e apresenta ação possível            | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`   |
+| SL-F034-E2E-005 | P0         | critical   | desktop  | exclusão elegível anonimiza e revoga acesso preservando histórico financeiro | `tests/e2e/critical/feat-034-lgpd-legal-data-rights.spec.ts`   |
+| SL-F034-E2E-006 | P1         | regression | mobile   | páginas legais, consentimento e confirmação são acessíveis                   | `tests/e2e/regression/feat-034-lgpd-legal-data-rights.spec.ts` |
 
 Regras:
 

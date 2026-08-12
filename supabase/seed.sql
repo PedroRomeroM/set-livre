@@ -27,5 +27,14 @@ values
     E'# Privacidade — fixture local\n\nConteúdo exclusivo para desenvolvimento e testes locais. Não constitui política de privacidade aprovada para produção.',
     'local_fixture',
     '2026-08-01 00:00:00+00'
+  ),
+  (
+    '00000000-0000-4000-8000-000000000204',
+    'owner_contract',
+    'local-2026-08-12',
+    'Contrato do dono — fixture local',
+    E'# Contrato do dono — fixture local\n\nConteúdo exclusivo para desenvolvimento e testes locais. Não constitui contrato jurídico aprovado para produção.',
+    'local_fixture',
+    '2026-08-12 00:00:00+00'
   )
 on conflict do nothing;

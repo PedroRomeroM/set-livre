@@ -9,6 +9,7 @@ import {
   completeFeat003Profile,
   createFeat003ProfileSecrets,
   createFeat003QaIdentity,
+  fillFeat003PhoneWithoutReportValue,
   formatFeat003PhoneForDisplay,
   maskedFeat003AdditionalDocument,
   registerAndConfirmFeat003Identity,
@@ -80,7 +81,7 @@ test("SL-F003-E2E-003 @p1 valida telefone, CPF e CNPJ localmente no mobile de 32
     await individualChoice.check();
     await page.getByRole("textbox", { name: "Nome completo" }).fill("Pessoa QA Inválida");
     const phoneControl = page.getByRole("textbox", { name: "Telefone" });
-    await phoneControl.fill(invalidForeignPrefix);
+    await fillFeat003PhoneWithoutReportValue(phoneControl, invalidForeignPrefix);
     await expect(phoneControl).toHaveValue(formatFeat003PhoneForDisplay(invalidForeignPrefix));
     await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), validCpf);
     await expect(individualChoice).toBeChecked();
@@ -89,7 +90,7 @@ test("SL-F003-E2E-003 @p1 valida telefone, CPF e CNPJ localmente no mobile de 32
       page.getByText("Informe um telefone brasileiro válido.", { exact: true }),
     ).toBeVisible();
 
-    await phoneControl.fill(invalidFormattedExcess);
+    await fillFeat003PhoneWithoutReportValue(phoneControl, invalidFormattedExcess);
     await expect(phoneControl).toHaveValue(formatFeat003PhoneForDisplay(invalidFormattedExcess));
     await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), validCpf);
     await expect(individualChoice).toBeChecked();
@@ -98,7 +99,7 @@ test("SL-F003-E2E-003 @p1 valida telefone, CPF e CNPJ localmente no mobile de 32
       page.getByText("Informe um telefone brasileiro válido.", { exact: true }),
     ).toBeVisible();
 
-    await phoneControl.fill("(41) 99999-1003");
+    await fillFeat003PhoneWithoutReportValue(phoneControl, "(41) 99999-1003");
     await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), invalidCpf);
     await expect(individualChoice).toBeChecked();
     await page.getByRole("button", { name: "Concluir perfil" }).click();
@@ -282,7 +283,10 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
 
     await page.getByRole("textbox", { name: "Nome completo" }).fill(offlineName);
-    await page.getByRole("textbox", { name: "Telefone" }).fill(offlinePhone);
+    await fillFeat003PhoneWithoutReportValue(
+      page.getByRole("textbox", { name: "Telefone" }),
+      offlinePhone,
+    );
     await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("replace");
     const replacementTaxId = page.getByRole("textbox", { name: "Novo CPF" });
     await stageFeat003SensitiveValue(replacementTaxId, offlineSecrets.taxId);
@@ -348,7 +352,10 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("keep");
     await page.getByRole("combobox", { name: "Alterar documento adicional" }).selectOption("keep");
     await page.getByRole("textbox", { name: "Nome completo" }).fill(recoveredName);
-    await page.getByRole("textbox", { name: "Telefone" }).fill(recoveredPhone);
+    await fillFeat003PhoneWithoutReportValue(
+      page.getByRole("textbox", { name: "Telefone" }),
+      recoveredPhone,
+    );
     const recoveryResponsePromise = page.waitForResponse((response) => {
       const address = new URL(response.url());
       return address.pathname === "/api/commands" && response.request().method() === "POST";

@@ -176,7 +176,7 @@ Ao clicar:
 
 - `/conta`: Server Component valida a sessão, lê o perfil próprio e entrega um boundary fechado; anônimo retorna a `/entrar?retorno=%2Fconta`;
 - `/conta/seguranca`: exibe o e-mail Auth somente leitura e oferece apenas os fluxos reais de recuperação de senha e logout; anônimo preserva o retorno allowlisted;
-- `/entrar`: `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta` ou `/conta/seguranca`; o servidor Auth continua sendo a decisão final;
+- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono` ou `/dono/recebimentos`; depois da validação ela vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
 - perfil incompleto: PF/PJ, nome, telefone, CPF/CNPJ e documento adicional opcional em uma coluna no mobile e grade no desktop;
 - perfil completo: tipo PF/PJ somente leitura, documentos já salvos apenas mascarados e ações explícitas `manter | substituir | remover` quando aplicáveis;
 - preferência: seletor nativo `Dispositivo | Claro | Escuro`, persistência autoritativa e aplicação sem paleta customizável;
@@ -238,6 +238,15 @@ Detalhe:
 - política usada.
 
 ## 10. Área do dono
+
+Bootstrap da FEAT-004:
+
+- `/dono` apresenta checklist factual, perfil canônico e contrato vigente; perfil incompleto aponta para `/conta`, contrato local é identificado como fixture e o checkbox nunca inicia marcado;
+- `/dono/recebimentos` apresenta somente estado interno, requisitos e próxima ação allowlisted, versões e elegibilidade derivada; nunca exibe provider ID, payload, KYC ou dados bancários;
+- desktop pode compor checklist e conteúdo lado a lado; mobile, 320 px e reflow 160x360 usam uma coluna sem sidebar comprimida nem CTA sticky que cubra o contrato;
+- loading/refetch/pausa/troca de sessão fecham status, elegibilidade e ações privados. Timeout ou resultado ambíguo oferece `Verificar estado atual`, sem afirmar falha nem reenviar cegamente; durante esse GET, a superfície privada fecha sob boundary neutro e, ao terminar, o foco programático vai ao heading do checklist no sucesso ou ao alerta seguro na falha. Nesse alerta, `Tentar novamente` repete o boundary e devolve foco ao heading somente após novo GET bem-sucedido;
+- `pending`, `active`, `refused`, `suspended` e `blocked` são apresentados por texto, não somente cor. Mudança assíncrona usa `role=status`, erro usa `role=alert` e foco retorna ao heading/alerta pertinente;
+- não há link para estúdios, checkout, financeiro, suporte inventado, fallback administrativo nem formulário bancário enquanto essas superfícies não existirem.
 
 Dashboard:
 

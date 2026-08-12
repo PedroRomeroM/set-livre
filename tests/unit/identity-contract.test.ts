@@ -94,7 +94,7 @@ describe("identity contracts", () => {
     expect(resolveAuthenticatedReturnTo(candidate)).toBe("/entrar?sessao=ativa");
   });
 
-  it.each(["/entrar?sessao=ativa", "/conta", "/conta/seguranca"])(
+  it.each(["/entrar?sessao=ativa", "/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"])(
     "preserves the exact authenticated surface: %s",
     (destination) => {
       expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);

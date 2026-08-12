@@ -43,6 +43,418 @@ COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
 
+CREATE OR REPLACE FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  accepted_at timestamptz := pg_catalog.clock_timestamp();
+  contract public.terms_versions%rowtype;
+  existing_request private.owner_activation_requests%rowtype;
+  owner public.owner_profiles%rowtype;
+  profile public.profiles%rowtype;
+  transition_action text;
+begin
+  if p_user_id is null
+    or p_owner_contract_version_id is null
+    or p_idempotency_key is null
+    or (
+      p_user_agent_hash is not null
+      and p_user_agent_hash !~ '^[0-9a-f]{64}$'
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_owner_activation';
+  end if;
+
+  select candidate.*
+  into profile
+  from public.profiles as candidate
+  where candidate.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_profile_missing';
+  end if;
+
+  select request.*
+  into existing_request
+  from private.owner_activation_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key
+  for update;
+
+  if found then
+    if existing_request.owner_contract_version_id
+      is distinct from p_owner_contract_version_id
+    then
+      raise exception using errcode = '40001', message = 'owner_idempotency_conflict';
+    end if;
+
+    return query
+    select * from private.owner_recipient_status_row(p_user_id);
+    return;
+  end if;
+
+  if profile.status <> 'active' or profile.completed_at is null then
+    raise exception using errcode = '42501', message = 'owner_profile_inactive';
+  end if;
+
+  select legal_version.*
+  into contract
+  from public.terms_versions as legal_version
+  where legal_version.id = p_owner_contract_version_id
+    and legal_version.kind = 'owner_contract'
+    and legal_version.effective_at <= accepted_at
+    and (
+      legal_version.retired_at is null
+      or accepted_at < legal_version.retired_at
+    )
+  for share;
+
+  if not found then
+    raise exception using errcode = '23514', message = 'owner_contract_stale';
+  end if;
+
+  if exists (
+    select 1
+    from public.terms_acceptances as acceptance
+    where acceptance.request_id = p_idempotency_key
+      and (
+        acceptance.user_id <> p_user_id
+        or acceptance.terms_version_id <> p_owner_contract_version_id
+      )
+  ) then
+    raise exception using errcode = '40001', message = 'owner_idempotency_conflict';
+  end if;
+
+  select current_owner.*
+  into owner
+  from public.owner_profiles as current_owner
+  where current_owner.user_id = p_user_id
+  for update;
+
+  if not found then
+    insert into public.owner_profiles (
+      user_id,
+      status,
+      accepted_owner_contract_version_id,
+      owner_version
+    )
+    values (
+      p_user_id,
+      'active',
+      p_owner_contract_version_id,
+      1
+    )
+    returning * into owner;
+    transition_action := 'owner.activated';
+  elsif owner.status = 'blocked' then
+    raise exception using errcode = '42501', message = 'owner_blocked';
+  elsif owner.accepted_owner_contract_version_id
+    is distinct from p_owner_contract_version_id
+  then
+    update public.owner_profiles as current_owner
+    set accepted_owner_contract_version_id = p_owner_contract_version_id
+    where current_owner.user_id = p_user_id
+    returning * into owner;
+    transition_action := 'owner.contract_renewed';
+  end if;
+
+  insert into public.terms_acceptances (
+    user_id,
+    terms_version_id,
+    accepted_content_hash,
+    accepted_at,
+    request_id,
+    ip_hash,
+    user_agent_hash
+  )
+  values (
+    p_user_id,
+    contract.id,
+    contract.content_hash,
+    accepted_at,
+    p_idempotency_key,
+    null,
+    p_user_agent_hash
+  )
+  on conflict (user_id, terms_version_id) do nothing;
+
+  if not exists (
+    select 1
+    from public.terms_acceptances as acceptance
+    where acceptance.user_id = p_user_id
+      and acceptance.terms_version_id = contract.id
+      and acceptance.accepted_content_hash = contract.content_hash
+  ) then
+    raise exception using errcode = '23514', message = 'owner_acceptance_invalid';
+  end if;
+
+  insert into public.owner_payment_recipients (owner_user_id)
+  values (p_user_id)
+  on conflict (owner_user_id) do nothing;
+
+  insert into private.owner_activation_requests (
+    owner_user_id,
+    idempotency_key,
+    owner_contract_version_id,
+    resulting_owner_version
+  )
+  values (
+    p_user_id,
+    p_idempotency_key,
+    p_owner_contract_version_id,
+    owner.owner_version
+  );
+
+  if transition_action is not null then
+    insert into audit.events (
+      actor_user_id,
+      actor_role,
+      action,
+      target_type,
+      target_id,
+      result,
+      request_id,
+      ip_hash,
+      metadata
+    )
+    values (
+      p_user_id,
+      'authenticated',
+      transition_action,
+      'owner_profile',
+      p_user_id,
+      'succeeded',
+      p_idempotency_key,
+      null,
+      pg_catalog.jsonb_build_object(
+        'ownerVersion', owner.owner_version,
+        'contractVersionId', contract.id
+      )
+    );
+  end if;
+
+  return query
+  select * from private.owner_recipient_status_row(p_user_id);
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  v_applied_at timestamptz := pg_catalog.clock_timestamp();
+  current_operation private.owner_recipient_operations%rowtype;
+  current_profile public.profiles%rowtype;
+  current_owner public.owner_profiles%rowtype;
+  current_recipient public.owner_payment_recipients%rowtype;
+  previous_status text;
+  latest_sequence bigint;
+begin
+  if p_user_id is null
+    or p_operation_id is null
+    or p_provider is distinct from 'local'
+    or p_provider_reference is null
+    or pg_catalog.char_length(p_provider_reference) not between 1 and 200
+    or p_provider_reference ~ '[[:cntrl:]]'
+    or not (
+      p_provider_reference ~ '^local-recipient:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      or p_provider_reference in (
+        'local-test-fixture:refused',
+        'local-test-fixture:suspended',
+        'local-test-fixture:blocked',
+        'local-test-fixture:unavailable',
+        'local-test-fixture:timeout'
+      )
+    )
+    or p_status is null
+    or p_status not in ('pending', 'active', 'refused', 'suspended', 'blocked')
+    or p_requirements is null
+    or pg_catalog.cardinality(p_requirements) > 3
+    or pg_catalog.array_position(p_requirements, null) is not null
+    or not (
+      p_requirements <@ array[
+        'identity_review', 'additional_information', 'provider_contact'
+      ]::text[]
+    )
+    or (
+      pg_catalog.cardinality(p_requirements) >= 2
+      and p_requirements[1] = p_requirements[2]
+    )
+    or (
+      pg_catalog.cardinality(p_requirements) >= 3
+      and (
+        p_requirements[1] = p_requirements[3]
+        or p_requirements[2] = p_requirements[3]
+      )
+    )
+    or (p_status = 'active' and p_requirements <> '{}'::text[])
+  then
+    raise exception using errcode = '22023', message = 'invalid_recipient_result';
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_profile_missing';
+  end if;
+
+  select owner.*
+  into current_owner
+  from public.owner_profiles as owner
+  where owner.user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_authority_missing';
+  end if;
+
+  select recipient.*
+  into current_recipient
+  from public.owner_payment_recipients as recipient
+  where recipient.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'recipient_state_missing';
+  end if;
+
+  select operation.*
+  into current_operation
+  from private.owner_recipient_operations as operation
+  where operation.id = p_operation_id
+    and operation.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'recipient_operation_missing';
+  end if;
+
+  if current_operation.applied_at is not null then
+    if current_operation.provider is distinct from p_provider
+      or current_operation.provider_reference is distinct from p_provider_reference
+      or current_operation.result_status is distinct from p_status
+      or current_operation.result_requirements is distinct from p_requirements
+    then
+      raise exception using errcode = '40001', message = 'recipient_apply_conflict';
+    end if;
+
+    return query
+    select * from private.owner_recipient_status_row(p_user_id);
+    return;
+  end if;
+
+  if current_profile.status <> 'active' or current_profile.completed_at is null then
+    raise exception using errcode = '42501', message = 'owner_profile_inactive';
+  end if;
+
+  if current_owner.status <> 'active' then
+    raise exception using errcode = '42501', message = 'owner_blocked';
+  end if;
+
+  select pg_catalog.max(operation.operation_sequence)
+  into latest_sequence
+  from private.owner_recipient_operations as operation
+  where operation.owner_user_id = p_user_id;
+
+  if current_operation.operation_sequence <> latest_sequence then
+    raise exception using errcode = '40001', message = 'recipient_operation_superseded';
+  end if;
+
+  if current_operation.profile_version <> current_profile.profile_version then
+    raise exception using errcode = '40001', message = 'recipient_profile_version_changed';
+  end if;
+
+  if (
+      current_operation.action = 'start'
+      and p_provider_reference <> ('local-recipient:' || current_operation.id::text)
+    )
+    or (
+      current_operation.action = 'refresh'
+      and p_provider_reference is distinct from current_operation.provider_reference
+    )
+  then
+    raise exception using errcode = '23514', message = 'recipient_provider_reference_changed';
+  end if;
+
+  if current_operation.action = 'start'
+    and p_status <> 'pending'
+  then
+    raise exception using errcode = '23514', message = 'recipient_start_result_invalid';
+  end if;
+
+  previous_status := current_recipient.status;
+
+  update public.owner_payment_recipients as recipient
+  set
+    status = p_status,
+    requirements = p_requirements,
+    profile_version_synced = current_operation.profile_version
+  where recipient.owner_user_id = p_user_id
+  returning * into current_recipient;
+
+  update private.owner_recipient_operations as operation
+  set
+    provider = p_provider,
+    provider_reference = p_provider_reference,
+    result_status = p_status,
+    result_requirements = p_requirements,
+    applied_at = v_applied_at
+  where operation.id = p_operation_id
+    and operation.owner_user_id = p_user_id
+    and operation.applied_at is null;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'recipient_apply_conflict';
+  end if;
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_user_id,
+    'authenticated',
+    'recipient.status_transitioned',
+    'owner_payment_recipient',
+    p_user_id,
+    'succeeded',
+    current_operation.idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object(
+      'fromStatus', previous_status,
+      'toStatus', p_status,
+      'recipientVersion', current_recipient.recipient_version,
+      'operationSequence', current_operation.operation_sequence
+    )
+  );
+
+  return query
+  select * from private.owner_recipient_status_row(p_user_id);
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."bootstrap_signup_identity"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -228,7 +640,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_acl_dependencies as (
     select
-      pg_catalog.count(*) = 13
+      pg_catalog.count(*) = 17
       and pg_catalog.bool_and(
         (
           dependency.dbid = (
@@ -382,6 +794,29 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           )
           and dependency.objsubid = 0
         )
+        or (
+          dependency.dbid = (
+            select database.oid
+            from pg_catalog.pg_database as database
+            where database.datname = pg_catalog.current_database()
+          )
+          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+          and dependency.objid in (
+            pg_catalog.to_regprocedure(
+              'private.get_owner_recipient_status_for_user(uuid)'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.activate_owner(uuid,uuid,uuid,text)'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.prepare_owner_recipient_operation(uuid,text,uuid)'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'
+            )
+          )
+          and dependency.objsubid = 0
+        )
       ) as restricted
     from pg_catalog.pg_shdepend as dependency
     join runtime_role on runtime_role.oid = dependency.refobjid
@@ -405,7 +840,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_routine_privilege as (
     select
-      pg_catalog.count(*) = 12
+      pg_catalog.count(*) = 16
       and pg_catalog.bool_and(
         privilege.grantee = runtime_role.oid
         and privilege.grantor <> runtime_role.oid
@@ -447,6 +882,18 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         ),
         pg_catalog.to_regprocedure(
           'private.update_profile_appearance(uuid,bigint,text)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.get_owner_recipient_status_for_user(uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.activate_owner(uuid,uuid,uuid,text)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.prepare_owner_recipient_operation(uuid,text,uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'
         )
       )
       and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
@@ -1690,6 +2137,111 @@ COMMENT ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_versi
 
 
 
+CREATE OR REPLACE FUNCTION "private"."enforce_owner_profile_state"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  contract_kind text;
+begin
+  select legal_version.kind
+  into contract_kind
+  from public.terms_versions as legal_version
+  where legal_version.id = new.accepted_owner_contract_version_id;
+
+  if contract_kind is distinct from 'owner_contract' then
+    raise exception using
+      errcode = '23514',
+      message = 'owner_contract_kind_invalid';
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.status <> 'active' or new.owner_version <> 1 then
+      raise exception using
+        errcode = '23514',
+        message = 'owner_initial_state_invalid';
+    end if;
+    return new;
+  end if;
+
+  if old.status = 'blocked'
+    and (
+      new.status is distinct from old.status
+      or new.accepted_owner_contract_version_id
+        is distinct from old.accepted_owner_contract_version_id
+    )
+  then
+    raise exception using
+      errcode = '23514',
+      message = 'owner_blocked_is_terminal';
+  end if;
+
+  new.owner_version := old.owner_version + 1;
+  new.activated_at := old.activated_at;
+  new.created_at := old.created_at;
+  new.updated_at := pg_catalog.clock_timestamp();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."enforce_owner_profile_state"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."enforce_owner_recipient_state"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if tg_op = 'INSERT' then
+    if new.status <> 'not_started'
+      or new.recipient_version <> 0
+      or new.profile_version_synced is not null
+      or new.requirements <> '{}'::text[]
+    then
+      raise exception using
+        errcode = '23514',
+        message = 'recipient_initial_state_invalid';
+    end if;
+    return new;
+  end if;
+
+  if not (
+    (old.status = 'not_started' and new.status = 'pending')
+    or (
+      old.status = 'pending'
+      and new.status in ('pending', 'active', 'refused', 'suspended', 'blocked')
+    )
+    or (
+      old.status = 'active'
+      and new.status in ('active', 'refused', 'suspended', 'blocked')
+    )
+    or (
+      old.status = 'refused'
+      and new.status in ('pending', 'refused', 'blocked')
+    )
+    or (
+      old.status = 'suspended'
+      and new.status in ('pending', 'active', 'suspended', 'blocked')
+    )
+    or (old.status = 'blocked' and new.status = 'blocked')
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'recipient_transition_invalid';
+  end if;
+
+  new.recipient_version := old.recipient_version + 1;
+  new.created_at := old.created_at;
+  new.updated_at := pg_catalog.clock_timestamp();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."enforce_owner_recipient_state"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."enforce_profile_lifecycle"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -1717,6 +2269,34 @@ $$;
 
 
 ALTER FUNCTION "private"."enforce_profile_lifecycle"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  if p_user_id is null then
+    raise exception using errcode = '22023', message = 'invalid_owner_user';
+  end if;
+
+  if not exists (
+    select 1 from public.profiles as profile where profile.id = p_user_id
+  ) then
+    raise exception using errcode = 'P0002', message = 'owner_profile_missing';
+  end if;
+
+  return query
+  select * from private.owner_recipient_status_row(p_user_id);
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_contract_missing';
+  end if;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") RETURNS boolean
@@ -2136,6 +2716,323 @@ COMMENT ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid"
 
 
 
+CREATE OR REPLACE FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  with current_contract as (
+    select
+      legal_version.id,
+      legal_version.kind,
+      legal_version.version,
+      legal_version.title,
+      legal_version.body_markdown,
+      legal_version.content_hash,
+      legal_version.source,
+      legal_version.effective_at
+    from public.terms_versions as legal_version
+    where legal_version.kind = 'owner_contract'
+      and legal_version.effective_at <= pg_catalog.now()
+      and (
+        legal_version.retired_at is null
+        or pg_catalog.now() < legal_version.retired_at
+      )
+  ),
+  source_state as (
+    select
+      profile.id as user_id,
+      profile.profile_version,
+      profile.status as profile_status,
+      profile.completed_at,
+      owner.status as canonical_owner_status,
+      owner.owner_version,
+      owner.accepted_owner_contract_version_id,
+      contract.id as contract_id,
+      contract.kind as contract_kind,
+      contract.version as contract_version,
+      contract.title as contract_title,
+      contract.body_markdown as contract_body_markdown,
+      contract.content_hash as contract_content_hash,
+      contract.source as contract_source,
+      contract.effective_at as contract_effective_at,
+      recipient.status as canonical_recipient_status,
+      recipient.requirements as recipient_requirements,
+      recipient.profile_version_synced,
+      recipient.recipient_version,
+      exists (
+        select 1
+        from public.terms_acceptances as acceptance
+        where acceptance.user_id = profile.id
+          and acceptance.terms_version_id = contract.id
+          and acceptance.accepted_content_hash = contract.content_hash
+      ) as current_contract_acceptance_exists
+    from public.profiles as profile
+    cross join current_contract as contract
+    left join public.owner_profiles as owner
+      on owner.user_id = profile.id
+    left join public.owner_payment_recipients as recipient
+      on recipient.owner_user_id = owner.user_id
+    where profile.id = p_user_id
+  ),
+  projected as (
+    select
+      source_state.*,
+      case
+        when source_state.profile_status <> 'active'
+          or source_state.canonical_owner_status = 'blocked'
+          then 'blocked'
+        when source_state.canonical_owner_status is null
+          then 'inactive'
+        else 'active'
+      end as projected_owner_status,
+      coalesce(source_state.canonical_recipient_status, 'not_started')
+        as projected_recipient_status,
+      (
+        source_state.accepted_owner_contract_version_id = source_state.contract_id
+        and source_state.current_contract_acceptance_exists
+      ) as projected_contract_accepted
+    from source_state
+  )
+  select
+    projected.user_id,
+    projected.projected_owner_status,
+    coalesce(projected.owner_version, 0::bigint),
+    projected.accepted_owner_contract_version_id,
+    projected.projected_contract_accepted,
+    projected.contract_id,
+    projected.contract_kind,
+    projected.contract_version,
+    projected.contract_title,
+    projected.contract_body_markdown,
+    projected.contract_content_hash,
+    projected.contract_source,
+    projected.contract_effective_at,
+    projected.projected_recipient_status,
+    coalesce(projected.recipient_requirements, '{}'::text[]),
+    case
+      when projected.projected_owner_status = 'blocked'
+        or projected.projected_recipient_status = 'blocked'
+        then 'none'
+      when projected.projected_owner_status = 'inactive'
+        or not projected.projected_contract_accepted
+        then 'activate_owner'
+      when projected.projected_recipient_status in ('not_started', 'refused')
+        then 'start_onboarding'
+      when projected.projected_recipient_status in ('pending', 'suspended')
+        or (
+          projected.projected_recipient_status = 'active'
+          and projected.profile_version_synced is distinct from projected.profile_version
+        )
+        then 'refresh_status'
+      else 'none'
+    end,
+    projected.profile_version,
+    projected.profile_version_synced,
+    coalesce(projected.recipient_version, 0::bigint),
+    (
+      projected.projected_owner_status = 'active'
+      and projected.projected_contract_accepted
+      and projected.projected_recipient_status = 'active'
+      and projected.profile_version_synced = projected.profile_version
+    ),
+    'local'::text
+  from projected;
+$$;
+
+
+ALTER FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") RETURNS TABLE("operation_id" "uuid", "operation_sequence" bigint, "operation_action" "text", "provider_reference" "text", "profile_version" bigint, "already_applied" boolean)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  current_operation private.owner_recipient_operations%rowtype;
+  current_owner public.owner_profiles%rowtype;
+  current_profile public.profiles%rowtype;
+  current_recipient public.owner_payment_recipients%rowtype;
+  next_sequence bigint;
+  prepared_reference text;
+  operation_was_found boolean := false;
+begin
+  if p_user_id is null
+    or p_idempotency_key is null
+    or p_action is null
+    or p_action not in ('start', 'refresh')
+  then
+    raise exception using errcode = '22023', message = 'invalid_recipient_operation';
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_profile_missing';
+  end if;
+
+  select owner.*
+  into current_owner
+  from public.owner_profiles as owner
+  where owner.user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'owner_authority_missing';
+  end if;
+
+  select recipient.*
+  into current_recipient
+  from public.owner_payment_recipients as recipient
+  where recipient.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'recipient_state_missing';
+  end if;
+
+  select operation.*
+  into current_operation
+  from private.owner_recipient_operations as operation
+  where operation.owner_user_id = p_user_id
+    and operation.idempotency_key = p_idempotency_key
+  for update;
+
+  operation_was_found := found;
+
+  if operation_was_found then
+    if current_operation.action <> p_action then
+      raise exception using errcode = '40001', message = 'recipient_idempotency_conflict';
+    end if;
+
+    if current_operation.applied_at is not null then
+      return query
+      select
+        current_operation.id,
+        current_operation.operation_sequence,
+        current_operation.action,
+        current_operation.provider_reference,
+        current_operation.profile_version,
+        true;
+      return;
+    end if;
+  end if;
+
+  if current_profile.status <> 'active' or current_profile.completed_at is null then
+    raise exception using errcode = '42501', message = 'owner_profile_inactive';
+  end if;
+
+  if current_owner.status <> 'active' then
+    raise exception using errcode = '42501', message = 'owner_blocked';
+  end if;
+
+  if not exists (
+    select 1
+    from public.terms_versions as legal_version
+    join public.terms_acceptances as acceptance
+      on acceptance.user_id = p_user_id
+      and acceptance.terms_version_id = legal_version.id
+      and acceptance.accepted_content_hash = legal_version.content_hash
+    where legal_version.id = current_owner.accepted_owner_contract_version_id
+      and legal_version.kind = 'owner_contract'
+      and legal_version.effective_at <= pg_catalog.clock_timestamp()
+      and (
+        legal_version.retired_at is null
+        or pg_catalog.clock_timestamp() < legal_version.retired_at
+      )
+  ) then
+    raise exception using errcode = '42501', message = 'owner_contract_not_current';
+  end if;
+
+  if current_recipient.status = 'blocked' then
+    raise exception using errcode = '42501', message = 'recipient_blocked';
+  end if;
+
+  if operation_was_found then
+    if current_operation.profile_version <> current_profile.profile_version then
+      raise exception using errcode = '40001', message = 'recipient_idempotency_conflict';
+    end if;
+
+    return query
+    select
+      current_operation.id,
+      current_operation.operation_sequence,
+      current_operation.action,
+      current_operation.provider_reference,
+      current_operation.profile_version,
+      false;
+    return;
+  end if;
+
+  if p_action = 'start'
+    and current_recipient.status not in ('not_started', 'refused')
+  then
+    raise exception using errcode = '23514', message = 'recipient_start_transition_invalid';
+  end if;
+
+  if p_action = 'refresh'
+    and current_recipient.status not in ('pending', 'active', 'suspended')
+  then
+    raise exception using errcode = '23514', message = 'recipient_refresh_transition_invalid';
+  end if;
+
+  if p_action = 'refresh' then
+    select operation.provider_reference
+    into prepared_reference
+    from private.owner_recipient_operations as operation
+    where operation.owner_user_id = p_user_id
+      and operation.applied_at is not null
+    order by operation.operation_sequence desc
+    limit 1;
+
+    if prepared_reference is null then
+      raise exception using errcode = '23514', message = 'recipient_provider_reference_missing';
+    end if;
+  else
+    prepared_reference := null;
+  end if;
+
+  select coalesce(pg_catalog.max(operation.operation_sequence), 0::bigint) + 1
+  into next_sequence
+  from private.owner_recipient_operations as operation
+  where operation.owner_user_id = p_user_id;
+
+  insert into private.owner_recipient_operations (
+    owner_user_id,
+    action,
+    idempotency_key,
+    operation_sequence,
+    profile_version,
+    provider_reference
+  )
+  values (
+    p_user_id,
+    p_action,
+    p_idempotency_key,
+    next_sequence,
+    current_profile.profile_version,
+    prepared_reference
+  )
+  returning * into current_operation;
+
+  return query
+  select
+    current_operation.id,
+    current_operation.operation_sequence,
+    current_operation.action,
+    current_operation.provider_reference,
+    current_operation.profile_version,
+    false;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."profile_command_result"("p_user_id" "uuid") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -2165,6 +3062,42 @@ ALTER FUNCTION "private"."profile_command_result"("p_user_id" "uuid") OWNER TO "
 
 COMMENT ON FUNCTION "private"."profile_command_result"("p_user_id" "uuid") IS 'Helper interno sem grant runtime que projeta o retorno autoritativo dos comandos de perfil.';
 
+
+
+CREATE OR REPLACE FUNCTION "private"."protect_audit_event"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if tg_op = 'UPDATE'
+    and old.actor_user_id is not null
+    and new.actor_user_id is null
+    and new.id is not distinct from old.id
+    and new.occurred_at is not distinct from old.occurred_at
+    and new.actor_role is not distinct from old.actor_role
+    and new.action is not distinct from old.action
+    and new.target_type is not distinct from old.target_type
+    and new.target_id is not distinct from old.target_id
+    and new.result is not distinct from old.result
+    and new.request_id is not distinct from old.request_id
+    and new.ip_hash is not distinct from old.ip_hash
+    and new.metadata is not distinct from old.metadata
+  then
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' and current_user = 'postgres' then
+    return old;
+  end if;
+
+  raise exception using
+    errcode = '42501',
+    message = 'audit_event_is_append_only';
+end;
+$$;
+
+
+ALTER FUNCTION "private"."protect_audit_event"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."protect_profile_delete"() RETURNS "trigger"
@@ -2615,7 +3548,8 @@ CREATE OR REPLACE FUNCTION "public"."get_current_legal_terms"() RETURNS TABLE("i
     legal_version.source,
     legal_version.effective_at
   from public.terms_versions as legal_version
-  where legal_version.effective_at <= pg_catalog.now()
+  where legal_version.kind in ('terms', 'privacy')
+    and legal_version.effective_at <= pg_catalog.now()
     and (
       legal_version.retired_at is null
       or pg_catalog.now() < legal_version.retired_at
@@ -2625,6 +3559,32 @@ $$;
 
 
 ALTER FUNCTION "public"."get_current_legal_terms"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_current_owner_contract"() RETURNS TABLE("id" "uuid", "kind" "text", "version" "text", "title" "text", "body_markdown" "text", "content_hash" "text", "source" "text", "effective_at" timestamp with time zone)
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
+    AS $$
+  select
+    legal_version.id,
+    legal_version.kind,
+    legal_version.version,
+    legal_version.title,
+    legal_version.body_markdown,
+    legal_version.content_hash,
+    legal_version.source,
+    legal_version.effective_at
+  from public.terms_versions as legal_version
+  where legal_version.kind = 'owner_contract'
+    and legal_version.effective_at <= pg_catalog.now()
+    and (
+      legal_version.retired_at is null
+      or pg_catalog.now() < legal_version.retired_at
+    );
+$$;
+
+
+ALTER FUNCTION "public"."get_current_owner_contract"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_my_profile"() RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
@@ -2673,9 +3633,163 @@ $$;
 
 ALTER FUNCTION "public"."get_own_identity_context"() OWNER TO "postgres";
 
+
+CREATE OR REPLACE FUNCTION "public"."get_owner_recipient_status"() RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
+    AS $$
+  with current_contract as (
+    select
+      legal_version.id,
+      legal_version.kind,
+      legal_version.version,
+      legal_version.title,
+      legal_version.body_markdown,
+      legal_version.content_hash,
+      legal_version.source,
+      legal_version.effective_at
+    from public.terms_versions as legal_version
+    where legal_version.kind = 'owner_contract'
+      and legal_version.effective_at <= pg_catalog.now()
+      and (
+        legal_version.retired_at is null
+        or pg_catalog.now() < legal_version.retired_at
+      )
+  ),
+  source_state as (
+    select
+      profile.id as user_id,
+      profile.profile_version,
+      profile.status as profile_status,
+      owner.status as canonical_owner_status,
+      owner.owner_version,
+      owner.accepted_owner_contract_version_id,
+      contract.id as contract_id,
+      contract.kind as contract_kind,
+      contract.version as contract_version,
+      contract.title as contract_title,
+      contract.body_markdown as contract_body_markdown,
+      contract.content_hash as contract_content_hash,
+      contract.source as contract_source,
+      contract.effective_at as contract_effective_at,
+      recipient.status as canonical_recipient_status,
+      recipient.requirements as recipient_requirements,
+      recipient.profile_version_synced,
+      recipient.recipient_version,
+      exists (
+        select 1
+        from public.terms_acceptances as acceptance
+        where acceptance.user_id = profile.id
+          and acceptance.terms_version_id = contract.id
+          and acceptance.accepted_content_hash = contract.content_hash
+      ) as current_contract_acceptance_exists
+    from public.profiles as profile
+    cross join current_contract as contract
+    left join public.owner_profiles as owner
+      on owner.user_id = profile.id
+    left join public.owner_payment_recipients as recipient
+      on recipient.owner_user_id = owner.user_id
+    where profile.id = (select auth.uid())
+  ),
+  projected as (
+    select
+      source_state.*,
+      case
+        when source_state.profile_status <> 'active'
+          or source_state.canonical_owner_status = 'blocked'
+          then 'blocked'
+        when source_state.canonical_owner_status is null
+          then 'inactive'
+        else 'active'
+      end as projected_owner_status,
+      coalesce(source_state.canonical_recipient_status, 'not_started')
+        as projected_recipient_status,
+      (
+        source_state.accepted_owner_contract_version_id = source_state.contract_id
+        and source_state.current_contract_acceptance_exists
+      ) as projected_contract_accepted
+    from source_state
+  )
+  select
+    projected.user_id,
+    projected.projected_owner_status,
+    coalesce(projected.owner_version, 0::bigint),
+    projected.accepted_owner_contract_version_id,
+    projected.projected_contract_accepted,
+    projected.contract_id,
+    projected.contract_kind,
+    projected.contract_version,
+    projected.contract_title,
+    projected.contract_body_markdown,
+    projected.contract_content_hash,
+    projected.contract_source,
+    projected.contract_effective_at,
+    projected.projected_recipient_status,
+    coalesce(projected.recipient_requirements, '{}'::text[]),
+    case
+      when projected.projected_owner_status = 'blocked'
+        or projected.projected_recipient_status = 'blocked'
+        then 'none'
+      when projected.projected_owner_status = 'inactive'
+        or not projected.projected_contract_accepted
+        then 'activate_owner'
+      when projected.projected_recipient_status in ('not_started', 'refused')
+        then 'start_onboarding'
+      when projected.projected_recipient_status in ('pending', 'suspended')
+        or (
+          projected.projected_recipient_status = 'active'
+          and projected.profile_version_synced is distinct from projected.profile_version
+        )
+        then 'refresh_status'
+      else 'none'
+    end,
+    projected.profile_version,
+    projected.profile_version_synced,
+    coalesce(projected.recipient_version, 0::bigint),
+    (
+      projected.projected_owner_status = 'active'
+      and projected.projected_contract_accepted
+      and projected.projected_recipient_status = 'active'
+      and projected.profile_version_synced = projected.profile_version
+    ),
+    'local'::text
+  from projected;
+$$;
+
+
+ALTER FUNCTION "public"."get_owner_recipient_status"() OWNER TO "postgres";
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
+
+
+CREATE TABLE IF NOT EXISTS "audit"."events" (
+    "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "occurred_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "actor_user_id" "uuid",
+    "actor_role" "text" NOT NULL,
+    "action" "text" NOT NULL,
+    "target_type" "text" NOT NULL,
+    "target_id" "uuid" NOT NULL,
+    "result" "text" NOT NULL,
+    "request_id" "uuid" NOT NULL,
+    "ip_hash" "text",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text"]))),
+    CONSTRAINT "events_actor_role_check" CHECK (("actor_role" = 'authenticated'::"text")),
+    CONSTRAINT "events_ip_hash_check" CHECK ((("ip_hash" IS NULL) OR ("ip_hash" ~ '^[0-9a-f]{64}$'::"text"))),
+    CONSTRAINT "events_metadata_check" CHECK (("jsonb_typeof"("metadata") = 'object'::"text")),
+    CONSTRAINT "events_result_check" CHECK (("result" = 'succeeded'::"text")),
+    CONSTRAINT "events_target_type_check" CHECK (("target_type" = ANY (ARRAY['owner_profile'::"text", 'owner_payment_recipient'::"text"])))
+);
+
+
+ALTER TABLE "audit"."events" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "audit"."events" IS 'Eventos operacionais append-only; referências externas e PII são proibidas em metadata.';
+
 
 
 CREATE TABLE IF NOT EXISTS "private"."identity_recovery_grants" (
@@ -2740,6 +3854,50 @@ COMMENT ON COLUMN "private"."identity_recovery_sessions"."canonical_absence_obse
 
 
 
+CREATE TABLE IF NOT EXISTS "private"."owner_activation_requests" (
+    "owner_user_id" "uuid" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
+    "owner_contract_version_id" "uuid" NOT NULL,
+    "resulting_owner_version" bigint NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "owner_activation_requests_resulting_owner_version_check" CHECK (("resulting_owner_version" >= 1))
+);
+
+
+ALTER TABLE "private"."owner_activation_requests" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "private"."owner_recipient_operations" (
+    "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "owner_user_id" "uuid" NOT NULL,
+    "action" "text" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
+    "operation_sequence" bigint NOT NULL,
+    "profile_version" bigint NOT NULL,
+    "provider" "text",
+    "provider_reference" "text",
+    "result_status" "text",
+    "result_requirements" "text"[],
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "applied_at" timestamp with time zone,
+    CONSTRAINT "owner_recipient_operations_action_check" CHECK (("action" = ANY (ARRAY['start'::"text", 'refresh'::"text"]))),
+    CONSTRAINT "owner_recipient_operations_operation_sequence_check" CHECK (("operation_sequence" >= 1)),
+    CONSTRAINT "owner_recipient_operations_profile_version_check" CHECK (("profile_version" >= 0)),
+    CONSTRAINT "owner_recipient_operations_provider_check" CHECK ((("provider" IS NULL) OR ("provider" = 'local'::"text"))),
+    CONSTRAINT "owner_recipient_operations_provider_reference_check" CHECK ((("provider_reference" IS NULL) OR ((("char_length"("provider_reference") >= 1) AND ("char_length"("provider_reference") <= 200)) AND ("provider_reference" !~ '[[:cntrl:]]'::"text") AND (("provider_reference" ~ '^local-recipient:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::"text") OR ("provider_reference" = ANY (ARRAY['local-test-fixture:refused'::"text", 'local-test-fixture:suspended'::"text", 'local-test-fixture:blocked'::"text", 'local-test-fixture:unavailable'::"text", 'local-test-fixture:timeout'::"text"])))))),
+    CONSTRAINT "owner_recipient_operations_result_pair_check" CHECK (((("applied_at" IS NULL) AND ("provider" IS NULL) AND ("result_status" IS NULL) AND ("result_requirements" IS NULL)) OR (("applied_at" IS NOT NULL) AND ("applied_at" >= "created_at") AND ("provider" = 'local'::"text") AND ("provider_reference" IS NOT NULL) AND ("result_status" IS NOT NULL) AND ("result_requirements" IS NOT NULL)))),
+    CONSTRAINT "owner_recipient_operations_result_requirements_check" CHECK ((("result_requirements" IS NULL) OR (("cardinality"("result_requirements") <= 3) AND ("array_position"("result_requirements", NULL::"text") IS NULL) AND ("result_requirements" <@ ARRAY['identity_review'::"text", 'additional_information'::"text", 'provider_contact'::"text"]) AND (("cardinality"("result_requirements") < 2) OR ("result_requirements"[1] <> "result_requirements"[2])) AND (("cardinality"("result_requirements") < 3) OR (("result_requirements"[1] <> "result_requirements"[3]) AND ("result_requirements"[2] <> "result_requirements"[3])))))),
+    CONSTRAINT "owner_recipient_operations_result_status_check" CHECK ((("result_status" IS NULL) OR ("result_status" = ANY (ARRAY['pending'::"text", 'active'::"text", 'refused'::"text", 'suspended'::"text", 'blocked'::"text"]))))
+);
+
+
+ALTER TABLE "private"."owner_recipient_operations" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."owner_recipient_operations" IS 'Prepare/apply idempotente e privado; contém a única referência local do provider nesta fatia.';
+
+
+
 CREATE TABLE IF NOT EXISTS "private"."signup_legal_intents" (
     "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
     "terms_version_id" "uuid" NOT NULL,
@@ -2763,6 +3921,56 @@ ALTER TABLE "private"."signup_legal_intents" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "private"."signup_legal_intents" IS 'Token aleatório e temporário removido atomicamente ao ser consumido ou após expirar.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."owner_payment_recipients" (
+    "owner_user_id" "uuid" NOT NULL,
+    "status" "text" DEFAULT 'not_started'::"text" NOT NULL,
+    "requirements" "text"[] DEFAULT '{}'::"text"[] NOT NULL,
+    "profile_version_synced" bigint,
+    "recipient_version" bigint DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "owner_payment_recipients_active_requirements_check" CHECK ((("status" <> 'active'::"text") OR ("requirements" = '{}'::"text"[]))),
+    CONSTRAINT "owner_payment_recipients_check" CHECK (("updated_at" >= "created_at")),
+    CONSTRAINT "owner_payment_recipients_profile_version_synced_check" CHECK ((("profile_version_synced" IS NULL) OR ("profile_version_synced" >= 0))),
+    CONSTRAINT "owner_payment_recipients_recipient_version_check" CHECK (("recipient_version" >= 0)),
+    CONSTRAINT "owner_payment_recipients_requirements_check" CHECK ((("cardinality"("requirements") <= 3) AND ("array_position"("requirements", NULL::"text") IS NULL) AND ("requirements" <@ ARRAY['identity_review'::"text", 'additional_information'::"text", 'provider_contact'::"text"]) AND (("cardinality"("requirements") < 2) OR ("requirements"[1] <> "requirements"[2])) AND (("cardinality"("requirements") < 3) OR (("requirements"[1] <> "requirements"[3]) AND ("requirements"[2] <> "requirements"[3]))))),
+    CONSTRAINT "owner_payment_recipients_status_check" CHECK (("status" = ANY (ARRAY['not_started'::"text", 'pending'::"text", 'active'::"text", 'refused'::"text", 'suspended'::"text", 'blocked'::"text"])))
+);
+
+
+ALTER TABLE "public"."owner_payment_recipients" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."owner_payment_recipients" IS 'Estado seguro e versionado do recebedor; nenhuma referência do provider existe nesta tabela.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."owner_profiles" (
+    "user_id" "uuid" NOT NULL,
+    "status" "text" DEFAULT 'active'::"text" NOT NULL,
+    "accepted_owner_contract_version_id" "uuid" NOT NULL,
+    "owner_version" bigint DEFAULT 1 NOT NULL,
+    "activated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "owner_profiles_check" CHECK (("activated_at" >= "created_at")),
+    CONSTRAINT "owner_profiles_check1" CHECK (("updated_at" >= "created_at")),
+    CONSTRAINT "owner_profiles_owner_version_check" CHECK (("owner_version" >= 1)),
+    CONSTRAINT "owner_profiles_status_check" CHECK (("status" = ANY (ARRAY['active'::"text", 'blocked'::"text"])))
+);
+
+
+ALTER TABLE "public"."owner_profiles" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."owner_profiles" IS 'Autoridade mínima do dono; identidade e PII permanecem exclusivamente em profiles.';
+
+
+
+COMMENT ON COLUMN "public"."owner_profiles"."accepted_owner_contract_version_id" IS 'Última versão de owner_contract aceita; o histórico imutável permanece em terms_acceptances.';
 
 
 
@@ -2879,7 +4087,7 @@ CREATE TABLE IF NOT EXISTS "public"."terms_versions" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     CONSTRAINT "terms_versions_body_markdown_check" CHECK (((("char_length"("btrim"("body_markdown")) >= 1) AND ("char_length"("btrim"("body_markdown")) <= 200000)) AND ("body_markdown" = "btrim"("body_markdown")))),
     CONSTRAINT "terms_versions_content_hash_check" CHECK (("content_hash" ~ '^[0-9a-f]{64}$'::"text")),
-    CONSTRAINT "terms_versions_kind_check" CHECK (("kind" = ANY (ARRAY['terms'::"text", 'privacy'::"text"]))),
+    CONSTRAINT "terms_versions_kind_check" CHECK (("kind" = ANY (ARRAY['terms'::"text", 'privacy'::"text", 'owner_contract'::"text"]))),
     CONSTRAINT "terms_versions_retirement_after_effective_check" CHECK ((("retired_at" IS NULL) OR ("retired_at" > "effective_at"))),
     CONSTRAINT "terms_versions_source_check" CHECK (("source" = ANY (ARRAY['local_fixture'::"text", 'approved'::"text"]))),
     CONSTRAINT "terms_versions_title_check" CHECK (((("char_length"("btrim"("title")) >= 3) AND ("char_length"("btrim"("title")) <= 160)) AND ("title" = "btrim"("title")))),
@@ -2925,6 +4133,16 @@ COMMENT ON COLUMN "public"."user_preferences"."preferences_version" IS 'Versão 
 
 
 
+ALTER TABLE ONLY "audit"."events"
+    ADD CONSTRAINT "events_action_target_id_request_id_key" UNIQUE ("action", "target_id", "request_id");
+
+
+
+ALTER TABLE ONLY "audit"."events"
+    ADD CONSTRAINT "events_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "private"."identity_recovery_grants"
     ADD CONSTRAINT "identity_recovery_grants_pkey" PRIMARY KEY ("token");
 
@@ -2950,6 +4168,26 @@ ALTER TABLE ONLY "private"."identity_recovery_sessions"
 
 
 
+ALTER TABLE ONLY "private"."owner_activation_requests"
+    ADD CONSTRAINT "owner_activation_requests_pkey" PRIMARY KEY ("owner_user_id", "idempotency_key");
+
+
+
+ALTER TABLE ONLY "private"."owner_recipient_operations"
+    ADD CONSTRAINT "owner_recipient_operations_owner_key_key" UNIQUE ("owner_user_id", "idempotency_key");
+
+
+
+ALTER TABLE ONLY "private"."owner_recipient_operations"
+    ADD CONSTRAINT "owner_recipient_operations_owner_sequence_key" UNIQUE ("owner_user_id", "operation_sequence");
+
+
+
+ALTER TABLE ONLY "private"."owner_recipient_operations"
+    ADD CONSTRAINT "owner_recipient_operations_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "private"."signup_legal_intents"
     ADD CONSTRAINT "signup_legal_intents_pkey" PRIMARY KEY ("id");
 
@@ -2957,6 +4195,16 @@ ALTER TABLE ONLY "private"."signup_legal_intents"
 
 ALTER TABLE ONLY "private"."signup_legal_intents"
     ADD CONSTRAINT "signup_legal_intents_request_id_key" UNIQUE ("request_id");
+
+
+
+ALTER TABLE ONLY "public"."owner_payment_recipients"
+    ADD CONSTRAINT "owner_payment_recipients_pkey" PRIMARY KEY ("owner_user_id");
+
+
+
+ALTER TABLE ONLY "public"."owner_profiles"
+    ADD CONSTRAINT "owner_profiles_pkey" PRIMARY KEY ("user_id");
 
 
 
@@ -2995,6 +4243,10 @@ ALTER TABLE ONLY "public"."user_preferences"
 
 
 
+CREATE INDEX "audit_events_actor_user_id_idx" ON "audit"."events" USING "btree" ("actor_user_id") WHERE ("actor_user_id" IS NOT NULL);
+
+
+
 CREATE INDEX "identity_recovery_grants_expires_at_idx" ON "private"."identity_recovery_grants" USING "btree" ("expires_at");
 
 
@@ -3004,6 +4256,18 @@ CREATE INDEX "identity_recovery_sessions_retain_until_idx" ON "private"."identit
 
 
 CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_intents" USING "btree" ("expires_at");
+
+
+
+CREATE OR REPLACE TRIGGER "audit_events_protect_append_only" BEFORE DELETE OR UPDATE ON "audit"."events" FOR EACH ROW EXECUTE FUNCTION "private"."protect_audit_event"();
+
+
+
+CREATE OR REPLACE TRIGGER "owner_payment_recipients_enforce_state" BEFORE INSERT OR UPDATE ON "public"."owner_payment_recipients" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_owner_recipient_state"();
+
+
+
+CREATE OR REPLACE TRIGGER "owner_profiles_enforce_state" BEFORE INSERT OR UPDATE ON "public"."owner_profiles" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_owner_profile_state"();
 
 
 
@@ -3039,6 +4303,11 @@ CREATE OR REPLACE TRIGGER "user_preferences_set_updated_at" BEFORE UPDATE ON "pu
 
 
 
+ALTER TABLE ONLY "audit"."events"
+    ADD CONSTRAINT "events_actor_user_id_fkey" FOREIGN KEY ("actor_user_id") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY "private"."identity_recovery_grants"
     ADD CONSTRAINT "identity_recovery_grants_session_user_fkey" FOREIGN KEY ("auth_session_id", "user_id") REFERENCES "private"."identity_recovery_sessions"("auth_session_id", "user_id") ON DELETE CASCADE;
 
@@ -3054,6 +4323,21 @@ ALTER TABLE ONLY "private"."identity_recovery_sessions"
 
 
 
+ALTER TABLE ONLY "private"."owner_activation_requests"
+    ADD CONSTRAINT "owner_activation_requests_owner_contract_version_id_fkey" FOREIGN KEY ("owner_contract_version_id") REFERENCES "public"."terms_versions"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "private"."owner_activation_requests"
+    ADD CONSTRAINT "owner_activation_requests_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "private"."owner_recipient_operations"
+    ADD CONSTRAINT "owner_recipient_operations_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "private"."signup_legal_intents"
     ADD CONSTRAINT "signup_legal_intents_privacy_version_id_fkey" FOREIGN KEY ("privacy_version_id") REFERENCES "public"."terms_versions"("id") ON DELETE RESTRICT;
 
@@ -3061,6 +4345,21 @@ ALTER TABLE ONLY "private"."signup_legal_intents"
 
 ALTER TABLE ONLY "private"."signup_legal_intents"
     ADD CONSTRAINT "signup_legal_intents_terms_version_id_fkey" FOREIGN KEY ("terms_version_id") REFERENCES "public"."terms_versions"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."owner_payment_recipients"
+    ADD CONSTRAINT "owner_payment_recipients_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."owner_profiles"
+    ADD CONSTRAINT "owner_profiles_accepted_owner_contract_version_id_fkey" FOREIGN KEY ("accepted_owner_contract_version_id") REFERENCES "public"."terms_versions"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."owner_profiles"
+    ADD CONSTRAINT "owner_profiles_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
 
 
 
@@ -3084,13 +4383,36 @@ ALTER TABLE ONLY "public"."user_preferences"
 
 
 
+ALTER TABLE "audit"."events" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "private"."identity_recovery_grants" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "private"."identity_recovery_sessions" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "private"."owner_activation_requests" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "private"."owner_recipient_operations" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "private"."signup_legal_intents" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."owner_payment_recipients" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "owner_payment_recipients_select_own" ON "public"."owner_payment_recipients" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "owner_user_id"));
+
+
+
+ALTER TABLE "public"."owner_profiles" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "owner_profiles_select_own" ON "public"."owner_profiles" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
 
 
 ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
@@ -3110,7 +4432,11 @@ CREATE POLICY "terms_acceptances_select_own" ON "public"."terms_acceptances" FOR
 ALTER TABLE "public"."terms_versions" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "terms_versions_select_current" ON "public"."terms_versions" FOR SELECT TO "authenticated", "anon" USING ((("effective_at" <= "now"()) AND (("retired_at" IS NULL) OR ("now"() < "retired_at"))));
+CREATE POLICY "terms_versions_select_current_authenticated" ON "public"."terms_versions" FOR SELECT TO "authenticated" USING ((("effective_at" <= "now"()) AND (("retired_at" IS NULL) OR ("now"() < "retired_at"))));
+
+
+
+CREATE POLICY "terms_versions_select_current_public" ON "public"."terms_versions" FOR SELECT TO "anon" USING ((("kind" = ANY (ARRAY['terms'::"text", 'privacy'::"text"])) AND ("effective_at" <= "now"()) AND (("retired_at" IS NULL) OR ("now"() < "retired_at"))));
 
 
 
@@ -3130,6 +4456,16 @@ GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) TO "app_dal";
 
 
 
@@ -3184,7 +4520,20 @@ GRANT ALL ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_ver
 
 
 
+REVOKE ALL ON FUNCTION "private"."enforce_owner_profile_state"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."enforce_owner_recipient_state"() FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."enforce_profile_lifecycle"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") TO "app_dal";
 
 
 
@@ -3214,7 +4563,20 @@ REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uu
 
 
 
+REVOKE ALL ON FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."profile_command_result"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."protect_audit_event"() FROM PUBLIC;
 
 
 
@@ -3267,6 +4629,11 @@ GRANT ALL ON FUNCTION "public"."get_current_legal_terms"() TO "authenticated";
 
 
 
+REVOKE ALL ON FUNCTION "public"."get_current_owner_contract"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_current_owner_contract"() TO "authenticated";
+
+
+
 REVOKE ALL ON FUNCTION "public"."get_my_profile"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."get_my_profile"() TO "authenticated";
 
@@ -3274,6 +4641,51 @@ GRANT ALL ON FUNCTION "public"."get_my_profile"() TO "authenticated";
 
 REVOKE ALL ON FUNCTION "public"."get_own_identity_context"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."get_own_identity_context"() TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_owner_recipient_status"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_owner_recipient_status"() TO "authenticated";
+
+
+
+GRANT SELECT("owner_user_id") ON TABLE "public"."owner_payment_recipients" TO "authenticated";
+
+
+
+GRANT SELECT("status") ON TABLE "public"."owner_payment_recipients" TO "authenticated";
+
+
+
+GRANT SELECT("requirements") ON TABLE "public"."owner_payment_recipients" TO "authenticated";
+
+
+
+GRANT SELECT("profile_version_synced") ON TABLE "public"."owner_payment_recipients" TO "authenticated";
+
+
+
+GRANT SELECT("recipient_version") ON TABLE "public"."owner_payment_recipients" TO "authenticated";
+
+
+
+GRANT SELECT("user_id") ON TABLE "public"."owner_profiles" TO "authenticated";
+
+
+
+GRANT SELECT("status") ON TABLE "public"."owner_profiles" TO "authenticated";
+
+
+
+GRANT SELECT("accepted_owner_contract_version_id") ON TABLE "public"."owner_profiles" TO "authenticated";
+
+
+
+GRANT SELECT("owner_version") ON TABLE "public"."owner_profiles" TO "authenticated";
+
+
+
+GRANT SELECT("activated_at") ON TABLE "public"."owner_profiles" TO "authenticated";
 
 
 

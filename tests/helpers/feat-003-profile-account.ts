@@ -180,6 +180,61 @@ export async function stageFeat003SensitiveValue(control: Locator, secret: strin
   }
 }
 
+export async function fillFeat003PhoneWithoutReportValue(control: Locator, phone: string) {
+  try {
+    // `fill`/`type` serializam o telefone no título do step; `evaluate` mantém o título estático.
+    await control.waitFor({ state: "visible", timeout: 5_000 });
+    const filling = await control.evaluate((element, phoneValue) => {
+      const view = element.ownerDocument.defaultView;
+      const inputConstructor = view?.HTMLInputElement;
+      const inputEventConstructor = view?.InputEvent;
+      if (
+        inputConstructor === undefined ||
+        inputEventConstructor === undefined ||
+        !(element instanceof inputConstructor)
+      ) {
+        return { code: "not-input" as const };
+      }
+      if (element.form === null) {
+        return { code: "form-missing" as const };
+      }
+      if (element.name !== "phone") {
+        return { code: "name-not-allowed" as const };
+      }
+      if (element.disabled || element.readOnly) {
+        return { code: "input-unavailable" as const };
+      }
+      const valueSetter = Object.getOwnPropertyDescriptor(inputConstructor.prototype, "value")?.set;
+      if (valueSetter === undefined) {
+        return { code: "setter-missing" as const };
+      }
+
+      element.focus();
+      valueSetter.call(element, phoneValue);
+      element.dispatchEvent(
+        new inputEventConstructor("input", {
+          bubbles: true,
+          composed: true,
+          data: null,
+          inputType: "insertText",
+        }),
+      );
+      return { code: "filled" as const, length: element.value.length };
+    }, phone);
+    if (filling.code !== "filled" || filling.length === 0) {
+      throw new Error(`O preenchimento QA de telefone falhou: code=${filling.code}.`);
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("O preenchimento QA de telefone falhou:")
+    ) {
+      throw error;
+    }
+    throw new Error("O preenchimento QA de telefone falhou: code=evaluate-failed.");
+  }
+}
+
 export async function assertFeat003SecretsAbsentFromDom(page: Page, secrets: readonly string[]) {
   await assertFeat003PrivateValuesAbsentFromDom(page, secrets);
 }
@@ -324,7 +379,10 @@ export async function completeFeat003Profile(
       name: input.personType === "individual" ? "Nome completo" : "Nome empresarial",
     })
     .fill(input.name);
-  await page.getByRole("textbox", { name: "Telefone" }).fill(input.phone);
+  await fillFeat003PhoneWithoutReportValue(
+    page.getByRole("textbox", { name: "Telefone" }),
+    input.phone,
+  );
   await stageFeat003SensitiveValue(
     page.getByRole("textbox", { name: input.personType === "individual" ? "CPF" : "CNPJ" }),
     input.secrets.taxId,

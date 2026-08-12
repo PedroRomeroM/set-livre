@@ -23,6 +23,7 @@ export type ApiRouteErrorCode =
   | "INPUT_INVALID"
   | "METHOD_NOT_ALLOWED"
   | "ORIGIN_INVALID"
+  | "PAYMENT_PROVIDER_UNAVAILABLE"
   | "RATE_LIMITED"
   | "RECOVERY_INVALID"
   | "RECOVERY_RESTART_REQUIRED"
@@ -258,7 +259,6 @@ export function apiErrorResponse(
 }
 
 const observableActionSchema = z.enum([
-  "identity.command",
   "identity.callback",
   "identity.login",
   "identity.logout",
@@ -267,15 +267,22 @@ const observableActionSchema = z.enum([
   "identity.recovery.update",
   "identity.register",
   "identity.session",
+  "owner.activate",
+  "owner.read",
+  "private.command",
   "profile.complete",
   "profile.read",
   "profile.update",
+  "recipient.onboarding.refresh",
+  "recipient.onboarding.start",
 ]);
 const observableOutcomeSchema = z.enum(["accepted", "rejected", "unavailable"]);
+const observableEventSchema = z.enum(["identity.request", "owner.request", "private.command"]);
 
 export function writeSafeOperationalEvent(event: {
   action: z.infer<typeof observableActionSchema>;
   durationMs: number;
+  event: z.infer<typeof observableEventSchema>;
   outcome: z.infer<typeof observableOutcomeSchema>;
   requestId: string;
   status: number;
@@ -284,7 +291,7 @@ export function writeSafeOperationalEvent(event: {
     .strictObject({
       action: observableActionSchema,
       durationMs: z.number().int().nonnegative(),
-      event: z.literal("identity.request"),
+      event: observableEventSchema,
       outcome: observableOutcomeSchema,
       requestId: z.uuid(),
       status: z.number().int().min(100).max(599),
@@ -292,7 +299,6 @@ export function writeSafeOperationalEvent(event: {
     .parse({
       ...event,
       durationMs: Math.max(0, Math.round(event.durationMs)),
-      event: "identity.request",
     });
   process.stdout.write(`${JSON.stringify(safeEvent)}\n`);
 }
