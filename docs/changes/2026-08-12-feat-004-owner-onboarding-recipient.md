@@ -2,7 +2,7 @@
 
 - Data: 2026-08-12
 - Autor/agente: Codex
-- Issue/PR: a definir
+- Issue/PR: [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6)
 - Features: FEAT-004
 - ADRs: ADR-003, ADR-004, ADR-005, ADR-009, ADR-011, ADR-013, ADR-015, ADR-016, ADR-017 e ADR-018
 - Risco: alto — nova autoridade de dono, integração financeira privada, RLS e elegibilidade futura de reserva
@@ -82,7 +82,11 @@ O boundary guest standalone da FEAT-004 também passou: exatamente um `POST /api
 
 O snapshot funcional foi congelado no commit `c115dcd726929f289777cd897cccc97d33a179ee` e gerou `set-livre-c115dcd726929f289777cd897cccc97d33a179ee.tar.gz`, com 24.891.031 bytes e SHA-256 `484d60e67f17768688619acf58b998a43fabc2420e9dd8b221f17a112e9aaa6c`. A árvore contém 2.859 payloads: web 1.568, backoffice 1.276, migrations 13, lockfile 1 e manifesto 1. O manifesto possui 678.902 bytes e SHA-256 `a62f1d4c4aaf317ce5d74232a959adff01367f863efe8f7b8de3fb17b89ee018`; os `BUILD_ID` equivalem ao commit, e o head empacotado é `20260812000100_owner_onboarding_recipient.sql`.
 
-O smoke padrão do gerador passou. A auditoria integral encontrou correspondência exata entre tar, staging e manifesto e terminou `NO-BLOCKER` somente para a release local Linux x64, Node 24.18/npm 11.19. As varreduras canônicas do gerador antes e depois do smoke não encontraram segredo de runtime nem PII de cliente/QA. Esta evidência não aprova produção ou ARM64: o smoke nativo ARM64 e PEND-003 — Nginx, TLS e trusted proxy — permanecem pendentes. Publicação, review e merge também ainda não ocorreram.
+O smoke padrão do gerador passou. A auditoria integral encontrou correspondência exata entre tar, staging e manifesto e terminou `NO-BLOCKER` somente para a release local Linux x64, Node 24.18/npm 11.19. As varreduras canônicas do gerador antes e depois do smoke não encontraram segredo de runtime nem PII de cliente/QA. Esta evidência não aprova produção ou ARM64: o smoke nativo ARM64 e PEND-003 — Nginx, TLS e trusted proxy — permanecem pendentes.
+
+## Publicação
+
+A branch `feat/feat-004-owner-onboarding-recipient` foi publicada, e o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) está `OPEN`, em draft e com base `main`. O HEAD remoto `4bf6ec51ce27486f274dcad1f708372947055240` contém o commit funcional `c115dcd726929f289777cd897cccc97d33a179ee` e o commit de documentação de release `4bf6ec51ce27486f274dcad1f708372947055240`. A publicação está concluída; review, promoção para ready e merge permanecem pendentes.
 
 ## Observabilidade e operação
 
@@ -98,4 +102,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Contratos, backend, UI, migration, reset, geração e banco estão implementados; o pgTAP passou em 355/355 no head `20260812000100`, com cleanup exato e zero resíduo final. Unitários finais passaram em 707/707, os gates não-browser citados estão verdes, a matriz específica FEAT-004 passou em 23/23, a integral limpa em 114/114, e builds, smoke padrão, boundary guest standalone e release local canônica x64 ficaram verdes. A feature permanece **Em implementação**: publicação, review e merge desta branch ainda não ocorreram, e a evidência local x64 não substitui PEND-003 nem o smoke ARM64 nativo.
+Contratos, backend, UI, migration, reset, geração e banco estão implementados; o pgTAP passou em 355/355 no head `20260812000100`, com cleanup exato e zero resíduo final. Unitários finais passaram em 707/707, os gates não-browser citados estão verdes, a matriz específica FEAT-004 passou em 23/23, a integral limpa em 114/114, e builds, smoke padrão, boundary guest standalone e release local canônica x64 ficaram verdes. A publicação da branch e a abertura do PR #6 foram concluídas. A feature permanece **Em implementação**: review, promoção para ready e merge ainda não ocorreram, e a evidência local x64 não substitui PEND-003 nem o smoke ARM64 nativo.

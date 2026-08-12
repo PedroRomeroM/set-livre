@@ -735,9 +735,13 @@
                 invocação pós-correções, automatizando os sete IDs. Após redigir telefones QA, a
                 suíte integral limpa também passou em 114/114. Builds web/backoffice, smoke padrão,
                 boundary guest standalone e release local canônica x64 passaram. O commit funcional
-                <code>c115dcd726929f289777cd897cccc97d33a179ee</code> gerou 2.859 payloads;
-                publicação, review, merge, PEND-003 e o smoke ARM64 nativo permanecem pendentes.
-                PEND-004 e PEND-006 continuam bloqueando produção, não a implementação local.
+                <code>c115dcd726929f289777cd897cccc97d33a179ee</code> gerou 2.859 payloads. A branch
+                foi publicada, e o
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> está
+                <code>OPEN</code>/draft contra <code>main</code>, no HEAD remoto
+                <code>4bf6ec51ce27486f274dcad1f708372947055240</code>; review, promoção para ready,
+                merge, PEND-003 e o smoke ARM64 nativo permanecem pendentes. PEND-004 e PEND-006
+                continuam bloqueando produção, não a implementação local.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -1194,8 +1198,8 @@
               001–007. Foram zero resultado inesperado, skip, flake, erro ou attachment. A integral
               limpa posterior passou em 114/114. Builds web/backoffice, o smoke padrão
               release-equivalent, o boundary guest standalone e a release local canônica x64 também
-              passaram; publicação, review, merge, PEND-003 e o smoke ARM64 nativo permanecem
-              pendentes.
+              passaram. A publicação foi concluída no PR #6; review, promoção para ready, merge,
+              PEND-003 e o smoke ARM64 nativo permanecem pendentes.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1252,8 +1256,16 @@
               <code>NO-BLOCKER</code> somente no escopo local Linux x64, Node 24.18/npm 11.19; as
               varreduras canônicas antes e depois do smoke não encontraram segredo de runtime nem
               PII de cliente/QA. Isso não comprova produção ou ARM64: PEND-003, trusted proxy e o
-              smoke ARM64 nativo continuam pendentes. Publicação, review e merge ainda não
-              ocorreram.
+              smoke ARM64 nativo continuam pendentes. A publicação foi concluída; review, promoção
+              para ready e merge ainda não ocorreram.
+            </p>
+            <p>
+              A branch <code>feat/feat-004-owner-onboarding-recipient</code> foi publicada, e o
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> está
+              <code>OPEN</code>, em draft e com base <code>main</code>. O HEAD remoto
+              <code>4bf6ec51ce27486f274dcad1f708372947055240</code> contém o commit funcional
+              <code>c115dcd726929f289777cd897cccc97d33a179ee</code> e o commit de documentação de
+              release <code>4bf6ec51ce27486f274dcad1f708372947055240</code>.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1453,7 +1465,8 @@
                 <code>20260812000100_owner_onboarding_recipient.sql</code>. O smoke padrão passou e
                 a auditoria estrutural integral terminou <code>NO-BLOCKER</code> no escopo Linux
                 x64, Node 24.18/npm 11.19. A feature continua em implementação: esta prova não é
-                ARM64 ou produção; PEND-003, publicação, review e merge seguem pendentes.
+                ARM64 ou produção; PEND-003 segue pendente. A publicação foi concluída no PR #6;
+                review, promoção para ready e merge seguem pendentes.
               </p>
             </article>
             <article class="card">
@@ -1610,7 +1623,8 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Publicar e concluir o review/merge da FEAT-004; a matriz específica 23/23, a
+                  Concluir review, promoção para ready e merge do PR #6, já publicado e ainda
+                  <code>OPEN</code>/draft contra <code>main</code>; a matriz específica 23/23, a
                   integral limpa 114/114, os builds, o smoke padrão, o boundary guest standalone e a
                   release local canônica x64 já estão verdes. PEND-003, trusted proxy e o smoke
                   ARM64 nativo continuam bloqueando produção. O run contaminado anterior permanece
