@@ -753,10 +753,11 @@
                 <code>403</code>. O patch local converte somente
                 <code>42501 + owner_contract_not_current</code> em <code>409 CONFLICT</code> e
                 mantém bloqueios/outros <code>42501</code> em <code>403 FORBIDDEN</code>. A release
-                <code>79376b62...</code> continua histórica e não contém esse patch. Nova release
-                canônica, publicação, resposta/resolução, novo review, promoção e merge permanecem
-                pendentes. PEND-003, o smoke ARM64 nativo, PEND-004 e PEND-006 continuam bloqueando
-                produção, não a implementação local.
+                <code>79376b62...</code> continua histórica; a release canônica local atual do
+                commit funcional <code>440c81f6...</code> contém o patch. Publicação,
+                resposta/resolução, novo review, promoção e merge permanecem pendentes. PEND-003, o
+                smoke ARM64 nativo, PEND-004 e PEND-006 continuam bloqueando produção, não a
+                implementação local.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -1213,10 +1214,11 @@
               <code>20260812000200</code>, com 14 migrations; em Node 24, format, lint sem warnings,
               typecheck integral, 718/718 unitários em 74 arquivos, docs:check 34/200/18, audit
               zero, Knip e diff-check passaram. Browser focado 23/23, integral 114/114, build único
-              sem warnings e smoke real padrão mais FEAT-004 também estão verdes. A release
-              <code>79376b62...</code> é histórica e não contém o patch; nova release canônica,
-              publicação, resposta/resolução da thread atual, novo review, promoção e merge seguem
-              pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios para produção.
+              sem warnings, smoke real padrão mais FEAT-004 e release canônica local
+              <code>440c81f6...</code> também estão verdes. A release <code>79376b62...</code> é
+              histórica. Publicação, resposta/resolução da thread atual, novo review, promoção e
+              merge seguem pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios para
+              produção.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1267,24 +1269,24 @@
             </p>
             <p>
               O commit funcional local
-              <code>79376b62bdce788c9eb7e1f1696d5acfde0cb215</code> foi processado pelo gerador uma
+              <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code> foi processado pelo gerador uma
               única vez, com exit <code>0</code> e log SHA-256
-              <code>1e8f5bf3d472f2000d8b32d53b0dca2165ec72513f79f407800e4d8d9d56afba</code>. A
-              release histórica anterior ao P2 atual
-              <code>.artifacts/set-livre-79376b62bdce788c9eb7e1f1696d5acfde0cb215.tar.gz</code>
-              possui 24.902.933 bytes, SHA-256
-              <code>af39e5d2f8f6d919e2adc554e27e214fa170dac12a7285ca8ec9630a7d1f8a1c</code>
+              <code>be9e2e2d0d1d2a4db78593c03858c183f93b3ed336bd820d3ce9d64c08ec1ba4</code>. A
+              release canônica local atual
+              <code>.artifacts/set-livre-440c81f6cc44cc95ed281d84e9a5124ae98a59c4.tar.gz</code>
+              possui 24.902.563 bytes, SHA-256
+              <code>f52210ee52a73a7fda68ee7bf389c4c26e7bd896c4c61f5775ca72ee42913b59</code>
               e sidecar SHA-256
-              <code>0c6bade3db133ccec9a01695a1cd7003d86d0e4275a739f389e3b63a78add5f5</code>. O
+              <code>a8082ee69d311a46c8e323913f1aa13d62c726e7b4206942c4309d2c6f56fb4e</code>. O
               manifesto possui 681.311 bytes e SHA-256
-              <code>c6514c43d37b8e687731fa2d8788da52df8df53acec11a640aa7707f4cb1d584</code>. O tar
+              <code>99d673708449287898424deec5188318d3fa329101a704dfd67859fabaf47b82</code>. O tar
               contém 3.453 membros — 584 diretórios, 2.867 arquivos e dois links —; manifesto e
               release cobrem 2.869 folhas: web 1.577, backoffice 1.276, migrations 14, lockfile 1 e
               manifesto 1. Os <code>BUILD_ID</code> equivalem ao commit e o head é
-              <code>20260812000200</code>, em Linux x64 com Node 24.18/npm 11.19. Smoke embutido,
-              segurança, buscas de secrets/PII e cleanup ficaram verdes. A auditoria final
-              independente terminou <code>NO-BLOCKER</code>. Isso não comprova ARM64 ou produção;
-              PEND-003 e o smoke ARM64 nativo permanecem pendentes.
+              <code>20260812000200</code>, em Linux x64 com Node 24.18/npm 11.19. Tar, sidecar,
+              smoke embutido, segurança, buscas de secrets/PII e cleanup ficaram verdes. A release
+              contém o patch, mas isso não comprova ARM64 ou produção; PEND-003 e o smoke ARM64
+              nativo permanecem pendentes. A release <code>79376b62...</code> permanece histórica.
             </p>
             <p>
               O snapshot histórico anterior foi congelado no commit
@@ -1303,9 +1305,9 @@
               PII de cliente/QA. A fotografia permanece stale e não descreve o patch local atual;
               tampouco a release <code>79376b62...</code> o contém. Naquele snapshot, a publicação
               foi concluída e o primeiro review abriu dois P2, já corrigidos, respondidos e
-              resolvidos. O P2 do segundo review já passou pelos full gates, browser, build e smoke;
-              ainda aguarda nova release canônica, publicação, resposta, resolução, novo review,
-              promoção para ready e merge.
+              resolvidos. O P2 do segundo review já passou pelos full gates, browser, build, smoke e
+              release canônica local <code>440c81f6...</code>; ainda aguarda publicação, resposta,
+              resolução, novo review, promoção para ready e merge.
             </p>
             <p>
               A branch <code>feat/feat-004-owner-onboarding-recipient</code> foi publicada até
@@ -1320,8 +1322,9 @@
               e não resolvida <code>PRRT_kwDOTyzZrs6YwM7k</code>. O comentário
               <code>PRRC_kwDOTyzZrs7gxI26</code>/REST <code>3770977722</code>, em
               <code>owner-service.ts</code> 107–112, exige distinguir contrato superado de bloqueio
-              real. O patch está somente local; não há nova publicação nem checks remotos atribuídos
-              a esse delta.
+              real. O patch e sua release canônica local estão no commit funcional
+              <code>440c81f6...</code>; não há nova publicação nem checks remotos atribuídos a esse
+              delta.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1509,26 +1512,26 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Release local histórica</span>
-              <h3>Snapshot FEAT-004 anterior ao P2 atual</h3>
+              <span class="tag done">Release canônica local atual</span>
+              <h3>Snapshot FEAT-004 com o P2 atual</h3>
               <p>
-                O commit <code>79376b62bdce788c9eb7e1f1696d5acfde0cb215</code> gerou, uma única vez
+                O commit <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code> gerou, uma única vez
                 e com exit <code>0</code>, o archive
-                <code>.artifacts/set-livre-79376b62bdce788c9eb7e1f1696d5acfde0cb215.tar.gz</code>,
-                com 24.902.933 bytes e SHA-256
-                <code>af39e5d2f8f6d919e2adc554e27e214fa170dac12a7285ca8ec9630a7d1f8a1c</code>. O
+                <code>.artifacts/set-livre-440c81f6cc44cc95ed281d84e9a5124ae98a59c4.tar.gz</code>,
+                com 24.902.563 bytes e SHA-256
+                <code>f52210ee52a73a7fda68ee7bf389c4c26e7bd896c4c61f5775ca72ee42913b59</code>. O
+                sidecar tem SHA-256
+                <code>a8082ee69d311a46c8e323913f1aa13d62c726e7b4206942c4309d2c6f56fb4e</code>, e o
                 manifesto tem 681.311 bytes, SHA-256
-                <code>c6514c43d37b8e687731fa2d8788da52df8df53acec11a640aa7707f4cb1d584</code>,
-                <code>BUILD_ID</code> igual ao commit nos dois apps e 14 migrations no head
+                <code>99d673708449287898424deec5188318d3fa329101a704dfd67859fabaf47b82</code>. O
+                <code>BUILD_ID</code> é igual ao commit nos dois apps e há 14 migrations no head
                 <code>20260812000200</code>. São 2.869 folhas: web 1.577, backoffice 1.276,
-                migrations 14, lockfile 1 e manifesto 1. Smoke embutido, segurança, secrets/PII e
-                cleanup ficaram verdes em Linux x64, Node 24.18/npm 11.19; a auditoria final
-                independente terminou <code>NO-BLOCKER</code>. A release <code>c115dcd...</code>, de
-                2.859 payloads e 13 migrations, permanece histórica e stale. Esta prova não é ARM64
-                ou produção; PEND-003 e o smoke ARM64 nativo seguem pendentes. Ela também não contém
-                o patch local de <code>owner_contract_not_current</code>. Full gates, browser, build
-                e smoke do patch estão verdes; nova release, publicação, resposta/resolução da
-                thread atual, novo review, promoção e merge seguem pendentes.
+                migrations 14, lockfile 1 e manifesto 1. Tar, sidecar, smoke embutido, segurança,
+                secrets/PII e cleanup ficaram verdes em Linux x64, Node 24.18/npm 11.19. As releases
+                <code>c115dcd...</code> e <code>79376b62...</code> permanecem históricas. Esta prova
+                não é ARM64 ou produção; PEND-003 e o smoke ARM64 nativo seguem pendentes. Full
+                gates, browser, build, smoke e release do patch estão verdes; publicação,
+                resposta/resolução da thread atual, novo review, promoção e merge seguem pendentes.
               </p>
             </article>
             <article class="card">
@@ -1686,14 +1689,15 @@
               <ol class="step-list">
                 <li>
                   Concluir o P2 atual do PR #6, ainda <code>OPEN</code>/draft: os full gates,
-                  browser, build e smoke atuais já estão verdes; gerar a nova release canônica,
-                  publicar o novo HEAD, responder e resolver <code>PRRT_kwDOTyzZrs6YwM7k</code>,
-                  solicitar novo review e somente então promover para ready e fazer merge. As duas
-                  threads anteriores já foram respondidas e resolvidas. Os hashes antigos e as
-                  releases <code>c115dcd...</code> e <code>79376b62...</code> são históricos e não
-                  contêm o delta atual. PEND-003, trusted proxy e o smoke ARM64 nativo continuam
-                  bloqueando produção. Gateway externo, checkout, fallback administrativo e dados
-                  bancários permanecem fora desta fatia.
+                  browser, build, smoke e a release canônica local <code>440c81f6...</code> já estão
+                  verdes; publicar o novo HEAD, responder e resolver
+                  <code>PRRT_kwDOTyzZrs6YwM7k</code>, solicitar novo review e somente então promover
+                  para ready e fazer merge. As duas threads anteriores já foram respondidas e
+                  resolvidas. Os hashes antigos e as releases <code>c115dcd...</code> e
+                  <code>79376b62...</code> são históricos e não contêm o delta atual. PEND-003,
+                  trusted proxy e o smoke ARM64 nativo continuam bloqueando produção. Gateway
+                  externo, checkout, fallback administrativo e dados bancários permanecem fora desta
+                  fatia.
                 </li>
               </ol>
             </article>
