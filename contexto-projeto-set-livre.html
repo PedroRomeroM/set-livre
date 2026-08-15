@@ -746,18 +746,26 @@
                 padrão mais FEAT-004 passou com 14/11 nonces, três boundaries, dois redirects, banco
                 <code>0 → 0</code> e cleanup zero. O
                 <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> da branch foi
-                publicada até <code>3e3f866c...</code>. As duas threads do primeiro review foram
-                respondidas e resolvidas. O segundo review <code>PRR_kwDOTyzZrs8AAAABJV08Cw</code>,
-                submetido em <code>2026-08-12T22:59:35Z</code> sobre esse commit, abriu o P2 atual
+                publicado de <code>3e3f866c...</code> até <code>011a48f4...</code>: o commit
+                funcional é <code>440c81f6...</code>, e <code>011a48f4...</code> registra a
+                documentação da release. No snapshot confirmado, HEAD local e remoto coincidiam em
+                <code>011a48f4...</code>. As duas threads do primeiro review foram respondidas e
+                resolvidas. O segundo review <code>PRR_kwDOTyzZrs8AAAABJV08Cw</code>, submetido em
+                <code>2026-08-12T22:59:35Z</code> sobre <code>3e3f866c...</code>, abriu o P2
                 <code>PRRT_kwDOTyzZrs6YwM7k</code>: contrato superado ainda recebia
-                <code>403</code>. O patch local converte somente
+                <code>403</code>. O patch publicado converte somente
                 <code>42501 + owner_contract_not_current</code> em <code>409 CONFLICT</code> e
                 mantém bloqueios/outros <code>42501</code> em <code>403 FORBIDDEN</code>. A release
                 <code>79376b62...</code> continua histórica; a release canônica local atual do
-                commit funcional <code>440c81f6...</code> contém o patch. Publicação,
-                resposta/resolução, novo review, promoção e merge permanecem pendentes. PEND-003, o
-                smoke ARM64 nativo, PEND-004 e PEND-006 continuam bloqueando produção, não a
-                implementação local.
+                commit funcional <code>440c81f6...</code> contém o patch. Em
+                <code>2026-08-15T15:36:08Z</code>, a thread recebeu a
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3789663669"
+                  ><code>PRRC_kwDOTyzZrs7h4a21</code></a
+                >/REST <code>3789663669</code>; depois da verificação na própria thread,
+                <code>PedroRomeroM</code> a resolveu ainda atual e não outdated. Novo
+                <code>@codex review</code>, espera integral de 60 minutos, promoção e merge
+                permanecem pendentes. PEND-003, o smoke ARM64 nativo, PEND-004 e PEND-006 continuam
+                bloqueando produção, não a implementação local.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -1216,9 +1224,10 @@
               zero, Knip e diff-check passaram. Browser focado 23/23, integral 114/114, build único
               sem warnings, smoke real padrão mais FEAT-004 e release canônica local
               <code>440c81f6...</code> também estão verdes. A release <code>79376b62...</code> é
-              histórica. Publicação, resposta/resolução da thread atual, novo review, promoção e
-              merge seguem pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios para
-              produção.
+              histórica. Publicação até <code>011a48f4...</code>, resposta e resolução da thread
+              estão concluídas. Novo <code>@codex review</code>, espera de 60 minutos, promoção e
+              merge seguem pendentes, sem claim de checks remotos. PEND-003 e o smoke ARM64 nativo
+              continuam obrigatórios para produção.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1306,25 +1315,39 @@
               tampouco a release <code>79376b62...</code> o contém. Naquele snapshot, a publicação
               foi concluída e o primeiro review abriu dois P2, já corrigidos, respondidos e
               resolvidos. O P2 do segundo review já passou pelos full gates, browser, build, smoke e
-              release canônica local <code>440c81f6...</code>; ainda aguarda publicação, resposta,
-              resolução, novo review, promoção para ready e merge.
+              release canônica local <code>440c81f6...</code>; publicação, resposta e resolução
+              também foram concluídas. Novo review, espera integral de 60 minutos, promoção para
+              ready e merge permanecem pendentes.
             </p>
             <p>
-              A branch <code>feat/feat-004-owner-onboarding-recipient</code> foi publicada até
-              <code>3e3f866c42302df9b0499e9af75575c7c092f3f0</code>, e o
-              <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> está
-              <code>OPEN</code> e em draft. As threads anteriores
+              A branch <code>feat/feat-004-owner-onboarding-recipient</code> avançou no remoto de
+              <code>3e3f866c42302df9b0499e9af75575c7c092f3f0</code> até
+              <code>011a48f4910baa0e17b26dee6eda3c678d910572</code>: o commit funcional é
+              <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code>, e
+              <code>011a48f4...</code> registra a documentação da release. No snapshot confirmado,
+              HEAD local e remoto coincidiam em <code>011a48f4...</code>. O
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> permanecia
+              <code>OPEN</code>/draft contra
+              <code>main@174ee16342367caedf55521227d21d5bf076b1a9</code> na leitura imediata;
+              <code>statusCheckRollup=[]</code> e <code>mergeable</code>/<code
+                >mergeStateStatus=UNKNOWN</code
+              >
+              não comprovam checks nem mergeabilidade. As threads anteriores
               <code>PRRT_kwDOTyzZrs6YkS9P</code> e <code>PRRT_kwDOTyzZrs6YkS9Y</code> receberam,
               respectivamente, as respostas <code>PRRC_kwDOTyzZrs7gw9tM</code> e
               <code>PRRC_kwDOTyzZrs7gw-TX</code> e foram resolvidas. O segundo review
               <code>PRR_kwDOTyzZrs8AAAABJV08Cw</code>, submetido em
-              <code>2026-08-12T22:59:35Z</code> sobre <code>3e3f866c...</code>, abriu a thread atual
-              e não resolvida <code>PRRT_kwDOTyzZrs6YwM7k</code>. O comentário
+              <code>2026-08-12T22:59:35Z</code> sobre <code>3e3f866c...</code>, abriu
+              <code>PRRT_kwDOTyzZrs6YwM7k</code>. O comentário
               <code>PRRC_kwDOTyzZrs7gxI26</code>/REST <code>3770977722</code>, em
               <code>owner-service.ts</code> 107–112, exige distinguir contrato superado de bloqueio
-              real. O patch e sua release canônica local estão no commit funcional
-              <code>440c81f6...</code>; não há nova publicação nem checks remotos atribuídos a esse
-              delta.
+              real. A thread recebeu
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3789663669"
+                ><code>PRRC_kwDOTyzZrs7h4a21</code></a
+              >/REST <code>3789663669</code> em <code>2026-08-15T15:36:08Z</code>; depois da
+              verificação, <code>PedroRomeroM</code> a resolveu ainda atual e não outdated. O patch
+              e sua release canônica local estão no commit funcional <code>440c81f6...</code>; a
+              publicação está concluída, sem atribuir checks remotos ao delta.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1513,7 +1536,7 @@
           <div class="grid">
             <article class="card">
               <span class="tag done">Release canônica local atual</span>
-              <h3>Snapshot FEAT-004 com o P2 atual</h3>
+              <h3>Snapshot FEAT-004 com o P2 publicado</h3>
               <p>
                 O commit <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code> gerou, uma única vez
                 e com exit <code>0</code>, o archive
@@ -1530,8 +1553,9 @@
                 secrets/PII e cleanup ficaram verdes em Linux x64, Node 24.18/npm 11.19. As releases
                 <code>c115dcd...</code> e <code>79376b62...</code> permanecem históricas. Esta prova
                 não é ARM64 ou produção; PEND-003 e o smoke ARM64 nativo seguem pendentes. Full
-                gates, browser, build, smoke e release do patch estão verdes; publicação,
-                resposta/resolução da thread atual, novo review, promoção e merge seguem pendentes.
+                gates, browser, build, smoke e release do patch estão verdes; publicação até
+                <code>011a48f4...</code>, resposta e resolução da thread estão concluídas. Novo
+                <code>@codex review</code>, espera de 60 minutos, promoção e merge seguem pendentes.
               </p>
             </article>
             <article class="card">
@@ -1688,16 +1712,17 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Concluir o P2 atual do PR #6, ainda <code>OPEN</code>/draft: os full gates,
-                  browser, build, smoke e a release canônica local <code>440c81f6...</code> já estão
-                  verdes; publicar o novo HEAD, responder e resolver
-                  <code>PRRT_kwDOTyzZrs6YwM7k</code>, solicitar novo review e somente então promover
-                  para ready e fazer merge. As duas threads anteriores já foram respondidas e
-                  resolvidas. Os hashes antigos e as releases <code>c115dcd...</code> e
-                  <code>79376b62...</code> são históricos e não contêm o delta atual. PEND-003,
-                  trusted proxy e o smoke ARM64 nativo continuam bloqueando produção. Gateway
-                  externo, checkout, fallback administrativo e dados bancários permanecem fora desta
-                  fatia.
+                  Concluir o ciclo do P2 do PR #6, ainda <code>OPEN</code>/draft: full gates,
+                  browser, build, smoke, release canônica local <code>440c81f6...</code>, publicação
+                  até <code>011a48f4...</code> e resposta/resolução de
+                  <code>PRRT_kwDOTyzZrs6YwM7k</code> já estão concluídos. Solicitar novo
+                  <code>@codex review</code>, respeitar a espera integral de 60 minutos e somente
+                  então, se a inspeção for limpa, promover para ready e fazer merge. As duas threads
+                  anteriores também estão respondidas e resolvidas. Os hashes antigos e as releases
+                  <code>c115dcd...</code> e <code>79376b62...</code> são históricos e não contêm o
+                  delta atual. PEND-003, trusted proxy e o smoke ARM64 nativo continuam bloqueando
+                  produção. Gateway externo, checkout, fallback administrativo e dados bancários
+                  permanecem fora desta fatia.
                 </li>
               </ol>
             </article>
