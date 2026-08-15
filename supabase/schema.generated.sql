@@ -43,7 +43,7 @@ COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
 
-CREATE OR REPLACE FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+CREATE OR REPLACE FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_user_agent_hash" "text") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $_$
@@ -58,6 +58,7 @@ begin
   if p_user_id is null
     or p_owner_contract_version_id is null
     or p_idempotency_key is null
+    or p_request_id is null
     or (
       p_user_agent_hash is not null
       and p_user_agent_hash !~ '^[0-9a-f]{64}$'
@@ -216,6 +217,7 @@ begin
       target_id,
       result,
       request_id,
+      idempotency_key,
       ip_hash,
       metadata
     )
@@ -226,6 +228,7 @@ begin
       'owner_profile',
       p_user_id,
       'succeeded',
+      p_request_id,
       p_idempotency_key,
       null,
       pg_catalog.jsonb_build_object(
@@ -241,10 +244,14 @@ end;
 $_$;
 
 
-ALTER FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") OWNER TO "postgres";
+ALTER FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_user_agent_hash" "text") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
+COMMENT ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_user_agent_hash" "text") IS 'Ativa ou renova dono com idempotência própria e request ID da fachada para auditoria.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $_$
@@ -259,6 +266,7 @@ declare
 begin
   if p_user_id is null
     or p_operation_id is null
+    or p_request_id is null
     or p_provider is distinct from 'local'
     or p_provider_reference is null
     or pg_catalog.char_length(p_provider_reference) not between 1 and 200
@@ -426,6 +434,7 @@ begin
     target_id,
     result,
     request_id,
+    idempotency_key,
     ip_hash,
     metadata
   )
@@ -436,6 +445,7 @@ begin
     'owner_payment_recipient',
     p_user_id,
     'succeeded',
+    p_request_id,
     current_operation.idempotency_key,
     null,
     pg_catalog.jsonb_build_object(
@@ -452,7 +462,11 @@ end;
 $_$;
 
 
-ALTER FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) OWNER TO "postgres";
+ALTER FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) IS 'Aplica transição autoritativa do recebedor e correlaciona auditoria ao request ID da fachada.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."bootstrap_signup_identity"() RETURNS "trigger"
@@ -806,13 +820,13 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
               'private.get_owner_recipient_status_for_user(uuid)'
             ),
             pg_catalog.to_regprocedure(
-              'private.activate_owner(uuid,uuid,uuid,text)'
+              'private.activate_owner(uuid,uuid,uuid,uuid,text)'
             ),
             pg_catalog.to_regprocedure(
               'private.prepare_owner_recipient_operation(uuid,text,uuid)'
             ),
             pg_catalog.to_regprocedure(
-              'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'
+              'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
             )
           )
           and dependency.objsubid = 0
@@ -887,13 +901,13 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           'private.get_owner_recipient_status_for_user(uuid)'
         ),
         pg_catalog.to_regprocedure(
-          'private.activate_owner(uuid,uuid,uuid,text)'
+          'private.activate_owner(uuid,uuid,uuid,uuid,text)'
         ),
         pg_catalog.to_regprocedure(
           'private.prepare_owner_recipient_operation(uuid,text,uuid)'
         ),
         pg_catalog.to_regprocedure(
-          'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'
+          'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
         )
       )
       and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
@@ -3080,6 +3094,7 @@ begin
     and new.target_id is not distinct from old.target_id
     and new.result is not distinct from old.result
     and new.request_id is not distinct from old.request_id
+    and new.idempotency_key is not distinct from old.idempotency_key
     and new.ip_hash is not distinct from old.ip_hash
     and new.metadata is not distinct from old.metadata
   then
@@ -3896,6 +3911,7 @@ CREATE TABLE IF NOT EXISTS "audit"."events" (
     "request_id" "uuid" NOT NULL,
     "ip_hash" "text",
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
     CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text"]))),
     CONSTRAINT "events_actor_role_check" CHECK (("actor_role" = 'authenticated'::"text")),
     CONSTRAINT "events_ip_hash_check" CHECK ((("ip_hash" IS NULL) OR ("ip_hash" ~ '^[0-9a-f]{64}$'::"text"))),
@@ -3909,6 +3925,14 @@ ALTER TABLE "audit"."events" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "audit"."events" IS 'Eventos operacionais append-only; referências externas e PII são proibidas em metadata.';
+
+
+
+COMMENT ON COLUMN "audit"."events"."request_id" IS 'Correlação com o requestId seguro da API e dos logs; linhas anteriores a 20260815000100 conservam o valor legado sem inventar correlação.';
+
+
+
+COMMENT ON COLUMN "audit"."events"."idempotency_key" IS 'Chave de deduplicação do comando, separada da correlação request_id.';
 
 
 
@@ -4254,7 +4278,7 @@ COMMENT ON COLUMN "public"."user_preferences"."preferences_version" IS 'Versão 
 
 
 ALTER TABLE ONLY "audit"."events"
-    ADD CONSTRAINT "events_action_target_id_request_id_key" UNIQUE ("action", "target_id", "request_id");
+    ADD CONSTRAINT "events_action_target_id_idempotency_key_key" UNIQUE ("action", "target_id", "idempotency_key");
 
 
 
@@ -4579,13 +4603,13 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
-REVOKE ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_user_agent_hash" "text") TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_user_agent_hash" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_contract_version_id" "uuid", "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_user_agent_hash" "text") TO "app_dal";
 
 
 
-REVOKE ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) TO "app_dal";
 
 
 

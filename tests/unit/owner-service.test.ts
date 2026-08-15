@@ -154,6 +154,7 @@ describe("owner service", () => {
     expect(mocks.activateOwnerProfile).toHaveBeenCalledWith({
       idempotencyKey,
       ownerContractVersionId: contractId,
+      requestId: context.requestId,
       userAgentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
       userId,
     });
@@ -253,6 +254,7 @@ describe("owner service", () => {
       operationId,
       provider: "local",
       providerReference: `local-recipient:${operationId}`,
+      requestId: context.requestId,
       requirements: ["identity_review"],
       status: "pending",
       userId,

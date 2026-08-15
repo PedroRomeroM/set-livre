@@ -41,7 +41,9 @@ Headers:
 - `X-Request-Id` opcional, validado;
 - cookie de sessão;
 - `Origin` confiável;
-- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código.
+- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código; os três comandos FEAT-004 usam exclusivamente `idempotencyKey` no envelope.
+
+`X-Request-Id`/`requestId` identifica a request HTTP e nunca substitui `idempotencyKey`. A chave de idempotência identifica a tentativa lógica repetível e pode atravessar retries com novos request IDs; ela não é copiada para o campo público de correlação.
 
 Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-002 usa o limite mais restritivo de 16 KiB e consome o stream independentemente de `Content-Length`.
 
@@ -137,6 +139,8 @@ Na FEAT-003, os envelopes Zod estritos de `profile.complete` e `profile.update` 
 
 Os três envelopes Zod estritos exigem `expectedScope` e `idempotencyKey` UUID, sem `ownerUserId`, status, provider ou referência externa fornecidos pelo cliente. `recipient.bank.update` permanece ausente até existir token ou handoff provider-owned aprovado. `owner.activate` retorna a projeção `activation` de 21 colunas porque a superfície precisa conservar o documento jurídico completo. `recipient.onboarding.start | refresh` retornam a projeção `recipient` de 16 colunas: apenas referência mínima do contrato (`id`, `source`, `effectiveAt`), status seguros, requisitos, próxima ação, versões monotônicas e `reservationsEligible`; título, versão textual, hash e corpo Markdown não atravessam esse contrato. Nenhuma das respostas contém PII, provider ID ou payload bruto.
 
+Nos três comandos, a rota encaminha o `requestId` da API fora do payload de domínio. Na ativação, o DAL envia correlação e chave lógica como parâmetros SQL distintos; no onboarding do recebedor, `prepare` reserva a `idempotencyKey` e `apply` recebe o `requestId`, recuperando a chave da operação reservada. Fatos novos em `audit.events` usam `request_id` somente para correlação e `idempotency_key` somente para unicidade/replay. Repetir a mesma chave lógica em outra request não cria outro fato nem troca a correlação do efeito original.
+
 As duas leituras autenticadas aplicam no servidor um deadline de 2.000 ms e usam contratos distintos:
 
 - `/dono` e `GET /api/owner/activation` chamam `get_owner_activation_status()` e retornam a projeção completa `activation` de 21 colunas;
@@ -146,9 +150,11 @@ Cada read model encaminha um `AbortSignal` real à RPC e usa race independente p
 
 Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo submit até `GET` autoritativo; o cliente nunca repete automaticamente o POST. `VALIDATION_FAILED` com `fieldErrors` continua sendo erro editável do formulário. Assim, uma corrida de estado usa recuperação por leitura, enquanto o checkbox do contrato ainda recebe feedback de campo normal. Em particular, SQLSTATE `42501` acompanhado exatamente de `owner_contract_not_current` é traduzido para `409 CONFLICT`, pois uma nova versão vigente exige releitura e novo aceite; qualquer outro `42501` permanece `403 FORBIDDEN`. A mensagem SQL serve apenas à classificação interna e não entra no payload público.
 
-A validação atual do mapeamento passou em Node 24 com 718/718 unitários de 74 arquivos e toda a cadeia estática verde; reset mais banco passaram em 355/355. A matriz focada única passou em 23/23, relatório/stdout/lista SHA-256 `66a4b5ceea14c7affa848748c525adccf684641b377f755a3a9ce3fb05aec6c6`/`ba57e0bd52d165bf422fccc6500eb4fb920c48f785a226baac24e8265c11fe0c`/`ed851b7bca361d0e3e50b5632f12251859b5098a12123a2ee2b8ebbb6f11bf59`. A integral única passou em 114/114, relatório/stdout/lista SHA-256 `b68c70ff6f17f55142d11394dd9b6113958a7e49ef82d2c5c70324dfcafe6227`/`7b8b7971f91e8a571cec6ac8bb63fed665bbfcd1b9ead4997a6e0436b76114bc`/`322ae32bc132bca0afcd30d4af55d37d4ec31977742e9d721999ab2664e924c6`; privacidade e cleanup ficaram verdes.
+No patch local de correlação, `npm ci`, format, lint, typecheck, 42/42 unitários focados, 12/12 guardas de privacidade, 718/718 unitários integrais em 74 arquivos, docs:check 34/200/18, audit zero, Knip e diff-check passaram. Um único reset, geração e `test:db` passou em 358/358 (`158 + 78 + 57 + 65`) no head `20260815000100`, com gerados sincronizados, readiness no head atual, recusa do anterior e tabelas finais em zero.
 
-O smoke runtime real atual, padrão mais FEAT-004, confirmou a fronteira guest e terminou com exit `0`: resumo SHA-256 `a8d41974344ba6eb3b6cb83d626e4b77e9853a2d98e58814d9c795cca356ad0b`, stdout `e15829cc6525d58cab4fa2ed49c33d9e5d6225512b77ec96a21fa2ea3b9703dba` e server log SHA-256 `7ea7719b4af0257044c24c32f252f9327920a069d74b31cac25d3f23d8f089c5`. Foram três boundaries e dois redirects, 14/11 nonces, banco `0 → 0` e cleanup completo. O build atual também foi único, exit `0`, sem warnings, log SHA-256 `db0d0049b248dd7b3d438d57ffa0faa465d3cd7a15a9bdd0d6267dc11a4ac162`. A release `79376b62...` permanece histórica; a release canônica local `440c81f6...` contém o patch e foi registrada no HEAD publicado `011a48f4910baa0e17b26dee6eda3c678d910572`. A resposta/resolução do P2 também foi concluída; novo `@codex review`, espera de 60 minutos, ready e merge seguem pendentes, sem claim de checks remotos.
+A focada P3 anterior permanece verde em 23/23. Depois de uma integral diagnóstica de 79 passados, uma falha e 34 não executados no teste de fundação WebKit, o oráculo foi corrigido para separar as páginas; o crítico passou em 3/3 e a integral aceita passou exatamente em 114/114, 17 specs e 16 projetos, preservando 23/23 da FEAT-004, privacidade e cleanup. Um único build passou com 26 rotas web, quatro do backoffice e zero warning; um único smoke customizado passou em 2,4 segundos com os três probes guest `401`/UUID, dois redirects, 14/11 nonces e banco/Mailpit `0 → 0`. Novo HEAD, release, publicação, resposta/resolução, novo review, ready e merge ainda não foram executados; toda a evidência permanece local x64.
+
+As fotografias anteriores de 718/718 unitários, 23/23 focados, 114/114 integrais, build/smoke e release `440c81f6...` permanecem evidência histórica do patch anterior. As novas execuções acima têm cardinalidades parcialmente iguais, mas são provas independentes do P3; somente a release antiga continua sem a migration e sem a correlação atual.
 
 ### 5.3 Estúdio e revisão
 

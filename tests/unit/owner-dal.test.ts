@@ -23,6 +23,7 @@ const userId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "22222222-2222-4222-8222-222222222222";
 const contractId = "33333333-3333-4333-8333-333333333333";
 const operationId = "44444444-4444-4444-8444-444444444444";
+const requestId = "55555555-5555-4555-8555-555555555555";
 const row = {
   accepted_owner_contract_version_id: null,
   next_action: "activate_owner",
@@ -85,12 +86,13 @@ describe("owner DAL", () => {
     await activateOwnerProfile({
       idempotencyKey,
       ownerContractVersionId: contractId,
+      requestId,
       userAgentHash,
       userId,
     });
     expect(mocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining("private.activate_owner"),
-      [userId, contractId, idempotencyKey, userAgentHash],
+      [userId, contractId, idempotencyKey, requestId, userAgentHash],
     );
   });
 
@@ -148,13 +150,22 @@ describe("owner DAL", () => {
       operationId,
       provider: "local",
       providerReference: "private-reference",
+      requestId,
       requirements: ["identity_review"],
       status: "pending",
       userId,
     });
     expect(mocks.query).toHaveBeenCalledWith(
       expect.stringContaining("private.apply_owner_recipient_operation"),
-      [userId, operationId, "local", "private-reference", "pending", ["identity_review"]],
+      [
+        userId,
+        operationId,
+        requestId,
+        "local",
+        "private-reference",
+        "pending",
+        ["identity_review"],
+      ],
     );
     expect(mocks.query.mock.calls.at(-1)?.[0]).not.toContain("owner_contract_body_markdown");
   });

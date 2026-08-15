@@ -123,7 +123,7 @@ revoke all on function private.feat004_capture_error(text)
 revoke all on function private.feat004_create_user(uuid, text, uuid)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(62);
+select plan(65);
 
 create extension if not exists dblink with schema extensions;
 
@@ -150,15 +150,23 @@ begin
 
     perform extensions.dblink_send_query(
       connection_name,
-      $remote$
+      pg_catalog.format(
+        $remote$
         select owner_version
         from private.activate_owner(
           '40000000-0000-4000-8000-000000000010',
           '00000000-0000-4000-8000-000000000204',
           '42000000-0000-4000-8000-000000000010',
+          %L::uuid,
           null
         )
-      $remote$
+        $remote$,
+        case connection_name
+          when 'feat004_activate_a'
+            then '45000000-0000-4000-8000-000000000010'
+          else '45000000-0000-4000-8000-000000000011'
+        end
+      )
     );
   end loop;
 end;
@@ -207,8 +215,13 @@ select ok(
       from audit.events as event
       where event.actor_user_id = '40000000-0000-4000-8000-000000000010'
         and event.action = 'owner.activated'
+        and event.request_id in (
+          '45000000-0000-4000-8000-000000000010',
+          '45000000-0000-4000-8000-000000000011'
+        )
+        and event.request_id <> '42000000-0000-4000-8000-000000000010'
     ),
-  'activate concorrente same-key converge sem 23505 em um fato e um audit'
+  'activate concorrente mantém idempotência e audita o request vencedor separadamente'
 );
 
 do $concurrent_prepare$
@@ -339,6 +352,50 @@ select ok(
     )
   ),
   'todas as relações FEAT-004 possuem RLS habilitada'
+);
+
+select ok(
+  (
+    select attribute.attnotnull
+    from pg_catalog.pg_attribute as attribute
+    where attribute.attrelid = 'audit.events'::regclass
+      and attribute.attname = 'idempotency_key'
+      and attribute.attnum > 0
+      and not attribute.attisdropped
+  )
+    and exists (
+      select 1
+      from pg_catalog.pg_constraint as constraint_record
+      where constraint_record.conrelid = 'audit.events'::regclass
+        and constraint_record.conname =
+          'events_action_target_id_idempotency_key_key'
+        and constraint_record.contype = 'u'
+        and constraint_record.convalidated
+        and pg_catalog.pg_get_constraintdef(constraint_record.oid) =
+          'UNIQUE (action, target_id, idempotency_key)'
+    )
+    and not exists (
+      select 1
+      from pg_catalog.pg_constraint as constraint_record
+      where constraint_record.conrelid = 'audit.events'::regclass
+        and constraint_record.conname =
+          'events_action_target_id_request_id_key'
+    )
+    and exists (
+      select 1
+      from pg_catalog.pg_trigger as trigger_record
+      where trigger_record.tgrelid = 'audit.events'::regclass
+        and trigger_record.tgname = 'audit_events_protect_append_only'
+        and not trigger_record.tgisinternal
+        and trigger_record.tgenabled = 'O'
+    )
+    and pg_catalog.strpos(
+      pg_catalog.pg_get_functiondef(
+        'private.protect_audit_event()'::regprocedure
+      ),
+      'new.idempotency_key is not distinct from old.idempotency_key'
+    ) > 0,
+  'auditoria separa correlação/dedup e mantém proteção append-only habilitada'
 );
 
 select ok(
@@ -592,9 +649,9 @@ select ok(
     from (
       values
         ('private.get_owner_recipient_status_for_user(uuid)'::text),
-        ('private.activate_owner(uuid,uuid,uuid,text)'::text),
+        ('private.activate_owner(uuid,uuid,uuid,uuid,text)'::text),
         ('private.prepare_owner_recipient_operation(uuid,text,uuid)'::text),
-        ('private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'::text)
+        ('private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'::text)
     ) as entrypoint(signature)
     where not pg_catalog.has_function_privilege(
         'app_dal', entrypoint.signature, 'EXECUTE'
@@ -611,7 +668,13 @@ select ok(
       or pg_catalog.has_function_privilege(
         'service_role', entrypoint.signature, 'EXECUTE'
       )
-  ),
+  )
+    and pg_catalog.to_regprocedure(
+      'private.activate_owner(uuid,uuid,uuid,text)'
+    ) is null
+    and pg_catalog.to_regprocedure(
+      'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'
+    ) is null,
   'quatro entrypoints privados executam somente por app_dal'
 );
 
@@ -623,9 +686,9 @@ select ok(
     from pg_catalog.pg_proc as routine
     where routine.oid in (
       'private.get_owner_recipient_status_for_user(uuid)'::regprocedure,
-      'private.activate_owner(uuid,uuid,uuid,text)'::regprocedure,
+      'private.activate_owner(uuid,uuid,uuid,uuid,text)'::regprocedure,
       'private.prepare_owner_recipient_operation(uuid,text,uuid)'::regprocedure,
-      'private.apply_owner_recipient_operation(uuid,uuid,text,text,text,text[])'::regprocedure
+      'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'::regprocedure
     )
   ),
   'quatro entrypoints privados usam definer e search_path vazio'
@@ -822,6 +885,7 @@ select pg_catalog.set_config(
       '40000000-0000-4000-8000-000000000001',
       '00000000-0000-4000-8000-000000000204',
       '42000000-0000-4000-8000-000000000001',
+      '45000000-0000-4000-8000-000000000001',
       pg_catalog.repeat('a', 64)
     ) as result
   )::text, 'false'),
@@ -840,6 +904,7 @@ select pg_catalog.set_config(
       '40000000-0000-4000-8000-000000000001',
       '00000000-0000-4000-8000-000000000204',
       '42000000-0000-4000-8000-000000000001',
+      '45000000-0000-4000-8000-000000000101',
       pg_catalog.repeat('a', 64)
     ) as result
   )::text, 'null'),
@@ -867,6 +932,7 @@ select matches(
         '40000000-0000-4000-8000-000000000001',
         '00000000-0000-4000-8000-000000000204',
         '42000000-0000-4000-8000-000000000001',
+        '45000000-0000-4000-8000-000000000102',
         repeat('b', 64)
       )
     $command$
@@ -882,12 +948,29 @@ select is(
         '40000000-0000-4000-8000-000000000001',
         '00000000-0000-4000-8000-000000000201',
         '42000000-0000-4000-8000-000000000002',
+        '45000000-0000-4000-8000-000000000103',
         null
       )
     $command$
   ),
   '23514:owner_contract_stale',
   'ativação recusa kind/version contratual incorreta'
+);
+
+select is(
+  private.feat004_capture_error(
+    $command$
+      select * from private.activate_owner(
+        '40000000-0000-4000-8000-000000000001',
+        '00000000-0000-4000-8000-000000000204',
+        '42000000-0000-4000-8000-000000000104',
+        null::uuid,
+        null::text
+      )
+    $command$
+  ),
+  '22023:invalid_owner_activation',
+  'ativação exige request ID autoritativo sem reaproveitar idempotência'
 );
 
 grant app_dal to postgres with inherit false, set true;
@@ -935,6 +1018,7 @@ select pg_catalog.set_config(
     from private.apply_owner_recipient_operation(
       '40000000-0000-4000-8000-000000000001',
       pg_catalog.current_setting('set_livre.test.start_operation_id')::uuid,
+      '45100000-0000-4000-8000-000000000001',
       'local',
       'local-recipient:' || pg_catalog.current_setting('set_livre.test.start_operation_id'),
       'pending',
@@ -1002,6 +1086,7 @@ select pg_catalog.set_config(
     from private.apply_owner_recipient_operation(
       '40000000-0000-4000-8000-000000000001',
       pg_catalog.current_setting('set_livre.test.refresh_operation_id')::uuid,
+      '45100000-0000-4000-8000-000000000001',
       'local',
       'local-recipient:' || pg_catalog.current_setting('set_livre.test.start_operation_id'),
       'active',
@@ -1048,6 +1133,7 @@ select is(
         select * from private.apply_owner_recipient_operation(
           '40000000-0000-4000-8000-000000000001',
           %L::uuid,
+          '45100000-0000-4000-8000-000000000102',
           'local',
           %L,
           'refused',
@@ -1138,6 +1224,7 @@ select is(
         select * from private.apply_owner_recipient_operation(
           '40000000-0000-4000-8000-000000000001',
           %L::uuid,
+          '45100000-0000-4000-8000-000000000103',
           'local',
           %L,
           'active',
@@ -1178,6 +1265,7 @@ select is(
         select * from private.apply_owner_recipient_operation(
           '40000000-0000-4000-8000-000000000001',
           %L::uuid,
+          '45100000-0000-4000-8000-000000000104',
           'local',
           %L,
           'active',
@@ -1199,6 +1287,7 @@ select is(
         select * from private.apply_owner_recipient_operation(
           '40000000-0000-4000-8000-000000000001',
           %L::uuid,
+          '45100000-0000-4000-8000-000000000105',
           'local',
           'local-test-fixture:refused',
           'active',
@@ -1224,6 +1313,7 @@ select pg_catalog.set_config(
     from private.apply_owner_recipient_operation(
       '40000000-0000-4000-8000-000000000001',
       pg_catalog.current_setting('set_livre.test.latest_operation_id')::uuid,
+      '45100000-0000-4000-8000-000000000003',
       'local',
       'local-recipient:' || pg_catalog.current_setting('set_livre.test.start_operation_id'),
       'refused',
@@ -1267,6 +1357,7 @@ select pg_catalog.set_config(
     from private.apply_owner_recipient_operation(
       '40000000-0000-4000-8000-000000000001',
       pg_catalog.current_setting('set_livre.test.retry_operation_id')::uuid,
+      '45100000-0000-4000-8000-000000000004',
       'local',
       'local-recipient:' || pg_catalog.current_setting('set_livre.test.retry_operation_id'),
       'pending',
@@ -1307,6 +1398,7 @@ select pg_catalog.set_config(
     from private.apply_owner_recipient_operation(
       '40000000-0000-4000-8000-000000000001',
       pg_catalog.current_setting('set_livre.test.block_operation_id')::uuid,
+      '45100000-0000-4000-8000-000000000005',
       'local',
       'local-test-fixture:blocked',
       'blocked',
@@ -1393,13 +1485,33 @@ select ok(
       and pg_catalog.bool_and(event.actor_user_id =
         '40000000-0000-4000-8000-000000000001')
       and pg_catalog.bool_and(event.ip_hash is null)
+      and pg_catalog.bool_and(event.request_id <> event.idempotency_key)
+      and pg_catalog.count(distinct event.request_id) = 5
       and pg_catalog.bool_and(
         event.metadata::text !~* 'provider|reference|email|phone|tax'
       )
+      and pg_catalog.array_agg(event.request_id order by event.request_id) = array[
+        '45000000-0000-4000-8000-000000000001',
+        '45100000-0000-4000-8000-000000000001',
+        '45100000-0000-4000-8000-000000000001',
+        '45100000-0000-4000-8000-000000000003',
+        '45100000-0000-4000-8000-000000000004',
+        '45100000-0000-4000-8000-000000000005'
+      ]::uuid[]
+      and pg_catalog.array_agg(
+        event.idempotency_key order by event.idempotency_key
+      ) = array[
+        '42000000-0000-4000-8000-000000000001',
+        '43000000-0000-4000-8000-000000000001',
+        '43000000-0000-4000-8000-000000000002',
+        '43000000-0000-4000-8000-000000000004',
+        '43000000-0000-4000-8000-000000000005',
+        '43000000-0000-4000-8000-000000000006'
+      ]::uuid[]
     from audit.events as event
     where event.actor_user_id = '40000000-0000-4000-8000-000000000001'
   ),
-  'ativação e cinco transições geram auditoria segura sem PII/provider'
+  'auditoria separa requests/idempotência, aceita request reutilizado e preserva replay'
 );
 
 create function private.feat004_attempt_audit_delete()
@@ -1465,6 +1577,7 @@ select private.activate_owner(
   '40000000-0000-4000-8000-000000000005',
   '00000000-0000-4000-8000-000000000204',
   '42000000-0000-4000-8000-000000000005',
+  '45000000-0000-4000-8000-000000000005',
   null
 );
 reset role;
@@ -1477,11 +1590,12 @@ select ok(
   exists (
     select 1
     from audit.events as event
-    where event.request_id = '42000000-0000-4000-8000-000000000005'
+    where event.request_id = '45000000-0000-4000-8000-000000000005'
+      and event.request_id <> '42000000-0000-4000-8000-000000000005'
       and event.actor_user_id is null
       and event.target_id = '40000000-0000-4000-8000-000000000005'
   ),
-  'cascade Auth anonimiza ator mas preserva fato operacional auditado'
+  'cascade Auth preserva fato correlacionado ao request sem confundir idempotência'
 );
 
 grant app_dal to postgres with inherit false, set true;
@@ -1490,6 +1604,7 @@ select private.activate_owner(
   '40000000-0000-4000-8000-000000000002',
   '00000000-0000-4000-8000-000000000204',
   '42000000-0000-4000-8000-000000000020',
+  '45000000-0000-4000-8000-000000000020',
   null
 );
 reset role;
@@ -1557,6 +1672,7 @@ select pg_catalog.set_config(
       '40000000-0000-4000-8000-000000000002',
       '00000000-0000-4000-8000-000000000204',
       '42000000-0000-4000-8000-000000000020',
+      '45000000-0000-4000-8000-000000000120',
       null
     ) as result
   )::text, 'false'),
@@ -1575,6 +1691,7 @@ select pg_catalog.set_config(
       '40000000-0000-4000-8000-000000000002',
       '00000000-0000-4000-8000-000000000205',
       '42000000-0000-4000-8000-000000000006',
+      '45000000-0000-4000-8000-000000000006',
       null
     ) as result
   )::text, 'false'),
@@ -1597,8 +1714,18 @@ select ok(
 );
 
 select ok(
-  pg_catalog.current_setting('set_livre.test.renewal_activation_ok')::boolean,
-  'dono já ativo aceita contrato corrente em renovação monotônica'
+  pg_catalog.current_setting('set_livre.test.renewal_activation_ok')::boolean
+    and (
+      select pg_catalog.count(*) = 1
+      from audit.events as event
+      where event.actor_user_id = '40000000-0000-4000-8000-000000000002'
+        and event.action = 'owner.contract_renewed'
+        and event.target_type = 'owner_profile'
+        and event.target_id = '40000000-0000-4000-8000-000000000002'
+        and event.request_id = '45000000-0000-4000-8000-000000000006'
+        and event.idempotency_key = '42000000-0000-4000-8000-000000000006'
+    ),
+  'dono renova contrato monotonicamente com request e idempotência separados'
 );
 
 select is(
@@ -1608,6 +1735,7 @@ select is(
         '40000000-0000-4000-8000-000000000002',
         '00000000-0000-4000-8000-000000000205',
         '42000000-0000-4000-8000-000000000020',
+        '45000000-0000-4000-8000-000000000121',
         null
       )
     $command$
@@ -1665,12 +1793,31 @@ select is(
       select * from private.apply_owner_recipient_operation(
         '40000000-0000-4000-8000-000000000002',
         '44000000-0000-4000-8000-000000000099',
+        '45100000-0000-4000-8000-000000000099',
         'pagarme', 'external-reference', 'active', '{}'::text[]
       )
     $command$
   ),
   '22023:invalid_recipient_result',
   'apply aceita somente provider local e referência local allowlisted'
+);
+
+select is(
+  private.feat004_capture_error(
+    $command$
+      select * from private.apply_owner_recipient_operation(
+        '40000000-0000-4000-8000-000000000002',
+        '44000000-0000-4000-8000-000000000099',
+        null::uuid,
+        'local',
+        'local-recipient:44000000-0000-4000-8000-000000000099',
+        'active',
+        '{}'::text[]
+      )
+    $command$
+  ),
+  '22023:invalid_recipient_result',
+  'apply exige request ID da fachada antes de consultar a operação'
 );
 
 select pg_catalog.set_config(
@@ -1725,13 +1872,13 @@ select is(
 );
 
 select ok(
-  private.check_readiness('20260812000200'),
+  private.check_readiness('20260815000100'),
   'readiness aceita head FEAT-004 e allowlist DAL ampliada exata'
 );
 
 select ok(
-  not private.check_readiness('20260812000100'),
-  'readiness rejeita head anterior'
+  not private.check_readiness('20260812000200'),
+  'readiness rejeita predecessor sem correlação de auditoria'
 );
 
 select ok(

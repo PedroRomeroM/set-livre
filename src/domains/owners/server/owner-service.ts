@@ -157,6 +157,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
         await dependencies.activateOwnerProfile({
           idempotencyKey: command.idempotencyKey,
           ownerContractVersionId: command.payload.ownerContractVersionId,
+          requestId: context.requestId,
           userAgentHash: hashOptionalPrivateEvidence(context.userAgent),
           userId: context.session.userId,
         }),
@@ -229,6 +230,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
           operationId: prepared.operationId,
           provider: "local",
           providerReference: providerResult.providerReference,
+          requestId: context.requestId,
           requirements: providerResult.requirements,
           status: providerResult.status,
           userId: context.session.userId,

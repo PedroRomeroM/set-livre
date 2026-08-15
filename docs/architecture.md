@@ -67,7 +67,7 @@ No cliente, `recoveryStatus(scope)` mantém scopes anônimo/UUID em queries dist
 
 #### Dono/recebedor local da FEAT-004
 
-`/dono` e `/dono/recebimentos` usam Server Components para sessão/read model inicial e Client Components somente nas mutations e no boundary interativo. A autoridade é `owner_profiles`; recipient/provider nunca vem de claim Auth ou papel administrativo. `POST /api/commands` recebe `expectedScope` e `idempotencyKey`, reserva a operação no DAL, chama o adapter server-only fora da transação e aplica o snapshot somente com fence de sequência. O adapter local nominal faz `start -> pending` e `refresh -> active`, é recusado fora de local/test e não realiza rede. Integração externa continua suspensa pelo ADR-018/PEND-004.
+`/dono` e `/dono/recebimentos` usam Server Components para sessão/read model inicial e Client Components somente nas mutations e no boundary interativo. A autoridade é `owner_profiles`; recipient/provider nunca vem de claim Auth ou papel administrativo. `POST /api/commands` recebe `expectedScope` e `idempotencyKey`, reserva a operação no DAL, chama o adapter server-only fora da transação e aplica o snapshot somente com fence de sequência. O `requestId` selecionado e validado na borda HTTP percorre handler, serviço, DAL e função SQL como contexto separado: ele correlaciona resposta, log e fato de auditoria, enquanto a chave do browser permanece exclusivamente responsável por deduplicação e replay. Uma nova request pode repetir `idempotencyKey` com outro `requestId` sem criar novo fato; o evento conserva a correlação da request que produziu o efeito. O adapter local nominal faz `start -> pending` e `refresh -> active`, é recusado fora de local/test e não realiza rede. Integração externa continua suspensa pelo ADR-018/PEND-004.
 
 ### 2.2 Backoffice
 
@@ -247,6 +247,8 @@ type CommandResponse<T> =
 - SQL;
 - log;
 - invalidation map.
+
+O contexto interno do comando mantém `requestId` e `idempotencyKey` em campos distintos. O primeiro é correlação da execução HTTP; o segundo pertence ao envelope somente quando a action exige convergência de retry. Nenhuma camada pode derivar um do outro.
 
 Arquivos usam upload assinado; iCal usa limite específico de 2 MB.
 

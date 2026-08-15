@@ -142,6 +142,7 @@ export async function getOwnerRecipientStatusForUser(userId: string) {
 export async function activateOwnerProfile(input: {
   idempotencyKey: string;
   ownerContractVersionId: string;
+  requestId: string;
   userAgentHash: string | null;
   userId: string;
 }) {
@@ -149,14 +150,21 @@ export async function activateOwnerProfile(input: {
     .strictObject({
       idempotencyKey: z.uuid(),
       ownerContractVersionId: z.uuid(),
+      requestId: z.uuid(),
       userAgentHash: evidenceHashSchema,
       userId: z.uuid(),
     })
     .parse(input);
   const result = await commandDalPool().query(
     `select ${ownerActivationProjection}
-       from private.activate_owner($1::uuid, $2::uuid, $3::uuid, $4::text)`,
-    [parsed.userId, parsed.ownerContractVersionId, parsed.idempotencyKey, parsed.userAgentHash],
+       from private.activate_owner($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text)`,
+    [
+      parsed.userId,
+      parsed.ownerContractVersionId,
+      parsed.idempotencyKey,
+      parsed.requestId,
+      parsed.userAgentHash,
+    ],
   );
   return parseExactlyOneRow(result.rows, ownerActivationRowSchema);
 }
@@ -205,6 +213,7 @@ export async function applyOwnerRecipientOperation(input: {
   operationId: string;
   provider: "local";
   providerReference: string;
+  requestId: string;
   requirements: readonly RecipientRequirement[];
   status: RecipientStatus;
   userId: string;
@@ -214,6 +223,7 @@ export async function applyOwnerRecipientOperation(input: {
       operationId: z.uuid(),
       provider: z.literal("local"),
       providerReference: z.string().min(1).max(200),
+      requestId: z.uuid(),
       requirements: z.array(recipientRequirementSchema).max(3),
       status: recipientStatusSchema.exclude(["not_started"]),
       userId: z.uuid(),
@@ -224,14 +234,16 @@ export async function applyOwnerRecipientOperation(input: {
        from private.apply_owner_recipient_operation(
          $1::uuid,
          $2::uuid,
-         $3::text,
+         $3::uuid,
          $4::text,
          $5::text,
-         $6::text[]
+         $6::text,
+         $7::text[]
        )`,
     [
       parsed.userId,
       parsed.operationId,
+      parsed.requestId,
       parsed.provider,
       parsed.providerReference,
       parsed.status,

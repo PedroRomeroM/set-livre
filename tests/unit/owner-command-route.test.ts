@@ -30,6 +30,7 @@ const userId = "11111111-1111-4111-8111-111111111111";
 const otherUserId = "22222222-2222-4222-8222-222222222222";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const contractId = "44444444-4444-4444-8444-444444444444";
+const requestId = "55555555-5555-4555-8555-555555555555";
 const privateUserAgent = "private-user-agent/provider-reference";
 
 function commandRequest(body: unknown) {
@@ -39,6 +40,7 @@ function commandRequest(body: unknown) {
       "content-type": "application/json",
       host: "127.0.0.1:3000",
       origin: "http://127.0.0.1:3000",
+      "x-request-id": requestId,
       "user-agent": privateUserAgent,
     },
     method: "POST",
@@ -199,12 +201,14 @@ describe("owner command route", () => {
     expect(mocks.activateOwner).toHaveBeenCalledWith(
       command,
       expect.objectContaining({
-        requestId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+        requestId,
         session: expect.objectContaining({ userId }),
         userAgent: privateUserAgent,
       }),
     );
     const serializedEvents = events.join("");
+    expect(response.headers.get("x-request-id")).toBe(requestId);
+    expect(serializedEvents).toContain(`"requestId":"${requestId}"`);
     expect(serializedEvents).toContain('"event":"private.command"');
     expect(serializedEvents).toContain('"action":"owner.activate"');
     expect(serializedEvents).not.toContain(idempotencyKey);
