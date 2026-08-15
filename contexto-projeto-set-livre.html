@@ -749,11 +749,12 @@
                 privacidade, 718/718 unitários integrais, docs/audit, Knip/diff, browser corrigido
                 114/114, build e smoke customizado. A release canônica local final do commit
                 <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> possui 2.870 artefatos, 15
-                migrations/head atual e duas auditorias independentes <code>NO-BLOCKER</code>.
-                Commit documental deste fechamento, se houver, publicação do novo HEAD,
-                resposta/resolução e novo review ainda estão pendentes. A feature continua
-                <strong>Em implementação</strong>; a prova é local x64, e PEND-003, smoke ARM64,
-                PEND-004 e PEND-006 continuam bloqueando produção.
+                migrations/head atual e duas auditorias independentes <code>NO-BLOCKER</code>. A
+                captura de <code>2026-08-15T19:38:32Z</code> verificou publicação até
+                <code>dda95b3...</code>, resposta/resolução e zero threads não resolvidas.
+                Commit/push deste registro, eventual ajuste do body e novo review ainda estão
+                pendentes. A feature continua <strong>Em implementação</strong>; a prova é local
+                x64, e PEND-003, smoke ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
               </p>
               <p>
                 O retorno pós-login aceita literalmente <code>/dono</code> e
@@ -1155,8 +1156,9 @@
               permanece verde em 23/23, e a integral corrigida passou em 114/114, preservando os
               sete IDs da FEAT-004. Build, smoke e release canônica local final também passaram;
               duas auditorias independentes da release terminaram <code>NO-BLOCKER</code>.
-              Publicação, resposta/resolução e ciclo final de review ainda estão pendentes. O
-              catálogo continua com 23 IDs automatizados e 177 planejados.
+              Publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas;
+              commit/push deste registro e ciclo final de review ainda estão pendentes. O catálogo
+              continua com 23 IDs automatizados e 177 planejados.
             </p>
           </div>
 
@@ -1258,10 +1260,12 @@
               2.870 artefatos e 3.454 membros no tar; os dois <code>BUILD_ID</code> equivalem ao
               commit e o head é <code>20260815000100</code>. Smoke, secrets/PII e cleanup final
               ficaram verdes no recorte Linux x64 Node 24.18/npm 11.19; duas auditorias
-              independentes terminaram <code>NO-BLOCKER</code>. Commit documental deste fechamento,
-              se houver, publicação, resposta/resolução e novo review seguem pendentes. Não há claim
-              de checks remotos, mergeabilidade, ready ou merge; PEND-003 e o smoke ARM64 nativo
-              continuam obrigatórios para produção.
+              independentes terminaram <code>NO-BLOCKER</code>. A captura remota de
+              <code>2026-08-15T19:38:32Z</code> verificou publicação até <code>dda95b3...</code>,
+              resposta/resolução e zero threads não resolvidas. Commit/push deste registro, eventual
+              ajuste do body e novo review seguem pendentes. Não há claim de aprovação, checks
+              remotos, ready ou merge; PEND-003 e o smoke ARM64 nativo continuam obrigatórios para
+              produção.
             </p>
             <p>
               Os blocos seguintes registram fotografias históricas anteriores; seus hashes não
@@ -1356,9 +1360,9 @@
               release canônica local <code>440c81f6...</code>; publicação, resposta e resolução
               também foram concluídas naquela fotografia, hoje histórica. O terceiro P2 já possui
               gates locais, banco, browser, build, smoke e release canônica local final auditada;
-              ainda aguarda commit documental deste fechamento, se houver, publicação,
-              resposta/resolução e novo review. Espera integral de 60 minutos, promoção para ready e
-              merge permanecem pendentes.
+              publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
+              Commit/push deste registro, eventual ajuste do body, novo review, espera mínima de 60
+              minutos, captura final única, promoção para ready e merge permanecem pendentes.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1388,11 +1392,25 @@
                 ><code>PRRC_kwDOTyzZrs7h4a21</code></a
               >/REST <code>3789663669</code> em <code>2026-08-15T15:36:08Z</code>; depois da
               verificação, <code>PedroRomeroM</code> a resolveu ainda atual e não outdated. Esse
-              patch e a release <code>440c81f6...</code> pertencem ao segundo P2 histórico. A
-              correção local do terceiro P2 já possui gates, banco, browser, build, smoke e release
-              canônica local final <code>2a86acc4...</code> auditada; commit documental deste
-              fechamento, se houver, publicação, resposta/resolução e novo review permanecem
-              pendentes.
+              patch e a release <code>440c81f6...</code> pertencem ao segundo P2 histórico.
+            </p>
+            <p>
+              Na captura remota verificada em <code>2026-08-15T19:38:32Z</code>, o push
+              <code>3dd11cb → dda95b3</code> publicou o funcional
+              <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> e os release-docs até
+              <code>dda95b3b9108930489a3b10275ef41c2f203ae24</code>; a release canônica permanece
+              vinculada ao funcional. O PR #6 estava <code>OPEN</code>/draft contra
+              <code>main@174ee16342367caedf55521227d21d5bf076b1a9</code>, com head daquela
+              fotografia <code>dda95b3b9108930489a3b10275ef41c2f203ae24</code>,
+              <code>MERGEABLE</code>/<code>CLEAN</code>, <code>reviewDecision</code> vazio e
+              <code>statusCheckRollup=[]</code>. <code>PedroRomeroM</code> criou a resposta
+              encadeada na thread <code>PRRC_kwDOTyzZrs7h6HnW</code>/REST <code>3790109142</code> no
+              mesmo instante; a thread <code>PRRT_kwDOTyzZrs6ZhR_d</code> ficou
+              <code>isResolved=true</code>, <code>isOutdated=false</code>, resolvida por ele. A
+              leitura encontrou zero threads não resolvidas, e as três anteriores permaneceram
+              resolvidas. Commit/push deste registro, ajuste do body se necessário, novo
+              review/espera mínima de 60 minutos e captura final única permanecem pendentes;
+              <code>MERGEABLE</code>/<code>CLEAN</code> não declara ready ou merge.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1607,11 +1625,13 @@
               </p>
               <p>
                 A release <code>440c81f6...</code> e as anteriores permanecem fotografias
-                históricas. “Final” descreve o artefato funcional local do terceiro P2, não
-                publicação, feature concluída, ARM64 ou produção. Commit documental deste
-                fechamento, se houver, publicação do novo HEAD, resposta/resolução, novo review com
-                espera integral de 60 minutos, ready e merge continuam pendentes; PEND-003 e o smoke
-                ARM64 nativo permanecem obrigatórios.
+                históricas. “Final” descreve o artefato funcional local do terceiro P2, não feature
+                concluída, ARM64 ou produção. A publicação da branch até <code>dda95b3...</code>, a
+                resposta e a resolução foram verificadas na captura de
+                <code>2026-08-15T19:38:32Z</code>. Commit/push deste registro, ajuste do body se
+                necessário, novo review com espera mínima de 60 minutos, captura final única, ready
+                e merge continuam pendentes; PEND-003 e o smoke ARM64 nativo permanecem
+                obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1769,14 +1789,14 @@
               <ol class="step-list">
                 <li>
                   Concluir o terceiro P2 do PR #6: com gates estáticos, banco, browser corrigido,
-                  build, smoke e release canônica local final já auditados, criar o commit
-                  documental deste fechamento, se houver, e publicar o novo HEAD. Então
-                  responder/resolver
-                  <code>PRRT_kwDOTyzZrs6ZhR_d</code>, solicitar novo <code>@codex review</code>,
-                  aguardar 60 minutos e somente diante de leitura limpa promover e mergear. A
-                  release <code>440c81f6...</code> e os demais hashes antigos são históricos.
-                  PEND-003, trusted proxy e smoke ARM64 continuam bloqueando produção; gateway
-                  externo, checkout, fallback e dados bancários permanecem fora.
+                  build, smoke, release canônica local final, publicação até
+                  <code>dda95b3...</code>, resposta e resolução já verificados, criar o commit/push
+                  deste registro e atualizar o body do PR se necessário. Então solicitar novo
+                  <code>@codex review</code>, aguardar no mínimo 60 minutos, fazer uma captura final
+                  única e somente diante de leitura limpa promover e mergear. A release
+                  <code>440c81f6...</code> e os demais hashes antigos são históricos. PEND-003,
+                  trusted proxy e smoke ARM64 continuam bloqueando produção; gateway externo,
+                  checkout, fallback e dados bancários permanecem fora.
                 </li>
               </ol>
             </article>

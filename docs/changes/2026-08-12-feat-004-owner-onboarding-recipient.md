@@ -156,7 +156,13 @@ A árvore contém 2.870 artefatos — web 1.577, backoffice 1.276, migrations 15
 
 Na fotografia publicada do segundo P2, a branch `feat/feat-004-owner-onboarding-recipient` avançou no remoto de `3e3f866c42302df9b0499e9af75575c7c092f3f0` até `011a48f4910baa0e17b26dee6eda3c678d910572`. O primeiro era o commit avaliado pelo segundo review; `440c81f6cc44cc95ed281d84e9a5124ae98a59c4` continha o patch funcional e sua release canônica local, enquanto `011a48f4...` registrava a documentação. Naquele snapshot, HEAD local e remoto coincidiam em `011a48f4...`.
 
-As threads anteriores estão respondidas e resolvidas. A correção do terceiro P2 já possui gates locais, banco, browser, build, smoke e release canônica local final auditada; commit documental deste fechamento, se houver, publicação do novo HEAD, resposta/resolução e novo review com espera integral de 60 minutos continuam pendentes. O [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) e a feature permanecem **Em implementação**; não há claim novo de checks remotos, mergeabilidade, ready ou merge.
+### Publicação, resposta e resolução do terceiro P2
+
+Na captura remota verificada em `2026-08-15T19:38:32Z`, o push `3dd11cb → dda95b3` publicou o commit funcional `2a86acc4dc3a005213d5f22384084e3aba0160be` e a documentação da release até `dda95b3b9108930489a3b10275ef41c2f203ae24`. A release canônica permanece vinculada ao funcional `2a86acc4...`; `dda95b3...` é somente o head publicado daquela fotografia, não um claim de HEAD eternamente atual.
+
+Na mesma captura, o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) estava `OPEN`/draft contra `main@174ee16342367caedf55521227d21d5bf076b1a9`, com head `dda95b3b9108930489a3b10275ef41c2f203ae24`, `MERGEABLE`/`CLEAN`, `reviewDecision` vazio e `statusCheckRollup=[]`. `PedroRomeroM` criou a resposta encadeada na thread `PRRC_kwDOTyzZrs7h6HnW`/REST `3790109142` em `2026-08-15T19:38:32Z`. A thread `PRRT_kwDOTyzZrs6ZhR_d` ficou `isResolved=true`, `isOutdated=false`, resolvida por ele; a leitura encontrou zero threads não resolvidas e confirmou as três anteriores ainda resolvidas.
+
+O commit/push deste registro documental, atualização do body do PR se necessária, novo `@codex review`, espera mínima de 60 minutos e captura final única continuam pendentes. A feature permanece **Em implementação**; `MERGEABLE`/`CLEAN` não declara ready ou merge e `statusCheckRollup=[]` não comprova checks remotos.
 
 ## Observabilidade e operação
 
@@ -172,4 +178,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Os P2 anteriores foram implementados, validados e publicados. O terceiro P2 de correlação possui interface/migration congeladas e fechamento local verde: gates estáticos, 42/42 focados, 718/718 unitários integrais, 358/358 pgTAP no head `20260815000100`, browser corrigido 114/114, build, smoke e release canônica local final auditada. Commit documental deste fechamento, se houver, publicação, resposta/resolução e novo review ainda faltam. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.
+Os P2 anteriores foram implementados, validados e publicados. O terceiro P2 de correlação possui interface/migration congeladas e fechamento local verde: gates estáticos, 42/42 focados, 718/718 unitários integrais, 358/358 pgTAP no head `20260815000100`, browser corrigido 114/114, build, smoke e release canônica local final auditada. Publicação até `dda95b3...`, resposta e resolução foram verificadas na captura congelada; commit/push deste registro, ajuste do body se necessário, novo review/espera mínima de 60 minutos e captura final ainda faltam. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.
