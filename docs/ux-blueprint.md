@@ -245,6 +245,7 @@ Bootstrap da FEAT-004:
 - `/dono/recebimentos` apresenta somente estado interno, requisitos e próxima ação allowlisted, versões e elegibilidade derivada; nunca exibe provider ID, payload, KYC ou dados bancários;
 - desktop pode compor checklist e conteúdo lado a lado; mobile, 320 px e reflow 160x360 usam uma coluna sem sidebar comprimida nem CTA sticky que cubra o contrato;
 - loading/refetch/pausa/troca de sessão fecham status, elegibilidade e ações privados. Timeout ou resultado ambíguo oferece `Verificar estado atual`, sem afirmar falha nem reenviar cegamente; durante esse GET, a superfície privada fecha sob boundary neutro e, ao terminar, o foco programático vai ao heading do checklist no sucesso ou ao alerta seguro na falha. Nesse alerta, `Tentar novamente` repete o boundary e devolve foco ao heading somente após novo GET bem-sucedido;
+- se uma nova versão do contrato surgir entre a tela e `start | refresh`, a API devolve `409 CONFLICT` e conduz ao mesmo `Verificar estado atual`; nenhuma tentativa é repetida. Dono ou recebedor realmente bloqueado continua proibido e não é apresentado como simples estado stale recuperável;
 - `pending`, `active`, `refused`, `suspended` e `blocked` são apresentados por texto, não somente cor. Mudança assíncrona usa `role=status`, erro usa `role=alert` e foco retorna ao heading/alerta pertinente;
 - não há link para estúdios, checkout, financeiro, suporte inventado, fallback administrativo nem formulário bancário enquanto essas superfícies não existirem.
 

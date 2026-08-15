@@ -62,6 +62,8 @@ Enquanto o ADR-018 estiver vigente, “provider” nesta fatia significa somente
 
 A projeção segura conserva `profile_version_synced`. A elegibilidade de reserva é verdadeira somente quando o dono está `active`, aceitou o `owner_contract` vigente, o recebedor está `active` e essa versão coincide com a versão canônica atual de `profiles`; qualquer ausência, refetch ou divergência falha fechada. Nova versão contratual preserva o histórico e exige novo aceite. O checkout real da FEAT-020 revalida o fato no banco antes de cobrar.
 
+Se essa nova versão se tornar vigente entre a leitura e `recipient.onboarding.start | refresh`, a preparação sinaliza `owner_contract_not_current`. O serviço publica `409 CONFLICT` e exige GET autoritativo antes de nova ação, sem repetir o POST; somente essa condição exata é recuperável por releitura. Dono ou recebedor bloqueado permanece `403 FORBIDDEN`.
+
 Estúdio pode ser publicado sem recipient ativo? Baseline:
 
 - conteúdo pode ser aprovado;

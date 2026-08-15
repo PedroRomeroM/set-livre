@@ -80,7 +80,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 | `ACCOUNT_SUSPENDED`             |  403 | conta suspensa                                |
 | `VALIDATION_FAILED`             |  422 | campos; sem `fieldErrors`, exige releitura    |
 | `NOT_FOUND`                     |  404 | recurso não visível                           |
-| `CONFLICT`                      |  409 | estado concorrente                            |
+| `CONFLICT`                      |  409 | estado concorrente ou contrato superado       |
 | `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
 | `QUOTE_EXPIRED`                 |  409 | cotação                                       |
 | `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                                    |
@@ -144,11 +144,11 @@ As duas leituras autenticadas aplicam no servidor um deadline de 2.000 ms e usam
 
 Cada read model encaminha um `AbortSignal` real à RPC e usa race independente para encerrar no prazo mesmo se o transporte não cooperar; o timer é limpo em sucesso/erro, e resolução ou rejeição tardia não publica estado. Um signal externo também encerra a operação. Os GETs traduzem indisponibilidade para `503` seguro, e as rotas SSR permanecem sob seu estado de erro e recuperação, sem fallback factual inventado.
 
-Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo submit até `GET` autoritativo; o cliente nunca repete automaticamente o POST. `VALIDATION_FAILED` com `fieldErrors` continua sendo erro editável do formulário. Assim, uma corrida de estado usa recuperação por leitura, enquanto o checkbox do contrato ainda recebe feedback de campo normal.
+Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo submit até `GET` autoritativo; o cliente nunca repete automaticamente o POST. `VALIDATION_FAILED` com `fieldErrors` continua sendo erro editável do formulário. Assim, uma corrida de estado usa recuperação por leitura, enquanto o checkbox do contrato ainda recebe feedback de campo normal. Em particular, SQLSTATE `42501` acompanhado exatamente de `owner_contract_not_current` é traduzido para `409 CONFLICT`, pois uma nova versão vigente exige releitura e novo aceite; qualquer outro `42501` permanece `403 FORBIDDEN`. A mensagem SQL serve apenas à classificação interna e não entra no payload público.
 
-A fotografia pós-review aceitou esse contrato em uma matriz focada única de 23/23 e numa integral única de 114/114. O ID 004 provocou a concorrência real sem replay, e os gates Node 24 passaram com 716/716 unitários em 74 arquivos; a evidência pré-review de 707/707 e seus relatórios browser permanece somente histórica.
+A validação atual do mapeamento passou em Node 24 com 718/718 unitários de 74 arquivos e toda a cadeia estática verde; reset mais banco passaram em 355/355. A matriz focada única passou em 23/23, relatório/stdout/lista SHA-256 `66a4b5ceea14c7affa848748c525adccf684641b377f755a3a9ce3fb05aec6c6`/`ba57e0bd52d165bf422fccc6500eb4fb920c48f785a226baac24e8265c11fe0c`/`ed851b7bca361d0e3e50b5632f12251859b5098a12123a2ee2b8ebbb6f11bf59`. A integral única passou em 114/114, relatório/stdout/lista SHA-256 `b68c70ff6f17f55142d11394dd9b6113958a7e49ef82d2c5c70324dfcafe6227`/`7b8b7971f91e8a571cec6ac8bb63fed665bbfcd1b9ead4997a6e0436b76114bc`/`322ae32bc132bca0afcd30d4af55d37d4ec31977742e9d721999ab2664e924c6`; privacidade e cleanup ficaram verdes.
 
-O smoke runtime pós-review confirmou a fronteira guest real: `GET /api/owner/activation` e `GET /api/owner/recipient` retornaram `401 UNAUTHENTICATED` com `requestId` UUID-v4; `POST /api/commands` para `recipient.onboarding.start`, com Host/Origin exatos e sem cookie, também retornou `401` com UUID. `/dono` e `/dono/recebimentos` responderam `200` com os redirects streaming Next exatos. O run final autorizado terminou com exit `0`; seu log tem SHA-256 `85db0dad1e7cbd999e4427222fdd1b685a3747ffde154eb5a46b444e9cf8f735`.
+O smoke runtime real atual, padrão mais FEAT-004, confirmou a fronteira guest e terminou com exit `0`: resumo SHA-256 `a8d41974344ba6eb3b6cb83d626e4b77e9853a2d98e58814d9c795cca356ad0b`, stdout `e15829cc6525d58cab4fa2ed49c33d9e5d6225512b77ec96a21fa2ea3b9703dba` e server log SHA-256 `7ea7719b4af0257044c24c32f252f9327920a069d74b31cac25d3f23d8f089c5`. Foram três boundaries e dois redirects, 14/11 nonces, banco `0 → 0` e cleanup completo. O build atual também foi único, exit `0`, sem warnings, log SHA-256 `db0d0049b248dd7b3d438d57ffa0faa465d3cd7a15a9bdd0d6267dc11a4ac162`. A release `79376b62...` permanece histórica e não contém o patch; nova release canônica e publicação seguem pendentes.
 
 ### 5.3 Estúdio e revisão
 

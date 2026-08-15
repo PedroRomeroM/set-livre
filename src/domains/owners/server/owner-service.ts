@@ -26,7 +26,10 @@ import {
   type RecipientOnboardingProvider,
 } from "./recipient-provider";
 
-const databaseErrorSchema = z.object({ code: z.string().optional() });
+const databaseErrorSchema = z.object({
+  code: z.string().optional(),
+  message: z.string().optional(),
+});
 const defaultProviderDeadlineMs = 2_000;
 
 type ActivateOwnerCommand = Extract<OwnerCommand, { action: "owner.activate" }>;
@@ -90,7 +93,17 @@ function assertFixtureContractAllowed(
 
 function handleOwnerDatabaseError(error: unknown): never {
   const parsed = databaseErrorSchema.safeParse(error);
-  switch (parsed.success ? parsed.data.code : undefined) {
+  const databaseError = parsed.success ? parsed.data : undefined;
+
+  if (databaseError?.code === "42501" && databaseError.message === "owner_contract_not_current") {
+    throw new ApiRouteError(
+      409,
+      "CONFLICT",
+      "O cadastro foi atualizado por outra solicitação. Recarregue o estado atual.",
+    );
+  }
+
+  switch (databaseError?.code) {
     case "22023":
       throw new ApiRouteError(
         422,

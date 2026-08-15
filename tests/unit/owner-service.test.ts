@@ -373,6 +373,8 @@ describe("owner service", () => {
     ["22023", "invalid_recipient_operation", 422, "VALIDATION_FAILED"],
     ["23514", "recipient_start_transition_invalid", 409, "CONFLICT"],
     ["40001", "recipient_operation_superseded", 409, "CONFLICT"],
+    ["42501", "owner_contract_not_current", 409, "CONFLICT"],
+    ["42501", "owner_blocked", 403, "FORBIDDEN"],
     ["42501", "recipient_blocked", 403, "FORBIDDEN"],
     ["P0002", "recipient_state_missing", 409, "CONFLICT"],
   ] as const)(
@@ -396,6 +398,7 @@ describe("owner service", () => {
         .catch((caught: unknown) => caught);
       expect(error).toMatchObject({ code, status });
       expect(String(error)).not.toContain("provider-private-reference");
+      expect(String(error)).not.toContain(databaseMessage);
     },
   );
 });
