@@ -146,11 +146,17 @@ A integral corrigida passou exatamente em 114/114, 17 specs e 16 projetos, prese
 
 O build atual foi executado exatamente uma vez e passou com exit `0`, 26 rotas web, quatro do backoffice e zero warning; log SHA-256 `8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2`. O smoke customizado atual também foi executado exatamente uma vez e passou com exit `0` em 2,4 segundos: três probes guest `401` com UUID, dois redirects exatos, 14 nonces web, 11 do backoffice, banco/Mailpit `0 → 0`, privacidade e cleanup verdes. SHA-256: stdout `399d3b41dd9d161bdd86288c53e5bf821279285eb4772740c9ff5169845e5abd`, server log `e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b` e resumo `25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450`.
 
+### Release canônica final do terceiro P2
+
+A release canônica local final foi gerada e auditada para o commit funcional `2a86acc4dc3a005213d5f22384084e3aba0160be`. O archive possui 24.903.588 bytes e SHA-256 `0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566`; o sidecar, 124 bytes e SHA-256 `1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab`; o manifesto, 681.529 bytes e SHA-256 `d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44`; e o log, 2.099 bytes e SHA-256 `e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e`.
+
+A árvore contém 2.870 artefatos — web 1.577, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, e o tar contém 3.454 membros — 584 diretórios, 2.868 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem ao commit funcional. O head empacotado é `20260815000100`, com prefixo SHA-256 registrado `ca995243...`; o lockfile possui prefixo SHA-256 `485ec8e7...`. Em Linux x64 com Node 24.18/npm 11.19, smoke embutido, varreduras de secrets/PII e cleanup final ficaram verdes; duas auditorias independentes terminaram `NO-BLOCKER`. Esse “final” descreve o artefato funcional local do P3, não ARM64, produção, publicação, feature concluída ou merge.
+
 ## Publicação
 
-A branch `feat/feat-004-owner-onboarding-recipient` avançou no remoto de `3e3f866c42302df9b0499e9af75575c7c092f3f0` até `011a48f4910baa0e17b26dee6eda3c678d910572`. O primeiro é o commit avaliado pelo segundo review; `440c81f6cc44cc95ed281d84e9a5124ae98a59c4` contém o patch funcional e a release canônica local, enquanto `011a48f4...` registra sua documentação. No snapshot de publicação, HEAD local e remoto coincidiam em `011a48f4...`.
+Na fotografia publicada do segundo P2, a branch `feat/feat-004-owner-onboarding-recipient` avançou no remoto de `3e3f866c42302df9b0499e9af75575c7c092f3f0` até `011a48f4910baa0e17b26dee6eda3c678d910572`. O primeiro era o commit avaliado pelo segundo review; `440c81f6cc44cc95ed281d84e9a5124ae98a59c4` continha o patch funcional e sua release canônica local, enquanto `011a48f4...` registrava a documentação. Naquele snapshot, HEAD local e remoto coincidiam em `011a48f4...`.
 
-As threads anteriores estão respondidas e resolvidas. A correção do terceiro P2 já possui gates locais, banco, browser, build e smoke verdes, mas novo HEAD, release, publicação, resposta/resolução e novo review continuam pendentes. O [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) e a feature permanecem **Em implementação**; não há claim novo de checks remotos, mergeabilidade, ready ou merge.
+As threads anteriores estão respondidas e resolvidas. A correção do terceiro P2 já possui gates locais, banco, browser, build, smoke e release canônica local final auditada; commit documental deste fechamento, se houver, publicação do novo HEAD, resposta/resolução e novo review com espera integral de 60 minutos continuam pendentes. O [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) e a feature permanecem **Em implementação**; não há claim novo de checks remotos, mergeabilidade, ready ou merge.
 
 ## Observabilidade e operação
 
@@ -166,4 +172,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Os P2 anteriores foram implementados, validados e publicados. O terceiro P2 de correlação possui interface/migration congeladas e fechamento precommit local verde: gates estáticos, 42/42 focados, 718/718 unitários integrais, 358/358 pgTAP no head `20260815000100`, browser corrigido 114/114, build e smoke. Novo HEAD, release, publicação, resposta/resolução e novo review ainda faltam. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.
+Os P2 anteriores foram implementados, validados e publicados. O terceiro P2 de correlação possui interface/migration congeladas e fechamento local verde: gates estáticos, 42/42 focados, 718/718 unitários integrais, 358/358 pgTAP no head `20260815000100`, browser corrigido 114/114, build, smoke e release canônica local final auditada. Commit documental deste fechamento, se houver, publicação, resposta/resolução e novo review ainda faltam. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.

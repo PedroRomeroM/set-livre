@@ -723,7 +723,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Terceiro review · release pendente</span>
+              <span class="tag review">Terceiro review · release local auditada</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
@@ -747,7 +747,10 @@
                 >), com readiness, overloads/grants, gerados/diff e tabelas finais corretos. O
                 fechamento precommit também passou format, lint, typecheck, 12/12 guardas de
                 privacidade, 718/718 unitários integrais, docs/audit, Knip/diff, browser corrigido
-                114/114, build e smoke customizado. Novo HEAD, release, publicação,
+                114/114, build e smoke customizado. A release canônica local final do commit
+                <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> possui 2.870 artefatos, 15
+                migrations/head atual e duas auditorias independentes <code>NO-BLOCKER</code>.
+                Commit documental deste fechamento, se houver, publicação do novo HEAD,
                 resposta/resolução e novo review ainda estão pendentes. A feature continua
                 <strong>Em implementação</strong>; a prova é local x64, e PEND-003, smoke ARM64,
                 PEND-004 e PEND-006 continuam bloqueando produção.
@@ -1150,9 +1153,10 @@
               42/42 unitários focados, 12/12 guardas de privacidade, 718/718 unitários integrais de
               74 arquivos e 358/358 pgTAP após um único reset e geração. A browser focada P3
               permanece verde em 23/23, e a integral corrigida passou em 114/114, preservando os
-              sete IDs da FEAT-004. Build e smoke também passaram; novo HEAD, release e ciclo final
-              de review ainda estão pendentes. O catálogo continua com 23 IDs automatizados e 177
-              planejados.
+              sete IDs da FEAT-004. Build, smoke e release canônica local final também passaram;
+              duas auditorias independentes da release terminaram <code>NO-BLOCKER</code>.
+              Publicação, resposta/resolução e ciclo final de review ainda estão pendentes. O
+              catálogo continua com 23 IDs automatizados e 177 planejados.
             </p>
           </div>
 
@@ -1241,10 +1245,23 @@
               log
               <code>e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b</code>
               e resumo
-              <code>25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450</code>. Novo
-              HEAD, release, publicação, resposta/resolução e novo review seguem pendentes. Não há
-              claim de checks remotos, mergeabilidade, ready ou merge; PEND-003 e o smoke ARM64
-              nativo continuam obrigatórios para produção.
+              <code>25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450</code>.
+            </p>
+            <p>
+              A release canônica local final foi gerada e auditada para o commit funcional
+              <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code>. Archive, sidecar, manifesto e
+              log possuem 24.903.588/124/681.529/2.099 bytes e SHA-256
+              <code>0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566</code>,
+              <code>1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab</code>,
+              <code>d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44</code> e
+              <code>e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e</code>. São
+              2.870 artefatos e 3.454 membros no tar; os dois <code>BUILD_ID</code> equivalem ao
+              commit e o head é <code>20260815000100</code>. Smoke, secrets/PII e cleanup final
+              ficaram verdes no recorte Linux x64 Node 24.18/npm 11.19; duas auditorias
+              independentes terminaram <code>NO-BLOCKER</code>. Commit documental deste fechamento,
+              se houver, publicação, resposta/resolução e novo review seguem pendentes. Não há claim
+              de checks remotos, mergeabilidade, ready ou merge; PEND-003 e o smoke ARM64 nativo
+              continuam obrigatórios para produção.
             </p>
             <p>
               Os blocos seguintes registram fotografias históricas anteriores; seus hashes não
@@ -1338,17 +1355,19 @@
               resolvidos. O P2 do segundo review passou pelos full gates, browser, build, smoke e
               release canônica local <code>440c81f6...</code>; publicação, resposta e resolução
               também foram concluídas naquela fotografia, hoje histórica. O terceiro P2 já possui
-              gates locais, banco, browser, build e smoke verdes; ainda aguarda novo HEAD, release,
-              publicação, resposta/resolução e novo review. Espera integral de 60 minutos, promoção
-              para ready e merge permanecem pendentes.
+              gates locais, banco, browser, build, smoke e release canônica local final auditada;
+              ainda aguarda commit documental deste fechamento, se houver, publicação,
+              resposta/resolução e novo review. Espera integral de 60 minutos, promoção para ready e
+              merge permanecem pendentes.
             </p>
             <p>
-              A branch <code>feat/feat-004-owner-onboarding-recipient</code> avançou no remoto de
+              Na fotografia publicada do segundo P2, a branch
+              <code>feat/feat-004-owner-onboarding-recipient</code> avançou no remoto de
               <code>3e3f866c42302df9b0499e9af75575c7c092f3f0</code> até
-              <code>011a48f4910baa0e17b26dee6eda3c678d910572</code>: o commit funcional é
+              <code>011a48f4910baa0e17b26dee6eda3c678d910572</code>: o commit funcional era
               <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code>, e
-              <code>011a48f4...</code> registra a documentação da release. No snapshot confirmado,
-              HEAD local e remoto coincidiam em <code>011a48f4...</code>. O
+              <code>011a48f4...</code> registrava a documentação da release. Naquele snapshot, HEAD
+              local e remoto coincidiam em <code>011a48f4...</code>. O
               <a href="https://github.com/PedroRomeroM/set-livre/pull/6">PR #6</a> permanecia
               <code>OPEN</code>/draft contra
               <code>main@174ee16342367caedf55521227d21d5bf076b1a9</code> na leitura imediata;
@@ -1370,8 +1389,10 @@
               >/REST <code>3789663669</code> em <code>2026-08-15T15:36:08Z</code>; depois da
               verificação, <code>PedroRomeroM</code> a resolveu ainda atual e não outdated. Esse
               patch e a release <code>440c81f6...</code> pertencem ao segundo P2 histórico. A
-              correção local do terceiro P2 já possui gates, banco, browser, build e smoke verdes;
-              novo HEAD, release, publicação, resposta/resolução e novo review permanecem pendentes.
+              correção local do terceiro P2 já possui gates, banco, browser, build, smoke e release
+              canônica local final <code>2a86acc4...</code> auditada; commit documental deste
+              fechamento, se houver, publicação, resposta/resolução e novo review permanecem
+              pendentes.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1562,27 +1583,35 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag review">Release atual pendente</span>
-              <h3>Snapshot histórico FEAT-004 do segundo P2</h3>
+              <span class="tag done">Release local canônica final P3</span>
+              <h3>Artefato funcional auditado por SHA</h3>
               <p>
-                O commit <code>440c81f6cc44cc95ed281d84e9a5124ae98a59c4</code> gerou, uma única vez
-                e com exit <code>0</code>, o archive
-                <code>.artifacts/set-livre-440c81f6cc44cc95ed281d84e9a5124ae98a59c4.tar.gz</code>,
-                com 24.902.563 bytes e SHA-256
-                <code>f52210ee52a73a7fda68ee7bf389c4c26e7bd896c4c61f5775ca72ee42913b59</code>. O
-                sidecar tem SHA-256
-                <code>a8082ee69d311a46c8e323913f1aa13d62c726e7b4206942c4309d2c6f56fb4e</code>, e o
-                manifesto tem 681.311 bytes, SHA-256
-                <code>99d673708449287898424deec5188318d3fa329101a704dfd67859fabaf47b82</code>. O
-                <code>BUILD_ID</code> é igual ao commit nos dois apps e há 14 migrations no head
-                <code>20260812000200</code>. São 2.869 folhas: web 1.577, backoffice 1.276,
-                migrations 14, lockfile 1 e manifesto 1. Tar, sidecar, smoke embutido, segurança,
-                secrets/PII e cleanup ficaram verdes em Linux x64, Node 24.18/npm 11.19. As releases
-                <code>c115dcd...</code> e <code>79376b62...</code> também permanecem históricas.
-                Esta prova não contém a migration <code>20260815000100</code> e não valida o patch
-                atual. Gates, browser, build e smoke do P3 estão verdes, mas a nova release ainda
-                depende do novo HEAD e de geração/auditoria próprias; tampouco há prova ARM64 ou de
-                produção.
+                O commit funcional <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> gerou a
+                release canônica local final. O archive possui 24.903.588 bytes e SHA-256
+                <code>0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566</code>; o
+                sidecar, 124 bytes e SHA-256
+                <code>1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab</code>; o
+                manifesto, 681.529 bytes e SHA-256
+                <code>d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44</code>; e o
+                log, 2.099 bytes e SHA-256
+                <code>e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e</code>.
+              </p>
+              <p>
+                São 2.870 artefatos: web 1.577, backoffice 1.276, migrations 15, lockfile 1 e
+                manifesto 1. O tar contém 3.454 membros: 584 diretórios, 2.868 arquivos e dois links
+                seguros. Os <code>BUILD_ID</code> dos dois apps equivalem ao commit; o head
+                empacotado é <code>20260815000100</code>, com prefixo SHA-256
+                <code>ca995243...</code>, e o lockfile possui prefixo <code>485ec8e7...</code>.
+                Smoke embutido, secrets/PII e cleanup final ficaram verdes em Linux x64, Node
+                24.18/npm 11.19; duas auditorias independentes terminaram <code>NO-BLOCKER</code>.
+              </p>
+              <p>
+                A release <code>440c81f6...</code> e as anteriores permanecem fotografias
+                históricas. “Final” descreve o artefato funcional local do terceiro P2, não
+                publicação, feature concluída, ARM64 ou produção. Commit documental deste
+                fechamento, se houver, publicação do novo HEAD, resposta/resolução, novo review com
+                espera integral de 60 minutos, ready e merge continuam pendentes; PEND-003 e o smoke
+                ARM64 nativo permanecem obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1740,8 +1769,9 @@
               <ol class="step-list">
                 <li>
                   Concluir o terceiro P2 do PR #6: com gates estáticos, banco, browser corrigido,
-                  build e smoke já verdes, congelar o novo HEAD e gerar/auditar a release. Então
-                  publicar, responder/resolver
+                  build, smoke e release canônica local final já auditados, criar o commit
+                  documental deste fechamento, se houver, e publicar o novo HEAD. Então
+                  responder/resolver
                   <code>PRRT_kwDOTyzZrs6ZhR_d</code>, solicitar novo <code>@codex review</code>,
                   aguardar 60 minutos e somente diante de leitura limpa promover e mergear. A
                   release <code>440c81f6...</code> e os demais hashes antigos são históricos.
