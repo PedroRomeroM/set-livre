@@ -12,6 +12,10 @@ export function ownerRecipientActionsAvailable(result: OwnerRecipientResult) {
   return ownerHasCurrentContract(result);
 }
 
+export function ownerRecipientOnboardingAvailable(result: OwnerRecipientResult) {
+  return result.recipientOnboardingCapability === "local_adapter";
+}
+
 export function ownerNeedsCurrentContractAcceptance(result: OwnerRecipientResult) {
   return result.ownerStatus === "active" && !ownerHasCurrentContract(result);
 }

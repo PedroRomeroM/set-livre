@@ -34,6 +34,7 @@ const ownerResult = {
   profileVersionSynced: null,
   projection: "activation",
   providerMode: "local",
+  recipientOnboardingCapability: "local_adapter",
   recipientStatus: "not_started",
   recipientVersion: 0,
   requirements: [],
@@ -55,6 +56,7 @@ const recipientResult = {
   profileVersionSynced: ownerResult.profileVersionSynced,
   projection: "recipient",
   providerMode: ownerResult.providerMode,
+  recipientOnboardingCapability: ownerResult.recipientOnboardingCapability,
   recipientStatus: ownerResult.recipientStatus,
   recipientVersion: ownerResult.recipientVersion,
   requirements: ownerResult.requirements,
@@ -113,6 +115,22 @@ describe("owner browser API", () => {
     const error = await readOwnerRecipient().catch((cause: unknown) => cause);
     expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
     expect(JSON.stringify(error)).not.toContain(privateProviderId);
+  });
+
+  it("fails closed when a recipient response omits the server-derived capability", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        {
+          data: { ...recipientResult, recipientOnboardingCapability: undefined },
+          requestId,
+        },
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    await expect(readOwnerRecipient()).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
   });
 
   it.each([

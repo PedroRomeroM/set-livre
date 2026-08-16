@@ -28,7 +28,7 @@ flowchart TB
 
 - Supabase CLI + Docker;
 - app público e backoffice;
-- provider fake/sandbox;
+- adapter local determinístico quando `APP_ENV=local | test`, sem sandbox remoto;
 - e-mail sink;
 - único alvo de E2E destrutivo.
 
@@ -36,7 +36,7 @@ flowchart TB
 
 - projeto Supabase separado;
 - VM/serviço ativado sob demanda ou namespace isolado;
-- provider sandbox;
+- provider sandbox somente como topologia alvo após revisão do ADR-018/PEND-004;
 - dados sintéticos;
 - não manter ocioso sem necessidade.
 
@@ -44,13 +44,15 @@ flowchart TB
 
 - Supabase dedicado;
 - VM persistente;
-- provider live;
+- provider live somente como topologia alvo após contrato e integração aprovados;
 - e-mail live;
 - domínio/TLS;
 - backups;
 - alertas.
 
 Credenciais nunca são compartilhadas.
+
+No código implementado nesta etapa, `recipientOnboardingCapability` é derivada server-side por request. `APP_ENV=local | test` produz `local_adapter`; `development | production`, valor ausente ou inválido produzem `unavailable`. Nesses runtimes, recebimentos permanece somente para consulta e start/refresh falham com `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de `prepare`. A tabela acima descreve a topologia final desejada para Acceptance/Production; não afirma sandbox ou provider live já integrados.
 
 ## 3. Oracle Cloud
 
@@ -115,9 +117,11 @@ Não usar GHCR.
 
 Na fundação local, `node scripts/release-manifest.mjs` já recompila um checkout limpo com ambientes isolados por app e `BUILD_ID` igual ao SHA, empacota os dois entrypoints com static/public, migrations e lockfile, recusa raiz de artefatos simbólica, montada ou fora do repositório, configuração local, secret incorporado e link externo, e revalida a árvore completa após o smoke. Antes de qualquer `chmod`, lock ou build, o preflight Linux consulta o `mountinfo` do próprio namespace; toda árvore antiga ou candidata passa por inspeção física completa, recusa mount na raiz ou abaixo, é retirada por rename atômico e só então removida após nova comprovação de identidade, forma e mounts. Assim, bind mounts e volumes esquecidos não são atravessados por limpeza recursiva; fora do Linux, uma árvore preexistente exige remoção manual. A entrada direta deriva a versão npm do manifesto da instalação adjacente ao Node atual, validada contra `packageManager`/`devEngines` antes do primeiro build, sem `npm.cmd`, shell ou resolução por `PATH`. Um lock advisory de kernel, mantido por descritor com `util-linux flock`, serializa toda a geração por checkout antes de qualquer build ou temporário compartilhado e é liberado automaticamente ao encerrar o processo. Cada `.env.local` é obrigatório, físico, exclusivo e `0600`; o script o abre sem seguir links, mantém o descritor até terminar a leitura e revalida identidade e modo antes de interpretar o runtime local exato. O readiness empacotado usa somente a URL DAL desse arquivo, validada para o host IPv4 escrito literalmente como `127.0.0.1` e a porta Supabase local, sem aceitar alias, representação alternativa ou override exportado pelo host. Os handlers de interrupção são instalados antes do primeiro spawn; em POSIX, `SIGHUP` encerra ambos os PGIDs detached, elimina descendentes remanescentes e preserva código `129`. O tar usa ordem, ownership, timestamp e modos determinísticos (`0755` para diretórios/executáveis e `0644` para os demais arquivos, sempre removendo `setuid`, `setgid` e `sticky`), é reextraído e comparado à árvore manifestada; um SHA existente nunca é sobrescrito por bytes divergentes. O artefato registra `platform`/`arch`; ele não é apresentado como ARM64 até o smoke real de PEND-003.
 
-O patch local do terceiro P2 passou em gates estáticos, 42/42 unitários focados, 718/718 integrais, 358/358 pgTAP no head `20260815000100` e browser corrigido 114/114. Seu build foi executado exatamente uma vez, terminou com exit `0`, 26 rotas web, quatro do backoffice e zero warning; log SHA-256 `8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2`. O smoke customizado atual também foi executado exatamente uma vez e terminou com exit `0` em 2,4 segundos: três probes guest `401` com UUID, dois redirects exatos, 14 nonces web, 11 backoffice, banco/Mailpit `0 → 0`, privacidade e cleanup verdes. SHA-256: stdout `399d3b41dd9d161bdd86288c53e5bf821279285eb4772740c9ff5169845e5abd`, server log `e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b` e resumo `25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450`.
+O patch local do terceiro P2 passou em gates estáticos, 42/42 unitários focados, 718/718 integrais, 358/358 pgTAP no head `20260815000100` e browser corrigido 114/114. Seu build foi executado exatamente uma vez, terminou com exit `0`, 26 rotas web, quatro do backoffice e zero warning; log SHA-256 `8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2`. O smoke customizado daquele snapshot também terminou com exit `0` em 2,4 segundos: três probes guest `401` com UUID, dois redirects exatos, 14 nonces web, 11 backoffice, banco/Mailpit `0 → 0`, privacidade e cleanup verdes. SHA-256: stdout `399d3b41dd9d161bdd86288c53e5bf821279285eb4772740c9ff5169845e5abd`, server log `e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b` e resumo `25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450`. Esses resultados são históricos para o delta de capability.
 
-A release canônica local final foi gerada e auditada para o commit funcional `2a86acc4dc3a005213d5f22384084e3aba0160be`. O archive possui 24.903.588 bytes e SHA-256 `0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566`; o sidecar, 124 bytes e SHA-256 `1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab`; o manifesto, 681.529 bytes e SHA-256 `d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44`; e o log, 2.099 bytes e SHA-256 `e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e`. A árvore manifestada soma 2.870 artefatos — web 1.577, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, enquanto o tar soma 3.454 membros — 584 diretórios, 2.868 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem ao commit. O head empacotado é `20260815000100`, com prefixo SHA-256 `ca995243...`; o lockfile possui prefixo SHA-256 `485ec8e7...`. Em Linux x64 com Node 24.18/npm 11.19, smoke embutido, varreduras de secrets/PII e cleanup final ficaram verdes, e duas auditorias independentes terminaram `NO-BLOCKER`. A captura remota de `2026-08-15T19:38:32Z` verificou publicação até `dda95b3b9108930489a3b10275ef41c2f203ae24`, resposta/resolução e zero threads não resolvidas. Commit/push deste registro e novo review ainda permanecem pendentes; esta prova não equivale a ARM64 ou produção, e PEND-003/smoke ARM64 nativo continuam obrigatórios. Os artefatos descritos a seguir pertencem ao segundo P2 e são históricos para o delta de correlação.
+A release canônica local do terceiro P2 foi gerada e auditada para o commit funcional `2a86acc4dc3a005213d5f22384084e3aba0160be`. O archive possui 24.903.588 bytes e SHA-256 `0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566`; o sidecar, 124 bytes e SHA-256 `1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab`; o manifesto, 681.529 bytes e SHA-256 `d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44`; e o log, 2.099 bytes e SHA-256 `e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e`. A árvore manifestada soma 2.870 artefatos — web 1.577, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, enquanto o tar soma 3.454 membros — 584 diretórios, 2.868 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem ao commit. O head empacotado é `20260815000100`, com prefixo SHA-256 `ca995243...`; o lockfile possui prefixo SHA-256 `485ec8e7...`. Em Linux x64 com Node 24.18/npm 11.19, smoke embutido, varreduras de secrets/PII e cleanup final ficaram verdes, e duas auditorias independentes terminaram `NO-BLOCKER`. A captura remota de `2026-08-15T19:38:32Z` verificou publicação até `dda95b3b9108930489a3b10275ef41c2f203ae24`, resposta/resolução e zero threads não resolvidas. Essa prova é histórica para a capability, não equivale a ARM64 ou produção, e PEND-003/smoke ARM64 nativo continuam obrigatórios.
+
+No quarto P2, o fechamento estático (734/734 unitários), o banco 358/358 e o browser 23/23 + 114/114 passaram. Um único build de validação terminou com exit `0`, 26 rotas web, quatro do backoffice e `BUILD_ID=local`; log SHA-256 `ca7d5c3e98449ea03a4cedbc567d93f989db7dbfdac854ea1a19f40f0c26b0b3`. O smoke customizado não é evidência verde. A tentativa 1 foi recusada por um oráculo que tratou tombstone segura de cookie como violação; a tentativa 2 terminou com exit `1` apesar de cumprir o contrato completo — três boundaries, dois redirects, 14/11 nonces, 15 relações e Mailpit em zero —, porque o postcheck produziu um falso positivo contra o shell pai; a tentativa 3 foi recusada antes dos probes porque o parser não aceitava `pgrp=0`. O cleanup terminou em zero nas três. O smoke embutido do gerador canônico será a prova definitiva antes de criar a release; release e publicação do delta permanecem pendentes.
 
 O build histórico foi executado uma única vez em Node 24: `npm run build` terminou com exit `0`, sem warnings; log SHA-256 `db0d0049b248dd7b3d438d57ffa0faa465d3cd7a15a9bdd0d6267dc11a4ac162`.
 

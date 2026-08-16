@@ -4,6 +4,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   createLocalRecipientOnboardingProvider,
+  deriveRecipientOnboardingCapability,
   localRecipientTestFixtureReferences,
   mapLocalRecipientSnapshot,
 } from "../../src/domains/owners/server/recipient-provider";
@@ -92,6 +93,17 @@ describe("local recipient onboarding provider", () => {
       expect(() => createLocalRecipientOnboardingProvider()).toThrow("proibido");
     },
   );
+
+  it.each([
+    ["local", "local_adapter"],
+    ["test", "local_adapter"],
+    ["development", "unavailable"],
+    ["production", "unavailable"],
+    ["preview", "unavailable"],
+    [undefined, "unavailable"],
+  ] as const)("derives APP_ENV=%s as capability %s", (environment, expected) => {
+    expect(deriveRecipientOnboardingCapability(environment)).toBe(expected);
+  });
 
   it("honors both an already aborted signal and an elapsed absolute deadline", async () => {
     vi.stubEnv("APP_ENV", "local");

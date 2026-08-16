@@ -59,7 +59,9 @@ describe("owner and recipient contracts", () => {
 
       for (const invalid of [
         { ...command, ownerUserId: scope },
+        { ...command, recipientOnboardingCapability: "local_adapter" },
         { ...command, payload: { status: "active" } },
+        { ...command, payload: { recipientOnboardingCapability: "local_adapter" } },
         { ...command, payload: { providerReference: "recipient-secret" } },
         { ...command, idempotencyKey: undefined },
       ]) {
@@ -80,6 +82,7 @@ describe("owner and recipient contracts", () => {
       profileVersionSynced: 4,
       projection: "activation",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "active",
       recipientVersion: 2,
       requirements: [],
@@ -106,6 +109,7 @@ describe("owner and recipient contracts", () => {
       profileVersion: 4,
       profileVersionSynced: null,
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "not_started",
       recipientVersion: 0,
       requirements: [],
@@ -152,6 +156,7 @@ describe("owner and recipient contracts", () => {
       profileVersionSynced: null,
       projection: "activation",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "not_started",
       recipientVersion: 0,
       requirements: [],
@@ -162,12 +167,30 @@ describe("owner and recipient contracts", () => {
     expect(
       ownerRecipientResultSchema.safeParse({
         ...base,
+        recipientOnboardingCapability: "unavailable",
+      }).success,
+    ).toBe(true);
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
         requirements: ["identity_review", "identity_review"],
       }).success,
     ).toBe(false);
     expect(ownerRecipientResultSchema.safeParse({ ...base, providerMode: "pagarme" }).success).toBe(
       false,
     );
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
+        recipientOnboardingCapability: "browser_enabled",
+      }).success,
+    ).toBe(false);
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
+        recipientOnboardingCapability: undefined,
+      }).success,
+    ).toBe(false);
     expect(ownerRecipientResultSchema.safeParse({ ...base, ownerVersion: "0" }).success).toBe(
       false,
     );
@@ -185,6 +208,7 @@ describe("owner and recipient contracts", () => {
       profileVersionSynced: null,
       projection: "activation",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "not_started",
       recipientVersion: 0,
       requirements: [],
@@ -265,6 +289,7 @@ describe("owner and recipient contracts", () => {
       profileVersionSynced: 4,
       projection: "activation",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "active",
       recipientVersion: 2,
       requirements: [],
@@ -302,6 +327,7 @@ describe("owner and recipient contracts", () => {
         profileVersionSynced: 4,
         projection: "activation",
         providerMode: "local",
+        recipientOnboardingCapability: "local_adapter",
         recipientStatus: "active",
         recipientVersion: 2,
         requirements: [],
@@ -323,6 +349,7 @@ describe("owner and recipient contracts", () => {
       profileVersionSynced: 4,
       projection: "activation",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "active",
       recipientVersion: 2,
       requirements: [],
@@ -357,6 +384,7 @@ describe("owner and recipient contracts", () => {
         profileVersionSynced: states.recipientStatus === "not_started" ? null : 4,
         projection: "activation",
         providerMode: "local",
+        recipientOnboardingCapability: "local_adapter",
         recipientStatus: states.recipientStatus,
         recipientVersion: states.recipientStatus === "not_started" ? 0 : 1,
         requirements: [],

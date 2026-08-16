@@ -26,6 +26,7 @@ const result = {
     source: "local_fixture",
   },
   projection: "recipient",
+  recipientOnboardingCapability: "local_adapter",
   scope: userId,
 };
 const activationResult = {
@@ -81,6 +82,7 @@ describe("owner recipient read route", () => {
     expect(response.headers.get("x-owner-session")).toBe("refreshed");
     const payload = await response.json();
     expect(payload).toMatchObject({ data: result, requestId });
+    expect(payload.data.recipientOnboardingCapability).toBe("local_adapter");
     expect(JSON.stringify(payload)).not.toContain("bodyMarkdown");
     expect(JSON.stringify(payload)).not.toContain("Contrato integral");
     expect(mocks.readOwnerRecipient).toHaveBeenCalledWith(userId);

@@ -172,20 +172,30 @@ describe("owner DAL", () => {
 
   it("maps strict full/slim rows and rejects scope/provider/column drift", () => {
     const parsedRecipientRow = parseOwnerRecipientStatusDalRow(recipientRow);
-    expect(mapOwnerRecipientStatusDalRow(parsedRecipientRow, userId)).toMatchObject({
+    expect(
+      mapOwnerRecipientStatusDalRow(parsedRecipientRow, userId, "local_adapter"),
+    ).toMatchObject({
       nextAction: "activate_owner",
       ownerVersion: 0,
       profileVersion: 4,
       projection: "recipient",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       scope: userId,
     });
     expect(() =>
-      mapOwnerRecipientStatusDalRow(parsedRecipientRow, "55555555-5555-4555-8555-555555555555"),
+      mapOwnerRecipientStatusDalRow(
+        parsedRecipientRow,
+        "55555555-5555-4555-8555-555555555555",
+        "local_adapter",
+      ),
     ).toThrow("não corresponde");
-    expect(mapOwnerActivationDalRow(parseOwnerActivationDalRow(row), userId)).toMatchObject({
+    expect(
+      mapOwnerActivationDalRow(parseOwnerActivationDalRow(row), userId, "local_adapter"),
+    ).toMatchObject({
       ownerContract: { bodyMarkdown: row.owner_contract_body_markdown },
       projection: "activation",
+      recipientOnboardingCapability: "local_adapter",
     });
     for (const malformed of [
       { ...recipientRow, provider_mode: "pagarme" },
@@ -209,7 +219,9 @@ describe("owner DAL", () => {
   it("refuses a local fixture DTO outside local/test while allowing an approved contract", () => {
     process.env.APP_ENV = "production";
     const parsedRow = parseOwnerRecipientStatusDalRow(recipientRow);
-    expect(() => mapOwnerRecipientStatusDalRow(parsedRow, userId)).toThrow("proibido");
+    expect(() => mapOwnerRecipientStatusDalRow(parsedRow, userId, "unavailable")).toThrow(
+      "proibido",
+    );
     expect(() =>
       mapOwnerRecipientStatusDalRow(
         parseOwnerRecipientStatusDalRow({
@@ -217,6 +229,7 @@ describe("owner DAL", () => {
           owner_contract_source: "approved",
         }),
         userId,
+        "unavailable",
       ),
     ).not.toThrow();
   });

@@ -77,6 +77,7 @@ export {
   ownerRecipientResultSchema,
   ownerRecipientStatusSchema,
   ownerStatusSchema,
+  recipientOnboardingCapabilitySchema,
   recipientOnboardingRefreshCommandSchema,
   recipientOnboardingStartCommandSchema,
   recipientRequirementSchema,
@@ -91,6 +92,7 @@ export {
   type OwnerRecipientResult,
   type OwnerRecipientStatus,
   type OwnerStatus,
+  type RecipientOnboardingCapability,
   type RecipientRequirement,
   type RecipientStatus,
 } from "./owner";

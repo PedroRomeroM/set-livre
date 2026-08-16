@@ -10,6 +10,7 @@ import {
   parseOwnerActivationDalRow,
   parseOwnerRecipientStatusDalRow,
 } from "./owner-dal";
+import { readRecipientOnboardingCapability } from "./recipient-provider";
 
 const ownerReadDeadlineMs = 2_000;
 
@@ -21,6 +22,7 @@ async function readOwnerRecipientWithClient(
   projection: "activation" | "recipient",
   externalSignal?: AbortSignal,
 ): Promise<OwnerActivationResult | OwnerRecipientStatus> {
+  const recipientOnboardingCapability = readRecipientOnboardingCapability();
   const abortController = new AbortController();
   const abortError = new DOMException("A leitura do cadastro de dono expirou.", "AbortError");
   const abortOutcome = new Promise<never>((_resolve, reject) => {
@@ -40,8 +42,16 @@ async function readOwnerRecipientWithClient(
         throw new Error("Não foi possível carregar o cadastro de dono autenticado.");
       }
       return projection === "activation"
-        ? mapOwnerActivationDalRow(parseOwnerActivationDalRow(data), userId)
-        : mapOwnerRecipientStatusDalRow(parseOwnerRecipientStatusDalRow(data), userId);
+        ? mapOwnerActivationDalRow(
+            parseOwnerActivationDalRow(data),
+            userId,
+            recipientOnboardingCapability,
+          )
+        : mapOwnerRecipientStatusDalRow(
+            parseOwnerRecipientStatusDalRow(data),
+            userId,
+            recipientOnboardingCapability,
+          );
     });
     const outcome = Promise.race([rpcOutcome, abortOutcome]);
 

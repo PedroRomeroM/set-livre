@@ -1,4 +1,5 @@
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { apiSuccessSchema, ownerRecipientStatusSchema } from "@set-livre/contracts";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 import {
   activateFeat004Owner,
@@ -12,6 +13,36 @@ import {
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 
 test.use({ screenshot: "off", trace: "off", video: "off" });
+
+async function publishRecipientOnboardingCapability(
+  page: Page,
+  capability: "local_adapter" | "unavailable",
+) {
+  await page.route(
+    "**/api/owner/recipient",
+    async (route) => {
+      const response = await route.fetch();
+      const payload: unknown = await response.json();
+      const parsed = apiSuccessSchema(ownerRecipientStatusSchema).parse(payload);
+      const data = ownerRecipientStatusSchema.parse({
+        ...parsed.data,
+        recipientOnboardingCapability: capability,
+      });
+      await route.fulfill({
+        body: JSON.stringify({ data, requestId: parsed.requestId }),
+        response,
+      });
+    },
+    { times: 1 },
+  );
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "GET" &&
+      new URL(candidate.url()).pathname === "/api/owner/recipient",
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  expect((await response).status()).toBe(200);
+}
 
 test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repetir POST", async ({
   browser,
@@ -46,6 +77,28 @@ test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repet
       if (request.method() === "POST" && path === "/api/commands") ownerPostRequests += 1;
       if (request.method() === "GET" && path === "/api/owner/recipient") ownerGetRequests += 1;
     });
+
+    await publishRecipientOnboardingCapability(page, "unavailable");
+    await expect(page.getByRole("status")).toContainText("Cadastro de recebimentos indisponível");
+    await expect(page.getByRole("status")).toContainText(
+      "A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.",
+    );
+    await expect(
+      page.getByText("Validação exclusiva do ambiente local", { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 3, name: "Não iniciado" })).toBeVisible();
+    await expect(recipientStartButton).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Atualizar status" })).toHaveCount(0);
+    expect(ownerPostRequests).toBe(0);
+
+    await publishRecipientOnboardingCapability(page, "local_adapter");
+    await expect(
+      page.getByText("Validação exclusiva do ambiente local", { exact: true }),
+    ).toBeVisible();
+    await expect(recipientStartButton).toBeVisible();
+    await expect(recipientStartButton).toBeEnabled();
+    expect(ownerPostRequests).toBe(0);
+    ownerGetRequests = 0;
 
     concurrentContext = await browser.newContext({
       baseURL: new URL(page.url()).origin,
@@ -84,6 +137,22 @@ test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repet
     expect(ownerGetRequests).toBe(1);
     expect(ownerPostRequests).toBe(1);
 
+    await publishRecipientOnboardingCapability(page, "unavailable");
+    await expect(page.getByRole("status")).toContainText("Cadastro de recebimentos indisponível");
+    await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toBeVisible();
+    await expect(recipientStartButton).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Atualizar status" })).toHaveCount(0);
+    expect(ownerPostRequests).toBe(1);
+
+    await publishRecipientOnboardingCapability(page, "local_adapter");
+    await expect(
+      page.getByText("Validação exclusiva do ambiente local", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Atualizar status" })).toBeEnabled();
+    expect(ownerGetRequests).toBe(3);
+    expect(ownerPostRequests).toBe(1);
+    const ownerGetRequestsBeforeAmbiguousRecovery = ownerGetRequests;
+
     await seedFeat004RecipientTestFixture(
       identity,
       testInfo.project.name === "narrow-chromium-320" ||
@@ -116,7 +185,7 @@ test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repet
     await expect(
       page.getByRole("heading", { level: 2, name: "Etapas para receber reservas" }),
     ).toBeFocused();
-    expect(ownerGetRequests).toBe(2);
+    expect(ownerGetRequests).toBe(ownerGetRequestsBeforeAmbiguousRecovery + 1);
     expect(ownerPostRequests).toBe(2);
     await assertFeat004PrivateValuesAbsent(page);
 

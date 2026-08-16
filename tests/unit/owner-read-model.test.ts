@@ -102,6 +102,7 @@ describe("owner recipient read model", () => {
       ownerContract: { id: row.owner_contract_id },
       projection: "recipient",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       scope: userId,
     });
     expect(mocks.rpc).toHaveBeenCalledWith("get_owner_recipient_status");
@@ -121,6 +122,7 @@ describe("owner recipient read model", () => {
         kind: "owner_contract",
       },
       projection: "activation",
+      recipientOnboardingCapability: "local_adapter",
       scope: userId,
     });
     expect(mocks.rpc).toHaveBeenCalledWith("get_owner_activation_status");
@@ -235,6 +237,7 @@ describe("owner recipient read model", () => {
     });
     await expect(readOwnerRecipient(userId)).resolves.toMatchObject({
       ownerContract: { source: "approved" },
+      recipientOnboardingCapability: "unavailable",
     });
   });
 });

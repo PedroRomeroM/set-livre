@@ -7,6 +7,7 @@ import {
   ownerHasCurrentContract,
   ownerNeedsCurrentContractAcceptance,
   ownerRecipientActionsAvailable,
+  ownerRecipientOnboardingAvailable,
   ownerRecipientProfileNeedsSync,
 } from "../../src/domains/owners/components/owner-view-state";
 
@@ -34,6 +35,7 @@ function activeOwner(overrides: Partial<OwnerActivationResult> = {}): OwnerActiv
     profileVersionSynced: null,
     projection: "activation",
     providerMode: "local",
+    recipientOnboardingCapability: "local_adapter",
     recipientStatus: "not_started",
     recipientVersion: 0,
     requirements: [],
@@ -78,6 +80,36 @@ describe("FEAT-004 owner UI", () => {
       recipientStatus: "active",
     });
     expect(ownerRecipientProfileNeedsSync(profileDrift)).toBe(true);
+  });
+
+  it("keeps canonical next actions separate from the runtime onboarding capability", () => {
+    const localStart = activeOwner();
+    const unavailableStart = activeOwner({ recipientOnboardingCapability: "unavailable" });
+    const localRefresh = activeOwner({
+      nextAction: "refresh_status",
+      profileVersionSynced: 1,
+      recipientStatus: "pending",
+      recipientVersion: 1,
+      requirements: ["identity_review"],
+    });
+    const unavailableRefresh = activeOwner({
+      ...localRefresh,
+      recipientOnboardingCapability: "unavailable",
+    });
+
+    expect(ownerRecipientActionsAvailable(localStart)).toBe(true);
+    expect(ownerRecipientActionsAvailable(unavailableStart)).toBe(true);
+    expect(localStart.nextAction).toBe("start_onboarding");
+    expect(unavailableStart.nextAction).toBe("start_onboarding");
+    expect(ownerRecipientOnboardingAvailable(localStart)).toBe(true);
+    expect(ownerRecipientOnboardingAvailable(unavailableStart)).toBe(false);
+
+    expect(ownerRecipientActionsAvailable(localRefresh)).toBe(true);
+    expect(ownerRecipientActionsAvailable(unavailableRefresh)).toBe(true);
+    expect(localRefresh.nextAction).toBe("refresh_status");
+    expect(unavailableRefresh.nextAction).toBe("refresh_status");
+    expect(ownerRecipientOnboardingAvailable(localRefresh)).toBe(true);
+    expect(ownerRecipientOnboardingAvailable(unavailableRefresh)).toBe(false);
   });
 
   it("exposes only the canonical owner routes and real navigation", () => {
@@ -146,9 +178,14 @@ describe("FEAT-004 owner UI", () => {
     expect(panel).toContain('result.ownerStatus === "blocked"');
     expect(panel).toContain("if (ownerHasCurrentContract(result))");
     expect(panel).toContain("if (!ownerRecipientActionsAvailable(result))");
+    expect(panel).toContain("ownerRecipientOnboardingAvailable(result)");
+    expect(panel).toContain("action === undefined || !onboardingAvailable ? null");
     expect(panel).toContain("Aceite o contrato vigente primeiro");
     expect(panel).toContain("!result.reservationsEligible");
     expect(panel).toContain("Validação exclusiva do ambiente local");
+    expect(panel).toContain("Cadastro de recebimentos indisponível");
+    expect(panel).toContain("O estado atual");
+    expect(panel).toContain("permanece somente para consulta.");
     expect(panel).toContain("Contrato não aprovado para produção");
     expect(panel).toContain('view: "overview"');
     expect(panel).toContain('view: "recipient"');

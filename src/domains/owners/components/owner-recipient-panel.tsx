@@ -63,6 +63,7 @@ import {
   ownerHasCurrentContract,
   ownerNeedsCurrentContractAcceptance,
   ownerRecipientActionsAvailable,
+  ownerRecipientOnboardingAvailable,
   ownerRecipientProfileNeedsSync,
 } from "./owner-view-state";
 import styles from "./owner.module.css";
@@ -673,6 +674,7 @@ function OwnerRecipientSection({
     result.nextAction === "start_onboarding" || result.nextAction === "refresh_status"
       ? result.nextAction
       : undefined;
+  const onboardingAvailable = ownerRecipientOnboardingAvailable(result);
 
   return (
     <section aria-labelledby="recipient-status-title" className={styles.section}>
@@ -685,7 +687,14 @@ function OwnerRecipientSection({
           provider permanecem privados.
         </p>
       </div>
-      <OwnerLocalAdapterNotice />
+      {onboardingAvailable ? (
+        <OwnerLocalAdapterNotice />
+      ) : (
+        <Alert title="Cadastro de recebimentos indisponível" variant="status">
+          A integração de recebimentos ainda não está disponível neste ambiente. O estado atual
+          permanece somente para consulta.
+        </Alert>
+      )}
       <div className={styles.statusDetails}>
         <h3 className={styles.statusTitle}>
           {result.recipientStatus === "active" && !result.reservationsEligible
@@ -704,7 +713,7 @@ function OwnerRecipientSection({
           </div>
         )}
       </div>
-      {action === undefined ? null : (
+      {action === undefined || !onboardingAvailable ? null : (
         <RecipientAction
           action={action}
           expectedScope={expectedScope}

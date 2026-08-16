@@ -9,6 +9,7 @@ import {
   recipientStatusSchema,
   type OwnerActivationResult,
   type OwnerRecipientStatus,
+  type RecipientOnboardingCapability,
   type RecipientRequirement,
   type RecipientStatus,
 } from "@set-livre/contracts";
@@ -281,6 +282,7 @@ function mapOwnerRecipientState(row: OwnerRecipientStatusDalRow) {
 export function mapOwnerRecipientStatusDalRow(
   row: OwnerRecipientStatusDalRow,
   expectedUserId: string,
+  recipientOnboardingCapability: RecipientOnboardingCapability,
 ): OwnerRecipientStatus {
   assertOwnerRecipientScope(row, expectedUserId);
   return ownerRecipientStatusSchema.parse({
@@ -291,12 +293,14 @@ export function mapOwnerRecipientStatusDalRow(
       source: row.owner_contract_source,
     },
     projection: "recipient",
+    recipientOnboardingCapability,
   });
 }
 
 export function mapOwnerActivationDalRow(
   row: OwnerActivationDalRow,
   expectedUserId: string,
+  recipientOnboardingCapability: RecipientOnboardingCapability,
 ): OwnerActivationResult {
   assertOwnerRecipientScope(row, expectedUserId);
   return ownerActivationResultSchema.parse({
@@ -312,5 +316,6 @@ export function mapOwnerActivationDalRow(
       version: row.owner_contract_version,
     },
     projection: "activation",
+    recipientOnboardingCapability,
   });
 }

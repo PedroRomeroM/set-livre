@@ -23,6 +23,7 @@ export const ownerNextActionSchema = z.enum([
   "none",
 ]);
 export const ownerProviderModeSchema = z.literal("local");
+export const recipientOnboardingCapabilitySchema = z.enum(["local_adapter", "unavailable"]);
 
 export const ownerContractReferenceSchema = z.strictObject({
   effectiveAt: z.iso.datetime(),
@@ -55,6 +56,7 @@ const ownerRecipientStateShape = {
   profileVersion: profileVersionSchema,
   profileVersionSynced: profileVersionSchema.nullable(),
   providerMode: ownerProviderModeSchema,
+  recipientOnboardingCapability: recipientOnboardingCapabilitySchema,
   recipientStatus: recipientStatusSchema,
   recipientVersion: profileVersionSchema,
   requirements: recipientRequirementsSchema,
@@ -72,6 +74,7 @@ type OwnerRecipientRelationalState = {
   profileVersion: number;
   profileVersionSynced: number | null;
   providerMode: "local";
+  recipientOnboardingCapability: RecipientOnboardingCapability;
   recipientStatus: RecipientStatus;
   recipientVersion: number;
   requirements: readonly RecipientRequirement[];
@@ -241,4 +244,5 @@ export type OwnerRecipientResult = z.infer<typeof ownerRecipientResultSchema>;
 export type OwnerRecipientStatus = z.infer<typeof ownerRecipientStatusSchema>;
 export type OwnerStatus = z.infer<typeof ownerStatusSchema>;
 export type RecipientRequirement = z.infer<typeof recipientRequirementSchema>;
+export type RecipientOnboardingCapability = z.infer<typeof recipientOnboardingCapabilitySchema>;
 export type RecipientStatus = z.infer<typeof recipientStatusSchema>;

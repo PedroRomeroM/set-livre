@@ -23,6 +23,7 @@ import {
 } from "./owner-dal";
 import {
   createLocalRecipientOnboardingProvider,
+  readRecipientOnboardingCapability,
   type RecipientOnboardingProvider,
 } from "./recipient-provider";
 
@@ -45,6 +46,7 @@ export type OwnerServiceDependencies = Readonly<{
   getOwnerRecipientStatusForUser: typeof getOwnerRecipientStatusForUser;
   prepareOwnerRecipientOperation: typeof prepareOwnerRecipientOperation;
   providerDeadlineMs: number;
+  readRecipientOnboardingCapability: typeof readRecipientOnboardingCapability;
 }>;
 
 const ownerServiceDefaults: OwnerServiceDependencies = {
@@ -54,6 +56,7 @@ const ownerServiceDefaults: OwnerServiceDependencies = {
   getOwnerRecipientStatusForUser,
   prepareOwnerRecipientOperation,
   providerDeadlineMs: defaultProviderDeadlineMs,
+  readRecipientOnboardingCapability,
 };
 
 function assertMutableAccount(context: PrivateCommandContext) {
@@ -150,9 +153,14 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
     assertMutableAccount(context);
     enforceOwnerMutationRateLimit(command.action, context.session.userId);
     try {
+      const recipientOnboardingCapability = dependencies.readRecipientOnboardingCapability();
       const currentRow = await dependencies.getOwnerRecipientStatusForUser(context.session.userId);
       assertFixtureContractAllowed(currentRow.owner_contract_source);
-      mapOwnerRecipientStatusDalRow(currentRow, context.session.userId);
+      mapOwnerRecipientStatusDalRow(
+        currentRow,
+        context.session.userId,
+        recipientOnboardingCapability,
+      );
       return mapOwnerActivationDalRow(
         await dependencies.activateOwnerProfile({
           idempotencyKey: command.idempotencyKey,
@@ -162,6 +170,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
           userId: context.session.userId,
         }),
         context.session.userId,
+        recipientOnboardingCapability,
       );
     } catch (error) {
       if (error instanceof ApiRouteError) throw error;
@@ -172,12 +181,14 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
   async function executePreparedRecipientOperation(
     context: PrivateCommandContext,
     prepared: PreparedRecipientOperation,
+    recipientOnboardingCapability: "local_adapter",
   ) {
     if (prepared.alreadyApplied) {
       try {
         return mapOwnerRecipientStatusDalRow(
           await dependencies.getOwnerRecipientStatusForUser(context.session.userId),
           context.session.userId,
+          recipientOnboardingCapability,
         );
       } catch (error) {
         if (error instanceof ApiRouteError) throw error;
@@ -236,6 +247,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
           userId: context.session.userId,
         }),
         context.session.userId,
+        recipientOnboardingCapability,
       );
     } catch (error) {
       if (error instanceof ApiRouteError) throw error;
@@ -246,6 +258,10 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
   async function executeRecipient(command: RecipientCommand, context: PrivateCommandContext) {
     assertMutableAccount(context);
     enforceOwnerMutationRateLimit(command.action, context.session.userId);
+    const recipientOnboardingCapability = dependencies.readRecipientOnboardingCapability();
+    if (recipientOnboardingCapability !== "local_adapter") {
+      return providerUnavailable("O cadastro de recebimentos não está disponível neste ambiente.");
+    }
     let prepared: PreparedRecipientOperation;
     try {
       prepared = await dependencies.prepareOwnerRecipientOperation({
@@ -256,7 +272,7 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
     } catch (error) {
       return handleOwnerDatabaseError(error);
     }
-    return executePreparedRecipientOperation(context, prepared);
+    return executePreparedRecipientOperation(context, prepared, recipientOnboardingCapability);
   }
 
   return {

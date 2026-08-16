@@ -162,6 +162,8 @@ O contrato do dono reutiliza o renderer jurídico promovido ao domínio comparti
 
 Status de ativação e recebedor são texto factual, não badge ornamental nem simulação de gateway. Loading inicial, refetch e troca de escopo substituem toda a superfície privada por um boundary neutro; erro ambíguo conserva o último snapshot e oferece `Verificar estado atual`, sem reenviar o comando. Essa verificação fecha novamente a superfície enquanto o GET está ativo e, ao terminar, transfere foco programático ao heading do checklist no sucesso ou ao alerta seguro na falha. `Tentar novamente` reutiliza o mesmo intent e restaura o heading somente após o retry bem-sucedido. Sucesso de comando continua usando `Alert` focável, e estados bloqueado, suspenso, recusado ou com contrato/perfil divergente exibem somente a ação autorizada pelo read model.
 
+Os controles de onboarding também são gated por `recipientOnboardingCapability`. Em `local_adapter`, o notice local e o CTA compatível com `nextAction` permanecem visíveis. Em `unavailable`, ambos os CTAs de início/refresh e o notice são **ausentes**, não renderizados como disabled; o estado factual continua consultável e um `Alert` `status` (`role=status`) apresenta o título **Cadastro de recebimentos indisponível** e o corpo **A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.** A composição não inventa provider, prontidão ou ação que o servidor não autorizou.
+
 ## 4. Contratos
 
 ### 4.1 Botões

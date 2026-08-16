@@ -12,12 +12,18 @@ const mocks = vi.hoisted(() => ({
 }));
 
 import { createOwnerService } from "../../src/domains/owners/server/owner-service";
+import { readRecipientOnboardingCapability } from "../../src/domains/owners/server/recipient-provider";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "22222222-2222-4222-8222-222222222222";
 const contractId = "33333333-3333-4333-8333-333333333333";
 const operationId = "44444444-4444-4444-8444-444444444444";
 const userAgent = "test-user-agent/private-value";
+const unavailableRecipientOperationCases = (["start", "refresh"] as const).flatMap((operation) =>
+  (["development", "production", "preview", undefined] as const).map(
+    (environment) => [operation, environment] as const,
+  ),
+);
 
 const currentRow = {
   accepted_owner_contract_version_id: null,
@@ -109,6 +115,7 @@ function service(providerDeadlineMs = 2_000) {
     getOwnerRecipientStatusForUser: mocks.getOwnerRecipientStatusForUser,
     prepareOwnerRecipientOperation: mocks.prepareOwnerRecipientOperation,
     providerDeadlineMs,
+    readRecipientOnboardingCapability,
   });
 }
 
@@ -161,6 +168,41 @@ describe("owner service", () => {
     expect(JSON.stringify(mocks.activateOwnerProfile.mock.calls)).not.toContain(userAgent);
   });
 
+  it.each(unavailableRecipientOperationCases)(
+    "refuses recipient onboarding %s in APP_ENV=%s before reserving an operation",
+    async (operation, environment) => {
+      if (environment === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = environment;
+
+      const ownerService = service();
+      await expect(
+        operation === "start"
+          ? ownerService.startRecipientOnboarding(
+              {
+                action: "recipient.onboarding.start",
+                expectedScope: userId,
+                idempotencyKey,
+                payload: {},
+              },
+              context,
+            )
+          : ownerService.refreshRecipientOnboarding(
+              {
+                action: "recipient.onboarding.refresh",
+                expectedScope: userId,
+                idempotencyKey,
+                payload: {},
+              },
+              context,
+            ),
+      ).rejects.toMatchObject({ code: "PAYMENT_PROVIDER_UNAVAILABLE", status: 503 });
+      expect(mocks.prepareOwnerRecipientOperation).not.toHaveBeenCalled();
+      expect(mocks.createProvider).not.toHaveBeenCalled();
+      expect(mocks.providerExecute).not.toHaveBeenCalled();
+      expect(mocks.applyOwnerRecipientOperation).not.toHaveBeenCalled();
+    },
+  );
+
   it("refuses a local fixture contract outside local/test before activating", async () => {
     process.env.APP_ENV = "production";
     await expect(
@@ -190,15 +232,17 @@ describe("owner service", () => {
       ...activeOwnerRow,
       owner_contract_source: "approved",
     });
-    await service().activateOwner(
-      {
-        action: "owner.activate",
-        expectedScope: userId,
-        idempotencyKey,
-        payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
-      },
-      context,
-    );
+    await expect(
+      service().activateOwner(
+        {
+          action: "owner.activate",
+          expectedScope: userId,
+          idempotencyKey,
+          payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
+        },
+        context,
+      ),
+    ).resolves.toMatchObject({ recipientOnboardingCapability: "unavailable" });
     expect(mocks.activateOwnerProfile).toHaveBeenCalledOnce();
   });
 

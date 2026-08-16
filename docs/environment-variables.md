@@ -66,6 +66,8 @@ Os três previews de produção locais — `npm start`, `npm run start:backoffic
 
 A FEAT-002 reutiliza os seis nomes do runtime local já documentados: `APP_ENV`, `APP_RELEASE_SHA`, `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` e `DATABASE_URL_APP_DAL`; não introduz service role no app, SMTP de produção ou segredo browser. Apesar do prefixo público exigido pelo SDK, a anon key não é autoridade: RLS/grants e o trigger protegido continuam obrigatórios. `local`/`test` aceitam apenas os dois endpoints HTTP `127.0.0.1` exatos; `development`/`production` exigem HTTPS tanto para a aplicação quanto para o Supabase e mantêm `Secure` nos cookies.
 
+Na FEAT-004, `APP_ENV` também deriva server-side a capacidade de onboarding do recebedor. `local | test` resulta em `recipientOnboardingCapability="local_adapter"`; `development | production`, valor ausente ou inválido resultam em `"unavailable"`. Essa derivação é fail-closed mesmo quando outra validação de boot também recusar a configuração. Nenhuma variável `NEXT_PUBLIC_*`, campo do browser ou futuro `PAYMENT_PROVIDER` habilita o adapter local, e a fatia atual não consome credencial de gateway.
+
 ## 4. Backoffice
 
 - `NEXT_PUBLIC_APP_URL` apontando para a origem do backoffice;

@@ -56,6 +56,7 @@ describe("FEAT-004 Playwright helper", () => {
       profileVersionSynced: null,
       projection: "recipient",
       providerMode: "local",
+      recipientOnboardingCapability: "local_adapter",
       recipientStatus: "not_started",
       recipientVersion: 0,
       requirements: [],

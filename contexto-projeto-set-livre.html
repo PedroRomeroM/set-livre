@@ -648,14 +648,12 @@
         </ul>
         <div class="stats" aria-label="Indicadores atuais">
           <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>23/23</strong><span>browser focado do quarto P2</span></div>
+          <div class="stat"><strong>358</strong><span>asserts pgTAP do quarto P2</span></div>
+          <div class="stat"><strong>114/114</strong><span>browser integral do quarto P2</span></div>
           <div class="stat">
-            <strong>42/42</strong><span>unitários focados do patch atual</span>
+            <strong>734/734</strong><span>unitários integrais do quarto P2</span>
           </div>
-          <div class="stat"><strong>358</strong><span>asserts pgTAP no head atual</span></div>
-          <div class="stat">
-            <strong>114/114</strong><span>browser integral corrigido atual</span>
-          </div>
-          <div class="stat"><strong>718/718</strong><span>unitários integrais atuais</span></div>
           <div class="stat"><strong>15</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
@@ -723,49 +721,43 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Terceiro review · release local auditada</span>
+              <span class="tag review">Quarto review · smoke canônico pendente</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
                 <code>/dono/recebimentos</code>. O recorte local cria aceite
                 <code>owner_contract</code>, autoridade de dono, status seguro do recebedor e
                 elegibilidade derivada, sem gateway externo, checkout, fallback ou dados bancários.
-                Os P2 anteriores e a release <code>440c81f6...</code> permanecem fotografias
-                históricas publicadas. A leitura seguinte abriu
-                <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3789698299"
-                  ><code>PRRT_kwDOTyzZrs6ZhR_d</code></a
-                >/REST <code>3789698299</code>: <code>audit.events.request_id</code> recebia a
-                <code>idempotencyKey</code> do browser na ativação/renovação e na transição do
-                recebedor. O patch local separa os contratos: <code>requestId</code> correlaciona
-                resposta, log e auditoria; <code>idempotency_key</code> fica em coluna privada para
-                replay. A unicidade passa a <code>(action, target_id, idempotency_key)</code>.
-                Linhas legadas copiam o valor antigo para a nova coluna, mas preservam
-                <code>request_id</code> porque a correlação HTTP verdadeira não pode ser recuperada.
-                A árvore possui 15 migrations e head <code>20260815000100</code>. Quatro arquivos
-                unitários focados passaram em 42/42 e banco passou em 358/358 (<code
-                  >158 + 78 + 57 + 65</code
-                >), com readiness, overloads/grants, gerados/diff e tabelas finais corretos. O
-                fechamento precommit também passou format, lint, typecheck, 12/12 guardas de
-                privacidade, 718/718 unitários integrais, docs/audit, Knip/diff, browser corrigido
-                114/114, build e smoke customizado. A release canônica local final do commit
-                <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> possui 2.870 artefatos, 15
-                migrations/head atual e duas auditorias independentes <code>NO-BLOCKER</code>. A
-                captura de <code>2026-08-15T19:38:32Z</code> verificou publicação até
-                <code>dda95b3...</code>, resposta/resolução e zero threads não resolvidas.
-                Commit/push deste registro, eventual ajuste do body e novo review ainda estão
-                pendentes. A feature continua <strong>Em implementação</strong>; a prova é local
-                x64, e PEND-003, smoke ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
+                O review <code>PRR_kwDOTyzZrs8AAAABJrjWnQ</code>/REST <code>4944615069</code>,
+                submetido em <code>2026-08-15T20:02:30Z</code> sobre
+                <code>11464a37593d510f5774af6af6fe655e671a9c35</code>, abriu a thread
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790152658"
+                  ><code>PRRT_kwDOTyzZrs6ZigTV</code></a
+                >, comentário <code>PRRC_kwDOTyzZrs7h6SPS</code>/REST <code>3790152658</code>, atual
+                e não resolvida na captura. A correção adiciona
+                <code>recipientOnboardingCapability: "local_adapter" | "unavailable"</code> às duas
+                projeções e aos três retornos POST. O servidor deriva a capability por request:
+                <code>APP_ENV=local | test</code> habilita apenas o adapter local;
+                <code>development | production</code>, ausência ou valor inválido falham fechados.
+                Start/refresh indisponíveis retornam
+                <code>503 PAYMENT_PROVIDER_UNAVAILABLE</code> antes de <code>prepare</code> ou
+                reservar operação. O fechamento local passou em 734/734 unitários, banco 358/358,
+                browser focado 23/23 e integral 114/114. Um único build passou com 26 + 4 rotas e
+                <code>BUILD_ID=local</code>.
               </p>
               <p>
-                O retorno pós-login aceita literalmente <code>/dono</code> e
-                <code>/dono/recebimentos</code>, preserva o destino em sucesso ou verificação
-                ambígua e recusa vetores de open redirect. Em resultado ambíguo,
-                <code>Verificar estado atual</code> fecha a superfície privada durante o GET e
-                restaura o foco no heading do checklist em sucesso ou no alerta seguro em falha.
-                Nesse alerta, <code>Tentar novamente</code> repete o boundary e devolve foco ao
-                heading somente depois do novo GET 200. Erro realmente associado ao checkbox
-                continua editável no próprio formulário. A nova versão do contrato usa esse mesmo
-                caminho verification-first; um bloqueio real não é apresentado como estado stale.
+                Em <code>unavailable</code>, o estado factual continua visível somente para
+                consulta, sem notice local, CTA de início/refresh, provider falso ou controle
+                desabilitado. Um alerta <code>role=status</code> apresenta
+                <strong>Cadastro de recebimentos indisponível</strong> e informa: “A integração de
+                recebimentos ainda não está disponível neste ambiente. O estado atual permanece
+                somente para consulta.” O smoke customizado não produziu evidência verde: três
+                tentativas foram recusadas por problemas exclusivos do harness. O smoke embutido do
+                gerador canônico será o gate definitivo; release, publicação, reply/resolve,
+                re-review, ready e merge permanecem pendentes. A release <code>2a86acc4...</code>
+                pertence ao terceiro P2 e é histórica. A feature continua
+                <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e PEND-006
+                continuam bloqueando produção.
               </p>
             </article>
             <article class="card">
@@ -857,7 +849,7 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Evidência atual do banco da FEAT-004:</strong>
+            <strong>Banco revalidado no quarto P2:</strong>
             <p>
               A árvore possui 15 migrations e head <code>20260815000100</code>. Um único reset,
               geração e <code>test:db</code> passou em 358/358 (<code>158 + 78 + 57 + 65</code>). A
@@ -867,8 +859,9 @@
               <code>idempotency_key</code>, mas não houve ensaio de upgrade com linhas
               pré-existentes que permita chamar esse backfill de testado. Readiness aceitou o head e
               recusou <code>20260812000200</code>; trigger, gerados/diff e tabelas finais ficaram
-              corretos. O P3 já possui nova rodada browser corrigida em 114/114, independente dos
-              hashes históricos do segundo P2.
+              corretos. O quarto P2 não cria migration, mas repetiu reset, geração e banco no mesmo
+              head em 358/358; a capability continua sendo um fato efêmero derivado no servidor, não
+              coluna persistida.
             </p>
           </div>
         </section>
@@ -942,8 +935,10 @@
               <p>
                 Além do cadastro e dos comandos de perfil, o registry privado já executa
                 <code>owner.activate</code>, <code>recipient.onboarding.start</code> e
-                <code>recipient.onboarding.refresh</code>. Catálogo, checkout e reserva continuam
-                ausentes até suas próprias features.
+                <code>recipient.onboarding.refresh</code>. Start e refresh só alcançam o adapter em
+                <code>APP_ENV=local | test</code>; nos demais ambientes falham com 503 antes de
+                preparar ou reservar uma operação. Catálogo, checkout e reserva continuam ausentes
+                até suas próprias features.
               </p>
             </article>
             <article class="card">
@@ -965,7 +960,8 @@
                 Contratos Zod de health, release, URL DAL, identidade, perfil, dono e recebedor;
                 readiness server-only; tipos gerados do banco. A projeção pública inclui somente os
                 campos seguros de perfil/dono/recebedor e mantém PII e referências do provider fora
-                do DTO.
+                do DTO. A capability obrigatória é derivada no servidor e não representa estado do
+                banco ou prontidão de provider externo.
               </p>
             </article>
             <article class="card">
@@ -1150,21 +1146,20 @@
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
               adversos. O snapshot histórico da FEAT-003 passou em 91/91 numa única execução de 3,9
-              minutos, incluindo 32/32 da feature. No patch atual da FEAT-004, Node 24 passou em
-              42/42 unitários focados, 12/12 guardas de privacidade, 718/718 unitários integrais de
-              74 arquivos e 358/358 pgTAP após um único reset e geração. A browser focada P3
-              permanece verde em 23/23, e a integral corrigida passou em 114/114, preservando os
-              sete IDs da FEAT-004. Build, smoke e release canônica local final também passaram;
-              duas auditorias independentes da release terminaram <code>NO-BLOCKER</code>.
-              Publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas;
-              commit/push deste registro e ciclo final de review ainda estão pendentes. O catálogo
+              minutos, incluindo 32/32 da feature. No quarto P2 da FEAT-004, o fechamento estático
+              passou com 734/734 unitários em 74 arquivos; o banco passou em 358/358, com 15
+              migrations/head <code>20260815000100</code>. O browser focado passou em 23/23 e o
+              integral em 114/114, preservando os sete IDs e 23/23 execuções da feature. Um único
+              build passou com exit 0, 26 + 4 rotas e <code>BUILD_ID=local</code>. O smoke
+              customizado não produziu evidência verde, e a release/publicação
+              <code>2a86acc4.../dda95b3...</code> permanecem históricas do terceiro P2. O catálogo
               continua com 23 IDs automatizados e 177 planejados.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">718/718 · atual</span>
+              <span class="tag done">734/734 · quarto P2</span>
               <h3>Vitest</h3>
               <p>
                 Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
@@ -1173,7 +1168,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">358 · head atual</span>
+              <span class="tag done">358/358 · quarto P2</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
@@ -1185,12 +1180,13 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag done">114/114 · atual</span>
+              <span class="tag done">114/114 · quarto P2</span>
               <h3>Playwright + axe</h3>
               <p>
-                A focada P3 anterior permanece verde em 23/23. Depois da correção do oráculo de
-                fundação, a integral atual passou exatamente em 114/114, 17 specs e 16 projetos,
-                preservando 23/23 da FEAT-004, com privacidade e cleanup verdes.
+                No quarto P2, a focada passou em 23/23, quatro specs e 14 projetos. A integral
+                passou em 114/114, 17 specs e 16 projetos, preservando 23/23 da FEAT-004, com
+                privacidade e cleanup verdes. A capability foi exercitada pelo ID 004 sem criar
+                cenário novo.
               </p>
             </article>
           </div>
@@ -1209,19 +1205,45 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Estado dos gates da FEAT-004:</strong>
+            <strong>Estado dos gates do quarto P2 da FEAT-004:</strong>
             <p>
-              No patch local atual, <code>npm ci</code> concluiu com 447 pacotes e auditoria em
-              zero; format, lint, typecheck, 42/42 unitários focados, 12/12 guardas de privacidade,
-              718/718 unitários integrais em 74 arquivos, docs:check 34/200/18, audit zero, Knip e
-              diff-check passaram. O banco permanece verde em 358/358 no head
-              <code>20260815000100</code>, com 15 migrations e cleanup correto.
+              <code>npm ci</code>, format, lint, typecheck, 734/734 unitários em 74 arquivos,
+              docs:check 34/200/18, audit zero, Knip e diff-check passaram. Reset, geração e banco
+              passaram em 358/358. A focada passou em 23/23; hashes SHA-256
+              auditoria/stdout/relatório/lista
+              <code>49d457...</code
+              >/<code>f52544...</code>/<code>112ff3...</code>/<code>7946ed...</code>. A integral
+              passou em 114/114; hashes
+              <code>438da6...</code
+              >/<code>c6a76b...</code>/<code>8bd8f1...</code>/<code>293848...</code>. Um único build
+              passou com 26 + 4 rotas, <code>BUILD_ID=local</code> e log SHA-256
+              <code>ca7d5c3e...</code>.
             </p>
             <p>
-              A focada P3 anterior permanece verde em 23/23. Uma primeira integral do snapshot sem a
-              correção do oráculo terminou em 79 passados, uma falha e 34 não executados no
-              <code>FOUNDATION-E2E-008</code> WebKit por navegação HMR na mesma página. Ela não foi
-              repetida e permanece diagnóstico histórico; relatório SHA-256
+              A primeira auditoria integral parou depois de estrutura e privacidade por
+              <code>ReferenceError: mailpitTotal is not defined</code>. A correção associou o campo
+              ao valor já calculado e reutilizou o mesmo relatório, com uma execução Playwright,
+              zero rerun e zero flake.
+            </p>
+            <p>
+              O smoke customizado <strong>não ficou verde</strong>. A tentativa 1 foi recusada por
+              um oráculo incorreto de tombstone de cookie; hashes stdout/server/resumo
+              <code>e30eb0...</code>/<code>fa8974...</code>/<code>2f1a9d...</code>. A tentativa 2
+              terminou com exit <code>1</code> apesar de cumprir três boundaries, dois redirects,
+              14/11 nonces, privacidade e cleanup, porque o postcheck produziu um falso positivo
+              contra o shell pai; hashes
+              <code>d84519...</code>/<code>7c9b2c...</code>/<code>63b674...</code>. A tentativa 3
+              foi recusada antes dos probes porque o parser não aceitava <code>pgrp=0</code>; hashes
+              stdout/server <code>bcd359...</code>/<code>b70a26...</code>. O cleanup terminou em
+              zero nas três. Nenhuma tentativa conta como smoke aprovado; o smoke embutido do
+              gerador canônico será o gate definitivo.
+            </p>
+            <p>
+              <strong>Fotografia histórica do terceiro P2.</strong> A focada P3 permanece verde em
+              23/23. Uma primeira integral do snapshot sem a correção do oráculo terminou em 79
+              passados, uma falha e 34 não executados no <code>FOUNDATION-E2E-008</code> WebKit por
+              navegação HMR na mesma página. Ela não foi repetida e permanece diagnóstico histórico;
+              relatório SHA-256
               <code>ac669d0a2f8056e1b68c44317e9e679cc367daeb5c9a71435ba2f1e6d40ca7ff</code>. O teste
               foi separado em páginas distintas, com arquivo SHA-256
               <code>7ae803488af54ea58bd06be7820c69c69460ed9038b1b9a5f17e5507d24999a7</code>; o
@@ -1237,7 +1259,8 @@
               <code>91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903</code>.
             </p>
             <p>
-              Build e smoke customizado foram executados exatamente uma vez. O build passou com exit
+              No terceiro P2, build e smoke customizado foram executados exatamente uma vez. O build
+              passou com exit
               <code>0</code>, 26 rotas web, quatro do backoffice, zero warning e log SHA-256
               <code>8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2</code>. O smoke
               passou com exit <code>0</code> em 2,4 segundos, três probes guest
@@ -1250,7 +1273,8 @@
               <code>25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450</code>.
             </p>
             <p>
-              A release canônica local final foi gerada e auditada para o commit funcional
+              A release canônica local histórica do terceiro P2 foi gerada e auditada para o commit
+              funcional
               <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code>. Archive, sidecar, manifesto e
               log possuem 24.903.588/124/681.529/2.099 bytes e SHA-256
               <code>0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566</code>,
@@ -1260,16 +1284,16 @@
               2.870 artefatos e 3.454 membros no tar; os dois <code>BUILD_ID</code> equivalem ao
               commit e o head é <code>20260815000100</code>. Smoke, secrets/PII e cleanup final
               ficaram verdes no recorte Linux x64 Node 24.18/npm 11.19; duas auditorias
-              independentes terminaram <code>NO-BLOCKER</code>. A captura remota de
+              independentes terminaram <code>NO-BLOCKER</code>. Essa release não contém nem valida a
+              capability nova. A captura remota histórica de
               <code>2026-08-15T19:38:32Z</code> verificou publicação até <code>dda95b3...</code>,
-              resposta/resolução e zero threads não resolvidas. Commit/push deste registro, eventual
-              ajuste do body e novo review seguem pendentes. Não há claim de aprovação, checks
-              remotos, ready ou merge; PEND-003 e o smoke ARM64 nativo continuam obrigatórios para
-              produção.
+              resposta/resolução e zero threads não resolvidas naquele instante. Não há claim de
+              aprovação, checks remotos, ready ou merge do quarto P2; PEND-003 e o smoke ARM64
+              nativo continuam obrigatórios para produção.
             </p>
             <p>
               Os blocos seguintes registram fotografias históricas anteriores; seus hashes não
-              substituem a evidência P3 acima.
+              substituem a evidência local atual do quarto P2 acima.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1353,16 +1377,16 @@
               passou. Tar, staging e manifesto receberam auditoria integral
               <code>NO-BLOCKER</code> somente no escopo local Linux x64, Node 24.18/npm 11.19; as
               varreduras canônicas antes e depois do smoke não encontraram segredo de runtime nem
-              PII de cliente/QA. A fotografia permanece stale e não descreve o patch local atual;
-              tampouco a release <code>79376b62...</code> o contém. Naquele snapshot, a publicação
+              PII de cliente/QA. A fotografia permanece stale e não descreve a capability atual;
+              tampouco a release <code>79376b62...</code> a contém. Naquele snapshot, a publicação
               foi concluída e o primeiro review abriu dois P2, já corrigidos, respondidos e
               resolvidos. O P2 do segundo review passou pelos full gates, browser, build, smoke e
               release canônica local <code>440c81f6...</code>; publicação, resposta e resolução
-              também foram concluídas naquela fotografia, hoje histórica. O terceiro P2 já possui
-              gates locais, banco, browser, build, smoke e release canônica local final auditada;
+              também foram concluídas naquela fotografia, hoje histórica. O terceiro P2 possui gates
+              locais, banco, browser, build, smoke e release canônica local final auditada;
               publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
-              Commit/push deste registro, eventual ajuste do body, novo review, espera mínima de 60
-              minutos, captura final única, promoção para ready e merge permanecem pendentes.
+              O quarto P2 possui fechamento estático, banco, browser focado/integral e build verdes;
+              o smoke canônico, a release e o ciclo remoto permanecem pendentes.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1395,7 +1419,7 @@
               patch e a release <code>440c81f6...</code> pertencem ao segundo P2 histórico.
             </p>
             <p>
-              Na captura remota verificada em <code>2026-08-15T19:38:32Z</code>, o push
+              Na captura remota histórica de <code>2026-08-15T19:38:32Z</code>, o push
               <code>3dd11cb → dda95b3</code> publicou o funcional
               <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> e os release-docs até
               <code>dda95b3b9108930489a3b10275ef41c2f203ae24</code>; a release canônica permanece
@@ -1408,9 +1432,17 @@
               mesmo instante; a thread <code>PRRT_kwDOTyzZrs6ZhR_d</code> ficou
               <code>isResolved=true</code>, <code>isOutdated=false</code>, resolvida por ele. A
               leitura encontrou zero threads não resolvidas, e as três anteriores permaneceram
-              resolvidas. Commit/push deste registro, ajuste do body se necessário, novo
-              review/espera mínima de 60 minutos e captura final única permanecem pendentes;
-              <code>MERGEABLE</code>/<code>CLEAN</code> não declara ready ou merge.
+              resolvidas naquele instante. <code>MERGEABLE</code>/<code>CLEAN</code> não declara
+              ready ou merge.
+            </p>
+            <p>
+              O review atual <code>PRR_kwDOTyzZrs8AAAABJrjWnQ</code>/REST <code>4944615069</code>,
+              submetido em <code>2026-08-15T20:02:30Z</code> sobre
+              <code>11464a37593d510f5774af6af6fe655e671a9c35</code>, abriu
+              <code>PRRT_kwDOTyzZrs6ZigTV</code>. O comentário
+              <code>PRRC_kwDOTyzZrs7h6SPS</code>/REST <code>3790152658</code> estava atual e não
+              resolvido na captura. Publicação da correção, reply, resolve, re-review, espera,
+              captura final, ready e merge não foram realizados.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1513,7 +1545,10 @@
             <p>
               A etapa atual usa somente a máquina local e Supabase via Docker. A FEAT-003 completa o
               perfil próprio; a FEAT-004 acrescenta autoridade de dono e recebedor versionado,
-              mantendo documentos e referências do provider na fronteira privada.
+              mantendo documentos e referências do provider na fronteira privada. A capability é
+              server-derived e falha fechada: somente <code>APP_ENV=local | test</code> habilita o
+              adapter local; development, production, ausência e valor inválido mantêm o estado
+              consultivo e recusam mutações antes de qualquer efeito.
             </p>
           </div>
 
@@ -1601,7 +1636,7 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Release local canônica final P3</span>
+              <span class="tag done">Fotografia histórica da release P3</span>
               <h3>Artefato funcional auditado por SHA</h3>
               <p>
                 O commit funcional <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> gerou a
@@ -1627,11 +1662,10 @@
                 A release <code>440c81f6...</code> e as anteriores permanecem fotografias
                 históricas. “Final” descreve o artefato funcional local do terceiro P2, não feature
                 concluída, ARM64 ou produção. A publicação da branch até <code>dda95b3...</code>, a
-                resposta e a resolução foram verificadas na captura de
-                <code>2026-08-15T19:38:32Z</code>. Commit/push deste registro, ajuste do body se
-                necessário, novo review com espera mínima de 60 minutos, captura final única, ready
-                e merge continuam pendentes; PEND-003 e o smoke ARM64 nativo permanecem
-                obrigatórios.
+                resposta e a resolução daquele P2 foram verificadas na captura de
+                <code>2026-08-15T19:38:32Z</code>. Este artefato não contém nem valida o quarto P2;
+                seu smoke canônico, release e ciclo remoto continuam pendentes. PEND-003 e o smoke
+                ARM64 nativo permanecem obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1788,15 +1822,13 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Concluir o terceiro P2 do PR #6: com gates estáticos, banco, browser corrigido,
-                  build, smoke, release canônica local final, publicação até
-                  <code>dda95b3...</code>, resposta e resolução já verificados, criar o commit/push
-                  deste registro e atualizar o body do PR se necessário. Então solicitar novo
-                  <code>@codex review</code>, aguardar no mínimo 60 minutos, fazer uma captura final
-                  única e somente diante de leitura limpa promover e mergear. A release
-                  <code>440c81f6...</code> e os demais hashes antigos são históricos. PEND-003,
-                  trusted proxy e smoke ARM64 continuam bloqueando produção; gateway externo,
-                  checkout, fallback e dados bancários permanecem fora.
+                  Concluir o quarto P2 do PR #6: executar o gerador canônico, cujo smoke embutido
+                  será a prova definitiva, e auditar a release sem reaproveitar o artefato do P3. Só
+                  depois publicar, responder e resolver <code>PRRT_kwDOTyzZrs6ZigTV</code>,
+                  solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer
+                  uma captura final única antes de ready ou merge. PEND-003, trusted proxy e smoke
+                  ARM64 continuam bloqueando produção; gateway externo, checkout, fallback e dados
+                  bancários permanecem fora.
                 </li>
               </ol>
             </article>
@@ -1840,7 +1872,8 @@
             <p>
               As pendências externas não bloqueiam o que pode ser comprovado localmente, mas impedem
               go-live. Adapters locais nunca serão apresentados como provider real ou prontidão de
-              produção.
+              produção. Em development/production, a capability de onboarding permanece indisponível
+              até uma integração externa ser escolhida e implementada em mudança própria.
             </p>
           </div>
 

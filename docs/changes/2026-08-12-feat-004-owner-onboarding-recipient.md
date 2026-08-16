@@ -28,9 +28,10 @@ A FEAT-004 é a próxima feature da sequência executável após a conclusão e 
 
 - o titular de um perfil completo aceita a versão local vigente do contrato do dono e cria uma única autoridade canônica em `owner_profiles`;
 - um adapter local determinístico implementa exclusivamente o recorte de onboarding/status do recebedor em `local | test`;
+- o estado comum expõe `recipientOnboardingCapability: "local_adapter" | "unavailable"`, derivado no servidor a cada request: `local | test` habilitam o adapter local; `development | production`, `APP_ENV` ausente ou inválido falham fechados como indisponíveis;
 - provider IDs e requisitos sensíveis permanecem privados, enquanto a UI recebe apenas status internos, requisitos e próximos passos allowlisted;
 - retentativas usam chave UUID, locks e fences de versão/sequência; mudanças de sessão falham fechadas;
-- `/dono` e `/dono/recebimentos` implementam loading, refetch, vazio, erro, timeout, conflito, sucesso e recuperação em composições desktop/mobile.
+- `/dono` e `/dono/recebimentos` implementam loading, refetch, vazio, erro, timeout, conflito, sucesso e recuperação em composições desktop/mobile; quando a capability está indisponível, o estado factual continua consultável, mas nenhum início ou refresh é oferecido.
 
 ### Correções locais do primeiro review draft
 
@@ -52,9 +53,15 @@ A leitura seguinte do review abriu `PRRT_kwDOTyzZrs6ZhR_d`, comentário `PRRC_kw
 
 O patch local separa os contratos de ponta a ponta. A rota mantém o `requestId` HTTP fora do payload de domínio; serviço e DAL o encaminham em parâmetro próprio, enquanto a chave do envelope continua responsável apenas por replay. A migration append-only `20260815000100_owner_audit_request_correlation.sql` adiciona `audit.events.idempotency_key NOT NULL`, troca a unicidade para `(action, target_id, idempotency_key)` e substitui as assinaturas privadas de ativação/aplicação. Para linhas legadas, o valor antigo de `request_id` é copiado para `idempotency_key` e preservado no campo original: ele representa a chave antiga, e a correlação HTTP histórica verdadeira não pode ser reconstruída.
 
+### Correção local do quarto P2
+
+O review `PRR_kwDOTyzZrs8AAAABJrjWnQ`/REST `4944615069`, submetido em `2026-08-15T20:02:30Z` sobre o commit `11464a37593d510f5774af6af6fe655e671a9c35`, abriu a thread `PRRT_kwDOTyzZrs6ZigTV`. O comentário `PRRC_kwDOTyzZrs7h6SPS`/REST `3790152658`, ancorado em `src/domains/owners/components/owner-recipient-panel.tsx` linhas 707–708 do lado direito, registrou que o CTA local ainda podia aparecer em um ambiente sem integração externa. Na captura, a [thread](https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790152658) estava atual (`isOutdated=false`) e não resolvida.
+
+A correção não antecipa provider externo nem muda `providerMode`, `nextAction` ou fatos persistidos. O estado comum das projeções de ativação/recebimentos e dos três retornos POST recebe a capability obrigatória derivada no servidor. `recipient.onboarding.start` e `recipient.onboarding.refresh` recusam `unavailable` com o `503 PAYMENT_PROVIDER_UNAVAILABLE` seguro já existente antes de `prepare`, de reservar operação ou de chamar adapter. A UI preserva o estado somente para consulta e não renderiza notice local, CTA de início/refresh, provider falso ou controle desabilitado.
+
 ## Arquivos/componentes
 
-Implementados: contratos estritos em `packages/contracts/src/owner.ts`; domínio server/client em `src/domains/owners`; renderer jurídico compartilhado em `src/domains/legal`; rotas `/dono`, `/dono/recebimentos`, `GET /api/owner/activation` e `GET /api/owner/recipient`; registry modular em `src/domains/commands`; migrations append-only, seed local, pgTAP `0004`, helpers e quatro specs FEAT-004. Os DALs de comando usam um pool restrito compartilhado; web/readiness/backoffice conservam `6 + 2 + 2 = 10`, sem ampliar o teto do login runtime.
+Implementados: contratos estritos em `packages/contracts/src/owner.ts`; domínio server/client em `src/domains/owners`, inclusive derivação server-only da capability; renderer jurídico compartilhado em `src/domains/legal`; rotas `/dono`, `/dono/recebimentos`, `GET /api/owner/activation` e `GET /api/owner/recipient`; registry modular em `src/domains/commands`; migrations append-only, seed local, pgTAP `0004`, helpers e quatro specs FEAT-004. Os DALs de comando usam um pool restrito compartilhado; web/readiness/backoffice conservam `6 + 2 + 2 = 10`, sem ampliar o teto do login runtime. O quarto P2 não cria migration, coluna ou configuração pública.
 
 ## Banco, migration, grants e RLS
 
@@ -72,9 +79,13 @@ O provider é chamado somente no servidor. Identificadores externos, payloads, K
 
 A classificação adicional também permanece fail-closed: ela exige simultaneamente o SQLSTATE e a mensagem privada allowlisted, não expõe essa mensagem ao cliente e não converte um `42501` desconhecido ou de bloqueio em conflito recuperável.
 
+`recipientOnboardingCapability` é calculada no servidor, nunca aceita do navegador e não revela configuração ou prontidão de provider. A allowlist habilita apenas `APP_ENV=local | test`; `development | production`, valor ausente ou inválido resultam em `unavailable`. A recusa acontece antes de `prepare`, reserva de operação, DAL ou adapter, sem criar efeito financeiro ou fato novo.
+
 ## Read models, comandos e invalidação
 
 `owner.activate`, `recipient.onboarding.start` e `recipient.onboarding.refresh` estão no registry privado com retorno autoritativo, idempotência explícita e invalidação de query keys escopadas por usuário. `recipient.bank.update` fica diferido até existir token ou handoff provider-owned aprovado. A elegibilidade exige dono ativo, contrato vigente aceito, recebedor ativo e a mesma versão de perfil sincronizada; nova versão contratual preserva o histórico e exige novo aceite. A FEAT-020 revalidará o fato antes da cobrança.
+
+As projeções SQL mantêm seus fatos canônicos e tuples de 21/16 colunas; a camada HTTP enriquece ambas, e também os três retornos POST, com a capability obrigatória. Ela não recalcula `providerMode` nem `nextAction`. Quando `unavailable`, `start | refresh` retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de preparar ou reservar uma operação; as leituras continuam disponíveis.
 
 Na preparação do recebedor, `owner_contract_not_current` é uma corrida corrigível por releitura, não uma proibição de autoridade: a API responde `409 CONFLICT`, o CTA fica desabilitado e somente um GET explícito pode reabrir o fluxo. Bloqueio canônico continua terminal em `403 FORBIDDEN`.
 
@@ -83,6 +94,8 @@ Os read models autenticados de ativação e recebimentos possuem deadline intern
 ## UX, mobile e acessibilidade
 
 O checklist factual, o contrato vigente, o CTA derivado do requisito pendente e as mensagens seguras do adapter estão implementados nas duas rotas. Os estilos e as specs cobrem os contratos de 320 px, zoom de 200%, teclado, touch de 44 px, axe e reflow; os sete IDs foram promovidos a automatizados após as matrizes browser limpas descritas abaixo. Nenhuma tela afirma aprovação real de gateway.
+
+Com `local_adapter`, `/dono/recebimentos` conserva o notice e os CTAs locais compatíveis com `nextAction`. Com `unavailable`, omite notice e CTAs de início/refresh e apresenta um alerta `role=status` com o título **Cadastro de recebimentos indisponível** e o corpo **A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.** O fato canônico permanece visível; não há botão falso nem controle desabilitado que sugira integração externa.
 
 Após resultado ambíguo, `Verificar estado atual` fecha a superfície privada enquanto o `GET /api/owner/recipient` está em curso. Se a leitura autoritativa passar, o foco programático retorna ao heading do checklist; se falhar, a UI mantém apenas a mensagem segura e foca seu alerta. A partir desse alerta, `Tentar novamente` usa o mesmo intent: fecha a superfície no novo GET e devolve o foco ao heading somente após sucesso. Os IDs 004/007 exigem `toBeFocused()` no heading após a recuperação bem-sucedida, sem reenviar o comando anterior; o ID 007 também cobre GET 503, retry, GET real 200 e heading focado.
 
@@ -136,7 +149,7 @@ O snapshot funcional foi congelado no commit `c115dcd726929f289777cd897cccc97d33
 
 O smoke padrão daquele gerador passou. A auditoria integral encontrou correspondência exata entre tar, staging e manifesto e terminou `NO-BLOCKER` somente para aquela release local Linux x64, Node 24.18/npm 11.19. As varreduras canônicas antes e depois do smoke não encontraram segredo de runtime nem PII de cliente/QA. O snapshot permanece histórico e stale, anterior aos dois P2, e não aprova produção ou ARM64.
 
-### Evidência final precommit do terceiro P2
+### Evidência histórica de fechamento local do terceiro P2
 
 Em Node 24, `npm ci` concluiu com 447 pacotes e auditoria em zero. Format, lint, typecheck, os quatro unitários focados em 42/42, a guarda estática de privacidade em 12/12, a suíte unitária integral em 718/718 por 74 arquivos, docs:check em 34 features/200 cenários/18 ADRs, `npm audit` em zero, Knip e diff-check passaram. A cadeia final de banco permaneceu em uma única execução: reset, geração e 358/358 pgTAP (`158 + 78 + 57 + 65`) no head de 15 migrations `20260815000100`, com readiness, overloads/grants, gerados e cleanup corretos.
 
@@ -144,13 +157,21 @@ A focada P3 anterior permanece verde em 23/23. Uma primeira integral do snapshot
 
 A integral corrigida passou exatamente em 114/114, 17 specs e 16 projetos, preservando 23/23 da FEAT-004. Privacidade e cleanup ficaram verdes. SHA-256: relatório `5abbdc7696273dcf24df6353dea014f9e6dc0738824783171e978cf19d8c2e44`, stdout `a630adc06adb9d461bb9b2fa7d2cc43d8dcf8470312b19b517178ca4f409d678`, lista `322ae32bc132bca0afcd30d4af55d37d4ec31977742e9d721999ab2664e924c6` e `.last-run.json` `91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903`.
 
-O build atual foi executado exatamente uma vez e passou com exit `0`, 26 rotas web, quatro do backoffice e zero warning; log SHA-256 `8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2`. O smoke customizado atual também foi executado exatamente uma vez e passou com exit `0` em 2,4 segundos: três probes guest `401` com UUID, dois redirects exatos, 14 nonces web, 11 do backoffice, banco/Mailpit `0 → 0`, privacidade e cleanup verdes. SHA-256: stdout `399d3b41dd9d161bdd86288c53e5bf821279285eb4772740c9ff5169845e5abd`, server log `e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b` e resumo `25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450`.
+O build daquela fotografia foi executado exatamente uma vez e passou com exit `0`, 26 rotas web, quatro do backoffice e zero warning; log SHA-256 `8677b868a632e0891499c8450e5c926ddefcde7e27c5d31f9adcb55e27bbfaa2`. O smoke customizado do mesmo snapshot também foi executado exatamente uma vez e passou com exit `0` em 2,4 segundos: três probes guest `401` com UUID, dois redirects exatos, 14 nonces web, 11 do backoffice, banco/Mailpit `0 → 0`, privacidade e cleanup verdes. SHA-256: stdout `399d3b41dd9d161bdd86288c53e5bf821279285eb4772740c9ff5169845e5abd`, server log `e3c376cdc9403d2739ea8f127244fef193ea0ad4689694fec5c8a097d5ee025b` e resumo `25262fb6efbf93a0a654a16171bc4f6998000ef0078b9d91e40a06beefe79450`. Esses resultados são históricos e não validam o quarto P2.
 
 ### Release canônica final do terceiro P2
 
 A release canônica local final foi gerada e auditada para o commit funcional `2a86acc4dc3a005213d5f22384084e3aba0160be`. O archive possui 24.903.588 bytes e SHA-256 `0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566`; o sidecar, 124 bytes e SHA-256 `1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab`; o manifesto, 681.529 bytes e SHA-256 `d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44`; e o log, 2.099 bytes e SHA-256 `e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e`.
 
 A árvore contém 2.870 artefatos — web 1.577, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, e o tar contém 3.454 membros — 584 diretórios, 2.868 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem ao commit funcional. O head empacotado é `20260815000100`, com prefixo SHA-256 registrado `ca995243...`; o lockfile possui prefixo SHA-256 `485ec8e7...`. Em Linux x64 com Node 24.18/npm 11.19, smoke embutido, varreduras de secrets/PII e cleanup final ficaram verdes; duas auditorias independentes terminaram `NO-BLOCKER`. Esse “final” descreve o artefato funcional local do P3, não ARM64, produção, publicação, feature concluída ou merge.
+
+### Evidência local do quarto P2
+
+No fechamento em Node 24, `npm ci`, format, lint, typecheck, 734/734 unitários em 74 arquivos, docs:check 34/200/18, audit com zero vulnerabilidade, Knip e diff-check passaram. Entre as provas estão `derives APP_ENV=%s as capability %s`, a recusa `before reserving an operation`, o enriquecimento de read model com `local_adapter | unavailable`, o campo obrigatório no contrato HTTP e os helpers de UI independentes para start/refresh. Reset, geração e `test:db` passaram em 358/358 (`158 + 78 + 57 + 65`), com 15 migrations e head `20260815000100`.
+
+O ID estável `SL-F004-E2E-004` foi estendido, sem criar novo ID nem mudar os totais do catálogo. O oráculo alterna somente a capability sobre estados factuais de `start_onboarding` e `refresh_status`, exige alerta/copy exatos e ausência dos CTAs em `unavailable`, verifica zero POST indevido e restaura os controles ao retornar para `local_adapter`. A rodada focada passou em 23/23, quatro specs e 14 projetos; SHA-256: auditoria `49d457c85e3489703ce1c316e83228e40b003d384b492d86830676b832262c0b`, stdout `f525446c0f4b5e61f32179e4d8cdb94e3f3ccc79601be889dfd30d79d3574e2b`, relatório `112ff3b8603ed644260e94218a66bbd96c6f2fc80e7b806ff61a54a29ef984a3` e lista `7946ed316c84b9992b202787c7db937620b84769b14a6edef790d7791ee8f6af`. A integral passou em 114/114, 17 specs e 16 projetos, preservando 23/23 da FEAT-004; SHA-256: auditoria `438da6bc8f6a557d9e97006a94dc3ce31505b9d061718c6c9b7b51e493bee8aa`, stdout `c6a76b42d4fc838c7c7b2b84fede68da343f933b9602e2a23cd6c24ccedf2d7e`, relatório `8bd8f19266a9ce8dee5aefafa52059835fe524b2595333785019cf033409c89c` e lista `293848081639eaeb419208f3279470460638a7476e8debe752cc49933182a492`. A primeira auditoria integral terminou depois de estrutura/privacidade por `ReferenceError: mailpitTotal is not defined`; a correção apenas ligou `cleanup.mailpitTotal` ao valor já calculado, e a segunda auditoria reutilizou os mesmos artefatos com zero nova invocação Playwright. Houve uma execução Playwright, zero rerun e zero flake.
+
+Um único build de validação passou com exit `0`, 26 rotas web, quatro do backoffice, `BUILD_ID=local` e log SHA-256 `ca7d5c3e98449ea03a4cedbc567d93f989db7dbfdac854ea1a19f40f0c26b0b3`. O smoke customizado não produziu evidência verde. A tentativa 1 foi recusada porque o oráculo tratou uma tombstone segura de `Set-Cookie` como violação; hashes SHA-256 stdout/server/resumo `e30eb0c921851fddf75c54262cf252f1aaef29bdba28b48a2d36300bc8781374`/`fa89740ce6562ae79feca91ba5653f2ef6d53cecfa221461e06820227febaf4e`/`2f1a9da9a728fd9907328a0895f7a5870e60c252b7c5138731078507c6677c81`. A tentativa 2 terminou com exit `1` apesar de cumprir o contrato completo — três boundaries, dois redirects, 14 nonces web, 11 backoffice, 15 relações e Mailpit em zero —, porque o postcheck produziu um falso positivo contra o shell pai; hashes `d845197c92915026a3879b5e16633401c84fcd8009c47f6f58deaac43fe45a1c`/`7c9b2c95dc1cf9b872ea024bfece0cb4cf54b852dd5e8c9f1a5f213115e9d42d`/`63b6748f260e43aff1ea04b58bfc613d72dd8f138b8f2bb4834caf6d5d5d93f0`. A tentativa 3 foi recusada antes dos probes porque o parser não aceitava `pgrp=0`; stdout/server `bcd359af5d25942436409dd499d03809f221e772eacf2562d4e4317ddfab4e74`/`b70a26b1f361cb3fcfc37c226743bac615afa4ded7d53aa798725badc3554235`. O cleanup terminou em zero nas três, mas nenhuma conta como smoke aprovado. O smoke embutido do gerador canônico será o gate definitivo; release, publicação, resposta, resolução, novo review, espera, ready e merge permanecem pendentes.
 
 ## Publicação
 
@@ -164,9 +185,13 @@ Na mesma captura, o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) es
 
 O commit/push deste registro documental, atualização do body do PR se necessária, novo `@codex review`, espera mínima de 60 minutos e captura final única continuam pendentes. A feature permanece **Em implementação**; `MERGEABLE`/`CLEAN` não declara ready ou merge e `statusCheckRollup=[]` não comprova checks remotos.
 
+### Review atual do quarto P2
+
+O review `PRR_kwDOTyzZrs8AAAABJrjWnQ`/REST `4944615069` foi submetido em `2026-08-15T20:02:30Z` sobre `11464a37593d510f5774af6af6fe655e671a9c35`. Na captura, a thread `PRRT_kwDOTyzZrs6ZigTV` e seu comentário `PRRC_kwDOTyzZrs7h6SPS`/REST `3790152658` estavam não resolvidos e não desatualizados. A correção existe somente no snapshot local até nova publicação e verificação; reply, resolve, re-review, espera, ready e merge não são antecipados por este registro.
+
 ## Observabilidade e operação
 
-Eventos operacionais allowlisted registram ação, resultado, duração e `requestId`, sem PII, payload externo ou chave idempotente. `audit.events` guarda a chave em coluna privada separada somente para deduplicação; fatos novos usam o request ID real como correlação. O adapter e o contrato `local_fixture` são recusados fora de local/test; PEND-004/PEND-006 continuam como bloqueadores explícitos de produção.
+Eventos operacionais allowlisted registram ação, resultado, duração e `requestId`, sem PII, payload externo ou chave idempotente. `audit.events` guarda a chave em coluna privada separada somente para deduplicação; fatos novos usam o request ID real como correlação. O adapter e o contrato `local_fixture` são recusados fora de local/test; PEND-004/PEND-006 continuam como bloqueadores explícitos de produção. Uma tentativa recusada por capability registra somente o resultado allowlisted `unavailable`, sem valor bruto de `APP_ENV`, readiness de provider ou payload de adapter.
 
 ## Documentação atualizada
 
@@ -178,4 +203,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Os P2 anteriores foram implementados, validados e publicados. O terceiro P2 de correlação possui interface/migration congeladas e fechamento local verde: gates estáticos, 42/42 focados, 718/718 unitários integrais, 358/358 pgTAP no head `20260815000100`, browser corrigido 114/114, build, smoke e release canônica local final auditada. Publicação até `dda95b3...`, resposta e resolução foram verificadas na captura congelada; commit/push deste registro, ajuste do body se necessário, novo review/espera mínima de 60 minutos e captura final ainda faltam. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.
+Os três P2 anteriores foram implementados e possuem evidência histórica própria; a release do terceiro P2 não valida a capability nova. Para o quarto P2, o fechamento estático 734/734, banco 358/358, browser focado 23/23, browser integral 114/114 e build 26 + 4 passaram. O smoke customizado não produziu uma execução aceita, e o gerador canônico ainda precisa validar o smoke e a release. Publicação, reply/resolve, re-review, espera, ready e merge continuam pendentes. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.

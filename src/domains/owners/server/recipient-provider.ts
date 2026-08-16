@@ -2,7 +2,11 @@ import "server-only";
 
 import { z } from "zod";
 
-import type { RecipientRequirement, RecipientStatus } from "@set-livre/contracts";
+import type {
+  RecipientOnboardingCapability,
+  RecipientRequirement,
+  RecipientStatus,
+} from "@set-livre/contracts";
 
 type RecipientProviderOperation = "refresh" | "start";
 
@@ -33,6 +37,7 @@ export const localRecipientTestFixtureReferences = {
 } as const;
 
 const localTestFixturePrefix = "local-test-fixture:";
+const appEnvironmentSchema = z.enum(["development", "local", "production", "test"]);
 
 const rawLocalRecipientSnapshotSchema = z.strictObject({
   reference: z.string().min(1).max(200),
@@ -53,6 +58,20 @@ const localRequirementMap: ReadonlyMap<string, RecipientRequirement> = new Map([
   ["IDENTITY_REVIEW", "identity_review"],
   ["PROVIDER_CONTACT", "provider_contact"],
 ]);
+
+export function deriveRecipientOnboardingCapability(
+  appEnvironment: string | undefined,
+): RecipientOnboardingCapability {
+  const parsedEnvironment = appEnvironmentSchema.safeParse(appEnvironment);
+  if (!parsedEnvironment.success) return "unavailable";
+  return parsedEnvironment.data === "local" || parsedEnvironment.data === "test"
+    ? "local_adapter"
+    : "unavailable";
+}
+
+export function readRecipientOnboardingCapability(): RecipientOnboardingCapability {
+  return deriveRecipientOnboardingCapability(process.env.APP_ENV);
+}
 
 export function mapLocalRecipientSnapshot(raw: unknown): RecipientProviderResult {
   const snapshot = rawLocalRecipientSnapshotSchema.parse(raw);
@@ -126,7 +145,7 @@ function testFixtureSnapshot(
 
 export function createLocalRecipientOnboardingProvider(): RecipientOnboardingProvider {
   const appEnvironment = process.env.APP_ENV;
-  if (appEnvironment !== "local" && appEnvironment !== "test") {
+  if (deriveRecipientOnboardingCapability(appEnvironment) !== "local_adapter") {
     throw new Error("O adapter local de recebedor é proibido fora de local/test.");
   }
 
