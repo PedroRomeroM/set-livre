@@ -173,6 +173,9 @@ describe("profile UI privacy guards", () => {
     expect(cache).toContain(
       "queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });",
     );
+    expect(cache).toContain(
+      "queryClient.removeQueries({ queryKey: ownerStudioQueryKeys.editors });",
+    );
   });
 
   it("keeps the account composition usable at 320px and the 200% reflow viewport", () => {

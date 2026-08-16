@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `studios` |
+| Campo            | Valor                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                                |
+| Prioridade       | P0                                                                                                                                       |
+| Domínio          | `studios`                                                                                                                                |
 | Specs Playwright | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`<br>`tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
 
 ## Objetivo
@@ -70,6 +70,8 @@ Gerenciar o ciclo editorial do dono com checklist de completude, reaprovação e
 - studio.resume
 - studio.draft.discard
 
+`studio.draft.discard` é implementado pela FEAT-006 como contrato de correção segura e apenas reutilizado nesta superfície editorial.
+
 ## UX e estados obrigatórios
 
 - Checklist aponta seção.
@@ -97,13 +99,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F009-E2E-001 | P0 | critical | desktop | envio completo entra em estado pendente | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-002 | P0 | critical | desktop | incompleto aponta campos e não transiciona | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-003 | P0 | critical | desktop | edição de revisão pendente é bloqueada | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-004 | P0 | critical | desktop | pausa oculta estúdio sem cancelar reserva | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-005 | P1 | regression | mobile | motivo de rejeição e navegação para correção | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                      | Spec                                                                |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------- | ------------------------------------------------------------------- |
+| SL-F009-E2E-001 | P0         | critical   | desktop  | envio completo entra em estado pendente      | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-002 | P0         | critical   | desktop  | incompleto aponta campos e não transiciona   | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-003 | P0         | critical   | desktop  | edição de revisão pendente é bloqueada       | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-004 | P0         | critical   | desktop  | pausa oculta estúdio sem cancelar reserva    | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-005 | P1         | regression | mobile   | motivo de rejeição e navegação para correção | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
 
 Regras:
 
@@ -139,3 +141,9 @@ Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `doc
 - logs e métricas necessários;
 - rollback/correção definidos;
 - nenhuma funcionalidade fora de escopo introduzida.
+
+## Fronteira temporal com FEAT-006
+
+FEAT-009 permanece planejada. Ela poderá reutilizar `studio.draft.discard`, mas não antecipa
+submissão, aprovação, publicação, pausa ou rota pública na implementação FEAT-006 atual. Não há
+claim de browser, build, smoke ou release para FEAT-009.

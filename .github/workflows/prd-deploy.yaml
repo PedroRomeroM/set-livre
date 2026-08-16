@@ -1,0 +1,402 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-set-livre
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Supabase migrations and immutable Oracle ARM64 release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      vars.PRD_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    environment: production
+    env:
+      EXPECTED_SUPABASE_PROJECT_REF: klzxatkgiiznymzuzadd
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm-cache
+    steps:
+      # actions/checkout@v5
+      - name: Checkout the CI-approved SHA
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate immutable deployment inputs
+        shell: bash
+        env:
+          PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+          PRD_BACKOFFICE_APP_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}
+          PRD_SUPABASE_URL: ${{ vars.PRD_SUPABASE_URL }}
+          PRD_SSH_HOST: ${{ vars.PRD_SSH_HOST }}
+          PRD_SSH_USER: ${{ vars.PRD_SSH_USER }}
+          PRD_SUPABASE_ANON_KEY: ${{ secrets.PRD_SUPABASE_ANON_KEY }}
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SSH_PRIVATE_KEY: ${{ secrets.PRD_SSH_PRIVATE_KEY }}
+          PRD_SSH_KNOWN_HOSTS: ${{ secrets.PRD_SSH_KNOWN_HOSTS }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_SHA" = "$(git rev-parse --verify HEAD^{commit})"
+          [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          main_ref="$(git rev-parse --verify refs/remotes/origin/main)"
+          git merge-base --is-ancestor "$RELEASE_SHA" "$main_ref"
+          test "$PRD_PUBLIC_APP_URL" = "https://setlivre.com"
+          test "$PRD_SUPABASE_URL" = "https://${EXPECTED_SUPABASE_PROJECT_REF}.supabase.co"
+          [[ "$PRD_SSH_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$PRD_SSH_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          node - "$PRD_BACKOFFICE_APP_URL" <<'NODE'
+          const value = process.argv[2];
+          const parsed = new URL(value);
+          if (parsed.protocol !== "https:" || parsed.origin !== value || parsed.hostname === "setlivre.com") {
+            process.exit(1);
+          }
+          NODE
+          for name in \
+            PRD_SSH_HOST PRD_SSH_USER PRD_SUPABASE_ANON_KEY PRD_DATABASE_URL_APP_DAL \
+            PRD_SSH_PRIVATE_KEY PRD_SSH_KNOWN_HOSTS SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; do
+            test -n "${!name:-}"
+          done
+          for name in \
+            PRD_SSH_HOST PRD_SSH_USER PRD_SUPABASE_ANON_KEY PRD_DATABASE_URL_APP_DAL \
+            SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD; do
+            [[ "${!name}" != *$'\r'* && "${!name}" != *$'\n'* ]]
+          done
+          [[ "$PRD_SSH_PRIVATE_KEY" != *$'\r'* ]]
+          [[ "$PRD_SSH_KNOWN_HOSTS" != *$'\r'* ]]
+
+      # actions/setup-node@v5
+      - name: Install Node.js 24.18.0 on ARM64
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install npm 11.19.0 and locked dependencies
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts npm@11.19.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.19.0"
+          npm ci
+
+      - name: Build production standalones without server secrets
+        shell: bash
+        env:
+          PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+          PRD_BACKOFFICE_APP_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}
+          PRD_SUPABASE_URL: ${{ vars.PRD_SUPABASE_URL }}
+          PRD_SUPABASE_ANON_KEY: ${{ secrets.PRD_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          web_env=.env.production.local
+          backoffice_env=apps/backoffice/.env.production.local
+          cleanup() { rm -f -- "$web_env" "$backoffice_env"; }
+          trap cleanup EXIT
+          test ! -e "$web_env"
+          test ! -e "$backoffice_env"
+          {
+            printf 'APP_ENV=production\n'
+            printf 'APP_RELEASE_SHA=%s\n' "$RELEASE_SHA"
+            printf 'NEXT_PUBLIC_APP_URL=%s\n' "$PRD_PUBLIC_APP_URL"
+            printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRD_SUPABASE_URL"
+            printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_ANON_KEY"
+          } >"$web_env"
+          {
+            printf 'APP_ENV=production\n'
+            printf 'APP_RELEASE_SHA=%s\n' "$RELEASE_SHA"
+            printf 'NEXT_PUBLIC_APP_URL=%s\n' "$PRD_BACKOFFICE_APP_URL"
+            printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRD_SUPABASE_URL"
+            printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_ANON_KEY"
+          } >"$backoffice_env"
+          chmod 0600 "$web_env" "$backoffice_env"
+          APP_RELEASE_SHA="$RELEASE_SHA" npm run build
+          test "$(tr -d '\r\n' < .next/BUILD_ID)" = "$RELEASE_SHA"
+          test "$(tr -d '\r\n' < apps/backoffice/.next/BUILD_ID)" = "$RELEASE_SHA"
+          cleanup
+          trap - EXIT
+          git diff --exit-code
+
+      - name: Package a deterministic two-application release
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          artifact_root=.artifacts/production
+          release_root="$artifact_root/release"
+          archive="$artifact_root/set-livre-${RELEASE_SHA}.tar.gz"
+          install -d -m 0700 "$release_root/web" "$release_root/backoffice" "$release_root/supabase"
+          cp -a .next/standalone/. "$release_root/web/"
+          install -d "$release_root/web/.next"
+          cp -a .next/static "$release_root/web/.next/static"
+          cp .next/BUILD_ID "$release_root/web/.next/BUILD_ID"
+          if [[ -d public ]]; then cp -a public "$release_root/web/public"; fi
+          cp -a apps/backoffice/.next/standalone/. "$release_root/backoffice/"
+          install -d "$release_root/backoffice/apps/backoffice/.next"
+          cp -a apps/backoffice/.next/static "$release_root/backoffice/apps/backoffice/.next/static"
+          cp apps/backoffice/.next/BUILD_ID \
+            "$release_root/backoffice/apps/backoffice/.next/BUILD_ID"
+          if [[ -d apps/backoffice/public ]]; then
+            cp -a apps/backoffice/public "$release_root/backoffice/apps/backoffice/public"
+          fi
+          cp -a supabase/migrations "$release_root/supabase/migrations"
+          test -f "$release_root/web/server.js"
+          test -f "$release_root/backoffice/apps/backoffice/server.js"
+          if find "$release_root" -name '.env*' -print -quit | grep -q .; then exit 1; fi
+          node - "$release_root" <<'NODE'
+          const { lstatSync, readdirSync, realpathSync } = require("node:fs");
+          const { isAbsolute, relative, resolve, sep } = require("node:path");
+          const root = realpathSync(process.argv[2]);
+          const inside = (path) => {
+            const displacement = relative(root, path);
+            return displacement === "" || (
+              displacement !== ".." && !displacement.startsWith(`..${sep}`) && !isAbsolute(displacement)
+            );
+          };
+          const visit = (directory) => {
+            for (const name of readdirSync(directory)) {
+              const path = resolve(directory, name);
+              const information = lstatSync(path);
+              if (information.isSymbolicLink()) {
+                if (!inside(realpathSync(path))) process.exit(1);
+              } else if (information.isDirectory()) {
+                visit(path);
+              } else if (!information.isFile()) {
+                process.exit(1);
+              }
+            }
+          };
+          visit(root);
+          NODE
+          node - "$release_root/manifest.json" "$RELEASE_SHA" <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const [destination, commit] = process.argv.slice(2);
+          writeFileSync(destination, `${JSON.stringify({
+            schemaVersion: 1,
+            commit,
+            runtime: { arch: process.arch, platform: process.platform, node: process.version },
+            applications: {
+              web: { entrypoint: "web/server.js", port: 3000 },
+              backoffice: { entrypoint: "backoffice/apps/backoffice/server.js", port: 3001 },
+            },
+            migrations: "supabase/migrations",
+          }, null, 2)}\n`, { mode: 0o600 });
+          NODE
+          commit_timestamp="$(git show -s --format=%ct "$RELEASE_SHA")"
+          tar --sort=name --mtime="@${commit_timestamp}" --owner=0 --group=0 --numeric-owner \
+            --mode='u+rwX,go+rX,go-w,a-s,a-t' -czf "$archive" -C "$artifact_root" release
+          sha256sum "$archive" >"${archive}.sha256"
+          chmod 0600 "$archive" "${archive}.sha256"
+
+      - name: Link and dry-run Supabase migrations
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/supabase link \
+            --project-ref "$EXPECTED_SUPABASE_PROJECT_REF"
+          ./node_modules/.bin/supabase db push --linked --include-all --dry-run
+
+      - name: Apply append-only Supabase migrations
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/supabase db push --linked --include-all
+          ./node_modules/.bin/supabase migration list --linked
+
+      - name: Prove the restricted production DAL identity
+        shell: bash
+        env:
+          DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL_APP_DAL });
+          try {
+            await client.connect();
+            const result = await client.query(
+              "select session_user, current_user, private.check_runtime_readiness(session_user) as ready",
+            );
+            const row = result.rows[0];
+            if (row?.current_user !== "app_dal" || row?.ready !== true || row?.session_user === "app_dal") {
+              throw new Error("Production DAL readiness contract failed");
+            }
+          } finally {
+            await client.end().catch(() => undefined);
+          }
+          NODE
+
+      - name: Configure pinned SSH trust
+        shell: bash
+        env:
+          PRD_SSH_PRIVATE_KEY: ${{ secrets.PRD_SSH_PRIVATE_KEY }}
+          PRD_SSH_KNOWN_HOSTS: ${{ secrets.PRD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 0700 "$RUNNER_TEMP/set-livre-ssh"
+          printf '%s\n' "$PRD_SSH_PRIVATE_KEY" >"$RUNNER_TEMP/set-livre-ssh/key"
+          printf '%s\n' "$PRD_SSH_KNOWN_HOSTS" >"$RUNNER_TEMP/set-livre-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/set-livre-ssh/key" "$RUNNER_TEMP/set-livre-ssh/known_hosts"
+
+      - name: Upload immutable release and runtime configuration
+        shell: bash
+        env:
+          PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+          PRD_BACKOFFICE_APP_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}
+          PRD_SUPABASE_URL: ${{ vars.PRD_SUPABASE_URL }}
+          PRD_SSH_HOST: ${{ vars.PRD_SSH_HOST }}
+          PRD_SSH_USER: ${{ vars.PRD_SSH_USER }}
+          PRD_SUPABASE_ANON_KEY: ${{ secrets.PRD_SUPABASE_ANON_KEY }}
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ssh_options=(-i "$RUNNER_TEMP/set-livre-ssh/key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/set-livre-ssh/known_hosts")
+          archive=".artifacts/production/set-livre-${RELEASE_SHA}.tar.gz"
+          web_env="$RUNNER_TEMP/set-livre-web.env"
+          backoffice_env="$RUNNER_TEMP/set-livre-backoffice.env"
+          cleanup() { rm -f -- "$web_env" "$backoffice_env"; }
+          trap cleanup EXIT
+          for specification in "web:$PRD_PUBLIC_APP_URL:$web_env" "backoffice:$PRD_BACKOFFICE_APP_URL:$backoffice_env"; do
+            application="${specification%%:*}"
+            remainder="${specification#*:}"
+            destination="${remainder##*:}"
+            application_url="${remainder%:*}"
+            {
+              printf 'NODE_ENV=production\n'
+              printf 'APP_ENV=production\n'
+              printf 'APP_RELEASE_SHA=%s\n' "$RELEASE_SHA"
+              printf 'NEXT_TELEMETRY_DISABLED=1\n'
+              printf 'HOSTNAME=127.0.0.1\n'
+              if [[ "$application" == web ]]; then printf 'PORT=3000\n'; else printf 'PORT=3001\n'; fi
+              printf 'NEXT_PUBLIC_APP_URL=%s\n' "$application_url"
+              printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRD_SUPABASE_URL"
+              printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_ANON_KEY"
+              printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
+            } >"$destination"
+            chmod 0600 "$destination"
+          done
+          scp "${ssh_options[@]}" "$archive" \
+            "$PRD_SSH_USER@$PRD_SSH_HOST:/tmp/set-livre-${RELEASE_SHA}.tar.gz"
+          scp "${ssh_options[@]}" "$web_env" \
+            "$PRD_SSH_USER@$PRD_SSH_HOST:/tmp/set-livre-web-${RELEASE_SHA}.env"
+          scp "${ssh_options[@]}" "$backoffice_env" \
+            "$PRD_SSH_USER@$PRD_SSH_HOST:/tmp/set-livre-backoffice-${RELEASE_SHA}.env"
+
+      - name: Activate atomically with automatic application rollback
+        shell: bash
+        env:
+          PRD_SSH_HOST: ${{ vars.PRD_SSH_HOST }}
+          PRD_SSH_USER: ${{ vars.PRD_SSH_USER }}
+        run: |
+          set -euo pipefail
+          ssh_options=(-i "$RUNNER_TEMP/set-livre-ssh/key" -o IdentitiesOnly=yes -o UserKnownHostsFile="$RUNNER_TEMP/set-livre-ssh/known_hosts")
+          archive_sha256="$(cut -d' ' -f1 ".artifacts/production/set-livre-${RELEASE_SHA}.tar.gz.sha256")"
+          [[ "$archive_sha256" =~ ^[a-f0-9]{64}$ ]]
+          ssh "${ssh_options[@]}" "$PRD_SSH_USER@$PRD_SSH_HOST" 'bash -s' -- "$RELEASE_SHA" "$archive_sha256" <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          release_sha="$1"
+          expected_archive_sha256="$2"
+          [[ "$release_sha" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$expected_archive_sha256" =~ ^[a-f0-9]{64}$ ]]
+          base=/opt/setlivre
+          archive="/tmp/set-livre-${release_sha}.tar.gz"
+          web_env="/tmp/set-livre-web-${release_sha}.env"
+          backoffice_env="/tmp/set-livre-backoffice-${release_sha}.env"
+          incoming="$base/releases/.incoming-${release_sha}"
+          release="$base/releases/$release_sha"
+          cleanup() { rm -f -- "$archive" "$web_env" "$backoffice_env"; }
+          trap cleanup EXIT
+          test -f "$archive"
+          test -f "$web_env"
+          test -f "$backoffice_env"
+          test "$(sha256sum "$archive" | cut -d' ' -f1)" = "$expected_archive_sha256"
+          if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then exit 1; fi
+          test ! -e "$incoming"
+          if [[ ! -d "$release" ]]; then
+            install -d -m 0750 "$incoming"
+            tar --extract --gzip --file "$archive" --directory "$incoming" \
+              --strip-components=1 --no-same-owner --no-same-permissions
+            test -f "$incoming/web/server.js"
+            test -f "$incoming/backoffice/apps/backoffice/server.js"
+            test "$(tr -d '\r\n' < "$incoming/web/.next/BUILD_ID")" = "$release_sha"
+            test "$(tr -d '\r\n' < "$incoming/backoffice/apps/backoffice/.next/BUILD_ID")" = "$release_sha"
+            chmod -R u=rwX,g=rX,o= "$incoming"
+            mv -- "$incoming" "$release"
+          fi
+          test -f "$release/web/server.js"
+          test -f "$release/backoffice/apps/backoffice/server.js"
+          test "$(tr -d '\r\n' < "$release/web/.next/BUILD_ID")" = "$release_sha"
+          test "$(tr -d '\r\n' < "$release/backoffice/apps/backoffice/.next/BUILD_ID")" = "$release_sha"
+          sudo install -d -o root -g setlivre -m 0750 "$release/runtime"
+          sudo install -o root -g setlivre -m 0640 "$web_env" "$release/runtime/web.env"
+          sudo install -o root -g setlivre -m 0640 \
+            "$backoffice_env" "$release/runtime/backoffice.env"
+          previous_target="$(readlink -f "$base/current" 2>/dev/null || true)"
+          ln -s "$release" "$base/.current-${release_sha}"
+          mv -Tf "$base/.current-${release_sha}" "$base/current"
+          sudo systemctl restart setlivre-web.service setlivre-backoffice.service
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/api/health/ready >/dev/null \
+              && curl --fail --silent --show-error http://127.0.0.1:3001/api/health/ready >/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$healthy" != 1 ]]; then
+            sudo journalctl -u setlivre-web.service -u setlivre-backoffice.service -n 120 --no-pager
+            if [[ "$previous_target" == "$base/releases/"* && -d "$previous_target" ]]; then
+              ln -s "$previous_target" "$base/.rollback-${release_sha}"
+              mv -Tf "$base/.rollback-${release_sha}" "$base/current"
+              sudo systemctl restart setlivre-web.service setlivre-backoffice.service
+            fi
+            exit 1
+          fi
+          if [[ "$previous_target" == "$base/releases/"* && -d "$previous_target" ]]; then
+            ln -sfn "$previous_target" "$base/previous"
+          fi
+          sudo systemctl is-active --quiet setlivre-web.service
+          sudo systemctl is-active --quiet setlivre-backoffice.service
+          REMOTE
+
+      - name: Public smoke and post-deploy monitoring
+        shell: bash
+        env:
+          PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            curl --fail --silent --show-error --max-time 10 \
+              "$PRD_PUBLIC_APP_URL/api/health/live" >/dev/null
+            curl --fail --silent --show-error --max-time 10 \
+              "$PRD_PUBLIC_APP_URL/api/health/ready" >/dev/null
+            if [[ "$attempt" -lt 12 ]]; then sleep 25; fi
+          done

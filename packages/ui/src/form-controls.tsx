@@ -94,6 +94,12 @@ export function Input({ className, ...inputProps }: InputProps) {
   return <input {...inputProps} className={joinClassNames(styles.input, className)} />;
 }
 
+export type TextareaProps = ComponentPropsWithRef<"textarea">;
+
+export function Textarea({ className, ...textareaProps }: TextareaProps) {
+  return <textarea {...textareaProps} className={joinClassNames(styles.textarea, className)} />;
+}
+
 export type SelectProps = ComponentPropsWithRef<"select">;
 
 export function Select({ className, ...selectProps }: SelectProps) {

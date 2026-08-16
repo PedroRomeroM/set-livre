@@ -176,6 +176,46 @@ A cadeia estática final única passou em 764/764 por 76 arquivos, preservando D
 
 O gerador canônico executou uma única vez para `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`; o primeiro smoke P5 embutido ficou verde, e duas auditorias `NO-BLOCKER` validaram release local de 2.871 artefatos sem mismatch/segredo/PII/resíduo. O fechamento pós-release não altera os contratos visuais. ARM64 e remoto continuam pendentes.
 
+### 3.4 Composição da FEAT-006
+
+A FEAT-006 acrescenta somente a primitive nativa `Textarea`, com a mesma fonte de 16 px, borda,
+foco, erro, estado disabled e fallback de forced colors de `Input`; o crescimento vertical é livre e
+o redimensionamento horizontal não pode quebrar o reflow. `Field`, `Input`, `Select`, `Button`,
+`Alert`, `Panel` e `Stack` continuam sendo reutilizados, sem card ou sistema visual paralelo.
+
+O editor usa seções semânticas **Identificação**, **Apresentação**, **Endereço**, **Capacidade** e
+**Pré-visualização**. Cidade/UF aparecem como texto factual `Curitiba · PR`, não controles. Descrição
+possui contador; o formulário é não controlado e só monta depois de o seed SSR autoritativo fechar o
+boundary de hidratação/refetch. Loading, pausa e troca de sessão omitem formulário, endereço,
+descrição e preview em vez de exibir snapshot privado sob key incorreta.
+
+Quando o form está dirty ou uma mutation está pendente, foco/online/visibilidade fecham de novo a
+superfície durante o GET de escopo. O controller do formulário permanece montado por baixo do
+boundary apenas para conservar hooks/callbacks; ele devolve DOM nulo, e os valores crus dos nove
+controles ficam em refs efêmeras. Resposta same-scope restaura os mesmos valores e, se a mutation
+ainda estiver pendente, mantém campos/CTA disabled. Troca A→B, unmount ou retorno pós-`await` arma o
+latch e impede sucesso, foco ou comparação tardios. Nada desse payload vai para URL, storage ou
+QueryCache.
+
+Depois de qualquer save aceito, o painel remonta `StudioCoreForm` com uma revisão visual local além da
+`editVersion`. Assim, até o no-op de um draft idêntico limpa dirty, erros e valores não canônicos a
+partir do DTO retornado. Esse token não aparece na UI, no cache remoto ou no contrato de domínio;
+publicado sem draft sempre cria revisão e não percorre o no-op.
+
+Conflito usa `Alert` e comparação explícita entre **Versão atual** e **Sua tentativa**; reaplicar
+somente repopula campos sobre a nova versão e nunca reenvia o comando. Descarte usa confirmação
+inline com **Confirmar descarte** e **Cancelar**, nunca `window.confirm`. Sem tipos ativos, a UI
+mostra o estado factual **Tipos de estúdio indisponíveis** e não monta select vazio, formulário ou
+CTA disabled. A navegação do dono ganha apenas **Cadastrar estúdio**; portfólio e página pública
+continuam ausentes até suas features proprietárias.
+
+Na recuperação de create ambíguo, S1/A e a tentativa B permanecem visíveis sem perda. **Editar a
+partir da versão atual** é a escolha explícita que navega ao editor canônico; **Reaplicar meus campos
+ao formulário** preserva B e prepara um update de S1 com a versão autoritativa; o usuário ainda faz
+um save explícito. A fonte desktop-chromium do ID 005 fixa K1/S1/A ambígua → GET 404 → usuário B →
+commit tardio K1 → K2/S1/B 409 → comparação A/B → reaplicação → save K3, encerrando com um único S1.
+A UI não serializa B. O roteiro está implementado na fonte, mas ainda não foi executado e não é verde.
+
 ## 4. Contratos
 
 ### 4.1 Botões
@@ -299,3 +339,17 @@ Toda primitive registra:
 - exemplos;
 - teste;
 - antiuso.
+
+### 10.1 FEAT-006 no snapshot atual
+
+O editor privado usa boundary fechado, estados de loading/vazio/erro/conflito/sucesso e recuperação,
+com composição própria para desktop/mobile. A fonte atual possui seis IDs: amplia 001 com probe
+pending/same-scope, 002 com descarte `draft_removed`, 003 com dirty A→B, 004 com Tab/Enter e foco,
+preserva 005 para comparação e adiciona 006 para reflow 160x360 nos três engines. Ela projeta 20
+execuções por três specs/dez projetos e ainda não foi executada. O 17/17 por duas specs/sete projetos
+é histórico, anterior às extensões; a coleta integral 131/19/16 não foi verde e a fonte atual projeta 134. As provas 23/23, 114/114 e builds descritas acima pertencem a outras features.
+
+Os contratos de teclado, zoom e descarte existem agora em fonte, mas não são evidência runtime. O
+`docs:check` canônico, integral unitária, DB 441 + gerados, browser 20/134, build das duas apps,
+smoke/release e ARM64 permanecem pendentes. A tentativa histórica de build rejeitada pelo sandbox
+não é falha visual/produto nem build verde.

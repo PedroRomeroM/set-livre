@@ -5,9 +5,12 @@ vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({
   activateOwner: vi.fn(),
   completeProfile: vi.fn(),
+  createStudio: vi.fn(),
+  discardStudioDraft: vi.fn(),
   readRouteIdentitySession: vi.fn(),
   refreshRecipientOnboarding: vi.fn(),
   startRecipientOnboarding: vi.fn(),
+  updateStudioCore: vi.fn(),
   updateProfile: vi.fn(),
 }));
 
@@ -26,11 +29,19 @@ vi.mock("../../src/domains/owners/server/owner-service", () => ({
   startRecipientOnboarding: mocks.startRecipientOnboarding,
 }));
 
+vi.mock("../../src/domains/studios/server/studio-service", () => ({
+  createStudio: mocks.createStudio,
+  discardStudioDraft: mocks.discardStudioDraft,
+  updateStudioCore: mocks.updateStudioCore,
+}));
+
 const userId = "11111111-1111-4111-8111-111111111111";
 const otherUserId = "22222222-2222-4222-8222-222222222222";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const contractId = "44444444-4444-4444-8444-444444444444";
 const requestId = "55555555-5555-4555-8555-555555555555";
+const studioId = "66666666-6666-4666-8666-666666666666";
+const studioTypeId = "77777777-7777-4777-8777-777777777777";
 const privateUserAgent = "private-user-agent/provider-reference";
 
 function commandRequest(body: unknown) {
@@ -65,6 +76,7 @@ describe("owner command route", () => {
       },
     });
     mocks.activateOwner.mockResolvedValue({ scope: userId });
+    mocks.createStudio.mockResolvedValue({ scope: userId });
     mocks.startRecipientOnboarding.mockResolvedValue({ scope: userId });
     mocks.refreshRecipientOnboarding.mockResolvedValue({ scope: userId });
     const { resetIdentityRateLimitForTests } = await import("../../src/lib/server/rate-limit");
@@ -215,5 +227,73 @@ describe("owner command route", () => {
     expect(serializedEvents).not.toContain(contractId);
     expect(serializedEvents).not.toContain(privateUserAgent);
     expect(serializedEvents).not.toContain("provider-reference");
+  });
+
+  it("dispatches studio creation without logging its private editor payload", async () => {
+    const events: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      events.push(String(chunk));
+      return true;
+    });
+    const privateStudioName = "Estúdio QA privado para telemetria";
+    const privateDescription =
+      "Descrição sintética privada que não pode aparecer no evento operacional do comando.";
+    const privateComplement = "Sala QA privada para telemetria";
+    const privateNeighborhood = "Bairro QA privado para telemetria";
+    const privatePostalCode = "80000000";
+    const privateStreet = "Rua QA Privada da Telemetria";
+    const privateStreetNumber = "QA-1200-privado";
+    const command = {
+      action: "studio.create",
+      expectedScope: userId,
+      idempotencyKey,
+      payload: {
+        core: {
+          address: {
+            complement: privateComplement,
+            neighborhood: privateNeighborhood,
+            postalCode: privatePostalCode,
+            street: privateStreet,
+            streetNumber: privateStreetNumber,
+          },
+          capacity: 12,
+          description: privateDescription,
+          name: privateStudioName,
+          studioTypeId,
+        },
+        studioId,
+      },
+    } as const;
+    const { POST } = await import("../../src/app/api/commands/route");
+    const response = await POST(commandRequest(command));
+
+    expect(response.status).toBe(200);
+    expect(mocks.createStudio).toHaveBeenCalledWith(
+      command,
+      expect.objectContaining({
+        requestId,
+        session: expect.objectContaining({ userId }),
+        userAgent: privateUserAgent,
+      }),
+    );
+    const serializedEvents = events.join("");
+    expect(serializedEvents).toContain(`"requestId":"${requestId}"`);
+    expect(serializedEvents).toContain('"event":"private.command"');
+    expect(serializedEvents).toContain('"action":"studio.create"');
+    for (const privateValue of [
+      idempotencyKey,
+      privateComplement,
+      privateDescription,
+      privateNeighborhood,
+      privatePostalCode,
+      privateStreet,
+      privateStreetNumber,
+      privateStudioName,
+      privateUserAgent,
+      studioId,
+      studioTypeId,
+    ]) {
+      expect(serializedEvents).not.toContain(privateValue);
+    }
   });
 });

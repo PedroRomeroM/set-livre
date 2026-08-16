@@ -5,6 +5,7 @@ import {
   ownerPrivateQueryScope,
   ownerQueryKeys,
 } from "@/domains/owners/components/owner-query-keys";
+import { ownerStudioQueryKeys } from "@/domains/studios/components/studio-query-keys";
 
 import {
   identityQueryKeys,
@@ -107,6 +108,7 @@ export function clearIdentityAndAccountQueryCache(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: accountQueryKeys.profiles });
   queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
   queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });
+  queryClient.removeQueries({ queryKey: ownerStudioQueryKeys.editors });
 }
 
 export function seedAuthoritativeAccountProfile(

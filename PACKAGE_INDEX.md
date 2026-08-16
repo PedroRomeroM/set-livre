@@ -13,10 +13,11 @@ A baseline recebida continha somente arquivos `.md` e representava a documentaç
 5. `docs/specification.md` — escopo canônico do produto;
 6. `docs/implementation-order.md` — sequência de construção;
 7. `docs/feature-catalog.md` — catálogo das 34 features;
-8. `docs/qa-traceability.md` — catálogo vivo dos 200 cenários.
+8. `docs/qa-traceability.md` — catálogo vivo dos 201 cenários.
 9. `docs/validation-report.md` — validação estrutural da baseline.
 10. `MANIFEST_SHA256.md` — hashes de integridade do pacote.
 11. `contexto-projeto-set-livre.html` — resumo executivo vivo para acompanhar o progresso e apresentar o estado implementado; não substitui as fontes canônicas.
+12. `configuration-seteps.md` — checklist humano fail-closed para MCP, Supabase Cloud, GitHub, OCI, DNS/TLS, secrets, backup e primeiro deploy.
 
 Documento vivo de orientação: [`docs/technology-stack.md`](docs/technology-stack.md) resume as tecnologias efetivamente encontradas no código e nas decisões arquiteturais. Ele não altera a precedência das fontes acima nem apresenta cloud ou produção como ativas.
 
@@ -25,17 +26,23 @@ Documento vivo de orientação: [`docs/technology-stack.md`](docs/technology-sta
 | Item                | Quantidade |
 | ------------------- | ---------: |
 | Features            |         34 |
-| ADRs                |         18 |
-| Cenários Playwright |        200 |
+| ADRs                |         19 |
+| Cenários Playwright |        201 |
 | Cenários P0         |        134 |
-| Cenários P1         |         66 |
+| Cenários P1         |         67 |
 | Runbooks            |          6 |
 
-A baseline recebida continha 193 cenários de produto. O catálogo vivo agora soma 200: a FEAT-002 acrescentou um contrato de reflow, a FEAT-003 acrescentou quatro IDs e a preparação da FEAT-004 acrescentou contratos próprios de accessibility e reflow. São 23 IDs automatizados — sete da FEAT-002, nove da FEAT-003 e sete da FEAT-004 — e 177 planejados. O snapshot funcional final da FEAT-003 passou em 578/578 unitários de 60 arquivos e, após reset e geração, em 293/293 asserts pgTAP distribuídos em 158 + 78 + 57, com 12 migrations, head `20260811000500` e zero resíduo. Uma matriz Playwright/axe integral passou em 91/91 em 3,9 minutos, incluindo 32/32 da FEAT-003: o ID 004 ficou verde em 3/3 projeções com `409` para logout stale, sessão/perfil de B intactos e zero erro de página/React; o ID 009 ficou verde em 4/4 com falha offline imediata, exatamente uma request e nenhum POST tardio após reconexão. Não houve resultado inesperado, flake, skip, erro ou attachment; sentinelas, tokens, cookies Auth e documentos crus tiveram zero ocorrência. Os 62 e-mails QA únicos ficaram em 114 títulos allowlisted (`Fill` 84, `Visible` 18, `Count` 4 e `Type` 8), e o cleanup de banco, Mailpit, portas e processos terminou sem resíduos. Os builds Next.js 16.3 de web/backoffice passaram sem warnings, com manifests standalone, 17 arquivos obrigatórios e `BUILD_ID` local em cada app; os smokes aprovaram live/ready/root, CSP, `no-store`, assets, nonces e probes adversariais, incluindo `/entrar` 200 no web e 404 no backoffice. Lockfile/gerados não mudaram, portas/processos ficaram limpos e os logs têm hashes `2e3b…4310` (build) e `c9e5…da97` (smoke). O commit funcional `e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7` gerou localmente `set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz`, com 24.757.341 bytes, SHA-256 `6edb2e246e0b3f46cf83f62ce8685e14b91cb31ac1437931f476fc649621273a` e 2.809 artefatos: web 1.519, backoffice 1.276, migrations 12, lockfile 1 e manifesto 1. O manifesto tem 667.285 bytes e SHA-256 `733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135`; ambos os `BUILD_ID` equivalem ao commit, em Linux x64 com Node 24.18/npm 11.19. A auditoria integral de tar, staging e manifesto terminou `NO-BLOCKER`, sem segredo de runtime nem dado PII/QA e sem resíduo. O HEAD final `1530f62589` recebeu a revisão Codex limpa `5262964258` às `06:00:43Z`; as cinco threads do PR ficaram resolvidas. O [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4) foi incorporado a `main` no merge `465d195`, em `2026-08-12T06:57:15Z`; a FEAT-003 passa a ser a segunda das 34 features concluídas.
+### Estado pós-merge da FEAT-004
+
+A FEAT-004 foi concluída e incorporada a `main` pelo [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6), no merge `b4f40035b3e7eda64d94726483d82ece9f01c7ed`, em `2026-08-16T09:24:06Z`. O HEAD final revisado foi `44854dca545ca3aa89e780d83a8a5025007f8b12`; depois da espera integral de 60 minutos, o comentário final REST `5306520356` registrou revisão limpa, e as seis threads ficaram resolvidas. O repositório passa a ter 3/34 features concluídas, e a próxima fatia da sequência executável é a FEAT-006. Não há claim de `reviewDecision` ou check rollup final sem captura correspondente.
+
+O artefato canônico da FEAT-004 continua sendo evidência local Linux x64 do commit funcional `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`; o merge não o transforma em prova ARM64 ou de produção. Oracle/ARM64/PEND-003 e o smoke ARM64 nativo permanecem pendentes.
+
+No snapshot final da FEAT-004, o catálogo então somava 200 cenários: a FEAT-002 acrescentara um contrato de reflow, a FEAT-003 quatro IDs e a FEAT-004 contratos próprios de accessibility e reflow. Eram 23 IDs automatizados — sete da FEAT-002, nove da FEAT-003 e sete da FEAT-004 — e 177 planejados. O catálogo vivo posterior está consolidado no snapshot da FEAT-006 abaixo. O snapshot funcional final da FEAT-003 passou em 578/578 unitários de 60 arquivos e, após reset e geração, em 293/293 asserts pgTAP distribuídos em 158 + 78 + 57, com 12 migrations, head `20260811000500` e zero resíduo. Uma matriz Playwright/axe integral passou em 91/91 em 3,9 minutos, incluindo 32/32 da FEAT-003: o ID 004 ficou verde em 3/3 projeções com `409` para logout stale, sessão/perfil de B intactos e zero erro de página/React; o ID 009 ficou verde em 4/4 com falha offline imediata, exatamente uma request e nenhum POST tardio após reconexão. Não houve resultado inesperado, flake, skip, erro ou attachment; sentinelas, tokens, cookies Auth e documentos crus tiveram zero ocorrência. Os 62 e-mails QA únicos ficaram em 114 títulos allowlisted (`Fill` 84, `Visible` 18, `Count` 4 e `Type` 8), e o cleanup de banco, Mailpit, portas e processos terminou sem resíduos. Os builds Next.js 16.3 de web/backoffice passaram sem warnings, com manifests standalone, 17 arquivos obrigatórios e `BUILD_ID` local em cada app; os smokes aprovaram live/ready/root, CSP, `no-store`, assets, nonces e probes adversariais, incluindo `/entrar` 200 no web e 404 no backoffice. Lockfile/gerados não mudaram, portas/processos ficaram limpos e os logs têm hashes `2e3b…4310` (build) e `c9e5…da97` (smoke). O commit funcional `e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7` gerou localmente `set-livre-e7cc8378c1c0a721f64ad3fc21dd61dca9086ef7.tar.gz`, com 24.757.341 bytes, SHA-256 `6edb2e246e0b3f46cf83f62ce8685e14b91cb31ac1437931f476fc649621273a` e 2.809 artefatos: web 1.519, backoffice 1.276, migrations 12, lockfile 1 e manifesto 1. O manifesto tem 667.285 bytes e SHA-256 `733dac5409c04d8fd1c39fcd2b867d0f812a75b4792479ead416ecf9f11f0135`; ambos os `BUILD_ID` equivalem ao commit, em Linux x64 com Node 24.18/npm 11.19. A auditoria integral de tar, staging e manifesto terminou `NO-BLOCKER`, sem segredo de runtime nem dado PII/QA e sem resíduo. O HEAD final `1530f62589` recebeu a revisão Codex limpa `5262964258` às `06:00:43Z`; as cinco threads do PR ficaram resolvidas. O [PR #4](https://github.com/PedroRomeroM/set-livre/pull/4) foi incorporado a `main` no merge `465d195`, em `2026-08-12T06:57:15Z`; a FEAT-003 passa a ser a segunda das 34 features concluídas.
 
 Na fotografia publicada anterior ao primeiro review draft, a matriz específica final da FEAT-004 executou suas quatro specs em uma única invocação pós-correções: 23/23 passaram, exit `0`, em cerca de 2,0 minutos, por 14 projetos; os IDs 001–007 somaram `3 + 3 + 3 + 4 + 3 + 4 + 3`. Não houve resultado inesperado, skip, flake, erro ou attachment. A auditoria encontrou zero sentinela, token, cookie Auth, URL de banco, documento cru ou referência privada do provider; os 26 e-mails QA únicos tiveram 26 ocorrências, exclusivamente no campo `title` dos steps `Fill` do JSON ZIP do relatório. O cleanup terminou com banco, Mailpit, portas e processos em zero. O relatório `index.html` tem SHA-256 `69c9490980cf67ce15990f87bb708fef0e685c7307654158162af723c212a075`, e `.last-run.json`, SHA-256 `91d1c43004802cd49950d78eb11c8fa7d05da8ffffe219a8b13b2f561bc00903`. Na mesma fotografia, os gates finais pós-código passaram em 707/707 unitários, 11/11 estáticos de privacidade, format, lint, typechecks, docs:check, audit com zero vulnerabilidade, Knip e diff-check. Essa evidência automatiza os IDs `SL-F004-E2E-001` a `007`; a integral limpa posterior está registrada abaixo.
 
-### Estado vivo do quinto P2 da FEAT-004
+### Fotografia histórica do quinto P2 da FEAT-004
 
 O review `PRR_kwDOTyzZrs8AAAABJsAUGQ`/REST `4945089561`, submetido em `2026-08-16T01:07:18Z` sobre `0decf00`, abriu `PRRT_kwDOTyzZrs6Zj15h`. O comentário `PRRC_kwDOTyzZrs7h8LaV`/REST `3790648981`, ancorado em `owner-recipient-panel.tsx` linha 489, estava atual, não resolvido e não desatualizado na captura: um contrato `local_fixture` ainda podia ser acompanhado pelo formulário de aceite em runtime no qual a escrita seria recusada.
 
@@ -57,7 +64,7 @@ A build pós-manifesto seguinte foi executada uma única vez e terminou com exit
 
 A cadeia estática final única ficou verde em Node 24/npm 11: `npm ci` 447/451/zero vulnerabilidades, format, lint zero, typecheck web/backoffice/contracts/UI/testes, 764/764 unitários em 76 arquivos, docs:check 34/200/18, audit zero, Knip e diff-check; o freeze continuou em 53 paths = 34 tech + 19 docs. Após remover fisicamente os dois `.next`, a build final via wrapper rodou exatamente uma vez, terminou com exit `0` em 14,733 s e produziu log privado de 2.155 bytes/SHA-256 `44006829f25e63549e9e65ea17abbc483c891996130da34677ec67c932290ec9`. A auditoria independente `build.audit.json`, SHA-256 `a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d`, terminou `NO-BLOCKER`: 26 + 4 rotas, zero warning, quatro `BUILD_ID=local`, zero cache/retired e árvores, privacidade, inputs e cleanup verdes. DB 15/legal 3/dblink/Mailpit/portas/processos ficaram em zero. Nesse fechamento pré-release, smoke/release ainda estavam pendentes.
 
-O gerador canônico processou exatamente uma vez o commit funcional `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`, terminou exit `0` em 21,26 s e aprovou o primeiro smoke P5 embutido antes de publicar localmente o archive. Archive/sidecar/manifesto/log possuem 24.896.963/124/681.762/2.097 bytes e SHA-256 `282f9d173eebf99ba63466d81f4aa4b9061e7d73668c267fb0a25e9e86043b92`/`8955c004a68401dfd27190d26ac1e92157a635fbf191977c2d7408e4c95f1eb0`/`d8b698ecef6b6c52f4961e8783ef2c1e68b5ab00239de4de9206cb9f2f2d2026`/`505a5fd915bacd59d3deea9c16c615cee82a9026ba17ac66ac6e4475a4c8d40e`; archive modo `0600`. A árvore fecha em 2.871 artefatos — web 1.578, backoffice 1.276, migrations 15, lockfile 1, manifesto 1 — e o tar em 3.455 membros — 584 diretórios, 2.869 arquivos e dois symlinks internos. `BUILD_ID` dos dois apps equivale ao commit; lock `485ec8...`, head `20260815000100`. Duas auditorias `NO-BLOCKER` terminaram com live/manifest/tar 2.871 sem mismatch e caches/secrets/env/PII/incoming/retired/portas/processos/DB/Mailpit/dblink em zero. A release permanece local Linux x64, ignorada e não publicada; ARM64/Oracle/PEND-003 e remoto seguem pendentes. A FEAT-004 continua **Em implementação**; o próximo fluxo é docs commit → push → body/reply/resolve P5 → novo review/60 min/captura → ready/merge.
+O gerador canônico processou exatamente uma vez o commit funcional `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`, terminou exit `0` em 21,26 s e aprovou o primeiro smoke P5 embutido antes de publicar localmente o archive. Archive/sidecar/manifesto/log possuem 24.896.963/124/681.762/2.097 bytes e SHA-256 `282f9d173eebf99ba63466d81f4aa4b9061e7d73668c267fb0a25e9e86043b92`/`8955c004a68401dfd27190d26ac1e92157a635fbf191977c2d7408e4c95f1eb0`/`d8b698ecef6b6c52f4961e8783ef2c1e68b5ab00239de4de9206cb9f2f2d2026`/`505a5fd915bacd59d3deea9c16c615cee82a9026ba17ac66ac6e4475a4c8d40e`; archive modo `0600`. A árvore fecha em 2.871 artefatos — web 1.578, backoffice 1.276, migrations 15, lockfile 1, manifesto 1 — e o tar em 3.455 membros — 584 diretórios, 2.869 arquivos e dois symlinks internos. `BUILD_ID` dos dois apps equivale ao commit; lock `485ec8...`, head `20260815000100`. Duas auditorias `NO-BLOCKER` terminaram com live/manifest/tar 2.871 sem mismatch e caches/secrets/env/PII/incoming/retired/portas/processos/DB/Mailpit/dblink em zero. Naquela captura a release permanecia local Linux x64, ignorada e não publicada, a FEAT-004 ainda estava em implementação e ARM64/Oracle/PEND-003 seguiam pendentes. O fechamento pós-merge está registrado acima.
 
 ### Fotografia histórica do quarto P2 da FEAT-004
 
@@ -99,9 +106,9 @@ O smoke runtime real histórico do segundo P2, padrão mais FEAT-004, terminou c
 
 O commit `440c81f6...` gerou a release histórica do segundo P2, com 14 migrations/head `20260812000200`; tar, sidecar, smoke, segurança e cleanup ficaram verdes naquele recorte local x64. Ela não contém a migration atual nem comprova ARM64/produção.
 
-A release `440c81f6...`, assim como `c115dcd...`, `79376b62...` e a release do terceiro P2, é histórica diante da capability nova. A FEAT-004 segue **Em implementação**.
+A release `440c81f6...`, assim como `c115dcd...`, `79376b62...` e a release do terceiro P2, é histórica diante da capability final. Naquela fotografia, a FEAT-004 seguia em implementação.
 
-Na captura pós-publicação, o push `11464a37593d510f5774af6af6fe655e671a9c35 → e51ab6fcda041e3a9571477fe696dd7ec69e87e5` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local, inclusive o panorama da stack. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. A release permanece ligada ao commit funcional. O PR #6 continuava `OPEN`/draft contra `main@174ee16342367caedf55521227d21d5bf076b1a9`, head `e51ab6f...`, com `mergeable=true` na fotografia do connector; o body foi atualizado com o P4, as evidências, a release e o estado resolvido. `PedroRomeroM` criou a resposta encadeada `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259` em `2026-08-16T00:43:03Z`; `PRRT_kwDOTyzZrs6ZigTV` ficou `isResolved=true`, `isOutdated=true`, resolvida por ele. A leitura thread-aware encontrou cinco threads e zero não resolvidas, mantendo as quatro anteriores resolvidas. Não há captura de `reviewDecision` ou check rollup neste estado. Novo `@codex review`, espera mínima de 60 minutos, captura final, ready e merge permanecem pendentes; a FEAT-004 continua **Em implementação**.
+Na captura pós-publicação, o push `11464a37593d510f5774af6af6fe655e671a9c35 → e51ab6fcda041e3a9571477fe696dd7ec69e87e5` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local, inclusive o panorama da stack. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. A release permanece ligada ao commit funcional. O PR #6 continuava `OPEN`/draft contra `main@174ee16342367caedf55521227d21d5bf076b1a9`, head `e51ab6f...`, com `mergeable=true` na fotografia do connector; o body foi atualizado com o P4, as evidências, a release e o estado resolvido. `PedroRomeroM` criou a resposta encadeada `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259` em `2026-08-16T00:43:03Z`; `PRRT_kwDOTyzZrs6ZigTV` ficou `isResolved=true`, `isOutdated=true`, resolvida por ele. A leitura thread-aware encontrou cinco threads e zero não resolvidas, mantendo as quatro anteriores resolvidas. Não houve captura de `reviewDecision` ou check rollup naquele estado. Naquela fotografia, novo `@codex review`, espera mínima de 60 minutos, captura final, ready e merge permaneciam pendentes, e a FEAT-004 continuava em implementação. O fechamento pós-merge está no início deste índice.
 
 ## Garantias documentais
 
@@ -112,6 +119,48 @@ Na captura pós-publicação, o push `11464a37593d510f5774af6af6fe655e671a9c35 �
 - cada feature possui cenários Playwright concretos e rastreáveis;
 - nenhuma decisão aberta pode ser preenchida silenciosamente pelo agente;
 - o manifesto histórico prova a baseline no commit indicado; mudanças posteriores são provadas por Git, registros em `docs/changes/` e gates locais.
+
+## Snapshot atual da FEAT-006
+
+A FEAT-006 continua em implementação; o repositório permanece em 3/34 features concluídas, e
+OPEN-012/013 mais FEAT-031 bloqueiam a conclusão. A 16ª migration `20260816000100` permanece
+imutável; a 17ª, `20260816000200`, é o head/readiness de fonte. O último banco verde permanece no
+head anterior, em 431 asserts (`158 + 78 + 57 + 65 + 73`). A fonte atual declara 83 casos da feature e
+total esperado 441, ainda sem execução; `schema.generated.sql` e `database.generated.ts` estão
+defasados e requerem reset, geração e teste. Readiness conserva 19 rotinas e 20 dependências.
+
+O catálogo vivo soma 201 cenários: P0 134, P1 67, P2 0, smoke 3, critical 131, regression 61,
+accessibility 2 e reflow 4. Há 29 automatizados (`7 + 9 + 7 + 6`) e 172 planejados; quatro cenários
+possuem o contrato `zoom200`. A FEAT-006 agora possui seis IDs, `SL-F006-E2E-001` a `006`, incluindo
+descarte `draft_removed`, teclado e reflow 200%. A fonte projeta 20 testes focados em três specs/dez
+projetos e uma coleção integral de 134; nenhuma das duas foi executada neste snapshot. Os 17/17 em
+duas specs/sete projetos são evidência histórica aceita, anterior à matriz atual. A lista integral
+131/19/16 também é histórica e nunca produziu um run verde.
+
+No browser, stale/compare é a atribuição correta; tombstone é provado em SQL/unitários. O ID 001
+preserva o bruto e exige pending no mesmo escopo com um único POST. O ID 003 fecha DOM e referências
+brutas na troca dirty A → B sem consultar ou popular o `QueryCache`; unmount e o retorno pós-`await`
+usam latch para suprimir callbacks tardios. O header de escopo esperado no GET é apenas assertion,
+nunca autenticação, e payload sensível não pode chegar a URL, storage ou cache.
+
+Na criação ambígua, S1 permanece estável e cada nova tentativa recebe uma chave K nova. A fonte
+desktop-chromium do ID 005 projeta K1/S1/A ambígua → GET 404 → usuário B → commit tardio K1 →
+K2/S1/B 409 → comparação A/B → reaplicação → save explícito K3 como update versionado do único S1.
+Usar a atual navega explicitamente para A. Esse roteiro está implementado na fonte, mas ainda não foi
+executado e não é verde; não existe replay automático de POST. A última integral unitária, 893/893,
+é histórica e anterior ao helper/hardening atual. O recorte dirigido anterior passou em 124/124 por
+dez arquivos; o atual passou em 141/141 por 12 arquivos FEAT-006/studio sob Node 24, incluindo
+correlação e remount. Nenhum é integral ou prova SQL. A tentativa completa atual falhou em 12 testes de
+infraestrutura por restrições do sandbox — nested spawn `EPERM`, remapeamento de ownership raiz e
+timeouts de process group ou stdout vazio — e não constitui gate verde.
+
+Create/update usam `FOR SHARE` no tipo ativo; FEAT-031 deve manter archive tipo-only ou a ordem agregado → tipo do update.
+Publicado sem draft clona mesmo idêntico, no-op restringe-se ao draft idêntico e a UI ainda remonta.
+Auditoria separa request/key, preserva o primeiro fato no replay e grava zero em no-op/falha/conflito.
+
+Permanecem pendentes o `docs:check` canônico, a integral unitária, reset/geração/DB 441, browser
+focado 20 e integral 134, build das duas aplicações, smoke, release, ARM64 e FEAT-031. Nenhum desses
+gates é apresentado como verde.
 
 ## Estado inicial efetivamente verificado
 

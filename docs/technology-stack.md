@@ -45,7 +45,7 @@ Este resumo descreve a stack encontrada no código e nas decisões arquiteturais
 
 Os dois `next.config.ts` usam `output: "standalone"`. O script `scripts/release-manifest.mjs` empacota a aplicação pública, o backoffice, migrations e metadados em releases locais reproduzíveis por SHA.
 
-A arquitetura final prevê Supabase Cloud e uma VM Oracle Cloud ARM64 com Ubuntu, processos Node sem root geridos por systemd, Nginx como proxy e troca atômica do symlink da release. Porém, o ADR-018 mantém a etapa atual **local-first**: cloud, CI/CD e produção ainda não estão configurados e não devem ser descritos como ativos.
+A arquitetura final prevê Supabase Cloud e uma VM Oracle Cloud ARM64 com Ubuntu, processos Node sem root geridos por systemd, Nginx como proxy e troca atômica do symlink da release. O ADR-019 liberou a configuração controlada de CI, Supabase, Oracle, DNS e TLS, sem remover o Supabase local dos testes destrutivos. Workflows e target existem em fonte, mas produção ainda não está ativa: environment/secrets, runtime DAL, VM, DNS/TLS e primeiro run continuam fail-closed em PEND-001/002/003. A suspensão do ADR-018 permanece para pagamentos e APIs externas não liberadas.
 
 ## Fontes verificadas
 
@@ -58,6 +58,7 @@ A arquitetura final prevê Supabase Cloud e uma VM Oracle Cloud ARM64 com Ubuntu
 - `docs/adr/ADR-013-css-modules-and-primitives.md`
 - `docs/adr/ADR-014-oracle-systemd-nginx-releases.md`
 - `docs/adr/ADR-018-local-first-delivery-boundary.md`
+- `docs/adr/ADR-019-controlled-cloud-delivery.md`
 - `package.json` e manifests dos workspaces
 - `next.config.ts`, `apps/backoffice/next.config.ts`, `tsconfig.base.json`, `eslint.config.mjs`, `vitest.config.ts` e `playwright.config.ts`
 - `supabase/config.toml`, código representativo em `src/`, `packages/` e specs em `tests/`

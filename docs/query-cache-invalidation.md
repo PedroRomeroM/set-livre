@@ -111,3 +111,41 @@ Medir; não usar Infinity em dado operacional.
 - optimistic updates only for reversible low-risk visual actions;
 - never optimistic payment/reservation;
 - calendar drag can preview but reverts until command success.
+
+## 6. FEAT-006 — editor privado
+
+`owner.studioEditor(userId, studioId)` inclui usuário, estúdio, mode e recorte canônico. Todo GET
+carrega `x-set-livre-expected-scope=userId`; o valor é asserção, nunca autoridade, e divergência fecha
+o boundary antes de query/read. Create/update fazem pre-read antes do DAL; sucesso usa somente o
+retorno derivado, sem read remoto pós-commit. Discard publica o editor retido local ou limpa o cache
+depois de `studio_removed`; tombstone/replay continuam provas SQL/unitárias, não browser.
+
+Refetch automático por foco/reconexão fica bloqueado enquanto o form está dirty ou uma mutation está
+pendente. Nesses estados, foco/online/visibilidade usam probe próprio: o controller continua montado
+para não perder a closure da mutation, mas seu DOM e o preview ficam ausentes; os valores crus são
+capturados diretamente dos controles e existem só em refs. Resposta same-scope restaura exatamente
+esses raws sem colocá-los no QueryCache; divergência ou captura impossível limpa o cache privado e
+recompõe SSR. Unmount/transição arma o latch e cada continuação após `await` revalida a publicação,
+impedindo resultado tardio de recriar query, sucesso ou DOM de A sob B.
+
+Criação ambígua conserva S1 com uma chave nova por reenvio explícito. Se o GET encontra A e a
+tentativa local é B, o estado recuperado de S1 fica separado do resultado observado da rota create:
+usar a atual navega para a key canônica de S1; reaplicar usa B como update de S1 com versão atual.
+Payload B não entra em URL, storage ou QueryCache. A fonte desktop-chromium do ID 005 fixa K1/S1/A
+ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação A/B → reaplicação → save
+explícito K3 como update do único S1. É uma projeção implementada na fonte, ainda sem execução ou
+selo verde.
+
+Todo save confirmado publica o DTO autoritativo e incrementa uma revisão local do formulário. Esse
+token participa da `key` visual separadamente de `editVersion`: por isso o form é remontado e volta ao
+estado canônico mesmo quando um draft já existente/idêntico produz no-op no banco e conserva a
+versão. O token é somente estado visual efêmero; não entra em query key, DTO ou persistência. Um
+publicado sem draft nunca usa esse no-op: sempre clona e retorna nova versão.
+
+A fonte atual possui seis IDs e projeta 20 execuções em três specs/dez projetos, sem run. O 17/17 em
+duas specs/sete projetos permanece histórico, anterior às extensões; a coleta integral histórica
+131/19/16 não foi verde, e a fonte integral atual projeta 134.
+
+O `docs:check` canônico, a integral unitária, DB 441 + gerados, browser 20/134, build das duas apps,
+smoke, release e ARM64 permanecem pendentes. A tentativa histórica de build rejeitada pelo pipe
+vazio do sandbox não valida nem reprova o cache do produto.

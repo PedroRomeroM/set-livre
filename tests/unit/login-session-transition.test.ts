@@ -117,14 +117,26 @@ describe("ambiguous login session transition", () => {
     expect(loginSessionVerificationPath("/dono/recebimentos")).toBe(
       "/entrar?entrada=verificar&retorno=%2Fdono%2Frecebimentos",
     );
+    expect(loginSessionVerificationPath("/dono/estudios/novo")).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2Fnovo",
+    );
+    expect(
+      loginSessionVerificationPath("/dono/estudios/11111111-1111-4111-8111-111111111111/dados"),
+    ).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fdados",
+    );
   });
 
-  it.each(["/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"] as const)(
-    "accepts the exact login return target %s",
-    (target) => {
-      expect(resolveAccountLoginReturnTarget(target)).toBe(target);
-    },
-  );
+  it.each([
+    "/conta",
+    "/conta/seguranca",
+    "/dono",
+    "/dono/recebimentos",
+    "/dono/estudios/novo",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+  ] as const)("accepts the exact login return target %s", (target) => {
+    expect(resolveAccountLoginReturnTarget(target)).toBe(target);
+  });
 
   it.each([
     "https://attacker.example/dono",
@@ -132,6 +144,14 @@ describe("ambiguous login session transition", () => {
     "/dono?next=https://attacker.example",
     "/dono/../conta",
     "/dono%2Frecebimentos",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados?modo=editar",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados#campos",
+    "/dono/estudios%2F11111111-1111-4111-8111-111111111111%2Fdados",
+    "/dono/estudios/../11111111-1111-4111-8111-111111111111/dados",
+    "/dono/estudios\\11111111-1111-4111-8111-111111111111\\dados",
+    "/dono/estudios/11111111-1111-0111-8111-111111111111/dados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
+    ["/dono/estudios/11111111-1111-4111-8111-111111111111/dados"],
     ["/dono"],
     undefined,
   ])("rejects a non-allowlisted login return target: %s", (target) => {

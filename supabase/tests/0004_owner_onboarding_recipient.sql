@@ -696,7 +696,7 @@ select ok(
 
 select ok(
   (
-    select pg_catalog.count(*) = 16
+    select pg_catalog.count(*) = 19
     from pg_catalog.pg_proc as routine
     cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
     join pg_catalog.pg_roles as role on role.oid = privilege.grantee
@@ -704,7 +704,7 @@ select ok(
       and privilege.privilege_type = 'EXECUTE'
       and not privilege.is_grantable
   ),
-  'app_dal mantém allowlist exata de dezesseis rotinas'
+  'app_dal mantém allowlist exata de dezenove rotinas'
 );
 
 select ok(
@@ -1872,8 +1872,8 @@ select is(
 );
 
 select ok(
-  private.check_readiness('20260815000100'),
-  'readiness aceita head FEAT-004 e allowlist DAL ampliada exata'
+  private.check_readiness('20260816000200'),
+  'readiness aceita head atual FEAT-006 e allowlist DAL ampliada exata'
 );
 
 select ok(

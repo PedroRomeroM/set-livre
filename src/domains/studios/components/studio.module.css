@@ -1,0 +1,214 @@
+.formSection,
+.sectionHeader,
+.previewSection,
+.comparison,
+.previewCard,
+.previewDetails,
+.discardConfirmation {
+  display: grid;
+  min-width: 0;
+}
+
+.formSection,
+.previewSection,
+.comparison,
+.discardConfirmation {
+  gap: var(--sl-space-5);
+}
+
+.sectionHeader,
+.previewCard,
+.previewDetails {
+  gap: var(--sl-space-3);
+}
+
+.formSection + .formSection,
+.previewSection,
+.comparison {
+  padding-top: var(--sl-space-6);
+  border-top: 1px solid var(--sl-color-line);
+}
+
+.sectionTitle,
+.sectionDescription,
+.counter,
+.fixedAddressLabel,
+.fixedAddressValue,
+.previewTitle,
+.previewDetails,
+.previewDetails dd,
+.previewDetails dt {
+  margin: 0;
+}
+
+.sectionTitle {
+  color: var(--sl-color-ink-strong);
+  font-size: clamp(1.25rem, 4vw, 1.6rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sectionDescription,
+.counter,
+.fixedAddressLabel {
+  color: var(--sl-color-ink-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.counter {
+  font-size: 0.875rem;
+  text-align: end;
+}
+
+.formGrid,
+.previewGrid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sl-space-4);
+}
+
+.fixedAddress {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-2);
+  padding: var(--sl-space-3) var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface-soft);
+}
+
+.fixedAddressLabel {
+  font-size: 0.875rem;
+  font-weight: 750;
+}
+
+.fixedAddressValue {
+  color: var(--sl-color-ink-strong);
+  font-weight: 750;
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--sl-space-3);
+  align-items: center;
+}
+
+.actions > button,
+.actions > a {
+  flex: 1 1 14rem;
+}
+
+.textLink {
+  display: inline-flex;
+  min-width: 0;
+  min-height: var(--sl-control-height);
+  align-items: center;
+  color: var(--sl-color-brand-strong);
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-underline-offset: 0.2em;
+}
+
+.previewCard {
+  align-content: start;
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface-soft);
+}
+
+.previewTitle {
+  color: var(--sl-color-ink-strong);
+  font-size: 1.0625rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.previewDetails div {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-1);
+}
+
+.previewDetails dt {
+  color: var(--sl-color-ink-muted);
+  font-size: 0.8125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.previewDetails dd {
+  color: var(--sl-color-ink-strong);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.preformatted {
+  white-space: pre-wrap;
+}
+
+.feedbackFocus {
+  min-width: 0;
+  border-radius: var(--sl-radius-sm);
+}
+
+.feedbackFocus:focus,
+.sectionTitle:focus,
+.previewTitle:focus {
+  outline: 0.2rem solid var(--sl-color-focus);
+  outline-offset: 0.2rem;
+}
+
+@media (max-width: 48rem) {
+  .formGrid,
+  .previewGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 24rem) {
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions > button,
+  .actions > a {
+    width: 100%;
+    flex: 0 1 auto;
+  }
+}
+
+@media (max-width: 12rem) {
+  .formSection,
+  .previewSection,
+  .comparison,
+  .previewCard,
+  .discardConfirmation {
+    gap: var(--sl-space-3);
+  }
+
+  .formSection + .formSection,
+  .previewSection,
+  .comparison {
+    padding-top: var(--sl-space-4);
+  }
+
+  .previewCard,
+  .fixedAddress {
+    padding: var(--sl-space-3);
+  }
+}
+
+@media (forced-colors: active) {
+  .fixedAddress,
+  .previewCard {
+    border-color: CanvasText;
+  }
+}

@@ -469,6 +469,53 @@ COMMENT ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uui
 
 
 
+CREATE OR REPLACE FUNCTION "private"."assert_studio_owner_authority"("p_user_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  profile_status text;
+  profile_completed_at timestamptz;
+  owner_status text;
+begin
+  if p_user_id is null then
+    raise exception using
+      errcode = '42501',
+      message = 'owner_authority_required';
+  end if;
+
+  select profile.status, profile.completed_at, owner.status
+  into profile_status, profile_completed_at, owner_status
+  from public.profiles as profile
+  join public.owner_profiles as owner
+    on owner.user_id = profile.id
+  where profile.id = p_user_id
+  for share of profile, owner;
+
+  if not found then
+    raise exception using
+      errcode = '42501',
+      message = 'owner_authority_required';
+  end if;
+
+  if profile_status <> 'active' or profile_completed_at is null then
+    raise exception using
+      errcode = '42501',
+      message = 'owner_profile_inactive';
+  end if;
+
+  if owner_status <> 'active' then
+    raise exception using
+      errcode = '42501',
+      message = 'owner_blocked';
+  end if;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."assert_studio_owner_authority"("p_user_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."bootstrap_signup_identity"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -654,7 +701,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_acl_dependencies as (
     select
-      pg_catalog.count(*) = 17
+      pg_catalog.count(*) = 20
       and pg_catalog.bool_and(
         (
           dependency.dbid = (
@@ -827,6 +874,15 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
             ),
             pg_catalog.to_regprocedure(
               'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.create_studio(uuid,uuid,uuid,text,text,text,text,text,text,text,integer,uuid)'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.update_studio_revision_core(uuid,uuid,bigint,uuid,text,text,text,text,text,text,text,integer,uuid)'
+            ),
+            pg_catalog.to_regprocedure(
+              'private.discard_studio_draft(uuid,uuid,bigint,uuid)'
             )
           )
           and dependency.objsubid = 0
@@ -854,7 +910,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   authorized_routine_privilege as (
     select
-      pg_catalog.count(*) = 16
+      pg_catalog.count(*) = 19
       and pg_catalog.bool_and(
         privilege.grantee = runtime_role.oid
         and privilege.grantor <> runtime_role.oid
@@ -908,6 +964,15 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         ),
         pg_catalog.to_regprocedure(
           'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.create_studio(uuid,uuid,uuid,text,text,text,text,text,text,text,integer,uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.update_studio_revision_core(uuid,uuid,bigint,uuid,text,text,text,text,text,text,text,integer,uuid)'
+        ),
+        pg_catalog.to_regprocedure(
+          'private.discard_studio_draft(uuid,uuid,bigint,uuid)'
         )
       )
       and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
@@ -2151,6 +2216,389 @@ COMMENT ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_versi
 
 
 
+CREATE OR REPLACE FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_studio_id" "uuid", "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") RETURNS TABLE("scope" "uuid", "studio_id" "uuid", "studio_status" "text", "edit_version" bigint, "draft_revision_id" "uuid", "draft_revision_number" bigint, "draft_name" "text", "draft_description" "text", "draft_street" "text", "draft_street_number" "text", "draft_address_complement" "text", "draft_neighborhood" "text", "draft_city" "text", "draft_state" "text", "draft_postal_code" "text", "draft_capacity" integer, "draft_studio_type_id" "uuid", "draft_studio_type_name" "text", "published_revision_id" "uuid", "published_revision_number" bigint, "published_name" "text", "published_description" "text", "published_street" "text", "published_street_number" "text", "published_address_complement" "text", "published_neighborhood" "text", "published_city" "text", "published_state" "text", "published_postal_code" "text", "published_capacity" integer, "published_studio_type_id" "uuid", "published_studio_type_name" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  command_hash text;
+  current_request private.studio_command_requests%rowtype;
+  new_revision_id uuid := extensions.gen_random_uuid();
+  returned_rows integer;
+begin
+  if p_studio_id is null
+    or p_idempotency_key is null
+    or p_studio_type_id is null
+    or not private.studio_core_is_valid(
+      p_name,
+      p_description,
+      p_street,
+      p_street_number,
+      p_address_complement,
+      p_neighborhood,
+      p_postal_code,
+      p_capacity
+    )
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'studio_core_invalid';
+  end if;
+
+  perform private.assert_studio_owner_authority(p_user_id);
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  command_hash := private.studio_command_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'name', p_name,
+      'description', p_description,
+      'street', p_street,
+      'streetNumber', p_street_number,
+      'addressComplement', p_address_complement,
+      'neighborhood', p_neighborhood,
+      'postalCode', p_postal_code,
+      'capacity', p_capacity,
+      'studioTypeId', p_studio_type_id
+    )
+  );
+
+  select request.*
+  into current_request
+  from private.studio_command_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key
+  for update;
+
+  if found then
+    if current_request.action <> 'studio.create'
+      or current_request.studio_id <> p_studio_id
+      or current_request.payload_hash <> command_hash
+    then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_idempotency_conflict';
+    end if;
+
+    return query
+    select *
+    from private.owner_studio_editor_row(p_user_id, p_studio_id);
+    get diagnostics returned_rows = row_count;
+
+    if returned_rows = 0 then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_result_no_longer_available';
+    end if;
+    return;
+  end if;
+
+  if not exists (
+    select 1
+    from public.studio_types as studio_type
+    where studio_type.id = p_studio_type_id
+      and studio_type.active
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'studio_type_unavailable';
+  end if;
+
+  if exists (
+    select 1
+    from private.studio_command_requests as previous_request
+    where previous_request.studio_id = p_studio_id
+      and previous_request.action = 'studio.create'
+  ) then
+    raise exception using
+      errcode = '40001',
+      message = 'studio_identifier_unavailable';
+  end if;
+
+  begin
+    insert into public.studios (
+      id,
+      owner_user_id,
+      status,
+      draft_revision_id,
+      edit_version
+    ) values (
+      p_studio_id,
+      p_user_id,
+      'draft',
+      new_revision_id,
+      1
+    );
+  exception
+    when unique_violation then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_identifier_unavailable';
+  end;
+
+  insert into public.studio_revisions (
+    id,
+    studio_id,
+    revision_number,
+    status,
+    name,
+    description,
+    street,
+    street_number,
+    address_complement,
+    neighborhood,
+    city,
+    state,
+    postal_code,
+    capacity,
+    studio_type_id
+  ) values (
+    new_revision_id,
+    p_studio_id,
+    1,
+    'draft',
+    p_name,
+    p_description,
+    p_street,
+    p_street_number,
+    p_address_complement,
+    p_neighborhood,
+    'Curitiba',
+    'PR',
+    p_postal_code,
+    p_capacity,
+    p_studio_type_id
+  );
+
+  begin
+    insert into private.studio_command_requests (
+      owner_user_id,
+      idempotency_key,
+      action,
+      studio_id,
+      payload_hash,
+      result_kind,
+      resulting_edit_version
+    ) values (
+      p_user_id,
+      p_idempotency_key,
+      'studio.create',
+      p_studio_id,
+      command_hash,
+      'editor',
+      1
+    );
+  exception
+    when unique_violation then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_identifier_unavailable';
+  end;
+
+  return query
+  select *
+  from private.owner_studio_editor_row(p_user_id, p_studio_id);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_studio_id" "uuid", "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_studio_id" "uuid", "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") IS 'Cria agregado e primeira revisão em uma transação; studioId pré-gerado não concede autoridade.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid") RETURNS TABLE("scope" "uuid", "studio_id" "uuid", "studio_deleted" boolean, "draft_discarded" boolean, "edit_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  max_safe_integer constant bigint := 9007199254740991;
+  command_hash text;
+  current_request private.studio_command_requests%rowtype;
+  current_studio public.studios%rowtype;
+  removed_revision_id uuid;
+  resulting_version bigint;
+begin
+  if p_studio_id is null
+    or p_idempotency_key is null
+    or p_expected_edit_version is null
+    or p_expected_edit_version < 1
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'studio_core_invalid';
+  end if;
+
+  perform private.assert_studio_owner_authority(p_user_id);
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  command_hash := private.studio_command_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedEditVersion', p_expected_edit_version
+    )
+  );
+
+  select request.*
+  into current_request
+  from private.studio_command_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key
+  for update;
+
+  if found then
+    if current_request.action <> 'studio.draft.discard'
+      or current_request.studio_id <> p_studio_id
+      or current_request.payload_hash <> command_hash
+    then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_idempotency_conflict';
+    end if;
+
+    if current_request.result_kind = 'draft_discarded' then
+      select studio.*
+      into current_studio
+      from public.studios as studio
+      where studio.id = p_studio_id
+        and studio.owner_user_id = p_user_id
+      for update;
+
+      if not found
+        or current_studio.edit_version is distinct from
+          current_request.resulting_edit_version
+        or current_studio.draft_revision_id is not null
+      then
+        raise exception using
+          errcode = '40001',
+          message = 'studio_result_no_longer_available';
+      end if;
+    end if;
+
+    return query
+    select
+      p_user_id,
+      p_studio_id,
+      current_request.result_kind = 'studio_deleted',
+      current_request.result_kind = 'draft_discarded',
+      current_request.resulting_edit_version;
+    return;
+  end if;
+
+  select studio.*
+  into current_studio
+  from public.studios as studio
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'P0002',
+      message = 'studio_not_found';
+  end if;
+
+  if current_studio.edit_version <> p_expected_edit_version then
+    raise exception using
+      errcode = '40001',
+      message = 'studio_edit_version_conflict';
+  end if;
+
+  if current_studio.draft_revision_id is null then
+    raise exception using
+      errcode = '23514',
+      message = 'studio_draft_missing';
+  end if;
+
+  removed_revision_id := current_studio.draft_revision_id;
+
+  if current_studio.published_revision_id is null then
+    insert into private.studio_command_requests (
+      owner_user_id,
+      idempotency_key,
+      action,
+      studio_id,
+      payload_hash,
+      result_kind,
+      resulting_edit_version
+    ) values (
+      p_user_id,
+      p_idempotency_key,
+      'studio.draft.discard',
+      p_studio_id,
+      command_hash,
+      'studio_deleted',
+      null
+    );
+
+    delete from public.studios as studio
+    where studio.id = current_studio.id;
+
+    return query
+    select p_user_id, p_studio_id, true, false, null::bigint;
+    return;
+  end if;
+
+  if current_studio.edit_version >= max_safe_integer then
+    raise exception using
+      errcode = '22003',
+      message = 'studio_edit_version_exhausted';
+  end if;
+
+  update public.studios as studio
+  set draft_revision_id = null,
+      edit_version = studio.edit_version + 1,
+      updated_at = pg_catalog.clock_timestamp()
+  where studio.id = current_studio.id
+  returning studio.edit_version into resulting_version;
+
+  delete from public.studio_revisions as revision
+  where revision.id = removed_revision_id
+    and revision.studio_id = current_studio.id;
+
+  insert into private.studio_command_requests (
+    owner_user_id,
+    idempotency_key,
+    action,
+    studio_id,
+    payload_hash,
+    result_kind,
+    resulting_edit_version
+  ) values (
+    p_user_id,
+    p_idempotency_key,
+    'studio.draft.discard',
+    p_studio_id,
+    command_hash,
+    'draft_discarded',
+    resulting_version
+  );
+
+  return query
+  select p_user_id, p_studio_id, false, true, resulting_version;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid") IS 'Descarta draft; remove o agregado nunca publicado e preserva tombstone idempotente.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."enforce_owner_profile_state"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -2283,6 +2731,99 @@ $$;
 
 
 ALTER FUNCTION "private"."enforce_profile_lifecycle"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."enforce_studio_revision_lifecycle"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  max_safe_integer constant bigint := 9007199254740991;
+  expected_revision_number bigint;
+  current_last_revision_number bigint;
+  has_revision boolean;
+begin
+  if tg_op = 'INSERT' then
+    select studio.last_revision_number
+    into current_last_revision_number
+    from public.studios as studio
+    where studio.id = new.studio_id
+    for update;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        message = 'studio_parent_missing';
+    end if;
+
+    if new.status <> 'draft' then
+      raise exception using
+        errcode = 'P0001',
+        message = 'studio_revision_is_immutable';
+    end if;
+
+    select exists (
+      select 1
+      from public.studio_revisions as revision
+      where revision.studio_id = new.studio_id
+    ) into has_revision;
+
+    if has_revision and current_last_revision_number >= max_safe_integer then
+      raise exception using
+        errcode = '22003',
+        message = 'studio_revision_number_exhausted';
+    end if;
+
+    expected_revision_number := case
+      when has_revision then current_last_revision_number + 1
+      else 1
+    end;
+
+    if (not has_revision and current_last_revision_number <> 1)
+      or new.revision_number <> expected_revision_number
+    then
+      raise exception using
+        errcode = '23514',
+        message = 'studio_revision_number_invalid';
+    end if;
+
+    if has_revision then
+      update public.studios as studio
+      set last_revision_number = new.revision_number
+      where studio.id = new.studio_id;
+    end if;
+
+    return new;
+  end if;
+
+  if old.status <> 'draft' then
+    raise exception using
+      errcode = 'P0001',
+      message = 'studio_revision_is_immutable';
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+
+  if new.id is distinct from old.id
+    or new.studio_id is distinct from old.studio_id
+    or new.revision_number is distinct from old.revision_number
+    or new.status is distinct from old.status
+    or new.created_at is distinct from old.created_at
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'studio_revision_is_immutable';
+  end if;
+
+  new.updated_at := pg_catalog.clock_timestamp();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."enforce_studio_revision_lifecycle"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
@@ -2857,6 +3398,62 @@ $$;
 ALTER FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."owner_studio_editor_row"("p_user_id" "uuid", "p_studio_id" "uuid") RETURNS TABLE("scope" "uuid", "studio_id" "uuid", "studio_status" "text", "edit_version" bigint, "draft_revision_id" "uuid", "draft_revision_number" bigint, "draft_name" "text", "draft_description" "text", "draft_street" "text", "draft_street_number" "text", "draft_address_complement" "text", "draft_neighborhood" "text", "draft_city" "text", "draft_state" "text", "draft_postal_code" "text", "draft_capacity" integer, "draft_studio_type_id" "uuid", "draft_studio_type_name" "text", "published_revision_id" "uuid", "published_revision_number" bigint, "published_name" "text", "published_description" "text", "published_street" "text", "published_street_number" "text", "published_address_complement" "text", "published_neighborhood" "text", "published_city" "text", "published_state" "text", "published_postal_code" "text", "published_capacity" integer, "published_studio_type_id" "uuid", "published_studio_type_name" "text")
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select
+    studio.owner_user_id,
+    studio.id,
+    studio.status,
+    studio.edit_version,
+    draft_revision.id,
+    draft_revision.revision_number,
+    draft_revision.name,
+    draft_revision.description,
+    draft_revision.street,
+    draft_revision.street_number,
+    draft_revision.address_complement,
+    draft_revision.neighborhood,
+    draft_revision.city,
+    draft_revision.state,
+    draft_revision.postal_code,
+    draft_revision.capacity,
+    draft_revision.studio_type_id,
+    draft_type.name,
+    published_revision.id,
+    published_revision.revision_number,
+    published_revision.name,
+    published_revision.description,
+    published_revision.street,
+    published_revision.street_number,
+    published_revision.address_complement,
+    published_revision.neighborhood,
+    published_revision.city,
+    published_revision.state,
+    published_revision.postal_code,
+    published_revision.capacity,
+    published_revision.studio_type_id,
+    published_type.name
+  from public.studios as studio
+  left join public.studio_revisions as draft_revision
+    on draft_revision.id = studio.draft_revision_id
+    and draft_revision.studio_id = studio.id
+  left join public.studio_types as draft_type
+    on draft_type.id = draft_revision.studio_type_id
+  left join public.studio_revisions as published_revision
+    on published_revision.id = studio.published_revision_id
+    and published_revision.studio_id = studio.id
+  left join public.studio_types as published_type
+    on published_type.id = published_revision.studio_type_id
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id;
+$$;
+
+
+ALTER FUNCTION "private"."owner_studio_editor_row"("p_user_id" "uuid", "p_studio_id" "uuid") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") RETURNS TABLE("operation_id" "uuid", "operation_sequence" bigint, "operation_action" "text", "provider_reference" "text", "profile_version" bigint, "already_applied" boolean)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -3330,6 +3927,64 @@ $$;
 ALTER FUNCTION "private"."set_user_preferences_updated_at"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."studio_command_payload_hash"("p_payload" "jsonb") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE STRICT
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.encode(
+    extensions.digest(p_payload::text, 'sha256'::text),
+    'hex'::text
+  );
+$$;
+
+
+ALTER FUNCTION "private"."studio_command_payload_hash"("p_payload" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."studio_core_is_valid"("p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer) RETURNS boolean
+    LANGUAGE "sql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $_$
+  select coalesce(
+    p_name is not null
+    and pg_catalog.char_length(p_name) between 2 and 120
+    and p_name = pg_catalog.btrim(p_name)
+    and p_name !~ '[[:cntrl:]]'
+    and p_description is not null
+    and pg_catalog.char_length(p_description) between 20 and 5000
+    and p_description = pg_catalog.btrim(p_description)
+    and pg_catalog.replace(p_description, E'\n', '') !~ '[[:cntrl:]]'
+    and p_street is not null
+    and pg_catalog.char_length(p_street) between 2 and 160
+    and p_street = pg_catalog.btrim(p_street)
+    and p_street !~ '[[:cntrl:]]'
+    and p_street_number is not null
+    and pg_catalog.char_length(p_street_number) between 1 and 20
+    and p_street_number = pg_catalog.btrim(p_street_number)
+    and p_street_number !~ '[[:cntrl:]]'
+    and (
+      p_address_complement is null
+      or (
+        pg_catalog.char_length(p_address_complement) between 1 and 120
+        and p_address_complement = pg_catalog.btrim(p_address_complement)
+        and p_address_complement !~ '[[:cntrl:]]'
+      )
+    )
+    and p_neighborhood is not null
+    and pg_catalog.char_length(p_neighborhood) between 2 and 120
+    and p_neighborhood = pg_catalog.btrim(p_neighborhood)
+    and p_neighborhood !~ '[[:cntrl:]]'
+    and p_postal_code is not null
+    and p_postal_code ~ '^[0-9]{8}$'
+    and p_capacity between 1 and 500,
+    false
+  );
+$_$;
+
+
+ALTER FUNCTION "private"."studio_core_is_valid"("p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -3505,6 +4160,374 @@ ALTER FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expect
 
 COMMENT ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") IS 'Atualiza identidade concluída com versão otimista e substituição documental explícita sem reexpor PII.';
 
+
+
+CREATE OR REPLACE FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") RETURNS TABLE("scope" "uuid", "studio_id" "uuid", "studio_status" "text", "edit_version" bigint, "draft_revision_id" "uuid", "draft_revision_number" bigint, "draft_name" "text", "draft_description" "text", "draft_street" "text", "draft_street_number" "text", "draft_address_complement" "text", "draft_neighborhood" "text", "draft_city" "text", "draft_state" "text", "draft_postal_code" "text", "draft_capacity" integer, "draft_studio_type_id" "uuid", "draft_studio_type_name" "text", "published_revision_id" "uuid", "published_revision_number" bigint, "published_name" "text", "published_description" "text", "published_street" "text", "published_street_number" "text", "published_address_complement" "text", "published_neighborhood" "text", "published_city" "text", "published_state" "text", "published_postal_code" "text", "published_capacity" integer, "published_studio_type_id" "uuid", "published_studio_type_name" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  max_safe_integer constant bigint := 9007199254740991;
+  command_hash text;
+  current_request private.studio_command_requests%rowtype;
+  current_studio public.studios%rowtype;
+  current_revision public.studio_revisions%rowtype;
+  new_revision_id uuid;
+  new_revision_number bigint;
+  returned_rows integer;
+begin
+  if p_studio_id is null
+    or p_idempotency_key is null
+    or p_expected_edit_version is null
+    or p_expected_edit_version < 1
+    or p_studio_type_id is null
+    or not private.studio_core_is_valid(
+      p_name,
+      p_description,
+      p_street,
+      p_street_number,
+      p_address_complement,
+      p_neighborhood,
+      p_postal_code,
+      p_capacity
+    )
+  then
+    raise exception using
+      errcode = '22023',
+      message = 'studio_core_invalid';
+  end if;
+
+  perform private.assert_studio_owner_authority(p_user_id);
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  command_hash := private.studio_command_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedEditVersion', p_expected_edit_version,
+      'name', p_name,
+      'description', p_description,
+      'street', p_street,
+      'streetNumber', p_street_number,
+      'addressComplement', p_address_complement,
+      'neighborhood', p_neighborhood,
+      'postalCode', p_postal_code,
+      'capacity', p_capacity,
+      'studioTypeId', p_studio_type_id
+    )
+  );
+
+  select request.*
+  into current_request
+  from private.studio_command_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key
+  for update;
+
+  if found then
+    if current_request.action <> 'studio.revision.updateCore'
+      or current_request.studio_id <> p_studio_id
+      or current_request.payload_hash <> command_hash
+    then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_idempotency_conflict';
+    end if;
+
+    return query
+    select *
+    from private.owner_studio_editor_row(p_user_id, p_studio_id);
+    get diagnostics returned_rows = row_count;
+
+    if returned_rows = 0 then
+      raise exception using
+        errcode = '40001',
+        message = 'studio_result_no_longer_available';
+    end if;
+    return;
+  end if;
+
+  select studio.*
+  into current_studio
+  from public.studios as studio
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using
+      errcode = 'P0002',
+      message = 'studio_not_found';
+  end if;
+
+  select revision.*
+  into current_revision
+  from public.studio_revisions as revision
+  where revision.studio_id = current_studio.id
+    and revision.id = coalesce(
+      current_studio.draft_revision_id,
+      current_studio.published_revision_id
+    );
+
+  if not found then
+    raise exception using
+      errcode = 'P0001',
+      message = 'studio_revision_pointer_invalid';
+  end if;
+
+  if current_revision.name = p_name
+    and current_revision.description = p_description
+    and current_revision.street = p_street
+    and current_revision.street_number = p_street_number
+    and current_revision.address_complement is not distinct from p_address_complement
+    and current_revision.neighborhood = p_neighborhood
+    and current_revision.postal_code = p_postal_code
+    and current_revision.capacity = p_capacity
+    and current_revision.studio_type_id = p_studio_type_id
+  then
+    insert into private.studio_command_requests (
+      owner_user_id,
+      idempotency_key,
+      action,
+      studio_id,
+      payload_hash,
+      result_kind,
+      resulting_edit_version
+    ) values (
+      p_user_id,
+      p_idempotency_key,
+      'studio.revision.updateCore',
+      p_studio_id,
+      command_hash,
+      'editor',
+      current_studio.edit_version
+    );
+
+    return query
+    select *
+    from private.owner_studio_editor_row(p_user_id, p_studio_id);
+    return;
+  end if;
+
+  if current_studio.edit_version <> p_expected_edit_version then
+    raise exception using
+      errcode = '40001',
+      message = 'studio_edit_version_conflict';
+  end if;
+
+  if not exists (
+    select 1
+    from public.studio_types as studio_type
+    where studio_type.id = p_studio_type_id
+      and studio_type.active
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'studio_type_unavailable';
+  end if;
+
+  if current_studio.edit_version >= max_safe_integer then
+    raise exception using
+      errcode = '22003',
+      message = 'studio_edit_version_exhausted';
+  end if;
+
+  if current_studio.draft_revision_id is null
+    and current_studio.last_revision_number >= max_safe_integer
+  then
+    raise exception using
+      errcode = '22003',
+      message = 'studio_revision_number_exhausted';
+  end if;
+
+  if current_studio.draft_revision_id is null then
+    new_revision_id := extensions.gen_random_uuid();
+    new_revision_number := current_studio.last_revision_number + 1;
+
+    insert into public.studio_revisions (
+      id,
+      studio_id,
+      revision_number,
+      status,
+      name,
+      description,
+      street,
+      street_number,
+      address_complement,
+      neighborhood,
+      city,
+      state,
+      postal_code,
+      capacity,
+      studio_type_id
+    )
+    select
+      new_revision_id,
+      published_revision.studio_id,
+      new_revision_number,
+      'draft',
+      published_revision.name,
+      published_revision.description,
+      published_revision.street,
+      published_revision.street_number,
+      published_revision.address_complement,
+      published_revision.neighborhood,
+      'Curitiba',
+      'PR',
+      published_revision.postal_code,
+      published_revision.capacity,
+      published_revision.studio_type_id
+    from public.studio_revisions as published_revision
+    where published_revision.studio_id = current_studio.id
+      and published_revision.id = current_studio.published_revision_id
+      and published_revision.status = 'approved';
+
+    if not found then
+      raise exception using
+        errcode = 'P0001',
+        message = 'studio_revision_pointer_invalid';
+    end if;
+
+    update public.studios as studio
+    set draft_revision_id = new_revision_id,
+        edit_version = studio.edit_version + 1,
+        updated_at = pg_catalog.clock_timestamp()
+    where studio.id = current_studio.id;
+
+    update public.studio_revisions as revision
+    set name = p_name,
+        description = p_description,
+        street = p_street,
+        street_number = p_street_number,
+        address_complement = p_address_complement,
+        neighborhood = p_neighborhood,
+        city = 'Curitiba',
+        state = 'PR',
+        postal_code = p_postal_code,
+        capacity = p_capacity,
+        studio_type_id = p_studio_type_id
+    where revision.id = new_revision_id
+      and revision.studio_id = current_studio.id;
+  else
+    update public.studio_revisions as revision
+    set name = p_name,
+        description = p_description,
+        street = p_street,
+        street_number = p_street_number,
+        address_complement = p_address_complement,
+        neighborhood = p_neighborhood,
+        city = 'Curitiba',
+        state = 'PR',
+        postal_code = p_postal_code,
+        capacity = p_capacity,
+        studio_type_id = p_studio_type_id
+    where revision.id = current_studio.draft_revision_id
+      and revision.studio_id = current_studio.id;
+
+    update public.studios as studio
+    set edit_version = studio.edit_version + 1,
+        updated_at = pg_catalog.clock_timestamp()
+    where studio.id = current_studio.id;
+  end if;
+
+  insert into private.studio_command_requests (
+    owner_user_id,
+    idempotency_key,
+    action,
+    studio_id,
+    payload_hash,
+    result_kind,
+    resulting_edit_version
+  )
+  select
+    p_user_id,
+    p_idempotency_key,
+    'studio.revision.updateCore',
+    p_studio_id,
+    command_hash,
+    'editor',
+    studio.edit_version
+  from public.studios as studio
+  where studio.id = p_studio_id;
+
+  return query
+  select *
+  from private.owner_studio_editor_row(p_user_id, p_studio_id);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") IS 'Atualiza ou clona a revisão draft com convergência idempotente e edit_version otimista.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."validate_studio_revision_pointers"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  current_studio_id uuid;
+  current_published_revision_id uuid;
+  current_draft_revision_id uuid;
+begin
+  if tg_table_name = 'studios' then
+    current_studio_id := new.id;
+  elsif tg_op = 'DELETE' then
+    current_studio_id := old.studio_id;
+  else
+    current_studio_id := new.studio_id;
+  end if;
+
+  select studio.published_revision_id, studio.draft_revision_id
+  into current_published_revision_id, current_draft_revision_id
+  from public.studios as studio
+  where studio.id = current_studio_id;
+
+  if not found then
+    return null;
+  end if;
+
+  if current_published_revision_id is not null
+    and not exists (
+      select 1
+      from public.studio_revisions as revision
+      where revision.studio_id = current_studio_id
+        and revision.id = current_published_revision_id
+        and revision.status = 'approved'
+    )
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'studio_revision_pointer_invalid';
+  end if;
+
+  if current_draft_revision_id is not null
+    and not exists (
+      select 1
+      from public.studio_revisions as revision
+      where revision.studio_id = current_studio_id
+        and revision.id = current_draft_revision_id
+        and revision.status = 'draft'
+    )
+  then
+    raise exception using
+      errcode = 'P0001',
+      message = 'studio_revision_pointer_invalid';
+  end if;
+
+  return null;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."validate_studio_revision_pointers"() OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."validate_terms_acceptance_snapshot"() RETURNS "trigger"
@@ -3894,6 +4917,84 @@ ALTER FUNCTION "public"."get_owner_recipient_status"() OWNER TO "postgres";
 COMMENT ON FUNCTION "public"."get_owner_recipient_status"() IS 'Compact authenticated recipient projection; never returns owner contract title, version, hash or Markdown body.';
 
 
+
+CREATE OR REPLACE FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") RETURNS TABLE("scope" "uuid", "studio_id" "uuid", "studio_status" "text", "edit_version" bigint, "draft_revision_id" "uuid", "draft_revision_number" bigint, "draft_name" "text", "draft_description" "text", "draft_street" "text", "draft_street_number" "text", "draft_address_complement" "text", "draft_neighborhood" "text", "draft_city" "text", "draft_state" "text", "draft_postal_code" "text", "draft_capacity" integer, "draft_studio_type_id" "uuid", "draft_studio_type_name" "text", "published_revision_id" "uuid", "published_revision_number" bigint, "published_name" "text", "published_description" "text", "published_street" "text", "published_street_number" "text", "published_address_complement" "text", "published_neighborhood" "text", "published_city" "text", "published_state" "text", "published_postal_code" "text", "published_capacity" integer, "published_studio_type_id" "uuid", "published_studio_type_name" "text")
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
+    AS $$
+  select
+    studio.owner_user_id,
+    studio.id,
+    studio.status,
+    studio.edit_version,
+    draft_revision.id,
+    draft_revision.revision_number,
+    draft_revision.name,
+    draft_revision.description,
+    draft_revision.street,
+    draft_revision.street_number,
+    draft_revision.address_complement,
+    draft_revision.neighborhood,
+    draft_revision.city,
+    draft_revision.state,
+    draft_revision.postal_code,
+    draft_revision.capacity,
+    draft_revision.studio_type_id,
+    draft_type.name,
+    published_revision.id,
+    published_revision.revision_number,
+    published_revision.name,
+    published_revision.description,
+    published_revision.street,
+    published_revision.street_number,
+    published_revision.address_complement,
+    published_revision.neighborhood,
+    published_revision.city,
+    published_revision.state,
+    published_revision.postal_code,
+    published_revision.capacity,
+    published_revision.studio_type_id,
+    published_type.name
+  from public.studios as studio
+  left join public.studio_revisions as draft_revision
+    on draft_revision.id = studio.draft_revision_id
+    and draft_revision.studio_id = studio.id
+  left join public.studio_types as draft_type
+    on draft_type.id = draft_revision.studio_type_id
+  left join public.studio_revisions as published_revision
+    on published_revision.id = studio.published_revision_id
+    and published_revision.studio_id = studio.id
+  left join public.studio_types as published_type
+    on published_type.id = published_revision.studio_type_id
+  where studio.id = p_studio_id
+    and studio.owner_user_id = (select auth.uid());
+$$;
+
+
+ALTER FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") IS 'Read model RLS do editor; retorna zero linhas para estúdio ausente ou de outro dono.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."list_active_studio_types"() RETURNS TABLE("id" "uuid", "name" "text")
+    LANGUAGE "sql" STABLE
+    SET "search_path" TO ''
+    AS $$
+  select studio_type.id, studio_type.name
+  from public.studio_types as studio_type
+  where studio_type.active
+  order by studio_type.sort_order, studio_type.name, studio_type.id;
+$$;
+
+
+ALTER FUNCTION "public"."list_active_studio_types"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."list_active_studio_types"() IS 'Read model pequeno das opções ativas do seletor de tipo de estúdio.';
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
@@ -4068,6 +5169,29 @@ COMMENT ON TABLE "private"."signup_legal_intents" IS 'Token aleatório e tempor�
 
 
 
+CREATE TABLE IF NOT EXISTS "private"."studio_command_requests" (
+    "owner_user_id" "uuid" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
+    "action" "text" NOT NULL,
+    "studio_id" "uuid" NOT NULL,
+    "payload_hash" "text" NOT NULL,
+    "result_kind" "text" NOT NULL,
+    "resulting_edit_version" bigint,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "studio_command_requests_action_check" CHECK (("action" = ANY (ARRAY['studio.create'::"text", 'studio.revision.updateCore'::"text", 'studio.draft.discard'::"text"]))),
+    CONSTRAINT "studio_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
+    CONSTRAINT "studio_command_requests_result_check" CHECK (((("result_kind" = ANY (ARRAY['editor'::"text", 'draft_discarded'::"text"])) AND ("resulting_edit_version" IS NOT NULL) AND (("resulting_edit_version" >= 1) AND ("resulting_edit_version" <= '9007199254740991'::bigint))) OR (("result_kind" = 'studio_deleted'::"text") AND ("resulting_edit_version" IS NULL)))),
+    CONSTRAINT "studio_command_requests_result_kind_check" CHECK (("result_kind" = ANY (ARRAY['editor'::"text", 'draft_discarded'::"text", 'studio_deleted'::"text"])))
+);
+
+
+ALTER TABLE "private"."studio_command_requests" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."studio_command_requests" IS 'Deduplicação privada dos comandos FEAT-006; studio_id não possui FK para preservar o tombstone de um rascunho removido.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."owner_payment_recipients" (
     "owner_user_id" "uuid" NOT NULL,
     "status" "text" DEFAULT 'not_started'::"text" NOT NULL,
@@ -4190,6 +5314,118 @@ COMMENT ON COLUMN "public"."profiles"."additional_document_masked" IS 'Projeçã
 
 
 COMMENT ON COLUMN "public"."profiles"."profile_version" IS 'Versão otimista monotônica da identidade, independente da aparência.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."studio_revisions" (
+    "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "studio_id" "uuid" NOT NULL,
+    "revision_number" bigint NOT NULL,
+    "status" "text" DEFAULT 'draft'::"text" NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text" NOT NULL,
+    "street" "text" NOT NULL,
+    "street_number" "text" NOT NULL,
+    "address_complement" "text",
+    "neighborhood" "text" NOT NULL,
+    "city" "text" DEFAULT 'Curitiba'::"text" NOT NULL,
+    "state" "text" DEFAULT 'PR'::"text" NOT NULL,
+    "postal_code" "text" NOT NULL,
+    "capacity" integer NOT NULL,
+    "studio_type_id" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "studio_revisions_address_complement_shape_check" CHECK ((("address_complement" IS NULL) OR ((("char_length"("address_complement") >= 1) AND ("char_length"("address_complement") <= 120)) AND ("address_complement" = "btrim"("address_complement")) AND ("address_complement" !~ '[[:cntrl:]]'::"text")))),
+    CONSTRAINT "studio_revisions_capacity_check" CHECK ((("capacity" >= 1) AND ("capacity" <= 500))),
+    CONSTRAINT "studio_revisions_city_check" CHECK (("city" = 'Curitiba'::"text")),
+    CONSTRAINT "studio_revisions_description_shape_check" CHECK (((("char_length"("description") >= 20) AND ("char_length"("description") <= 5000)) AND ("description" = "btrim"("description")) AND ("replace"("description", '
+'::"text", ''::"text") !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_revisions_name_shape_check" CHECK (((("char_length"("name") >= 2) AND ("char_length"("name") <= 120)) AND ("name" = "btrim"("name")) AND ("name" !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_revisions_neighborhood_shape_check" CHECK (((("char_length"("neighborhood") >= 2) AND ("char_length"("neighborhood") <= 120)) AND ("neighborhood" = "btrim"("neighborhood")) AND ("neighborhood" !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_revisions_postal_code_check" CHECK (("postal_code" ~ '^[0-9]{8}$'::"text")),
+    CONSTRAINT "studio_revisions_revision_number_check" CHECK ((("revision_number" >= 1) AND ("revision_number" <= '9007199254740991'::bigint))),
+    CONSTRAINT "studio_revisions_state_check" CHECK (("state" = 'PR'::"text")),
+    CONSTRAINT "studio_revisions_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'pending'::"text", 'approved'::"text"]))),
+    CONSTRAINT "studio_revisions_street_number_shape_check" CHECK (((("char_length"("street_number") >= 1) AND ("char_length"("street_number") <= 20)) AND ("street_number" = "btrim"("street_number")) AND ("street_number" !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_revisions_street_shape_check" CHECK (((("char_length"("street") >= 2) AND ("char_length"("street") <= 160)) AND ("street" = "btrim"("street")) AND ("street" !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_revisions_updated_after_created_check" CHECK (("updated_at" >= "created_at"))
+);
+
+
+ALTER TABLE "public"."studio_revisions" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."studio_revisions" IS 'Snapshot canônico do núcleo do estúdio; revisões não draft são imutáveis.';
+
+
+
+COMMENT ON COLUMN "public"."studio_revisions"."city" IS 'Cidade fixa da baseline, derivada pelo servidor e nunca aceita do payload.';
+
+
+
+COMMENT ON COLUMN "public"."studio_revisions"."state" IS 'UF fixa da baseline, derivada pelo servidor e nunca aceita do payload.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."studio_types" (
+    "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL,
+    "slug" "text" NOT NULL,
+    "description" "text",
+    "active" boolean DEFAULT true NOT NULL,
+    "sort_order" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "studio_types_description_shape_check" CHECK ((("description" IS NULL) OR ((("char_length"("description") >= 1) AND ("char_length"("description") <= 240)) AND ("description" = "btrim"("description")) AND ("description" !~ '[[:cntrl:]]'::"text")))),
+    CONSTRAINT "studio_types_name_shape_check" CHECK (((("char_length"("name") >= 2) AND ("char_length"("name") <= 80)) AND ("name" = "btrim"("name")) AND ("name" !~ '[[:cntrl:]]'::"text"))),
+    CONSTRAINT "studio_types_slug_shape_check" CHECK (((("char_length"("slug") >= 2) AND ("char_length"("slug") <= 80)) AND ("slug" ~ '^[a-z0-9]+(-[a-z0-9]+)*$'::"text"))),
+    CONSTRAINT "studio_types_sort_order_check" CHECK (("sort_order" >= 0)),
+    CONSTRAINT "studio_types_updated_after_created_check" CHECK (("updated_at" >= "created_at"))
+);
+
+
+ALTER TABLE "public"."studio_types" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."studio_types" IS 'Taxonomia administrativa mínima dos tipos de estúdio; produção começa sem linhas e não recebe fixtures locais.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."studios" (
+    "id" "uuid" NOT NULL,
+    "owner_user_id" "uuid" NOT NULL,
+    "status" "text" DEFAULT 'draft'::"text" NOT NULL,
+    "published_revision_id" "uuid",
+    "draft_revision_id" "uuid",
+    "edit_version" bigint DEFAULT 1 NOT NULL,
+    "last_revision_number" bigint DEFAULT 1 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "studios_edit_version_check" CHECK ((("edit_version" >= 1) AND ("edit_version" <= '9007199254740991'::bigint))),
+    CONSTRAINT "studios_last_revision_number_check" CHECK ((("last_revision_number" >= 1) AND ("last_revision_number" <= '9007199254740991'::bigint))),
+    CONSTRAINT "studios_revision_pointers_distinct_check" CHECK ((("published_revision_id" IS NULL) OR ("draft_revision_id" IS NULL) OR ("published_revision_id" <> "draft_revision_id"))),
+    CONSTRAINT "studios_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'published'::"text"]))),
+    CONSTRAINT "studios_status_revision_shape_check" CHECK (((("status" = 'draft'::"text") AND ("published_revision_id" IS NULL) AND ("draft_revision_id" IS NOT NULL)) OR (("status" = 'published'::"text") AND ("published_revision_id" IS NOT NULL)))),
+    CONSTRAINT "studios_updated_after_created_check" CHECK (("updated_at" >= "created_at"))
+);
+
+
+ALTER TABLE "public"."studios" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."studios" IS 'Agregado raiz do estúdio; edit_version é monotônica no agregado e evita ABA entre clone, edição e descarte.';
+
+
+
+COMMENT ON COLUMN "public"."studios"."id" IS 'UUID pré-gerado pelo navegador/app para recuperação ambígua; nunca comprova ownership.';
+
+
+
+COMMENT ON COLUMN "public"."studios"."edit_version" IS 'Token otimista monotônico do agregado, independente do número da revisão.';
+
+
+
+COMMENT ON COLUMN "public"."studios"."last_revision_number" IS 'Maior revision_number já alocado; descartes nunca reduzem este contador anti-reuso.';
 
 
 
@@ -4342,6 +5578,11 @@ ALTER TABLE ONLY "private"."signup_legal_intents"
 
 
 
+ALTER TABLE ONLY "private"."studio_command_requests"
+    ADD CONSTRAINT "studio_command_requests_pkey" PRIMARY KEY ("owner_user_id", "idempotency_key");
+
+
+
 ALTER TABLE ONLY "public"."owner_payment_recipients"
     ADD CONSTRAINT "owner_payment_recipients_pkey" PRIMARY KEY ("owner_user_id");
 
@@ -4354,6 +5595,36 @@ ALTER TABLE ONLY "public"."owner_profiles"
 
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."studio_revisions"
+    ADD CONSTRAINT "studio_revisions_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."studio_revisions"
+    ADD CONSTRAINT "studio_revisions_studio_id_id_key" UNIQUE ("studio_id", "id");
+
+
+
+ALTER TABLE ONLY "public"."studio_revisions"
+    ADD CONSTRAINT "studio_revisions_studio_number_key" UNIQUE ("studio_id", "revision_number");
+
+
+
+ALTER TABLE ONLY "public"."studio_types"
+    ADD CONSTRAINT "studio_types_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."studio_types"
+    ADD CONSTRAINT "studio_types_slug_key" UNIQUE ("slug");
+
+
+
+ALTER TABLE ONLY "public"."studios"
+    ADD CONSTRAINT "studios_pkey" PRIMARY KEY ("id");
 
 
 
@@ -4403,6 +5674,22 @@ CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_in
 
 
 
+CREATE UNIQUE INDEX "studio_command_requests_create_studio_id_key" ON "private"."studio_command_requests" USING "btree" ("studio_id") WHERE ("action" = 'studio.create'::"text");
+
+
+
+CREATE UNIQUE INDEX "studio_revisions_one_draft_per_studio_idx" ON "public"."studio_revisions" USING "btree" ("studio_id") WHERE ("status" = 'draft'::"text");
+
+
+
+CREATE INDEX "studio_revisions_studio_type_id_idx" ON "public"."studio_revisions" USING "btree" ("studio_type_id");
+
+
+
+CREATE INDEX "studios_owner_user_id_idx" ON "public"."studios" USING "btree" ("owner_user_id");
+
+
+
 CREATE OR REPLACE TRIGGER "audit_events_protect_append_only" BEFORE DELETE OR UPDATE ON "audit"."events" FOR EACH ROW EXECUTE FUNCTION "private"."protect_audit_event"();
 
 
@@ -4428,6 +5715,18 @@ CREATE OR REPLACE TRIGGER "profiles_protect_delete" BEFORE DELETE ON "public"."p
 
 
 CREATE OR REPLACE TRIGGER "profiles_set_updated_at" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "private"."set_profile_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "studio_revisions_enforce_lifecycle" BEFORE INSERT OR DELETE OR UPDATE ON "public"."studio_revisions" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_studio_revision_lifecycle"();
+
+
+
+CREATE CONSTRAINT TRIGGER "studio_revisions_validate_revision_pointers" AFTER INSERT OR DELETE OR UPDATE ON "public"."studio_revisions" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "private"."validate_studio_revision_pointers"();
+
+
+
+CREATE CONSTRAINT TRIGGER "studios_validate_revision_pointers" AFTER INSERT OR UPDATE ON "public"."studios" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "private"."validate_studio_revision_pointers"();
 
 
 
@@ -4492,6 +5791,11 @@ ALTER TABLE ONLY "private"."signup_legal_intents"
 
 
 
+ALTER TABLE ONLY "private"."studio_command_requests"
+    ADD CONSTRAINT "studio_command_requests_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."owner_payment_recipients"
     ADD CONSTRAINT "owner_payment_recipients_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
 
@@ -4509,6 +5813,31 @@ ALTER TABLE ONLY "public"."owner_profiles"
 
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."studio_revisions"
+    ADD CONSTRAINT "studio_revisions_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."studio_revisions"
+    ADD CONSTRAINT "studio_revisions_studio_type_id_fkey" FOREIGN KEY ("studio_type_id") REFERENCES "public"."studio_types"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."studios"
+    ADD CONSTRAINT "studios_draft_revision_fk" FOREIGN KEY ("id", "draft_revision_id") REFERENCES "public"."studio_revisions"("studio_id", "id") DEFERRABLE INITIALLY DEFERRED;
+
+
+
+ALTER TABLE ONLY "public"."studios"
+    ADD CONSTRAINT "studios_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."studios"
+    ADD CONSTRAINT "studios_published_revision_fk" FOREIGN KEY ("id", "published_revision_id") REFERENCES "public"."studio_revisions"("studio_id", "id") DEFERRABLE INITIALLY DEFERRED;
 
 
 
@@ -4545,6 +5874,9 @@ ALTER TABLE "private"."owner_recipient_operations" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "private"."signup_legal_intents" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "private"."studio_command_requests" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."owner_payment_recipients" ENABLE ROW LEVEL SECURITY;
 
 
@@ -4563,6 +5895,32 @@ ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
 
 
 CREATE POLICY "profiles_select_own" ON "public"."profiles" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "id"));
+
+
+
+ALTER TABLE "public"."studio_revisions" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "studio_revisions_select_owner" ON "public"."studio_revisions" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."studios" "studio"
+  WHERE (("studio"."id" = "studio_revisions"."studio_id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+ALTER TABLE "public"."studio_types" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "studio_types_select_authenticated" ON "public"."studio_types" FOR SELECT TO "authenticated" USING (("active" OR (EXISTS ( SELECT 1
+   FROM ("public"."studio_revisions" "revision"
+     JOIN "public"."studios" "studio" ON (("studio"."id" = "revision"."studio_id")))
+  WHERE (("revision"."studio_type_id" = "studio_types"."id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid")))))));
+
+
+
+ALTER TABLE "public"."studios" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "studios_select_owner" ON "public"."studios" FOR SELECT TO "authenticated" USING (("owner_user_id" = ( SELECT "auth"."uid"() AS "uid")));
 
 
 
@@ -4610,6 +5968,10 @@ GRANT ALL ON FUNCTION "private"."activate_owner"("p_user_id" "uuid", "p_owner_co
 
 REVOKE ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uuid", "p_operation_id" "uuid", "p_request_id" "uuid", "p_provider" "text", "p_provider_reference" "text", "p_status" "text", "p_requirements" "text"[]) TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."assert_studio_owner_authority"("p_user_id" "uuid") FROM PUBLIC;
 
 
 
@@ -4664,6 +6026,16 @@ GRANT ALL ON FUNCTION "private"."create_signup_legal_intent"("expected_terms_ver
 
 
 
+REVOKE ALL ON FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_studio_id" "uuid", "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_studio_id" "uuid", "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."enforce_owner_profile_state"() FROM PUBLIC;
 
 
@@ -4673,6 +6045,10 @@ REVOKE ALL ON FUNCTION "private"."enforce_owner_recipient_state"() FROM PUBLIC;
 
 
 REVOKE ALL ON FUNCTION "private"."enforce_profile_lifecycle"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."enforce_studio_revision_lifecycle"() FROM PUBLIC;
 
 
 
@@ -4708,6 +6084,10 @@ REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uu
 
 
 REVOKE ALL ON FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."owner_studio_editor_row"("p_user_id" "uuid", "p_studio_id" "uuid") FROM PUBLIC;
 
 
 
@@ -4753,6 +6133,14 @@ REVOKE ALL ON FUNCTION "private"."set_user_preferences_updated_at"() FROM PUBLIC
 
 
 
+REVOKE ALL ON FUNCTION "private"."studio_command_payload_hash"("p_payload" "jsonb") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."studio_core_is_valid"("p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer) FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") TO "app_dal";
 
@@ -4760,6 +6148,15 @@ GRANT ALL ON FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", 
 
 REVOKE ALL ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."update_profile_identity"("p_user_id" "uuid", "p_expected_profile_version" bigint, "p_name" "text", "p_phone_e164" "text", "p_replace_tax_id" boolean, "p_tax_id" "text", "p_replace_additional_document" boolean, "p_additional_document" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_edit_version" bigint, "p_idempotency_key" "uuid", "p_name" "text", "p_description" "text", "p_street" "text", "p_street_number" "text", "p_address_complement" "text", "p_neighborhood" "text", "p_postal_code" "text", "p_capacity" integer, "p_studio_type_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."validate_studio_revision_pointers"() FROM PUBLIC;
 
 
 
@@ -4795,6 +6192,16 @@ GRANT ALL ON FUNCTION "public"."get_owner_activation_status"() TO "authenticated
 
 REVOKE ALL ON FUNCTION "public"."get_owner_recipient_status"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."get_owner_recipient_status"() TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."list_active_studio_types"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."list_active_studio_types"() TO "authenticated";
 
 
 
@@ -4871,6 +6278,102 @@ GRANT SELECT("additional_document_masked") ON TABLE "public"."profiles" TO "auth
 
 
 GRANT SELECT("profile_version") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT SELECT("id") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("studio_id") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("revision_number") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("name") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("description") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("street") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("street_number") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("address_complement") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("neighborhood") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("city") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("state") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("postal_code") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("capacity") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("studio_type_id") ON TABLE "public"."studio_revisions" TO "authenticated";
+
+
+
+GRANT SELECT("id") ON TABLE "public"."studio_types" TO "authenticated";
+
+
+
+GRANT SELECT("name") ON TABLE "public"."studio_types" TO "authenticated";
+
+
+
+GRANT SELECT("active") ON TABLE "public"."studio_types" TO "authenticated";
+
+
+
+GRANT SELECT("sort_order") ON TABLE "public"."studio_types" TO "authenticated";
+
+
+
+GRANT SELECT("id") ON TABLE "public"."studios" TO "authenticated";
+
+
+
+GRANT SELECT("owner_user_id") ON TABLE "public"."studios" TO "authenticated";
+
+
+
+GRANT SELECT("status") ON TABLE "public"."studios" TO "authenticated";
+
+
+
+GRANT SELECT("published_revision_id") ON TABLE "public"."studios" TO "authenticated";
+
+
+
+GRANT SELECT("draft_revision_id") ON TABLE "public"."studios" TO "authenticated";
+
+
+
+GRANT SELECT("edit_version") ON TABLE "public"."studios" TO "authenticated";
 
 
 

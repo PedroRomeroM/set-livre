@@ -16,6 +16,25 @@ A FEAT-003 amplia a mesma allowlist para `profile.read`, `profile.complete` e `p
 
 A FEAT-004 acrescenta `event=owner.request` para `owner.read`; tanto `GET /api/owner/activation` quanto `GET /api/owner/recipient` usam essa action allowlisted, sem registrar a projeção ou o documento. `owner.activate`, `recipient.onboarding.start` e `recipient.onboarding.refresh` usam `event=private.command` na rota compartilhada, com a action específica. Nenhuma ação de dono é rotulada como `identity.request`. Os eventos operacionais aceitam apenas ação, `requestId`, duração arredondada, status e resultado; não aceitam nome, telefone, documento, corpo/hash/título/fonte do contrato, provider/ref externa, requisito bruto, operação, idempotency key ou payload. Indisponibilidade/timeout do adapter, a recusa `PAYMENT_PROVIDER_UNAVAILABLE` do onboarding e a recusa `SERVICE_UNAVAILABLE` da ativação aparecem somente como `outcome=unavailable`, sem registrar `APP_ENV`, capability, fonte contratual, chamar o adapter ou tornar `/ready` indisponível. A recusa de ativação ocorre antes da escrita/auditoria, embora possa depender da leitura necessária para classificar a fonte. Em fatos novos, `audit.events.request_id` recebe o mesmo request ID usado na resposta/log, enquanto a coluna privada `idempotency_key` conserva a chave lógica somente para deduplicação; ela não entra no evento operacional, DTO ou metadata. Linhas anteriores ao head `20260815000100` preservam o valor legado de `request_id`, que era a chave idempotente, e não possuem correlação HTTP histórica recuperável. A mensagem SQL `owner_contract_not_current` participa apenas da classificação interna `409 CONFLICT`; mensagens e detalhes privados do banco não entram no erro público nem no evento operacional. Outros `42501` continuam `403 FORBIDDEN`.
 
+A FEAT-006 acrescenta `event=studio.request` para `studio.read` no único GET privado do editor.
+Os três comandos continuam sob `event=private.command`, com actions allowlisted
+`studio.create`, `studio.revision.updateCore` e `studio.draft.discard`. Eventos não aceitam nome,
+descrição, endereço, capacidade, tipo, UUID do estúdio, versão, idempotency key, conteúdo da revisão
+ou comparação local; registram somente action, `requestId`, duração arredondada, status e outcome.
+Conta suspensa (`ACCOUNT_SUSPENDED`) e perfil incompleto (`FORBIDDEN`) são recusados antes de
+header/query/read e aparecem apenas como resultado controlado. O header
+`x-set-livre-expected-scope` é asserção de sessão, não autenticação; ausência/formato inválido vira
+`422` e divergência, `409 SESSION_CHANGED`, sempre sem registrar UUID ou chamar read model.
+`NOT_FOUND`, conflito otimista e validação permanecem classificações públicas sem mensagem SQL ou
+valor de campo. O endereço de outro dono nunca aparece nem permite distinguir inexistência.
+
+Nos comandos de estúdio, o mesmo `requestId` da resposta/evento operacional chega ao SQL em parâmetro
+UUID próprio, separado da chave e fora do hash. Efeitos reais gravam `studio.created`,
+`studio.revision.updated`, `studio.draft.discarded` ou `studio.deleted` em `audit.events`, com ator,
+alvo e resultado factuais e metadata apenas estrutural de versão. Replay conserva a correlação
+original; no-op, falha e conflito não criam evento. Core, endereço, tipo, PII e chave idempotente nunca
+entram no log operacional ou na metadata.
+
 No terceiro P2, o fechamento estático, 358/358 pgTAP, browser 114/114, build, smoke e a release local `2a86acc4...` passaram. O quarto P2 fechou em 734/734 unitários, banco 358/358, browser 23/23 e 114/114, build e release `969f30cd...`; essas fotografias são históricas para a capability de ativação.
 
 No quinto P2, o snapshot pré-hidratação passou em 747/747 unitários e 358/358 no banco. A primeira focada coletou 23 testes em quatro specs/14 projetos (`615bf589...`) e terminou uma vez com exit `1`: 12 passados, uma falha em `SL-F004-E2E-001`/`critical-webkit`, dez não executados e zero rerun. O submit nativo pré-hidratação foi classificado como falha real de privacidade FEAT-002 e não evidência da capability; a integral não iniciou. Foram mantidos apenas stdout redigido `f4d0595a...` e auditoria `13859c3c...`; os brutos foram removidos e o cleanup ficou em zero.
@@ -80,7 +99,7 @@ Redaction:
 
 - conexão DB simples com timeout;
 - migration head compatível;
-- `current_user=app_dal` sem atributo privilegiado, membership de saída, ownership ou grant direto além de `USAGE private` e `EXECUTE` nas dezesseis rotinas autorizadas: dois checks de readiness, criação da intenção legal, seis operações do contexto recovery, três comandos do perfil e quatro entrypoints privados de dono/recebedor, sempre sem grant option; o manifesto totaliza dezessete dependências ACL exatas. As leituras de perfil e dono ficam fora dessa role e usam RPCs públicos `security invoker`, sem UUID de entrada, com `auth.uid()` + RLS; ativação retorna 21 colunas com contrato completo, e recebimentos retorna 16 sem título, versão textual, hash ou corpo;
+- `current_user=app_dal` sem atributo privilegiado, membership de saída, ownership ou grant direto além de `USAGE private` e `EXECUTE` nas dezenove rotinas autorizadas: dois checks de readiness, criação da intenção legal, seis operações do contexto recovery, três comandos do perfil, quatro entrypoints privados de dono/recebedor e três comandos de estúdio, sempre sem grant option; o manifesto totaliza vinte dependências ACL exatas. As leituras de perfil, dono e editor do estúdio ficam fora dessa role e usam RPCs públicos `security invoker`, sem UUID autoritativo de usuário, com `auth.uid()` + RLS; ativação retorna 21 colunas com contrato completo, recebimentos retorna 16 sem título, versão textual, hash ou corpo, e a FEAT-006 expõe `list_active_studio_types()`/`get_owner_studio_editor()`;
 - `PUBLIC` conserva somente `USAGE` em `pg_catalog`/`information_schema`, `CONNECT` no banco e `USAGE` nas quatro linguagens internas; `TEMPORARY` é recusado efetivamente à DAL/runtime, não há default ACL, objeto grande, parâmetro, FDW/server ou tablespace público, e `net` permanece inacessível às roles runtime;
 - nenhuma relação, coluna, sequência, rotina ou tipo autônomo de `private` concede privilégio efetivo a `PUBLIC`; row types, arrays e multiranges implícitos seguem o objeto canônico. Em relações e colunas de `pg_catalog`, ACLs públicas podem apenas reproduzir privilégios iniciais `i`/`e` registrados em `pg_init_privs`. Rotinas são confrontadas por OID/overload, grantor e grant option com essa mesma origem; sem init row, a baseline usa `pg_extension.extowner` para membros de extensão ou o owner bootstrap OID `10` para os demais objetos initdb, nunca `proowner`, e exige ownership canônico mesmo sem `EXECUTE` público. Rotina normal posterior continua sem baseline. Expansões como `SELECT` em `pg_authid`, `EXECUTE` em `pg_read_file(text)` ou owner/grantor recalculado após drift tornam readiness indisponível. `pg_roles`, `pg_user` e `pg_db_role_setting` negam ainda leitura direta ou transitiva às roles web/DAL; os demais catálogos mantêm somente a acessibilidade built-in. Essa métrica não promete confidencialidade genérica nem substitui manifestos de grants a roles nomeadas;
 - exatamente `session_user` restrito pode assumir `app_dal`; as referências administrativas `postgres` não possuem `SET/INHERIT`, nenhuma role intermediária assume o login, e esse login conserva somente `CONNECT`, membership DAL e a máscara vazia do GUC JWT local;
@@ -208,3 +227,24 @@ Links obrigatórios:
 - refund/payout;
 - backup/restore;
 - security incident.
+
+## 10. FEAT-006
+
+As ações `studio.create`, `studio.revision.updateCore` e `studio.draft.discard` usam evento
+allowlisted e registram apenas action, requestId, duração, status e resultado. Nome, endereço,
+descrição, tipo, idempotency key, versão, payload e provider não entram em evento/log. Same-key e
+different-key permanecem fatos de concorrência no DB. Create/update com resultado tardio não mais
+reconstruível emitem `40001`/`studio_result_no_longer_available` e viram `409` verification-first;
+overflow `22003`/`MAX_SAFE_INTEGER` também é `409`, e desconhecido é `503`. O serviço faz pre-read
+antes do DAL e nenhum read/await remoto após commit. O probe dirty/pending, a comparação A/B e o
+payload efêmero não criam campo novo de telemetria; unmount/transição e checks pós-`await` suprimem
+callbacks tardios sem registrar valores. O recorte dirigido anterior 124/124 por dez arquivos
+comprovou que a telemetria também exclui UUID do estúdio e user-agent, além dos campos allowlisted, e
+incluiu helper/latch. O atual passou em 141/141 por 12 arquivos sob Node 24 e acrescenta correlação
+auditável de ponta a ponta; nenhum substitui a suíte integral ou a execução SQL. A tentativa completa
+atual falhou em 12 testes de infraestrutura por limites do sandbox, não por violação de redaction.
+
+`requestId` e `idempotencyKey` ocupam colunas distintas, e replay não troca a primeira correlação.
+No-op de draft idêntico, validação, conflito e falha geram zero fato. Publicado sem draft, mesmo
+idêntico, cria revisão e audita `studio.revision.updated` com `draftCreated=true`; metadata contém
+somente `draftCreated`, `editVersion` e `revisionNumber`.

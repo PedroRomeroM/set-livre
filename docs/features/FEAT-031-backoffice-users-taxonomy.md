@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `backoffice` |
+| Campo            | Valor                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                            |
+| Prioridade       | P0                                                                                                                                   |
+| Domínio          | `backoffice`                                                                                                                         |
 | Specs Playwright | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`<br>`tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts` |
 
 ## Objetivo
@@ -51,6 +51,11 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Taxonomia usada é arquivada, não excluída.
 - Slug unique.
 - Item inativo não aceita nova seleção, mas continua em histórico.
+- O arquivamento de `studio_types` deve ser tipo-only. Se também bloquear estúdio existente, precisa
+  seguir a ordem agregado → tipo usada pelo update da FEAT-006 ou redesenhar/testar as duas direções;
+  estúdio depois do tipo não pode surgir silenciosamente.
+- `OPEN-013` bloqueia rename de tipo já usado; esta feature não pode escolher silenciosamente entre
+  imutabilidade, versionamento ou snapshot do rótulo.
 
 ## Dados canônicos afetados
 
@@ -93,14 +98,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F031-E2E-001 | P0 | critical | desktop | support suspende/restaura usuário e comandos bloqueiam | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-002 | P0 | critical | desktop | somente admin gerencia roles | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-003 | P0 | critical | desktop | não remover último admin | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-004 | P0 | critical | desktop | arquivar taxonomia remove novas seleções e preserva o histórico público | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-005 | P1 | regression | desktop | dados pessoais ficam mascarados até revelação autorizada e auditada | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-006 | P1 | regression | desktop | cursor e busca de usuários são processados no servidor | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                                 | Spec                                                              |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| SL-F031-E2E-001 | P0         | critical   | desktop  | support suspende/restaura usuário e comandos bloqueiam                  | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`   |
+| SL-F031-E2E-002 | P0         | critical   | desktop  | somente admin gerencia roles                                            | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`   |
+| SL-F031-E2E-003 | P0         | critical   | desktop  | não remover último admin                                                | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`   |
+| SL-F031-E2E-004 | P0         | critical   | desktop  | arquivar taxonomia remove novas seleções e preserva o histórico público | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`   |
+| SL-F031-E2E-005 | P1         | regression | desktop  | dados pessoais ficam mascarados até revelação autorizada e auditada     | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts` |
+| SL-F031-E2E-006 | P1         | regression | desktop  | cursor e busca de usuários são processados no servidor                  | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts` |
 
 Regras:
 
@@ -115,7 +120,8 @@ Regras:
 ## Testes unitários, integração e banco
 
 - banco: role constraints/last admin guard
-- uso e arquivamento de taxonomia
+- uso e arquivamento de taxonomia, incluindo corrida contra seleção `FOR SHARE`; se o comando também
+  bloquear estúdio, concorrência nas duas direções deve provar ausência de deadlock
 - auditoria e segurança
 
 ## Documentação viva afetada

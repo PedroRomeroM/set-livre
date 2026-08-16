@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `studios` |
+| Campo            | Valor                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                        |
+| Prioridade       | P0                                                                                                                               |
+| Domínio          | `studios`                                                                                                                        |
 | Specs Playwright | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
 
 ## Objetivo
@@ -28,7 +28,7 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 
 ## Incluído
 
-- Tipo de estúdio.
+- Consumo do tipo de estúdio já selecionado no núcleo da FEAT-006.
 - Tags e comodidades.
 - Regras de uso.
 - FAQ ordenável.
@@ -49,6 +49,7 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 - Vídeo é ID validado.
 - Textos são plain text renderizados com escape.
 - A alteração ocorre apenas no rascunho.
+- Nome, descrição, endereço, capacidade e `studio_type_id` continuam sob `studio.revision.updateCore`; esta feature não os duplica.
 
 ## Dados canônicos afetados
 
@@ -93,13 +94,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F007-E2E-001 | P0 | critical | desktop | salvar tags, comodidades, regras e FAQ | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-002 | P1 | regression | mobile | reordenar FAQ e preservar conteúdo | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-003 | P0 | critical | desktop | tag inativa/externa é rejeitada | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-004 | P1 | regression | desktop | YouTube válido renderiza e inválido falha | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-005 | P0 | critical | desktop | texto malicioso não executa script | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                   | Spec                                                            |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------- | --------------------------------------------------------------- |
+| SL-F007-E2E-001 | P0         | critical   | desktop  | salvar tags, comodidades, regras e FAQ    | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
+| SL-F007-E2E-002 | P1         | regression | mobile   | reordenar FAQ e preservar conteúdo        | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-003 | P0         | critical   | desktop  | tag inativa/externa é rejeitada           | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
+| SL-F007-E2E-004 | P1         | regression | desktop  | YouTube válido renderiza e inválido falha | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-005 | P0         | critical   | desktop  | texto malicioso não executa script        | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
 
 Regras:
 
@@ -135,3 +136,9 @@ Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `doc
 - logs e métricas necessários;
 - rollback/correção definidos;
 - nenhuma funcionalidade fora de escopo introduzida.
+
+## Fronteira temporal com FEAT-006
+
+FEAT-007 permanece planejada e não cria, edita ou arquiva `studio_types`. A FEAT-006 é proprietária
+dos quatro fixtures locais e do tipo selecionado no editor; tags, comodidades, regras, FAQ e vídeo
+continuam fora desta fatia. Não há claim de browser, build, smoke ou release para FEAT-007.

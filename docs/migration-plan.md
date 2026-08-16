@@ -79,3 +79,27 @@ Produção não recebe usuários/dados QA. Taxonomias iniciais entram em migrati
 - RLS tests;
 - command tests;
 - snapshot generated.
+
+## FEAT-006 — migration e readiness atuais
+
+`20260816000100_studio_core_revision.sql` permanece imutável como a 16ª migration.
+`20260816000200_studio_command_concurrency_hardening.sql` é a 17ª migration append-only e o novo
+head/readiness de fonte; o predecessor imediato esperado `20260816000100` deve falhar fechado. O
+último teste DB autorizado ocorreu uma vez no head anterior, em cinco arquivos, e somou 431 asserts
+(`158 + 78 + 57 + 65 + 73`); naquela execução, readiness atual foi `true` e o predecessor `false`.
+O manifesto corrente tem 20 dependências, 19 rotinas, quatro fixtures locais e os read models
+`list_active_studio_types()` e `get_owner_studio_editor()`. O pgTAP da feature agora declara 83 casos,
+incluindo replay tardio, lock do tipo versus archive, clone publicado idêntico e auditoria
+requestId/idempotency. O total DB esperado passa a 441 (`158 + 78 + 57 + 65 + 83`), ainda sem reset,
+rerun, geração ou claim de gate verde. `schema.generated.sql` e `database.generated.ts` continuam stale;
+a migration recebeu somente inspeção estática/diff neste ambiente. Como `00100`, `00200` e `0005`
+ainda estão untracked, nenhum checksum Git é prova histórica; a cadeia aplicada só poderá ser
+atestada pelo reset/banco compatível.
+
+### Rollback/correção da FEAT-006
+
+As duas migrations são append-only e nunca devem ser editadas ou desfeitas depois de aplicadas. Um
+rollback de aplicação só pode usar release anterior compatível com o schema e deve manter
+head/readiness aceitos. Shells, drafts, revisões, ledger e auditoria permanecem preservados; qualquer
+correção de schema ou dados entra por nova migration forward-only e comando autoritativo, nunca por
+edição de migration aplicada ou exclusão manual de histórico.

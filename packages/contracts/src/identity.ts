@@ -168,10 +168,15 @@ const allowedAuthenticatedReturnTos = new Set<string>([
   "/conta/seguranca",
   "/dono",
   "/dono/recebimentos",
+  "/dono/estudios/novo",
 ]);
+const studioEditorAuthenticatedReturnToPattern =
+  /^\/dono\/estudios\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/dados$/u;
 
 export function resolveAuthenticatedReturnTo(candidate: unknown) {
-  return typeof candidate === "string" && allowedAuthenticatedReturnTos.has(candidate)
+  if (typeof candidate !== "string") return defaultAuthenticatedReturnTo;
+  return allowedAuthenticatedReturnTos.has(candidate) ||
+    studioEditorAuthenticatedReturnToPattern.test(candidate)
     ? candidate
     : defaultAuthenticatedReturnTo;
 }

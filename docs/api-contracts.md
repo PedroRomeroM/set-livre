@@ -33,7 +33,7 @@ type LogoutRequest = {
 };
 ```
 
-Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry implementado, `expectedScope` pertence aos dois comandos de perfil e aos três comandos de dono/recebedor; estes três também exigem `idempotencyKey`. A rota Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry implementado, `expectedScope` pertence aos dois comandos de perfil, aos três comandos de dono/recebedor e aos três comandos da FEAT-006; os comandos de dono e estúdio também exigem `idempotencyKey`. A rota Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
 Headers:
 
@@ -170,23 +170,106 @@ O gerador canônico processou `2045d1a00c15889007b3c5c04c08d0467fc3d9b3` exatame
 
 ### 5.3 Estúdio e revisão
 
-| Action                           | Efeito                            |
-| -------------------------------- | --------------------------------- |
-| `studio.create`                  | cria studio + revisão draft       |
-| `studio.revision.updateCore`     | dados, endereço, capacidade, tipo |
-| `studio.revision.updateTaxonomy` | tags/amenities                    |
-| `studio.revision.updateContent`  | descrição/regras/FAQ/YouTube      |
-| `studio.revision.submit`         | valida completude e envia         |
-| `studio.pause`                   | pausa novas reservas              |
-| `studio.resume`                  | retoma se elegível                |
-| `studio.draft.discard`           | descarta draft sem dependência    |
-| `studio.media.upload.prepare`    | emite upload assinado             |
-| `studio.media.upload.finalize`   | valida objeto/metadados           |
-| `studio.media.reorder`           | posição                           |
-| `studio.media.cover.set`         | capa                              |
-| `studio.media.delete`            | remove se seguro                  |
+| Action                           | Efeito                                      |
+| -------------------------------- | ------------------------------------------- |
+| `studio.create`                  | cria studio + revisão draft                 |
+| `studio.revision.updateCore`     | nome, descrição, endereço, capacidade, tipo |
+| `studio.revision.updateTaxonomy` | tags/amenities                              |
+| `studio.revision.updateContent`  | regras/FAQ/YouTube                          |
+| `studio.revision.submit`         | valida completude e envia                   |
+| `studio.pause`                   | pausa novas reservas                        |
+| `studio.resume`                  | retoma se elegível                          |
+| `studio.draft.discard`           | descarta draft sem dependência              |
+| `studio.media.upload.prepare`    | emite upload assinado                       |
+| `studio.media.upload.finalize`   | valida objeto/metadados                     |
+| `studio.media.reorder`           | posição                                     |
+| `studio.media.cover.set`         | capa                                        |
+| `studio.media.delete`            | remove se seguro                            |
 
-`studio.revision.update*` usa optimistic concurrency (`expectedUpdatedAt` ou revision token).
+Na FEAT-006, `studio.revision.updateCore` usa concorrência otimista com `expectedEditVersion`
+inteiro positivo e monotônico do agregado. `studio.create` recebe um `studioId` UUID aleatório
+pré-gerado apenas para recuperar resposta ambígua; esse identificador, `expectedScope` e qualquer ID
+do cliente nunca provam ownership. Status, número da revisão, cidade, UF, ownership e versão
+resultante nunca vêm do navegador. As ações posteriores reutilizam ou ampliam esse token de forma
+explícita, sem usar timestamp como autoridade.
+
+Nos três comandos, a rota mantém o `requestId` UUID fora do envelope de domínio e o encaminha por
+handler, serviço e DAL. O SQL o recebe imediatamente depois da `idempotencyKey` nas assinaturas
+privadas de 13/14/5 parâmetros; ele não participa do hash do payload. Assim, retry com a mesma chave
+lógica e outro request ID não vira divergência nem cria efeito/auditoria adicional. O primeiro efeito
+preserva sua correlação em `audit.events.request_id`, e a chave fica somente em
+`audit.events.idempotency_key` e no ledger privado.
+
+O core estrito contém `name` (2–120), `description` multiline (20–5000), `street` (2–160),
+`streetNumber` (1–20), `complement` nulo ou 1–120, `neighborhood` (2–120), `postalCode` em oito
+dígitos, `capacity` inteira 1–500 e `studioTypeId` UUID. O servidor/banco derivam sempre
+`Curitiba`, `PR` e a convenção temporal da baseline. Campo extra, caractere de controle, status,
+revision ID/number ou versão resultante é recusado pelo Zod estrito.
+
+Há um único read endpoint privado:
+
+- `GET /api/owner/studio-editor` retorna `mode=create`, `studio=null` e tipos ativos;
+- `GET /api/owner/studio-editor?studioId=<UUID>` retorna `mode=edit`, o rascunho e a versão
+  aprovada separadamente, `editVersion` e tipos ativos;
+- toda chamada interativa envia o header obrigatório `x-set-livre-expected-scope: <UUID>`; ele
+  repete o recorte SSR somente como asserção de sessão e **não** autentica, autoriza nem prova
+  ownership;
+- os read models são `list_active_studio_types()` e `get_owner_studio_editor()`;
+- sessão e estado da conta são validados antes de interpretar `studioId` ou consultar read model:
+  conta suspensa recebe `ACCOUNT_SUSPENDED`, e perfil incompleto, `FORBIDDEN`; parâmetro ausente é
+  diferente de vazio, e valor repetido, inválido ou extra é recusado;
+- depois de autenticação/status/perfil, header ausente ou inválido retorna `422 VALIDATION_FAILED`,
+  e UUID divergente do usuário autoritativo retorna `409 SESSION_CHANGED`; os dois ramos precedem o
+  parse da query e executam zero read model;
+- estúdio inexistente e pertencente a outro dono retornam o mesmo `404 NOT_FOUND`, sem endereço,
+  existência ou owner no payload.
+
+O DTO nunca expõe IDs internos de revisão nem `owner_user_id`. Cada snapshot contém número da
+revisão e core com `studioTypeName`; a pré-visualização deixa explícito que o rascunho não está
+publicado. `studio.draft.discard` retorna união estrita: `studio_removed` para shell nunca publicado,
+ou `draft_removed` com o editor factual quando a aprovada permanece.
+
+Update de estúdio publicado sem draft sempre cria a próxima revisão a partir da aprovada, inclusive
+quando o core enviado é idêntico. No-op existe somente se já houver draft semanticamente idêntico;
+nesse caso, versão e auditoria não avançam, mas o retorno autoritativo continua sendo sucesso e a UI
+remonta o formulário para limpar estado dirty/erros sem depender de mudança em `editVersion`.
+
+Create/update bloqueiam o tipo ainda ativo com `FOR SHARE`, serializando a seleção com o futuro
+arquivamento da FEAT-031. O comando administrativo deve permanecer tipo-only; se também bloquear um
+estúdio existente, precisa seguir a ordem global agregado → tipo usada pelo update ou redesenhá-la
+com prova bidirecional de ausência de deadlock. Nunca pode buscar estúdio depois de bloquear o tipo
+silenciosamente. Tipo arquivado sai de
+novas seleções e permanece no histórico; rename de tipo usado continua bloqueado por `OPEN-013`.
+
+Cada efeito real grava exatamente uma ação factual: `studio.created`, `studio.revision.updated`,
+`studio.draft.discarded` ou `studio.deleted`. Replay mantém o evento original; no-op, validação,
+conflito e falha gravam zero. Metadata contém apenas versões, número de revisão e `draftCreated` quando
+aplicável, nunca core, tipo, endereço ou PII.
+
+No conflito, o cliente não repete POST. Um GET explícito fecha o boundary, e só depois a interface
+mostra **Versão atual** e **Sua tentativa**. Reaplicar campos apenas repopula o formulário com a
+nova `expectedEditVersion`. Falha de rede/timeout/resposta inválida também exige confirmação por
+GET; payload completo existe somente em ref efêmera e nunca entra em URL, storage ou QueryCache.
+
+Foco, retorno online e `visibilitychange` visível também provocam esse GET quando o formulário está
+dirty **ou** uma mutation continua pendente. O refetch automático TanStack fica desabilitado nesses
+dois estados. O controller do form permanece montado para conservar a closure pendente, mas devolve
+DOM nulo durante o probe; as nove entradas são capturadas diretamente dos controles em uma ref
+efêmera. Mesmo escopo restaura exatamente os valores crus e mantém a mutation disabled/pending;
+divergência, `404` de boundary ou captura impossível inicia a transição fechada. Unmount/transição
+arma um latch, limpa refs e impede que qualquer callback ou efeito posterior a `await` publique
+sucesso, comparação, cache ou navegação atrasados.
+
+Uma criação ambígua conserva o mesmo `studioId` S1 em toda a recuperação; cada nova tentativa
+**explícita** recebe outra idempotency key. Se o primeiro comando de core A aparece depois que a
+tentativa local já é core B, o GET de S1 não descarta B: a comparação apresenta A como atual e B como
+tentativa. **Editar a partir da versão atual** navega deliberadamente ao editor canônico S1/A;
+**Reaplicar meus campos** mantém B somente em memória e converte o próximo submit em
+`studio.revision.updateCore` para S1 com a `expectedEditVersion` lida e chave nova. A tentativa B não
+é serializada em rota, Web Storage ou QueryCache. A fonte desktop-chromium do ID 005 fixa o contrato
+de ponta a ponta: K1/S1/A ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação
+A/B → reaplicação → save explícito K3 como update do único S1. Esse roteiro está implementado na
+fonte, mas ainda não foi executado e não é verde.
 
 ### 5.4 Calendário
 
@@ -480,3 +563,21 @@ Obrigatória em:
 Mesmo key + mesmo hash retorna resultado anterior. Mesmo key + payload diferente retorna conflito.
 
 O primeiro uso concreto é a intenção jurídica do cadastro: enquanto a intenção está pendente, `requestId` igual e mesmo contrato retorna o mesmo token opaco inclusive sob corrida, e payload divergente falha fechado. O trigger apaga a intenção ao concluir, o purge remove expiradas e o token nunca é devolvido ao navegador. Depois do consumo ou da expiração, o mesmo `requestId` pode iniciar uma nova tentativa; isso não recria perfil ou aceite para um usuário já materializado, e replay do token apagado falha fechado.
+
+### Boundary atual da FEAT-006
+
+`studio.create` e `studio.revision.updateCore` fazem pre-read de tipos/editor antes do DAL. Após o
+commit, o serviço deriva o retorno somente de inputs já validados e não faz read remoto nem `await`
+remoto adicional. `studio.draft.discard` pré-lê e valida mode/scope/id; shell nunca publicado retorna
+tombstone mínima, enquanto draft retido deriva localmente `draft=null`, `editVersion` SQL e preserva
+published/status/types/id.
+
+Concorrência DB real prova same-key com um efeito e different-key com um vencedor e `40001`. Mesma
+key + mesmo hash só retorna o efeito anterior enquanto o agregado ainda está na
+`resulting_edit_version` registrada; mesma key + hash diferente conflita, e key diferente é uma
+tentativa distinta. Se o ledger prova create/update anterior, mas o resultado tardio não é mais o
+estado corrente reconstruível, a função emite `40001`/`studio_result_no_longer_available`; o serviço
+responde `409` e exige GET verification-first. O browser cobre stale/comparação; tombstone e replay
+seguro pertencem às provas SQL/unitárias. Nenhum deles dispara POST automático. `MAX_SAFE_INTEGER`
+com `22003` retorna `409` factual; erro desconhecido retorna `503`. O rate class `studio.edits` é
+60/10min por usuário; o facade frontend mantém limite IP separado.

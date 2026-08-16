@@ -11,7 +11,7 @@ Cada feature possui documento próprio, cenários com IDs estáveis e um ou mais
 | FEAT-003 | Perfil PF/PJ, conta e preferências                      |     P0     | `identity`              | `docs/features/FEAT-003-profile-account.md`                 | `tests/e2e/critical/feat-003-profile-account.spec.ts`<br>`tests/e2e/regression/feat-003-profile-account.spec.ts`<br>`tests/e2e/accessibility/feat-003-profile-account.spec.ts`<br>`tests/e2e/reflow/feat-003-profile-account.spec.ts`                                             |
 | FEAT-004 | Ativação de dono e onboarding de recebedor              |     P0     | `owners-payments`       | `docs/features/FEAT-004-owner-onboarding-recipient.md`      | `tests/e2e/critical/feat-004-owner-onboarding-recipient.spec.ts`<br>`tests/e2e/regression/feat-004-owner-onboarding-recipient.spec.ts`<br>`tests/e2e/accessibility/feat-004-owner-onboarding-recipient.spec.ts`<br>`tests/e2e/reflow/feat-004-owner-onboarding-recipient.spec.ts` |
 | FEAT-005 | Dashboard do dono e portfólio de estúdios               |     P0     | `owners`                | `docs/features/FEAT-005-owner-dashboard-portfolio.md`       | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts`<br>`tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts`                                                                                                                                              |
-| FEAT-006 | Criação do estúdio e dados centrais versionados         |     P0     | `studios`               | `docs/features/FEAT-006-studio-core-revision.md`            | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`<br>`tests/e2e/regression/feat-006-studio-core-revision.spec.ts`                                                                                                                                                        |
+| FEAT-006 | Criação do estúdio e dados centrais versionados         |     P0     | `studios`               | `docs/features/FEAT-006-studio-core-revision.md`            | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`<br>`tests/e2e/regression/feat-006-studio-core-revision.spec.ts`<br>`tests/e2e/reflow/feat-006-studio-core-revision.spec.ts`                                                                                            |
 | FEAT-007 | Tags, comodidades, regras, FAQ e vídeo                  |     P0     | `studios`               | `docs/features/FEAT-007-studio-taxonomy-content.md`         | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`                                                                                                                                                  |
 | FEAT-008 | Galeria de fotos, capa e ordenação                      |     P0     | `media`                 | `docs/features/FEAT-008-studio-media.md`                    | `tests/e2e/critical/feat-008-studio-media.spec.ts`<br>`tests/e2e/regression/feat-008-studio-media.spec.ts`                                                                                                                                                                        |
 | FEAT-009 | Envio, status, edição, pausa e publicação               |     P0     | `studios`               | `docs/features/FEAT-009-studio-publication-workflow.md`     | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`<br>`tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts`                                                                                                                                          |
@@ -44,13 +44,43 @@ Cada feature possui documento próprio, cenários com IDs estáveis e um ou mais
 ## Resumo
 
 - Features: **34**.
-- Conclusão no repositório: **2/34**, com a FEAT-002 incorporada pelo PR #2 e a FEAT-003 pelo PR #4.
-- Cenários Playwright catalogados: **200**.
-- Prioridade: **134 P0**, **66 P1**, **0 P2**.
-- Suítes: **3 smoke**, **131 critical**, **61 regression**, **2 accessibility** e **3 reflow**.
-- Viewports primários: **163 desktop**, **31 mobile** (incluindo um contrato explícito de 320 px), **1 desktop/mobile**, **2 claro/escuro/mobile** e **3 zoom 200%**; a matriz responsiva adicional está em `docs/qa-test-plan.md`.
+- Conclusão no repositório: **3/34**; FEAT-002, FEAT-003 e FEAT-004 estão incorporadas, e a FEAT-006 está em implementação.
+- Cenários Playwright catalogados: **201**.
+- Prioridade: **134 P0**, **67 P1**, **0 P2**.
+- Suítes: **3 smoke**, **131 critical**, **61 regression**, **2 accessibility** e **4 reflow**.
+- Viewports primários: **163 desktop**, **31 mobile** (incluindo um contrato explícito de 320 px), **1 desktop/mobile**, **2 claro/escuro/mobile** e **4 zoom 200%**; a matriz responsiva adicional está em `docs/qa-test-plan.md`.
 
 ## Uso
+
+### Snapshot FEAT-006
+
+Os seis IDs da FEAT-006 estão automatizados em fonte; o catálogo totaliza **29 automatizados**
+(FEAT-002 7 + FEAT-003 9 + FEAT-004 7 + FEAT-006 6) e **172 planejados**. A fonte focada atual
+projeta 20 execuções em três specs/dez projetos, e a integral atual projeta 134; nenhuma foi
+executada. O resultado aceito continua sendo somente a fotografia histórica de 17/17 por duas
+specs/sete projetos, anterior às extensões, e a coleta histórica de 131 em 19 specs/16 projetos não
+foi verde.
+
+Os IDs atuais fixam, sem multiplicar cenários, probe same-scope com mutation pendente e um POST,
+descarte `draft_removed`, fence dirty A→B, teclado/foco sem POST inválido, comparação stale e reflow
+200% nos três engines. A implementação segue verification-first: expected-scope do GET é asserção,
+não autoridade; o DOM fecha durante probe; valores crus e payload de recuperação permanecem somente
+em refs efêmeras, nunca URL/storage/QueryCache; latch de unmount/pós-`await` suprime callback tardio.
+Criação ambígua preserva S1, usa chave nova por tentativa explícita e, se encontra A diante da
+tentativa B, oferece navegação explícita para A ou reaplicação seguida de save de B como update
+versionado, sem perda. No ID 005 desktop-chromium, a fonte fixa K1/S1/A ambígua → GET 404 → usuário B
+→ commit tardio K1 → K2/S1/B 409 → comparação A/B → reaplicação → save K3 e único S1. É fonte
+implementada/projeção pendente, nunca execução verde.
+
+O último DB verde continua 431 no head anterior; a fonte possui head `20260816000200`, pgTAP 83
+casos/441 esperados e schema/tipos gerados stale, aguardando reset, geração e teste. A integral
+estática 893/893 é histórica, anterior aos helpers atuais. O recorte dirigido anterior passou em
+124/124 por dez arquivos; o atual passou em 141/141 por 12 arquivos FEAT-006/studio sob Node 24,
+incluindo correlação e remount, mas não é integral nem prova SQL; a tentativa completa falhou em 12 testes de
+infraestrutura por limites do sandbox e não constitui gate verde. `docs:check`, integral unitária,
+DB 441 + gerados, browser 20/134, build das duas apps, smoke, release e ARM64 permanecem pendentes. A
+FEAT-006 segue em implementação; OPEN-012/013 e FEAT-031 bloqueiam sua conclusão. A migration nova
+teve somente inspeção estática/diff.
 
 1. Implementar features na ordem de `docs/implementation-order.md`.
 2. Ler o documento da feature e seus ADRs/dependências.

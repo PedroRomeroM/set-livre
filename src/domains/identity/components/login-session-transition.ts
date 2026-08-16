@@ -5,9 +5,17 @@ const accountLoginReturnTargets = [
   "/conta/seguranca",
   "/dono",
   "/dono/recebimentos",
+  "/dono/estudios/novo",
 ] as const;
 
-export type AccountLoginReturnTarget = (typeof accountLoginReturnTargets)[number];
+type StaticAccountLoginReturnTarget = (typeof accountLoginReturnTargets)[number];
+type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/dados`;
+
+export type AccountLoginReturnTarget =
+  StaticAccountLoginReturnTarget | StudioEditorLoginReturnTarget;
+
+const studioEditorReturnTargetPattern =
+  /^\/dono\/estudios\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/dados$/u;
 
 export function resolveAccountLoginReturnTarget(
   candidate: string | readonly string[] | undefined,
@@ -15,6 +23,9 @@ export function resolveAccountLoginReturnTarget(
   if (typeof candidate !== "string") return undefined;
   for (const target of accountLoginReturnTargets) {
     if (candidate === target) return target;
+  }
+  if (studioEditorReturnTargetPattern.test(candidate)) {
+    return candidate as StudioEditorLoginReturnTarget;
   }
   return undefined;
 }

@@ -64,6 +64,8 @@ Default: `VM.Standard.A1.Flex` ARM64 dentro da elegibilidade Always Free da tena
 
 Sistema: Ubuntu LTS ARM64 mínimo.
 
+O discovery read-only de 2026-08-16 comprovou `sa-saopaulo-1` como home region, uma AD, shape A1 Flex e imagem Ubuntu 24.04 Minimal ARM64. Os limites informaram A1 sem uso, mas quota não comprova capacidade física nem gratuidade do launch. As redes encontradas pertencem a Spenses/outro projeto e foram recusadas. O target isolado é um novo compartment `SetLivre`, VCN `10.20.0.0/16`, subnet regional `10.20.1.0/24`, NSG com 80/443 públicos e 22 somente do `/32` administrativo, A1 2 OCPUs/12 GB, boot 50 GB e IMDSv2-only. A definição não equivale a recurso criado; PEND-003 continua aberta até inventário, custo zero, hardening e smoke.
+
 ### 3.2 Disco
 
 - volume boot com margem para três releases, logs e build;
@@ -90,14 +92,11 @@ Portas 3000/3001/worker somente loopback. Backoffice pode usar subdomínio com a
 │   ├── web/
 │   ├── backoffice/
 │   ├── workers/
+│   ├── runtime/          # env root:setlivre 0640, instalado fora do artifact
 │   └── RELEASE.md
 ├── current -> releases/<sha>
 ├── previous -> releases/<sha>
-└── shared/
-    ├── web.env
-    ├── backoffice.env
-    ├── worker.env
-    └── runtime/
+└── shared/runtime/
 ```
 
 Usuário `setlivre` sem sudo executa serviços. Deploy user só escreve releases e troca symlinks via script restrito.
@@ -162,7 +161,7 @@ Baseline de unit:
 [Service]
 User=setlivre
 WorkingDirectory=/opt/setlivre/current/web
-EnvironmentFile=/opt/setlivre/shared/web.env
+EnvironmentFile=/opt/setlivre/current/runtime/web.env
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
@@ -231,6 +230,8 @@ A CSP de HTML nasce no Proxy de cada app, antes da renderização, porque o nonc
 14. Knip;
 15. artifacts de falha.
 
+`.github/workflows/ci.yaml` materializa essa ordem em `ubuntu-24.04`, com actions pinadas por SHA, Node `24.18.0`, npm `11.19.0` e PostgreSQL client `18.4`. PR e `push` de `main` usam somente Supabase local/Docker; PR não recebe secret cloud. O PR executa `test:e2e:affected` — conservadoramente integral enquanto não houver seletor seguro — e `main` executa `test:e2e`. O workflow ainda precisa de primeiro run real e proteção de branch; sua existência em fonte não fecha PEND-001.
+
 ## 10. Release
 
 1. merge em main;
@@ -249,6 +250,10 @@ A CSP de HTML nasce no Proxy de cada app, antes da renderização, porque o nonc
 14. health interno;
 15. smoke HTTPS;
 16. registrar release.
+
+O workflow `.github/workflows/prd-deploy.yaml` é elegível somente após conclusão verde do workflow `CI` disparado por `push` de `main`, head repository igual, SHA completo e `PRD_DEPLOY_ENABLED=true`. Ele exige environment GitHub `production`, runner `ubuntu-24.04-arm`, ref Supabase fixa `klzxatkgiiznymzuzadd`, executa `supabase db push --dry-run` antes do push, prova a identidade `app_dal`/runtime e então transfere por SSH uma release web+backoffice+migrations com checksum. Não chama seed, reset, `config push`, Docker remoto ou service role no runtime. A troca de `current` ocorre somente no host preparado pelo contrato do ADR-014 e health falho restaura a aplicação anterior quando existe. Migrations permanecem forward-only.
+
+Secrets são escopados por etapa e o checkout não persiste credenciais. O artefato é construído sem URL administrativa/DAL no ambiente de build; runtime entra depois em arquivos root-owned. O workflow não foi executado no GitHub e não comprova hoje runner ARM64, environment, SSH, Supabase Cloud ou host. Os nomes e passos humanos canônicos estão em `configuration-seteps.md`.
 
 ## 11. Rollback
 
@@ -326,6 +331,60 @@ Para fotos e operação comercial, o plano gratuito pode ser insuficiente. Produ
 - image transformation;
 - SLA/suporte.
 
+O único projeto Cloud comprovadamente criado nesta rodada é `set-livre`, ref `klzxatkgiiznymzuzadd`. Ele não é tratado como pronto: OAuth/MCP, Auth URLs/templates, senha, login `app_runtime_prod`, ACLs gerenciadas, backups e secrets GitHub ainda precisam da checklist. `supabase/config.toml` contém portas/URLs locais e nunca é enviado por `config push`; produção recebe somente migrations versionadas. Acceptance separado continua pendente quando necessário e testes destrutivos permanecem exclusivamente locais.
+
 Acceptance e produção também precisam fixar a expiração do JWT Auth em exatamente `3600` segundos antes de receber tráfego. A binding/tombstone de recovery deriva sua retenção do `exp` assinado, e as funções privadas de emissão/inspeção e o readiness falham fechado quando `app.settings.jwt_exp` diverge. Alterar essa duração exige adaptar primeiro o contrato de retenção e seus testes; PEND-002 continua bloqueando a prova correspondente no Supabase Cloud.
 
 O custo do Supabase e providers não está coberto pela VM gratuita.
+
+## 16. Snapshot FEAT-006
+
+FEAT-006 está em implementação local-first. O último reset/generate/test DB autorizado pertence ao
+head anterior de 16 migrations, `20260816000100`, e passou uma vez em 431 asserts
+(`158 + 78 + 57 + 65 + 73`), readiness `true`/predecessor `false`, DAL 20 dependências/19 rotinas,
+quatro fixtures locais e cleanup zero. A fonte possui agora 17 migrations e head/readiness
+`20260816000200`, com predecessor imediato `20260816000100` esperado falso e o mesmo manifesto. A
+última cadeia estática integral canônica, anterior aos helpers/hardenings finais, passou em
+Node24/npm11 com 85
+arquivos/893 unitários. O recorte dirigido anterior executou 124/124 em dez arquivos; o atual passou
+em 141/141 por 12 arquivos FEAT-006/studio sob Node 24, incluindo correlação e remount. Nenhum é
+integral. A tentativa da suíte unitária completa falhou em 12 testes de infraestrutura por limites
+do sandbox — nested spawn `EPERM`, remapeamento de ownership raiz e timeouts de process group ou
+stdout vazio — e não constitui gate verde.
+
+O pgTAP atual declara 83 casos da feature e total esperado 441, ainda sem reset/rerun. A migration
+`00200` recebeu somente inspeção estática/diff neste ambiente; `schema.generated.sql` e
+`database.generated.ts` estão stale. Reset, `supabase:generate`, `test:db` e diff dos gerados são
+obrigatórios. Assim, 431 continua sendo o último DB verde e 441 é apenas expectativa.
+
+No Next.js 16.3, `cleanDistDir` preserva `cache`, `dev`, `lock` e `trace`. O cleanup pós-build
+genérico remove fisicamente apenas `<app>/.next/cache`, tanto em sucesso quanto em falha, e deixa
+`<app>/.next/dev` intacto: essa árvore pode pertencer a um `next dev` concorrente e não pode ser
+apagada sem exclusão mútua confiável. O alvo e seus ancestrais são revalidados; symlink ou mount
+falham fechado sem travessia. `BUILD_ID`, `standalone` e `static` não são removidos. O preview local
+e o fluxo de release, em boundary quiescente próprio, continuam responsáveis pelo preclean físico
+da árvore `.next` inteira quando aplicável. O teste direcionado `remove-next-build-cache` passou em
+12/12; essa prova é isolada e não torna a suíte unitária integral verde.
+
+O browser focado passou historicamente em 17/17 por duas specs/sete projetos, com privacidade e
+cleanup verdes. A coleta integral histórica enumerou 131 testes em 19 specs/16 projetos, sem run
+verde. A fonte atual projeta 20 execuções por três specs/dez projetos e 134 na integral; nenhuma foi
+executada porque o sandbox bloqueia localhost. Build final das duas apps, smoke, release, remoto e
+ARM64/PEND-003 permanecem pendentes. A prova histórica é Linux x64 e não representa produção.
+
+Após preclean físico dos dois `.next`, uma única invocação `APP_RELEASE_SHA=local npm run build`
+sob Node 24/npm 11 compilou a etapa web em 3,9 s e foi rejeitada em
+`Could not parse output from TypeScript's --showConfig`; o backoffice não iniciou e smoke ficou em
+zero. O diagnóstico independente executou `tsc --showConfig` diretamente com exit `0` e repetiu o
+spawn exato com stdout/stderr em pipe, também exit `0`, mas ambos os buffers tiveram length zero no
+sandbox. A classificação é rejeição de harness/sandbox, não falha de produto nem build verde.
+
+O log privado possui 449 bytes, modo `0600` e SHA-256
+`0f614f806016737ae887529df0ed728dab3d4b3d62da13b12010925facb6cf68`; `next-env`, lockfile e
+ausência de caches permaneceram canônicos. O build final das duas apps continua pendente. O
+`docs:check` atual também é inconclusivo porque o pipe de `git hash-object --stdin` não produziu
+saída no sandbox; a prova canônica anterior não é promovida para este snapshot.
+
+Os contratos atuais de probe dirty/pending, latch de unmount/pós-`await`, recuperação A/B e reflow
+não adicionam serviço, variável, cache distribuído ou dependência externa. Permanecem estritamente
+no app local e não alteram readiness: o manifesto corrente continua 20 dependências/19 rotinas.

@@ -643,16 +643,22 @@
           <li>Fundação local</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
           <li>FEAT-003 · concluída e incorporada a main</li>
-          <li>FEAT-004 · em implementação local</li>
-          <li>Sem integração cloud nesta etapa</li>
+          <li>FEAT-004 · concluída e incorporada a main</li>
+          <li>FEAT-006 · em implementação</li>
+          <li>Cloud em configuração fail-closed · sem go-live</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais e históricos identificados">
-          <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>2/2 + 22/22</strong><span>hardening SSR do cadastro</span></div>
-          <div class="stat"><strong>358/358</strong><span>pgTAP pós-hardening P5</span></div>
+          <div class="stat"><strong>3/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>201</strong><span>cenários no catálogo vivo</span></div>
+          <div class="stat"><strong>431</strong><span>último DB verde; 441 pendente</span></div>
           <div class="stat"><strong>114/114</strong><span>browser integral do quarto P2</span></div>
-          <div class="stat"><strong>764/764</strong><span>unitários finais P5</span></div>
-          <div class="stat"><strong>15</strong><span>migrations append-only na árvore</span></div>
+          <div class="stat">
+            <strong>141/141</strong><span>recorte dirigido FEAT-006; não integral</span>
+          </div>
+          <div class="stat">
+            <strong>17/17</strong><span>browser focado histórico FEAT-006</span>
+          </div>
+          <div class="stat"><strong>17</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -681,16 +687,113 @@
           <div class="section-head">
             <h2>Estado atual</h2>
             <p>
-              A fundação técnica, a FEAT-002 e a FEAT-003 foram incorporadas a
+              A fundação técnica, a FEAT-002, a FEAT-003 e a FEAT-004 foram incorporadas a
               <code>main</code>. O PR #2 concluiu Auth e <code>legal-core</code> no merge
               <code>d272657</code>. O PR #4 concluiu perfil PF/PJ, conta, segurança e preferência
               visual no merge <code>465d195</code>, realizado em <code>2026-08-12T06:57:15Z</code>.
               Seu HEAD final <code>1530f62589</code> recebeu a revisão Codex limpa
               <code>5262964258</code> às <code>06:00:43Z</code>, e as cinco threads ficaram
-              resolvidas. Assim, duas das 34 features estão concluídas no repositório, sem atribuir
-              prontidão de produção às pendências externas.
+              resolvidas. O PR #6 concluiu dono e recebedor no merge
+              <code>b4f40035b3e7eda64d94726483d82ece9f01c7ed</code>, em
+              <code>2026-08-16T09:24:06Z</code>. Seu HEAD final
+              <code>44854dca545ca3aa89e780d83a8a5025007f8b12</code> recebeu revisão limpa no
+              comentário REST <code>5306520356</code> depois da espera integral de 60 minutos, e as
+              seis threads ficaram resolvidas. Assim, três das 34 features estão concluídas no
+              repositório; a FEAT-006 está em implementação. Esta captura não atribui
+              <code>reviewDecision</code> nem check rollup não observados e não antecipa prontidão
+              de produção.
             </p>
           </div>
+
+          <section class="card" aria-labelledby="cloud-delivery-atual">
+            <span class="tag external">Configuração em andamento</span>
+            <h3 id="cloud-delivery-atual">CI, Supabase e Oracle · estado factual</h3>
+            <p>
+              O ADR-019 liberou somente a fronteira controlada de CI, Supabase Cloud, Oracle, DNS e
+              TLS. Os workflows copiados foram reescritos para Set Livre: CI usa Node 24.18/npm
+              11.19, Supabase local e gates completos; produção só fica elegível após CI verde no
+              SHA de <code>main</code>, environment protegido e flag explícita. A ref Supabase
+              esperada é <code>klzxatkgiiznymzuzadd</code>, e migrations remotas nunca usam reset,
+              seed ou <code>config push</code>.
+            </p>
+            <p>
+              O discovery OCI read-only confirmou <code>sa-saopaulo-1</code>, A1 Flex e Ubuntu 24.04
+              ARM64, sem criar recurso. Redes de Spenses/outro projeto foram recusadas. O target
+              isolado usa novo compartment/VCN/subnet/NSG Set Livre, 2 OCPUs/12 GB, boot 50 GB e
+              IMDSv2-only; launch, custo zero, hardening, IP, DNS/TLS e smoke ainda precisam de
+              evidência. MCP/OAuth, secrets, runtime DAL e primeiro run GitHub também permanecem
+              pendentes em <code>configuration-seteps.md</code>. Portanto workflows em fonte não
+              significam produção ativa e PEND-001/002/003 continuam abertas.
+            </p>
+          </section>
+
+          <section class="card" aria-labelledby="feat006-atual">
+            <span class="tag planned">Em implementação</span>
+            <h3 id="feat006-atual">FEAT-006 · estado atual</h3>
+            <p>
+              <code>20260816000100</code> permanece imutável; o head/readiness de fonte é
+              <code>20260816000200</code>, a 17ª migration, com predecessor imediato esperado falso.
+              O último banco verde permanece em 431 asserts (<code>158 + 78 + 57 + 65 + 73</code>)
+              no head anterior. A fonte atual declara 83 casos pgTAP e total esperado 441, mas esse
+              total ainda não foi executado; <code>schema.generated.sql</code> e
+              <code>database.generated.ts</code> estão defasados e exigem reset, geração e teste. O
+              readiness conserva 19 rotinas e 20 dependências. A última integral unitária verde é
+              histórica, 893/893 antes do helper/hardening atual. O recorte anterior executou
+              124/124 em dez arquivos; o atual passou em 141/141 por 12 arquivos FEAT-006/studio sob
+              Node 24, incluindo correlação e remount, mas não é a suíte integral nem prova SQL. A
+              tentativa da integral atual falhou em 12 testes de infraestrutura por limites do
+              sandbox — nested spawn <code>EPERM</code>, remapeamento de ownership raiz e
+              timeouts/process groups ou stdout vazio —, sem converter esse diagnóstico em gate
+              verde.
+            </p>
+            <p>
+              O catálogo vivo soma 201 cenários: P0 134, P1 67, P2 0, smoke 3, critical 131,
+              regression 61, accessibility 2 e reflow 4. São 29 automatizados (<code
+                >7 + 9 + 7 + 6</code
+              >) e 172 planejados; quatro exigem zoom 200%. A FEAT-006 possui seis IDs,
+              <code>001–006</code>, incluindo discard <code>draft_removed</code>, teclado e reflow
+              200%. A fonte projeta a focada em 20 testes/três specs/dez projetos e a integral em
+              134; nenhuma foi executada. Os 17/17 em duas specs/sete projetos são evidência
+              histórica aceita. A lista integral 131/19/16 também é histórica e não possui run
+              verde. Browser prova stale/compare; tombstone pertence a SQL/unitários.
+            </p>
+            <p>
+              O ID 001 exige pending no mesmo escopo, um único POST e preservação do bruto. O ID 003
+              fecha o boundary dirty A → B: DOM e referências brutas são removidos sem consultar ou
+              popular o <code>QueryCache</code>, e latches de unmount e pós-<code>await</code>
+              suprimem callbacks tardios. O header de escopo esperado no GET é somente assertion de
+              coerência, nunca autenticação. Nenhum payload sensível pode chegar à URL, storage ou
+              cache.
+            </p>
+            <p>
+              Create/update bloqueiam o tipo ativo com <code>FOR SHARE</code>. A FEAT-031 deve
+              arquivar tipo-only ou preservar a ordem agregado → tipo do update; se também travar
+              estúdio, precisa de prova bidirecional de ausência de deadlock. Publicado sem draft
+              clona mesmo com core idêntico; no-op só vale para draft existente idêntico e ainda
+              remonta o formulário. O <code>requestId</code> segue separado da chave/hash até a
+              auditoria: efeito novo grava uma ação factual com metadata estrutural, replay preserva
+              o primeiro fato e no-op/falha/conflito gravam zero.
+            </p>
+            <p>
+              Na criação ambígua, S1 permanece estável e cada tentativa recebe uma nova chave K. A
+              fonte desktop-chromium do ID 005 fixa K1/S1/A ambígua → GET 404 → usuário B → commit
+              tardio K1 → K2/S1/B 409 → comparação A/B → reaplicação → save explícito K3 como update
+              do único S1 com <code>expectedEditVersion</code>. Usar a atual navega explicitamente
+              para A. Esse roteiro está implementado na fonte, mas não foi executado e não é verde;
+              não há replay automático de POST. As três specs mantêm trace, screenshot e vídeo em
+              <code>off</code>; apenas fixtures sintéticas <code>qa_f006_*</code> são permitidas nos
+              campos automáticos allowlisted.
+            </p>
+            <p>
+              A feature continua em implementação. OPEN-012 mantém a autoridade fail-closed e
+              OPEN-013 proíbe rename de tipo usado; ambas e FEAT-031 bloqueiam a conclusão.
+              Permanecem pendentes o <code>docs:check</code> canônico, a integral unitária,
+              reset/geração/DB 441, browser focado 20 e integral 134, build das duas aplicações,
+              smoke, release e ARM64. Nenhum desses gates é apresentado como verde. A migration nova
+              teve somente inspeção estática/diff; os novos SQL/pgTAP continuam untracked e os
+              gerados, stale.
+            </p>
+          </section>
 
           <div class="grid three">
             <article class="card">
@@ -719,8 +822,17 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quinto review · gates pendentes</span>
+              <span class="tag done">Concluída · incorporada a main</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
+              <p>
+                O PR #6 foi incorporado no merge
+                <code>b4f40035b3e7eda64d94726483d82ece9f01c7ed</code>, em
+                <code>2026-08-16T09:24:06Z</code>. O HEAD final
+                <code>44854dca545ca3aa89e780d83a8a5025007f8b12</code> recebeu revisão final limpa no
+                comentário REST <code>5306520356</code> após 60 minutos, com 6/6 threads resolvidas.
+                Os parágrafos seguintes preservam as fotografias técnicas do quinto P2 que
+                antecederam esse fechamento.
+              </p>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
                 <code>/dono/recebimentos</code>. O recorte local cria aceite
@@ -849,9 +961,9 @@
                 sidecar/manifesto/log têm 124/681.762/2.097 bytes. Duas auditorias
                 <code>NO-BLOCKER</code> validaram 2.871 artefatos, tar de 3.455 membros, paridade,
                 privacidade e cleanup sem resíduo. A release permanece local, ignorada e não
-                publicada; ARM64/Oracle/PEND-003 e remoto seguem pendentes. A feature continua
-                <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e PEND-006
-                continuam bloqueando produção.
+                publicada; ARM64/Oracle/PEND-003 seguem pendentes. Na fotografia pré-merge, a
+                feature ainda estava em implementação; PEND-003, smoke ARM64, PEND-004 e PEND-006
+                continuam bloqueando produção, sem alterar a conclusão no repositório.
               </p>
             </article>
             <article class="card">
@@ -1217,7 +1329,7 @@
                   <td>Documentação</td>
                   <td><code>docs:check</code></td>
                   <td>
-                    Valida Blueprint, ADRs, 34 features, 200 cenários, sequência, links, registro de
+                    Valida Blueprint, ADRs, 34 features, 201 cenários, sequência, links, registro de
                     dependências, migrations imutáveis, change records e atualização deste resumo
                     executivo.
                   </td>
@@ -1529,9 +1641,10 @@
               publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
               O quarto P2 possui fechamento estático, banco, browser focado/integral, build, smoke
               embutido e release local auditada; publicação, body, resposta e resolução também foram
-              verificados. O quinto review abriu a correção local atual, ainda sem publicação,
-              resposta ou resolução; novo review pós-patch, espera, captura final, ready e merge
-              permanecem pendentes.
+              verificados. Na fotografia então vigente, o quinto review havia aberto uma correção
+              ainda sem publicação, resposta ou resolução, e novo review pós-patch, espera, captura
+              final, ready e merge permaneciam pendentes. O fechamento posterior está no início
+              deste resumo.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1618,8 +1731,9 @@
               atual, não resolvido e não obsoleto na captura. A causa era o bloqueio de leitura do
               contrato <code>local_fixture</code> fora de local/test; o contrato corrigido separa a
               leitura consultiva da capability de ativação e mantém o bloqueio no comando antes da
-              escrita. O patch do quinto P2 ainda não foi publicado, respondido ou resolvido; novo
-              review, captura final, ready e merge permanecem pendentes.
+              escrita. Naquela captura, o patch do quinto P2 ainda não havia sido publicado,
+              respondido ou resolvido, e novo review, captura final, ready e merge permaneciam
+              pendentes. O fechamento posterior está no cartão de estado atual.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1745,10 +1859,14 @@
                 leitura completa de ativação da leitura compacta de recebimentos; a décima quinta
                 separa <code>audit.events.idempotency_key</code>, usado privadamente para
                 deduplicação, de <code>request_id</code>, usado para correlação. Logs operacionais
-                recebem apenas o request ID, nunca a chave idempotente. A DAL expõe dezesseis
-                rotinas privadas em dezessete dependências ACL exatas. As leituras de perfil e dono
-                usam RPCs públicos <code>security invoker</code> com <code>auth.uid()</code> + RLS,
-                e readiness exige <code>jwt_exp=3600</code>.
+                recebem apenas o request ID, nunca a chave idempotente. Esse era o snapshot
+                histórico FEAT-004 de dezesseis rotinas privadas/dezessete dependências ACL. No
+                estado corrente da FEAT-006, a décima sexta materializa o núcleo do estúdio e a
+                décima sétima endurece concorrência/auditoria sem alterar o manifesto: a DAL expõe
+                dezenove rotinas em vinte dependências exatas. O último DB verde ainda pertence ao
+                head anterior; reset/geração/441 estão pendentes. As leituras de perfil, dono e
+                estúdio usam RPCs públicos <code>security invoker</code> com
+                <code>auth.uid()</code> + RLS, e readiness exige <code>jwt_exp=3600</code>.
               </p>
             </article>
             <article class="card">
@@ -1799,8 +1917,8 @@
             <li>E2E privado e psql isolado</li>
             <li>grants explícitos; RLS entra por tabela</li>
             <li>erros públicos seguros</li>
-            <li>artefatos E2E só em falha quando PII permite; FEAT-004 usa off</li>
-            <li>sem API externa</li>
+            <li>artefatos E2E só em falha quando PII permite; FEAT-004/006 usam off</li>
+            <li>providers externos ainda suspensos</li>
           </ul>
         </section>
 
@@ -1808,22 +1926,23 @@
           <div class="section-head">
             <h2>Release e deploy</h2>
             <p>
-              Já existe um caminho local reproduzível para o artefato. Infraestrutura real e go-live
-              permanecem deliberadamente bloqueados pelo ADR-018. O quinto P2 executou uma única
-              build que compilou com exit 0, mas o artefato standalone foi recusado por copiar
-              strings de conexão locais do manifesto raiz; nenhum smoke ou geração de release foi
-              iniciado. Depois da correção do manifesto, uma segunda build única terminou com exit
-              0, mas foi recusada por uma ocorrência DAL em cada cache Turbopack; standalone, static
-              e log ficaram limpos e o smoke permaneceu em zero. O wrapper único agora limpa
-              fisicamente apenas o cache autorizado mesmo em falha da validação/build; o preview
-              limpa no supervisor antes de validação/servidor. A build final via wrapper rodou uma
-              única vez após remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit
-              independente <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. O
-              gerador canônico processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0
-              em 21,26 s, e aprovou o primeiro smoke P5 embutido. A release local possui 2.871
-              artefatos/3.455 membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e
-              não publicado. ARM64/remoto continuam pendentes. O patch ainda não foi publicado no
-              Git, respondido ou resolvido no PR.
+              Já existe um caminho local reproduzível para o artefato. O ADR-019 liberou a
+              configuração de CI/Supabase/Oracle, mas infraestrutura real e go-live continuam
+              fail-closed até PEND-001/002/003. O quinto P2 executou uma única build que compilou
+              com exit 0, mas o artefato standalone foi recusado por copiar strings de conexão
+              locais do manifesto raiz; nenhum smoke ou geração de release foi iniciado. Depois da
+              correção do manifesto, uma segunda build única terminou com exit 0, mas foi recusada
+              por uma ocorrência DAL em cada cache Turbopack; standalone, static e log ficaram
+              limpos e o smoke permaneceu em zero. O wrapper único agora limpa fisicamente apenas o
+              cache autorizado mesmo em falha da validação/build; o preview limpa no supervisor
+              antes de validação/servidor. A build final via wrapper rodou uma única vez após
+              remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit independente
+              <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. O gerador canônico
+              processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0 em 21,26 s, e
+              aprovou o primeiro smoke P5 embutido. A release local possui 2.871 artefatos/3.455
+              membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e não publicado.
+              ARM64/remoto continuam pendentes. O patch ainda não foi publicado no Git, respondido
+              ou resolvido no PR.
             </p>
           </div>
 
@@ -1854,9 +1973,10 @@
                 Esta é uma prova local Linux x64, não ARM64 ou produção. A release P3
                 <code>2a86acc4...</code> e as anteriores permanecem fotografias históricas.
                 Publicação, body, resposta e resolução do quarto P2 foram verificados no head
-                <code>e51ab6f...</code>. Essa evidência não valida o quinto P2, para o qual release,
-                publicação, resposta, resolução, novo review, espera, captura final, ready e merge
-                permanecem pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios.
+                <code>e51ab6f...</code>. Essa evidência não validava o quinto P2, para o qual, na
+                fotografia histórica, release, publicação, resposta, resolução, novo review, espera,
+                captura final, ready e merge permaneciam pendentes. PEND-003 e o smoke ARM64 nativo
+                continuam obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1908,12 +2028,13 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag external">Fase 5 / externo</span>
-              <h3>Produção ainda não realizada</h3>
+              <span class="tag external">Configuração sem go-live</span>
+              <h3>Entrega cloud versionada, ainda não comprovada</h3>
               <p>
-                Faltam build/smoke ARM64 real, Oracle, Nginx, systemd, TLS, Supabase Cloud, CI/CD,
+                Workflows Set Livre e o target OCI estão definidos, mas faltam runs GitHub, runtime
+                DAL Cloud, VM lançada/hardened, Nginx, systemd, DNS/TLS, build/smoke ARM64,
                 backup/restore e rollback ensaiados. O artefato local não é apresentado como release
-                de produção.
+                de produção e nenhuma quota isolada prova custo zero ou capacidade física.
               </p>
             </article>
           </div>
@@ -1923,10 +2044,9 @@
           <div class="section-head">
             <h2>Features e roadmap</h2>
             <p>
-              As 34 features estão especificadas com 200 cenários de produto. A FEAT-002 está
-              concluída e incorporada a <code>main</code>; a FEAT-003 também está concluída e
-              incorporada. A FEAT-004 está em implementação local; as demais continuam planejadas
-              conforme a sequência executável do ADR-017.
+              As 34 features estão especificadas com 201 cenários de produto. FEAT-002, FEAT-003 e
+              FEAT-004 estão concluídas e incorporadas a <code>main</code>. A FEAT-006 é a fatia
+              atual e continua em implementação; as demais seguem a sequência executável do ADR-017.
             </p>
           </div>
 
@@ -1955,7 +2075,7 @@
                     publicação pelo backoffice
                   </td>
                   <td>
-                    <span class="tag done">002 e 003 concluídas; 004 em implementação · 2/9</span>
+                    <span class="tag done">002, 003 e 004 concluídas; próxima 006 · 3/9</span>
                   </td>
                 </tr>
                 <tr>
@@ -2012,16 +2132,17 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Criar o commit desta documentação e fazer push do fechamento pós-release.</li>
                 <li>
-                  Atualizar o body, responder e resolver a thread P5
-                  <code>PRRT_kwDOTyzZrs6Zj15h</code> após verificar a resposta.
+                  Fechar o <code>docs:check</code> canônico, a integral unitária e o ciclo
+                  reset/geração/DB 441 da FEAT-006.
                 </li>
                 <li>
-                  Só então solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos
-                  e fazer uma captura final única antes de ready ou merge. PEND-003, trusted proxy e
-                  smoke ARM64 continuam bloqueando produção; gateway externo, checkout, fallback e
-                  dados bancários permanecem fora.
+                  Executar browser focado 20 e integral 134, build das duas aplicações, smoke,
+                  release e prova ARM64.
+                </li>
+                <li>
+                  Resolver OPEN-012/013 e concluir a FEAT-031 antes de declarar a FEAT-006
+                  concluída.
                 </li>
               </ol>
             </article>
@@ -2043,7 +2164,11 @@
             <article class="card">
               <span class="tag external">Pendência externa</span>
               <h3>Cloud e entrega</h3>
-              <p>CI/CD, proteção de branch, Supabase Cloud, Oracle ARM64, domínio, DNS e TLS.</p>
+              <p>
+                Concluir environments/proteção de branch, runtime DAL, VM/hardening, domínio,
+                DNS/TLS e primeiro CI/deploy ARM64 acompanhado. A configuração em fonte ainda não
+                fecha PEND-001/002/003.
+              </p>
             </article>
             <article class="card">
               <span class="tag external">Pendência externa</span>

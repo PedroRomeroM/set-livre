@@ -102,13 +102,24 @@ Não compartilhar cookie name/domain com app público sem decisão.
 
 ## 6. Deploy/CI
 
-- host/user/key;
-- known_hosts;
-- Object Storage;
-- migration DB URL;
-- Supabase project refs;
-- provider sandbox;
-- Sentry auth token para sourcemaps.
+O environment GitHub `production` usa somente os nomes consumidos pelo workflow:
+
+| Tipo     | Nome                       | Contrato                                                                |
+| -------- | -------------------------- | ----------------------------------------------------------------------- |
+| variable | `PRD_DEPLOY_ENABLED`       | `true` somente após bootstrap/smoke; qualquer outro valor impede deploy |
+| variable | `PRD_PUBLIC_APP_URL`       | origem exata `https://setlivre.com`                                     |
+| variable | `PRD_BACKOFFICE_APP_URL`   | origem HTTPS separada/protegida                                         |
+| variable | `PRD_SUPABASE_URL`         | `https://klzxatkgiiznymzuzadd.supabase.co`                              |
+| variable | `PRD_SSH_HOST`             | IP reservado/hostname validado, sem opção SSH embutida                  |
+| variable | `PRD_SSH_USER`             | usuário de deploy sem root                                              |
+| secret   | `SUPABASE_ACCESS_TOKEN`    | token da CLI de migration, com owner/rotação                            |
+| secret   | `SUPABASE_DB_PASSWORD`     | senha administrativa usada somente por `supabase link/db push`          |
+| secret   | `PRD_SUPABASE_ANON_KEY`    | chave pública de browser, ainda protegida contra alteração acidental    |
+| secret   | `PRD_DATABASE_URL_APP_DAL` | login runtime restrito que assume somente `app_dal`, TLS obrigatório    |
+| secret   | `PRD_SSH_PRIVATE_KEY`      | chave dedicada de deploy                                                |
+| secret   | `PRD_SSH_KNOWN_HOSTS`      | host key comparada por canal OCI confiável                              |
+
+Nenhum desses valores pertence a PR, `.env.example`, artifact ou log. O build ARM64 recebe apenas origens HTTPS, anon key e SHA; a URL DAL entra depois em arquivo runtime root-owned. Object Storage, provider sandbox e Sentry não possuem credencial ativa nesta liberação e continuam dependentes de decisão própria. A lista operacional e a rotação ficam em `configuration-seteps.md`.
 
 ## 7. Defaults não secretos
 

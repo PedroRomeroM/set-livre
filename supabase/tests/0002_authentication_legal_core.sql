@@ -2351,8 +2351,8 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260815000100'),
-  'readiness permanece verde com dezessete dependências e dezesseis rotinas DAL'
+  private.check_readiness('20260816000200'),
+  'readiness permanece verde com vinte dependências e dezenove rotinas DAL'
 );
 
 select is(

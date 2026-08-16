@@ -144,7 +144,8 @@ describe("FEAT-004 owner UI", () => {
 
     expect(frame).toContain('href="/dono"');
     expect(frame).toContain('href="/dono/recebimentos"');
-    expect(frame.match(/aria-current=/gu)).toHaveLength(2);
+    expect(frame).toContain('href={{ pathname: "/dono/estudios/novo" }}');
+    expect(frame.match(/aria-current=/gu)).toHaveLength(3);
     expect(`${frame}\n${overview}\n${recipient}`).not.toContain("/dono/inicio");
     expect(overview).toContain('redirect("/entrar?retorno=%2Fdono")');
     expect(recipient).toContain('redirect("/entrar?retorno=%2Fdono%2Frecebimentos")');

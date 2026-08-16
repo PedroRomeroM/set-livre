@@ -363,3 +363,58 @@ Timeout sem resumo é inconclusivo.
 - smoke/rollback;
 - performance dentro do baseline;
 - docs/traceability atualizados.
+
+## 17. FEAT-006 — estado e gates
+
+Os seis IDs `SL-F006-E2E-001` a `SL-F006-E2E-006` estão automatizados na fonte. O ID 001 valida
+pending no mesmo escopo, exatamente um POST e preservação do bruto; o 002 descarta o rascunho com
+`draft_removed`; o 003 fecha o boundary dirty A → B; o 004 prova teclado real; e o 006 dedica a
+matriz de reflow a zoom 200%. A fonte atual projeta 20 casos focados em três specs/dez projetos e
+134 casos na coleção integral. Essas contagens são de descoberta estática: nenhuma das duas matrizes
+atuais foi executada.
+
+A evidência browser aceita continua sendo o snapshot histórico 17/17 em duas specs/sete projetos,
+anterior à adição dos contratos atuais. A lista integral histórica enumerou 131 testes em 19
+specs/16 projetos, mas não houve execução integral verde. No browser, a atribuição correta é
+stale/compare; tombstone é coberto por SQL/unitários. Nenhum resultado histórico deve ser promovido
+a gate atual.
+
+As três specs mantêm trace, screenshot e vídeo em `off`: provisionamento, documentos, cookies e
+referências brutas não podem entrar em artefatos. A evidência equivalente combina locators
+semânticos, respostas HTTP, contadores de request, asserções de DOM, stdout/relatório redigidos e
+varreduras negativas. Payloads sensíveis não podem aparecer em URL, storage ou `QueryCache`; somente
+fixtures sintéticas `qa_f006_*` são admitidas em campos automáticos allowlisted.
+
+O header de escopo esperado enviado ao GET é somente uma assertion de coerência, não autenticação.
+O probe dirty/pending deve fechar o DOM e as referências brutas sem consultar nem popular o
+`QueryCache`. O latch de unmount e pós-`await` precisa suprimir todo callback tardio. A criação
+ambígua preserva o escopo S1 e exige uma nova chave K por tentativa. No ID 005 desktop-chromium, a
+fonte implementa K1/S1/A ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação
+A/B → `Reaplicar` → save explícito K3 como update do único S1 com `expectedEditVersion`. `Usar versão
+atual` navega explicitamente para A. Essa projeção ainda não foi executada e não é verde; não há
+perda do rascunho nem replay automático de POST.
+
+O pgTAP `0005` também deve provar: create/update seguram `FOR SHARE` sobre tipo ativo diante do archive
+concorrente; publicado sem draft clona mesmo com core idêntico; draft existente idêntico é no-op;
+`request_id` e `idempotency_key` permanecem distintos; cada efeito grava a ação/metadata allowlisted
+uma vez; replay preserva o primeiro fato/correlação; no-op, falha e conflito auditam zero. Um futuro
+teste FEAT-031 deve manter archive tipo-only ou a ordem agregado → tipo do update; se bloquear studio depois do
+tipo, precisa provar ausência de deadlock nas duas direções. Unitário de UI exige remount após save,
+inclusive no-op com `editVersion` estável.
+
+O último DB verde permanece 431 no head executado `20260816000100`. A fonte agora aponta para
+`20260816000200`, predecessor imediato esperado falso, sem reset. O plano pgTAP `0005` contém 83 casos
+e o total esperado é 441, ainda não executado; `schema.generated.sql` e `database.generated.ts` estão
+defasados e precisam do ciclo reset → geração → teste. O readiness de fonte conserva 19 rotinas e 20
+dependências. A migration nova teve somente inspeção estática/diff; migrations/pgTAP/reset/generate
+continuam pendentes. `00100`, `00200` e `0005` seguem untracked, portanto checksum Git não substitui
+a futura prova do banco aplicado. A última suíte unitária integral verde, 893/893, é histórica e anterior ao
+helper/hardening atual. O recorte dirigido anterior passou em 124/124 por dez arquivos; o atual passou
+em 141/141 por 12 arquivos FEAT-006/studio sob Node 24, mas não é integral nem executa SQL. A tentativa
+completa atual falhou em 12 testes de infraestrutura por limites do
+sandbox — nested spawn `EPERM`, remapeamento de ownership raiz e timeouts de process group ou stdout
+vazio — e não constitui gate verde.
+
+Permanecem pendentes o `docs:check` canônico, a suíte unitária integral, reset/geração/DB 441, a
+focada browser 20 e a integral 134, build das duas aplicações, smoke, release, ARM64 e FEAT-031. A
+FEAT-006 continua `Em implementação`; OPEN-012, OPEN-013 e FEAT-031 bloqueiam a conclusão.

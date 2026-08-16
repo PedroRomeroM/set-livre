@@ -1662,8 +1662,8 @@ select is(
       and privilege.privilege_type = 'EXECUTE'
       and not privilege.is_grantable
   ),
-  16,
-  'manifesto app_dal possui dezesseis grants de rotina'
+  19,
+  'manifesto app_dal possui dezenove grants de rotina'
 );
 
 select is(
@@ -1675,13 +1675,13 @@ select is(
       and dependency.deptype = 'a'
       and role.rolname = 'app_dal'
   ),
-  17,
-  'manifesto app_dal possui dezessete dependências ACL'
+  20,
+  'manifesto app_dal possui vinte dependências ACL'
 );
 
 select ok(
-  private.check_readiness('20260815000100'),
-  'readiness permanece verde na head FEAT-003'
+  private.check_readiness('20260816000200'),
+  'readiness permanece verde no head atual FEAT-006'
 );
 
 create function private.feat003_readiness_probe()
@@ -1698,7 +1698,7 @@ grant execute on function private.feat003_readiness_probe()
   to app_dal;
 
 select ok(
-  not private.check_readiness('20260815000100'),
+  not private.check_readiness('20260816000200'),
   'readiness falha fechado com rotina DAL fora da allowlist'
 );
 
@@ -1706,7 +1706,7 @@ revoke all on function private.feat003_readiness_probe()
   from app_dal;
 
 select ok(
-  private.check_readiness('20260815000100'),
+  private.check_readiness('20260816000200'),
   'readiness recupera ao remover grant DAL indevido'
 );
 

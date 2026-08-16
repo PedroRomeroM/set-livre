@@ -291,7 +291,8 @@ const studioKeys = {
     ["studios", "list", stableFilterKey(filters), cursor ?? "first"] as const,
   detail: (studioId: string, date?: string) =>
     ["studios", "detail", studioId, date ?? "none"] as const,
-  owner: (userId: string) => ["owner", userId, "studios"] as const,
+  ownerEditor: (userId: string, studioId?: string) =>
+    ["owner", "private", "studio-editor", userId, studioId ?? "new"] as const,
 };
 
 const reservationKeys = {
@@ -308,16 +309,18 @@ const ownerKeys = {
 
 Cada action declara domínios afetados. Exemplo:
 
-| Action                   | Invalida                                            |
-| ------------------------ | --------------------------------------------------- |
-| `studio.revision.update` | owner studio editor                                 |
-| `studio.review.approve`  | public list/detail, owner status, review queue      |
-| `calendar.block.create`  | availability, owner calendar, quote                 |
-| `payment.confirm`        | reservation, calendar, owner/renter lists, payments |
-| `reservation.cancel`     | reservation, calendar, payments, payouts            |
-| `owner.activate`         | owner recipient status                              |
-| `recipient.onboarding.*` | owner recipient status e elegibilidade futura       |
-| `profile.*`              | profile e owner recipient status                    |
+| Action                       | Invalida                                            |
+| ---------------------------- | --------------------------------------------------- |
+| `studio.create`              | editor privado do novo estúdio                      |
+| `studio.revision.updateCore` | editor privado do estúdio                           |
+| `studio.draft.discard`       | editor privado ou remoção do shell nunca publicado  |
+| `studio.review.approve`      | public list/detail, owner status, review queue      |
+| `calendar.block.create`      | availability, owner calendar, quote                 |
+| `payment.confirm`            | reservation, calendar, owner/renter lists, payments |
+| `reservation.cancel`         | reservation, calendar, payments, payouts            |
+| `owner.activate`             | owner recipient status                              |
+| `recipient.onboarding.*`     | owner recipient status e elegibilidade futura       |
+| `profile.*`                  | profile e owner recipient status                    |
 
 ## 9. Segurança em camadas
 
@@ -377,3 +380,43 @@ Não antecipar Kubernetes, Redis ou microserviços. Gatilhos:
 - indisponibilidade da VM incompatível com negócio.
 
 Escala futura mantém contratos de comandos/read models e pode substituir runtime.
+
+### FEAT-006: verification-first e concorrência
+
+O editor pré-lê tipos ou editor antes de chamar o DAL; depois do commit não há read remoto nem
+`await` remoto. A mesma key idempotente com o mesmo hash produz um efeito; uma key diferente é uma
+tentativa nova, e a concorrência real dblink deixa um vencedor e expõe `40001` ao perdedor. Stale e
+tombstone replay exigem GET explícito; nenhum POST é repetido automaticamente. Um resultado antigo
+do ledger só é reconstruído quando a `resulting_edit_version` ainda é a versão corrente; caso
+contrário, `studio_result_no_longer_available` força a releitura. `MAX_SAFE_INTEGER`/`22003` mapeiam
+para `409` factual e desconhecido para `503`. O limiter `studio.edits` é 60/10min por usuário,
+separado do rate por IP do facade.
+
+O `requestId` da rota percorre handler, serviço, DAL e SQL como contexto UUID separado, posterior à
+`idempotencyKey` nas assinaturas e fora do payload/hash. Efeito real cria um fato append-only de
+auditoria na mesma transação; replay conserva o primeiro evento/correlação, enquanto no-op, falha e
+conflito não auditam. As ações são factuais e a metadata contém apenas versões, número de revisão e o
+flag estrutural de clone, nunca core ou PII.
+
+Create/update bloqueiam o `studio_type` ativo com `FOR SHARE` antes do efeito. A futura FEAT-031 deve
+manter o archive tipo-only; se também bloquear studio existente, segue a ordem agregado → tipo do
+update ou exige redesenho e prova bidirecional. Adquirir studio depois de tipo silenciosamente é
+proibido. Publicado sem
+draft sempre clona, mesmo com core idêntico; no-op existe apenas para draft existente idêntico. Como
+esse retorno pode manter `editVersion`, o cliente incrementa uma revisão local de formulário e remonta
+a superfície a partir do DTO autoritativo após todo save bem-sucedido.
+
+Todo GET interativo leva `x-set-livre-expected-scope` UUID. O header é uma asserção do seed SSR,
+nunca autenticação/ownership, e é comparado com a sessão autoritativa antes da query/read. Em form
+dirty ou mutation pendente, foco/online/visibilidade executam um probe próprio: o DOM privado fecha,
+o controller montado guarda valores crus apenas em refs e o QueryCache não recebe esse payload.
+Mesmo escopo reabre com os mesmos raws; divergência limpa cache/boundary e recarrega. Um latch de
+unmount/transição e guardas imediatamente pós-`await` impedem callbacks tardios de publicar.
+
+Na criação ambígua, o agregado usa S1 estável e cada nova ação explícita usa chave nova. Se S1 já
+contém A enquanto o usuário tenta B, a comparação preserva ambos. Escolher a versão atual navega
+para S1/A; reaplicar converte B em update de S1 com `expectedEditVersion` autoritativa. B permanece
+somente em memória efêmera, fora de URL, storage e cache remoto. A fonte desktop-chromium do ID 005
+fixa K1/S1/A ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação A/B →
+reaplicação → save explícito K3 como update do único S1. Esse roteiro está implementado na fonte,
+mas não foi executado nem está verde.

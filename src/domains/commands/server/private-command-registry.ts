@@ -4,17 +4,21 @@ import {
   ownerCommandSchema,
   profileCompleteCommandSchema,
   profileUpdateCommandSchema,
+  studioCommandSchema,
   type OwnerCommand,
+  type StudioCommand,
 } from "@set-livre/contracts";
 import { z } from "zod";
 
 import { executePrivateIdentityCommand } from "@/domains/identity/server/private-identity-command-handler";
+import { executeStudioCommand as executeStudioDomainCommand } from "@/domains/studios/server/studio-command-handler";
 import type { PrivateCommandContext } from "./private-command-context";
 
 export const privateCommandSchema = z.discriminatedUnion("action", [
   profileCompleteCommandSchema,
   profileUpdateCommandSchema,
   ...ownerCommandSchema.options,
+  ...studioCommandSchema.options,
 ]);
 
 export type PrivateCommand = z.infer<typeof privateCommandSchema>;
@@ -23,12 +27,18 @@ type OwnerCommandHandler = (
   command: OwnerCommand,
   context: PrivateCommandContext,
 ) => Promise<unknown>;
+type StudioCommandHandler = (
+  command: StudioCommand,
+  context: PrivateCommandContext,
+) => Promise<unknown>;
 
 export type PrivateCommandDependencies = Readonly<{
   executeOwnerCommand: OwnerCommandHandler;
+  executeStudioCommand?: StudioCommandHandler;
 }>;
 
 export function createPrivateCommandRegistry(dependencies: PrivateCommandDependencies) {
+  const executeStudioCommand = dependencies.executeStudioCommand ?? executeStudioDomainCommand;
   return function executePrivateCommand(command: PrivateCommand, context: PrivateCommandContext) {
     switch (command.action) {
       case "profile.complete":
@@ -38,6 +48,10 @@ export function createPrivateCommandRegistry(dependencies: PrivateCommandDepende
       case "recipient.onboarding.start":
       case "recipient.onboarding.refresh":
         return dependencies.executeOwnerCommand(command, context);
+      case "studio.create":
+      case "studio.revision.updateCore":
+      case "studio.draft.discard":
+        return executeStudioCommand(command, context);
     }
   };
 }

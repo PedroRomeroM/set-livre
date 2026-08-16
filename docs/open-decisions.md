@@ -124,3 +124,71 @@ Default: 24 horas antes do início. Configurável em ambiente, não por usuário
 - os DALs de comando do app público compartilham um pool restrito de no máximo seis conexões. Somados ao pool de readiness do app público e ao pool de readiness do backoffice, ambos limitados a duas conexões, os processos simultâneos preservam o teto do login runtime: `6 + 2 + 2 = 10`. Nenhum processo possui orçamento implícito além desse limite.
 
 **Critério de reabertura:** contrato comercial ou jurídico aprovado, handoff provider-owned que exija novos campos, mudança da matriz de status, necessidade comprovada de dados comerciais distintos do perfil ou requisito de fallback antes das features administrativas proprietárias.
+
+## OPEN-011 — Fronteira do núcleo versionado de estúdio e taxonomias
+
+**Status:** resolvida em 2026-08-16 para a FEAT-006, dentro dos ADRs 003, 004, 005, 011, 013, 015, 017 e 018.
+
+**Conflitos registrados:** a FEAT-006 atribuía nome, descrição, capacidade e tipo ao núcleo versionado, enquanto a FEAT-007 repetia o tipo e o contrato especializado colocava a descrição em `studio.revision.updateContent`. `studio.draft.discard` também aparecia nas FEAT-006 e FEAT-009. O `taxonomy-core` era obrigatório para o primeiro editor, mas nenhuma fonte aprovava nomes comerciais para uma taxonomia de produção.
+
+**Resolução:**
+
+- a FEAT-006 é proprietária de `name`, `description`, endereço estruturado, `capacity` e `studio_type_id`; todos são criados e corrigidos por `studio.create` e `studio.revision.updateCore`;
+- a FEAT-007 acrescenta somente tags, comodidades, regras, FAQ e vídeo. Ela consome o tipo já selecionado, sem assumir sua criação ou edição;
+- o bootstrap `taxonomy-core` da FEAT-006 materializa apenas `studio_types`, porque essa é a única taxonomia consumida no mesmo PR. `amenities`, `tags`, suas relações e FAQ pertencem à FEAT-007;
+- o Supabase local recebe fixtures determinísticas `Fotografia`, `Vídeo`, `Podcast` e `Multifuncional`, com slugs estáveis, apenas para desenvolvimento e QA. Elas não são catálogo comercial aprovado nem seed de produção;
+- a administração, criação e arquivamento da taxonomia pertencem à FEAT-031. Até essa integração existir, um ambiente sem tipos ativos mostra dependência vazia factual e não permite inventar tipo pelo dono;
+- `studio.draft.discard` pertence à FEAT-006 como correção segura. A FEAT-009 apenas reutiliza o comando na superfície editorial;
+- concorrência otimista usa `editVersion` inteiro monotônico e input `expectedEditVersion`; timestamp não é token de concorrência;
+- a FEAT-006 não antecipa rota pública de detalhe. A separação entre revisão publicada e rascunho é comprovada no editor privado e no banco; a FEAT-011 será dona da página pública.
+
+**Critério de reabertura:** aprovação de um catálogo comercial inicial que precise entrar como seed de produção, necessidade comprovada de outra taxonomia no editor central, ou mudança na divisão de responsabilidade entre dados centrais e conteúdo complementar.
+
+## OPEN-012 — Autoridade para editar estúdio antes da ativação do dono
+
+**Status:** aberta; bloqueia a conclusão da FEAT-006.
+
+**Conflito registrado:** a FEAT-004 afirma que o estúdio pode ser editado antes da ativação, mas a
+FEAT-006 vincula `studios.owner_user_id` a `owner_profiles` e exige
+`owner_profiles.status = active` no read model, no comando SQL e na UI. `owner_profiles` somente
+nasce em `owner.activate`.
+
+**Comportamento seguro preservado até decisão:** perfil base ativo e completo e
+`owner_profiles.active` são obrigatórios; o estado do recebedor não bloqueia o editor.
+
+**Decisão necessária:** definir se “antes da ativação” significa antes de `owner.activate` — o que
+exige uma fonte canônica de ownership pré-ativação e alterações de schema e autorização — ou antes
+da elegibilidade financeira/ativação do recebedor, caso em que a FEAT-004 deve exigir dono ativo e
+dispensar somente o recebedor ativo.
+
+**Prova para fechamento:** SQL, serviço e UI cobrem a fronteira escolhida, conta suspensa continua
+bloqueada e reserva permanece inelegível sem todos os requisitos financeiros.
+
+## OPEN-013 — Nome histórico da taxonomia de estúdio
+
+**Status:** aberta; bloqueia a integração da FEAT-031 e, portanto, a conclusão da FEAT-006.
+
+**Conflito registrado:** a FEAT-031 prevê CRUD de taxonomias e exige histórico estável, mas as
+revisões da FEAT-006 guardam somente `studio_type_id`; os read models resolvem o nome atual em
+`studio_types`. Arquivar preserva a referência, porém renomear altera retroativamente o rótulo de
+revisões já aprovadas.
+
+**Comportamento seguro preservado até decisão:** arquivamento pode impedir novas seleções sem apagar
+referências; renomear tipo já usado não deve ser implementado.
+
+**Decisão necessária:** tornar o nome imutável depois do primeiro uso, versionar a taxonomia ou
+persistir o rótulo como snapshot em cada revisão. A escolha deve definir também como a prévia de
+impacto e o read model histórico apresentam nomes antigos e atuais.
+
+**Prova para fechamento:** renomear e arquivar um tipo referenciado por revisão aprovada preserva o
+resultado histórico definido, impede nova seleção quando inativo e não reescreve a revisão.
+
+## Decisões fechadas da implementação FEAT-006
+
+- concorrência real dblink: mesma key lógica produz um efeito; keys diferentes disputam a versão e
+  deixam um vencedor, com o perdedor observando `40001`/`409`;
+- verification-first: tipos/editor são pré-lidos antes do DAL, e não há read ou await remoto após o
+  commit; discard deriva localmente o retorno retido e só retorna tombstone mínima para shell seguro;
+- stale replay exige GET autoritativo e não repete POST. `MAX_SAFE_INTEGER` com `22003` vira `409`
+  factual; erro desconhecido vira `503`;
+- `studio.edits` limita 60/10min por usuário; o facade frontend aplica limite IP separado.

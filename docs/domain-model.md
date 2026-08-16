@@ -135,7 +135,18 @@ A leitura da conta usa `public.get_my_profile()` como read model `security invok
 
 ### 4.3 Estúdio
 
-`studios.owner_user_id` é `not null`. Uma conta pode possuir vários estúdios. Não existe membership nesta versão.
+`studios.owner_user_id` é `not null` e referencia a autoridade canônica em `owner_profiles`. Uma
+conta pode possuir vários estúdios; não existe membership nesta versão. O agregado guarda
+`edit_version` monotônico, `last_revision_number` monotônico e ponteiros compostos para no máximo um
+rascunho e uma revisão aprovada, sempre pertencentes ao mesmo estúdio. Descartar um draft não reduz
+o maior número já alocado, de modo que o próximo clone não reutiliza revision number. O UUID
+pré-gerado no app serve somente à recuperação de uma criação ambígua e nunca prova ownership.
+
+Uma nova seleção de tipo exige que a linha ainda ativa seja bloqueada com `FOR SHARE` antes do
+efeito. Isso lineariza create/update com o arquivamento futuro. A FEAT-031 deve manter o archive
+tipo-only. Se também bloquear studio existente, precisa seguir a ordem agregado → tipo do update ou
+redesenhar/testar as duas direções; studio depois do tipo não pode surgir silenciosamente. Arquivar
+conserva a referência, e `OPEN-013` proíbe renomear tipo já usado até decisão humana.
 
 ### 4.4 Reserva
 
@@ -146,6 +157,11 @@ A leitura da conta usa `public.get_my_profile()` como read model `security invok
 Papéis são globais e não alteram ownership. Ação administrativa passa por função específica e auditoria.
 
 ## 5. Estado de estúdio
+
+Na FEAT-006, o schema materializa somente `draft` e `published`: criação produz `draft`, enquanto o
+estado `published` é uma pré-condição estrutural usada para provar que a edição clona a revisão
+aprovada. O produto ainda não expõe submissão, aprovação, pausa ou publicação. A máquina completa
+abaixo continua como contrato-alvo das features FEAT-009/010:
 
 Estados operacionais:
 
@@ -179,6 +195,10 @@ Regras:
 
 ## 6. Estado de revisão
 
+O contrato mínimo da FEAT-006 materializa `draft`, `pending` e `approved`; somente `draft` é mutável.
+`pending/approved` não ganham ação de produto nesta fatia e existem para fixar imutabilidade e a
+separação entre versão aprovada e edição. `rejected/superseded` entram com o workflow proprietário.
+
 - `draft`;
 - `pending`;
 - `approved`;
@@ -186,6 +206,11 @@ Regras:
 - `superseded`.
 
 Somente draft pode ser editada. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com motivo. Aprovação marca revisão anterior como superseded.
+
+Na FEAT-006, salvar um publicado sem draft é sempre uma correção real: clona a aprovada mesmo que o
+core seja idêntico. Convergência sem nova versão existe somente diante de um draft já presente e
+semanticamente igual. Esse no-op não cria fato de auditoria, mas a superfície remonta o form a partir
+do retorno autoritativo para limpar estado local.
 
 ## 7. Estado de tentativa/hold
 
@@ -259,21 +284,22 @@ Bloqueios:
 
 ## 11. Correção e exclusão
 
-| Objeto                           | Estratégia                                                          |
-| -------------------------------- | ------------------------------------------------------------------- |
-| Draft de revisão sem dependência | hard delete                                                         |
-| Revisão submetida                | imutável; nova revisão                                              |
-| Estúdio publicado                | pause/disable; não apagar histórico                                 |
-| Janela semanal                   | editar                                                              |
-| Exceção futura                   | editar/remover                                                      |
-| Bloqueio manual futuro           | editar/remover                                                      |
-| Reserva confirmada               | cancelar/compensar                                                  |
-| Pagamento                        | evento/reembolso; nunca apagar                                      |
-| Repasse                          | evento corretivo                                                    |
-| Perfil sem histórico             | exclusão                                                            |
-| Perfil com histórico             | anonimização                                                        |
-| Mídia não publicada              | remover após cleanup                                                |
-| Mídia publicada antiga           | manter enquanto revisão for necessária; depois política de retenção |
+| Objeto                           | Estratégia                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| Draft de revisão sem dependência | hard delete; shell nunca publicado também é removido com tombstone idempotente |
+| Draft de estúdio publicado       | remover somente o draft; preservar revisão aprovada e avançar `edit_version`   |
+| Revisão submetida                | imutável; nova revisão                                                         |
+| Estúdio publicado                | pause/disable; não apagar histórico                                            |
+| Janela semanal                   | editar                                                                         |
+| Exceção futura                   | editar/remover                                                                 |
+| Bloqueio manual futuro           | editar/remover                                                                 |
+| Reserva confirmada               | cancelar/compensar                                                             |
+| Pagamento                        | evento/reembolso; nunca apagar                                                 |
+| Repasse                          | evento corretivo                                                               |
+| Perfil sem histórico             | exclusão                                                                       |
+| Perfil com histórico             | anonimização                                                                   |
+| Mídia não publicada              | remover após cleanup                                                           |
+| Mídia publicada antiga           | manter enquanto revisão for necessária; depois política de retenção            |
 
 ## 12. Tempo
 
@@ -313,3 +339,27 @@ PII pertence a perfil/provider integration, não a read models públicos. Reserv
 10. ação administrativa sensível possui audit event;
 11. provider event é idempotente;
 12. repasse pago não existe para reserva reembolsada.
+
+### Estado FEAT-006 e discard
+
+Create/update usam pre-read antes do DAL e `expectedEditVersion` como fence. Discard pré-lê mode,
+scope e id: shell nunca publicado retorna tombstone mínima; em estúdio publicado remove apenas o
+draft e deriva localmente o editor retido com `draft=null`, `editVersion` SQL e published/status/
+types/id preservados. Same-key/different-key e stale replay são verificados no banco; replay de
+create/update só reconstrói o resultado se a `resulting_edit_version` ainda for corrente. Não há
+read remoto pós-commit nem replay automático de POST; stale/comparação é browser, enquanto
+tombstone/replay é SQL/unitário.
+
+Correlação e replay são ortogonais: `requestId` segue apenas o contexto server-side e não entra no
+hash; `idempotencyKey` continua a identidade lógica. Um efeito grava exatamente um fato append-only
+de criação, atualização de revisão, descarte ou exclusão, com metadata somente estrutural. Replay
+preserva o primeiro fato/request ID, e no-op, falha ou conflito não auditam.
+
+O `studioId` de uma criação ambígua permanece S1 em toda a recuperação, mas cada nova ação explícita
+recebe chave idempotente nova. Se S1 termina com core A e a tentativa efêmera já é B, o domínio não
+trata B como fato nem o descarta silenciosamente: a UI compara A/B e só navega para A por escolha
+explícita; reaplicar B produz update de S1 com `expectedEditVersion` corrente. O payload B nunca
+entra em URL, Web Storage ou QueryCache. A fonte desktop-chromium do ID 005 concretiza K1/S1/A
+ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação A/B → reaplicação → save
+explícito K3 como update do único S1. O roteiro está implementado na fonte, sem execução ou gate
+verde no snapshot atual.

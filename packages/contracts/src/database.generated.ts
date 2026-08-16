@@ -134,6 +134,172 @@ export type Database = {
         };
         Relationships: [];
       };
+      studio_revisions: {
+        Row: {
+          address_complement: string | null;
+          capacity: number;
+          city: string;
+          created_at: string;
+          description: string;
+          id: string;
+          name: string;
+          neighborhood: string;
+          postal_code: string;
+          revision_number: number;
+          state: string;
+          status: string;
+          street: string;
+          street_number: string;
+          studio_id: string;
+          studio_type_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          address_complement?: string | null;
+          capacity: number;
+          city?: string;
+          created_at?: string;
+          description: string;
+          id?: string;
+          name: string;
+          neighborhood: string;
+          postal_code: string;
+          revision_number: number;
+          state?: string;
+          status?: string;
+          street: string;
+          street_number: string;
+          studio_id: string;
+          studio_type_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          address_complement?: string | null;
+          capacity?: number;
+          city?: string;
+          created_at?: string;
+          description?: string;
+          id?: string;
+          name?: string;
+          neighborhood?: string;
+          postal_code?: string;
+          revision_number?: number;
+          state?: string;
+          status?: string;
+          street?: string;
+          street_number?: string;
+          studio_id?: string;
+          studio_type_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revisions_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revisions_studio_type_id_fkey";
+            columns: ["studio_type_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_types";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_types: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          description: string | null;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      studios: {
+        Row: {
+          created_at: string;
+          draft_revision_id: string | null;
+          edit_version: number;
+          id: string;
+          last_revision_number: number;
+          owner_user_id: string;
+          published_revision_id: string | null;
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          draft_revision_id?: string | null;
+          edit_version?: number;
+          id: string;
+          last_revision_number?: number;
+          owner_user_id: string;
+          published_revision_id?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          draft_revision_id?: string | null;
+          edit_version?: number;
+          id?: string;
+          last_revision_number?: number;
+          owner_user_id?: string;
+          published_revision_id?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studios_draft_revision_fk";
+            columns: ["id", "draft_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["studio_id", "id"];
+          },
+          {
+            foreignKeyName: "studios_owner_user_id_fkey";
+            columns: ["owner_user_id"];
+            isOneToOne: false;
+            referencedRelation: "owner_profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "studios_published_revision_fk";
+            columns: ["id", "published_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["studio_id", "id"];
+          },
+        ];
+      };
       terms_acceptances: {
         Row: {
           accepted_at: string;
@@ -351,6 +517,50 @@ export type Database = {
           requirements: string[];
           reservations_eligible: boolean;
           scope: string;
+        }[];
+      };
+      get_owner_studio_editor: {
+        Args: { p_studio_id: string };
+        Returns: {
+          draft_address_complement: string;
+          draft_capacity: number;
+          draft_city: string;
+          draft_description: string;
+          draft_name: string;
+          draft_neighborhood: string;
+          draft_postal_code: string;
+          draft_revision_id: string;
+          draft_revision_number: number;
+          draft_state: string;
+          draft_street: string;
+          draft_street_number: string;
+          draft_studio_type_id: string;
+          draft_studio_type_name: string;
+          edit_version: number;
+          published_address_complement: string;
+          published_capacity: number;
+          published_city: string;
+          published_description: string;
+          published_name: string;
+          published_neighborhood: string;
+          published_postal_code: string;
+          published_revision_id: string;
+          published_revision_number: number;
+          published_state: string;
+          published_street: string;
+          published_street_number: string;
+          published_studio_type_id: string;
+          published_studio_type_name: string;
+          scope: string;
+          studio_id: string;
+          studio_status: string;
+        }[];
+      };
+      list_active_studio_types: {
+        Args: never;
+        Returns: {
+          id: string;
+          name: string;
         }[];
       };
     };

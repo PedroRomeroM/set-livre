@@ -38,3 +38,48 @@ values
     '2026-08-12 00:00:00+00'
   )
 on conflict do nothing;
+
+-- FEAT-006 usa estes tipos somente no Supabase local. Produção começa com a
+-- taxonomia vazia e depende de cadastro administrativo factual posterior.
+insert into public.studio_types (
+  id,
+  name,
+  slug,
+  description,
+  active,
+  sort_order
+)
+values
+  (
+    '00000000-0000-4000-8000-000000000601',
+    'Fotografia',
+    'fotografia',
+    'Fixture local de tipo de estúdio para desenvolvimento e testes.',
+    true,
+    10
+  ),
+  (
+    '00000000-0000-4000-8000-000000000602',
+    'Vídeo',
+    'video',
+    'Fixture local de tipo de estúdio para desenvolvimento e testes.',
+    true,
+    20
+  ),
+  (
+    '00000000-0000-4000-8000-000000000603',
+    'Podcast',
+    'podcast',
+    'Fixture local de tipo de estúdio para desenvolvimento e testes.',
+    true,
+    30
+  ),
+  (
+    '00000000-0000-4000-8000-000000000604',
+    'Multifuncional',
+    'multifuncional',
+    'Fixture local de tipo de estúdio para desenvolvimento e testes.',
+    true,
+    40
+  )
+on conflict do nothing;

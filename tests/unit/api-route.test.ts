@@ -122,6 +122,33 @@ describe("API route facade", () => {
     expect(serialized).not.toContain("postgresql");
   });
 
+  it("keeps studio not-found responses and telemetry strict without private input", async () => {
+    const { ApiRouteError, apiErrorResponse, writeSafeOperationalEvent } =
+      await import("../../src/lib/server/api-route");
+    const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const response = apiErrorResponse(
+      new ApiRouteError(404, "NOT_FOUND", "O estúdio não foi encontrado."),
+      requestId,
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "NOT_FOUND", requestId },
+    });
+    expect(response.status).toBe(404);
+
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    writeSafeOperationalEvent({
+      action: "studio.read",
+      durationMs: 3,
+      event: "studio.request",
+      outcome: "rejected",
+      requestId,
+      status: 404,
+    });
+    expect(output).toHaveBeenCalledWith(expect.stringContaining('"action":"studio.read"'));
+    expect(output).toHaveBeenCalledWith(expect.stringContaining('"event":"studio.request"'));
+    output.mockRestore();
+  });
+
   it("trusts only one proxy-authenticated network address in production", async () => {
     const { requestRateLimitDiscriminator } = await import("../../src/lib/server/api-route");
     process.env.APP_ENV = "production";

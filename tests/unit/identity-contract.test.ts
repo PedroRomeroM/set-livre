@@ -88,18 +88,31 @@ describe("identity contracts", () => {
     "/conta?userId=11111111-1111-4111-8111-111111111111",
     "/entrar?sessao=ativa&next=https://attacker.example",
     "/entrar%3Fsessao%3Dativa",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados?modo=editar",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados#campos",
+    "/dono/estudios%2F11111111-1111-4111-8111-111111111111%2Fdados",
+    "/dono/estudios/../11111111-1111-4111-8111-111111111111/dados",
+    "/dono/estudios\\11111111-1111-4111-8111-111111111111\\dados",
+    "/dono/estudios/11111111-1111-0111-8111-111111111111/dados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
     "\\\\attacker.example\\account",
+    ["/dono/estudios/11111111-1111-4111-8111-111111111111/dados"],
     undefined,
   ])("fails closed for a non-allowlisted returnTo: %s", (candidate) => {
     expect(resolveAuthenticatedReturnTo(candidate)).toBe("/entrar?sessao=ativa");
   });
 
-  it.each(["/entrar?sessao=ativa", "/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"])(
-    "preserves the exact authenticated surface: %s",
-    (destination) => {
-      expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);
-    },
-  );
+  it.each([
+    "/entrar?sessao=ativa",
+    "/conta",
+    "/conta/seguranca",
+    "/dono",
+    "/dono/recebimentos",
+    "/dono/estudios/novo",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+  ])("preserves the exact authenticated surface: %s", (destination) => {
+    expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);
+  });
 
   it("limits callback types and token length", () => {
     const base = {

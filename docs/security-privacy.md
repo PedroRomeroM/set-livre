@@ -73,7 +73,7 @@ Camadas:
 
 Nunca aceitar `owner_user_id`, `role`, `status`, shares ou `approved` do cliente como autoridade.
 
-Na DAL, `app_dal` é `NOLOGIN`/`NOINHERIT` e pode ser assumida somente pelo login restrito configurado; as referências administrativas `postgres` exigidas pelo PostgreSQL 17 não possuem `SET/INHERIT`, e nenhuma role intermediária pode assumir o login. O readiness aplica allowlists exatas às duas identidades: `app_dal` não possui objetos nem default privileges e recebe diretamente apenas `USAGE` em `private` e `EXECUTE` nas dezesseis rotinas autorizadas — os dois checks de readiness, a criação da intenção legal, `issue`/`inspect`/`claim`/`release`/`consume`/`close` do contexto recovery, os três comandos `complete`/`update identity`/`update appearance` do perfil e os quatro entrypoints FEAT-004 `get_owner_recipient_status_for_user`/`activate_owner`/`prepare_owner_recipient_operation`/`apply_owner_recipient_operation` —, totalizando dezessete dependências ACL. As leituras autenticadas `public.get_my_profile()`, `public.get_owner_activation_status()` e `public.get_owner_recipient_status()` permanecem fora dessa role, como `security invoker`, sem UUID de entrada e sob `auth.uid()` + RLS. O login recebe somente `CONNECT`, sua membership DAL, limite de dez conexões, validade infinita e a máscara local vazia do GUC de assinatura. Esse teto é compartilhado pelos processos simultâneos: o pool de comandos web usa no máximo seis conexões, o readiness web duas e o readiness do backoffice duas (`6 + 2 + 2 = 10`), sem aumentar o limite da role. `TEMPORARY` é revogado de `PUBLIC`, não é concedido à DAL nem ao login e sua ausência efetiva é verificada nos dois entrypoints de readiness; grants explícitos administrados pela stack permanecem intocados. A inspeção recusa grants por coluna, a role como grantor, parâmetros residuais, terceiro membro ou ownership fora do manifesto. A baseline pública é exata; objetos alcançáveis de `private` e objetos compartilhados monitorados falham fechado. Em `pg_catalog`, cada privilégio de relação ou coluna concedido a `PUBLIC` precisa estar contido na baseline inicial `i`/`e` do próprio objeto registrada em `pg_init_privs`; isso preserva as leituras built-in do PostgreSQL sem aceitar expansões posteriores, como `SELECT` em `pg_authid` ou em `rolpassword`. Rotinas são comparadas pelo OID do overload: ACL `i`/`e` prevalece; sem esse registro, membros de extensão usam `pg_extension.extowner` e demais built-ins initdb (`OID < 16384`) usam o owner bootstrap OID `10`, nunca o `proowner` mutável do objeto. O owner precisa coincidir com essa origem mesmo quando `PUBLIC` não conserva `EXECUTE`; uma rotina normal posterior começa com baseline pública vazia. Grantor e grant option também precisam caber na origem canônica, portanto o default interno e membros legítimos de extensão continuam válidos sem liberar `pg_read_file(text)`, função nova ou grantor derivado de owner adulterado. `pg_roles`, `pg_user` e `pg_db_role_setting` continuam sob a garantia adicional de ACL/owner exatos e inacessibilidade direta, por coluna ou transitiva às roles web/DAL. Row types, arrays e multiranges implícitos seguem seus objetos canônicos; composites explícitos continuam monitorados. O contrato restringe expansão direta de `PUBLIC`; ele não avalia sozinho a semântica da rotina, grants a roles nomeadas nem afirma que todo catálogo built-in seja confidencial. As personas adversariais owner/admin das fixtures permanecem sob `authenticated`, veem apenas a própria conta e não ganham escrita direta nem execução privada; as autoridades canônicas entram somente pelos fatos FEAT-004, nunca por metadata Auth.
+Na DAL, `app_dal` é `NOLOGIN`/`NOINHERIT` e pode ser assumida somente pelo login restrito configurado; as referências administrativas `postgres` exigidas pelo PostgreSQL 17 não possuem `SET/INHERIT`, e nenhuma role intermediária pode assumir o login. O readiness aplica allowlists exatas às duas identidades: `app_dal` não possui objetos nem default privileges e recebe diretamente apenas `USAGE` em `private` e `EXECUTE` nas dezenove rotinas autorizadas — os dezesseis entrypoints anteriores mais `create_studio`, `update_studio_revision_core` e `discard_studio_draft` —, totalizando vinte dependências ACL. As leituras autenticadas `public.get_my_profile()`, `public.get_owner_activation_status()`, `public.get_owner_recipient_status()`, `public.list_active_studio_types()` e `public.get_owner_studio_editor(uuid)` permanecem fora dessa role, como `security invoker`, sob `auth.uid()` + RLS. O login recebe somente `CONNECT`, sua membership DAL, limite de dez conexões, validade infinita e a máscara local vazia do GUC de assinatura. Esse teto é compartilhado pelos processos simultâneos: o pool de comandos web usa no máximo seis conexões, o readiness web duas e o readiness do backoffice duas (`6 + 2 + 2 = 10`), sem aumentar o limite da role. `TEMPORARY` é revogado de `PUBLIC`, não é concedido à DAL nem ao login e sua ausência efetiva é verificada nos dois entrypoints de readiness; grants explícitos administrados pela stack permanecem intocados. A inspeção recusa grants por coluna, a role como grantor, parâmetros residuais, terceiro membro ou ownership fora do manifesto. A baseline pública é exata; objetos alcançáveis de `private` e objetos compartilhados monitorados falham fechado. Em `pg_catalog`, cada privilégio de relação ou coluna concedido a `PUBLIC` precisa estar contido na baseline inicial `i`/`e` do próprio objeto registrada em `pg_init_privs`; isso preserva as leituras built-in do PostgreSQL sem aceitar expansões posteriores, como `SELECT` em `pg_authid` ou em `rolpassword`. Rotinas são comparadas pelo OID do overload: ACL `i`/`e` prevalece; sem esse registro, membros de extensão usam `pg_extension.extowner` e demais built-ins initdb (`OID < 16384`) usam o owner bootstrap OID `10`, nunca o `proowner` mutável do objeto. O owner precisa coincidir com essa origem mesmo quando `PUBLIC` não conserva `EXECUTE`; uma rotina normal posterior começa com baseline pública vazia. Grantor e grant option também precisam caber na origem canônica, portanto o default interno e membros legítimos de extensão continuam válidos sem liberar `pg_read_file(text)`, função nova ou grantor derivado de owner adulterado. `pg_roles`, `pg_user` e `pg_db_role_setting` continuam sob a garantia adicional de ACL/owner exatos e inacessibilidade direta, por coluna ou transitiva às roles web/DAL. Row types, arrays e multiranges implícitos seguem seus objetos canônicos; composites explícitos continuam monitorados. O contrato restringe expansão direta de `PUBLIC`; ele não avalia sozinho a semântica da rotina, grants a roles nomeadas nem afirma que todo catálogo built-in seja confidencial. As personas adversariais owner/admin das fixtures permanecem sob `authenticated`, veem apenas a própria conta e não ganham escrita direta nem execução privada; as autoridades canônicas entram somente pelos fatos FEAT-004, nunca por metadata Auth.
 
 O documento jurídico do dono segue minimização por intenção. Somente `/dono` e `GET /api/owner/activation` recebem a projeção de ativação com 21 colunas e corpo Markdown. `/dono/recebimentos`, `GET /api/owner/recipient` e os retornos de `recipient.onboarding.start | refresh` recebem 16 colunas e omitem título, versão textual, hash e corpo. Usuário e projeção também separam as query keys privadas, evitando que o contrato completo seja reutilizado no cache operacional de recebimentos.
 
@@ -83,7 +83,32 @@ A disponibilidade jurídica da ativação usa uma capability diferente e exclusi
 
 Concorrência não autoriza replay automático. `CONFLICT` e `VALIDATION_FAILED` sem `fieldErrors` fecham a ação até um GET autoritativo; validação realmente ligada ao campo continua editável. A classificação server-side trata somente `42501 + owner_contract_not_current` como `409 CONFLICT`, porque contrato superado exige nova leitura; `owner_blocked`, `recipient_blocked` e qualquer outro `42501` permanecem `403 FORBIDDEN`. O payload público recebe apenas código e mensagem seguros, nunca a mensagem SQL usada nessa decisão. A execução browser anterior ao novo P2 aceitou o cenário de dois contextos: exatamente um POST stale, um `409`, zero GET antes da decisão do usuário, um GET autoritativo e nenhum novo POST durante a recuperação.
 
+Na FEAT-006, a mesma regra protege o editor privado. O cliente nunca envia owner, status, número da
+revisão, cidade, UF ou versão resultante; `studioId` e `expectedScope` são somente correlação e
+asserção, enquanto sessão, `owner_profiles`, RLS e a função privada decidem autoridade. Estúdio
+inexistente e pertencente a outro dono retornam o mesmo `404 NOT_FOUND`. Antes de parsear `studioId`
+ou consultar os read models, o GET recusa conta suspensa com `ACCOUNT_SUSPENDED` e perfil incompleto
+com `FORBIDDEN`. `expectedEditVersion`
+monotônico evita perda silenciosa e nenhuma falha ambígua repete POST automaticamente: a interface
+exige GET explícito, mantém a tentativa somente em ref efêmera e permite comparar/reaplicar sem
+gravar. Nome, descrição e endereço ficam fora de URL, log, evento, erro público, QueryCache e
+storage. As três specs desativam trace, screenshot e vídeo porque o provisionamento atravessa senha,
+documentos e cookies. Evidências persistidas aceitam somente fixtures locais `qa_f006_*`, saída e
+relatório redigidos e scans negativos; dado real ou não-namespaceado permanece proibido.
+
+Create/update ainda exigem tipo ativo sob `FOR SHARE`, impedindo que uma seleção nova atravesse o
+commit concorrente de arquivamento. A futura FEAT-031 deve manter archive tipo-only. Se também
+bloquear estúdio existente, precisa seguir a ordem agregado → tipo do update ou redesenhar/testar as
+duas direções; estúdio depois do tipo não pode surgir silenciosamente. A autoridade pré-ativação continua
+fail-closed enquanto `OPEN-012` estiver aberta, e rename de tipo usado permanece proibido por
+`OPEN-013`.
+
 Correlação e replay também são fronteiras separadas. O `requestId` selecionado/validado pela rota percorre apenas o contexto server-side e chega a `audit.events.request_id`; a `idempotencyKey` do envelope permanece privada e aparece somente nas tabelas de operação/replay e em `audit.events.idempotency_key`, necessária à unicidade do fato. Ela não entra em log/evento operacional, resposta, DTO, DOM, URL ou metadata. Linhas anteriores à migration `20260815000100` preservam o valor legado — uma chave idempotente — nos dois campos; o request ID HTTP verdadeiro não é recuperável e não é fabricado.
+
+Na FEAT-006, o request ID também fica fora do payload/hash e entra no SQL em parâmetro UUID separado.
+Auditoria aceita somente ator/target/result factuais e metadata estrutural de versão; core, nome,
+descrição, endereço, capacidade, tipo e PII são recusados. Replay preserva o primeiro evento e seu
+request ID; no-op, validação, conflito ou falha não produzem fato.
 
 Na FEAT-003, CPF/CNPJ e documento adicional permanecem somente nas colunas privadas alcançadas pela DAL e nunca são selecionados pelo read model. O DTO próprio contém apenas máscaras estruturais, nome e telefone do titular autenticado. `profile.complete` e `profile.update` exigem `expectedScope` UUID no envelope estrito para repetir o recorte SSR, mas esse campo é apenas asserção do cliente: `session.userId` permanece a autoridade. Depois de origem e fachada, a rota privada autentica antes de consumir o body; divergência recebe `409 SESSION_CHANGED` antes do limiter específico de perfil, serviço e DAL.
 
@@ -305,3 +330,79 @@ Runbook:
 - export/deletion;
 - CSP;
 - secrets scan.
+
+## 14. FEAT-006 — concorrência e fronteira privada
+
+O editor usa verification-first: pre-read de tipos/editor antes do DAL, nenhuma leitura ou Promise
+remota pós-commit, e nenhum POST automático após stale/replay. Same-key com mesmo hash retorna um
+efeito; mesma key com hash diferente conflita; different-key tem um vencedor real e o perdedor
+recebe `40001`/`409`. Create/update com replay tardio cujo resultado já não está disponível emitem
+`40001`/`studio_result_no_longer_available` e exigem GET explícito. Tombstone replay somente é aceito
+quando o pre-read comprova shell seguro; o browser cobre stale/comparação, enquanto tombstone e
+replay são provados em SQL/unitário.
+
+Publicado sem draft sempre clona a aprovada, mesmo com core idêntico; convergência sem nova versão
+fica restrita ao draft existente idêntico. Efeito real cria uma única ação de auditoria allowlisted na
+mesma transação. Replay conserva evento/correlação; no-op, conflito e falha ficam em zero. Um sucesso
+no-op ainda força remount local do formulário para limpar valores dirty sem persistir o payload.
+`MAX_SAFE_INTEGER`/SQLSTATE `22003` retornam `409` factual; desconhecido retorna `503`. Rate class
+`studio.edits` é 60/10min por usuário e o facade frontend mantém rate IP separado. O browser focado
+canônico passou historicamente em 17/17 por duas specs/sete projetos, com privacidade e cleanup
+verdes. A fonte atual com seis IDs/20 execuções/três specs/dez projetos ainda não foi rodada; build,
+smoke, release, remoto e ARM64/PEND-003 permanecem pendentes.
+
+O GET exige `x-set-livre-expected-scope` UUID após autenticação/status/perfil e antes de query/read.
+É uma asserção do SSR, nunca autenticação ou ownership; ausência/inválido retorna `422`, divergência
+retorna `409 SESSION_CHANGED` e zero read model executa. Em form dirty ou mutation pendente,
+foco/online/visibilidade fecham o DOM privado durante um probe. O controller montado conserva apenas
+refs efêmeras com valores crus, sem QueryCache, URL ou storage. Mesmo escopo restaura os raws;
+divergência limpa cache/boundary. Latch de unmount/transição e guardas pós-`await` impedem callback
+tardio de republicar conteúdo privado.
+
+Criação ambígua conserva S1 e usa nova chave somente após ação explícita. Se S1 já contém A e a
+tentativa local é B, a comparação preserva ambos: escolher a atual navega para A; reaplicar transforma
+B em update de S1 com versão autoritativa. B não é persistido no cliente. A fonte desktop-chromium do
+ID 005 fixa K1/S1/A ambígua → GET 404 → usuário B → commit tardio K1 → K2/S1/B 409 → comparação A/B →
+reaplicação → save explícito K3 como update do único S1. Esse roteiro está implementado na fonte,
+mas não foi executado nem está verde.
+
+Por exceção explícita de PII, as três specs FEAT-006 mantêm trace, screenshot e vídeo em `off`. Locators,
+respostas HTTP, contadores de request e asserções de DOM substituem a captura; stdout, relatório e
+artefatos passam por redaction e varredura negativa de sentinela, token, cookie, documento e URL de
+banco, aceitando somente fixtures sintéticas `qa_f006_*` nos campos automáticos allowlisted.
+
+Quatro focadas anteriores foram rejeitadas por trigger de cleanup, locator de comparação, trigger
+de publicação e status soft-404; elas permanecem diagnóstico histórico e não herdam o selo de
+privacidade/cleanup da focada canônica. A coleta integral enumerou 131 testes em 19 specs/16
+projetos. A primeira execução integral foi rejeitada pela race do body. A segunda foi interrompida
+externamente no teste 10 e é inconclusiva; não existe claim de privacidade, cleanup ou matriz verde
+para ela. O sandbox gerenciado atual bloqueia localhost, portanto a execução integral final aguarda
+ambiente compatível. A fonte integral atual projeta 134, também sem execução.
+
+A última cadeia estática integral canônica, anterior aos helpers atuais, passou em 893/893 por 85
+arquivos. O recorte dirigido anterior passou em 124/124 por dez arquivos; o atual passou em 141/141
+por 12 arquivos FEAT-006/studio sob Node 24, incluindo helper, latch, correlação separada, auditoria e
+remount, além da prova de que a telemetria redige idempotency key, UUID do estúdio, tipo, nome,
+endereço, descrição e user-agent. Nenhum é integral. A tentativa
+completa atual falhou em 12 testes de infraestrutura por limites do sandbox — nested spawn `EPERM`,
+remapeamento de ownership raiz e timeouts de process group ou stdout vazio — e não é gate verde.
+
+Após preclean físico dos dois `.next`, a única invocação `APP_RELEASE_SHA=local npm run build` sob
+Node 24/npm 11 compilou a etapa web em 3,9 s e foi rejeitada em
+`Could not parse output from TypeScript's --showConfig`; backoffice não iniciou e smoke permaneceu
+em zero. O comando direto e o spawn exato com stdout/stderr em pipe terminaram `0`, mas ambos os
+buffers do spawn tiveram length zero no sandbox. A classificação é rejeição de harness, não falha
+de produto e não build verde.
+
+O único log preservado é privado: 449 bytes, modo `0600`, SHA-256
+`0f614f806016737ae887529df0ed728dab3d4b3d62da13b12010925facb6cf68`. `next-env`, lockfile e
+ausência de caches permaneceram canônicos; o build final das duas apps continua pendente. O
+`docs:check` atual também é inconclusivo porque o pipe de `git hash-object --stdin` não produziu
+saída. Nenhum desses resultados amplia a evidência de privacidade do browser focado.
+
+A fonte agora contém teclado/foco, zoom 200%/reflow, descarte e probes pending/dirty, mas segue sem
+execução browser atual. `docs:check`, integral unitária, DB 441 + gerados, browser 20/134, build,
+smoke/release e ARM64 permanecem pendentes. A FEAT-006 continua em implementação e depende da
+resolução de OPEN-012/013 e da FEAT-031 para concluir a administração/arquivamento da taxonomia. A
+migration `00200` teve apenas inspeção estática/diff neste ambiente; schema e tipos gerados seguem
+stale.

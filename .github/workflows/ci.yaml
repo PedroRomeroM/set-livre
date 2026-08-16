@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality, local Supabase and browser gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm-cache
+    steps:
+      # actions/checkout@v5
+      - name: Checkout exact revision
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+
+      # actions/setup-node@v5
+      - name: Install Node.js 24.18.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install and verify npm 11.19.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts npm@11.19.0
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "11.19.0"
+
+      - name: Install PostgreSQL 18.4 client
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_file="$(mktemp)"
+          cleanup() { rm -f -- "$key_file"; }
+          trap cleanup EXIT
+          sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            --output "$key_file"
+          fingerprint="$(gpg --show-keys --with-colons "$key_file" | awk -F: '$1 == "fpr" { print $10; exit }')"
+          test "$fingerprint" = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+          gpg --dearmor < "$key_file" \
+            | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update
+          package_version="$(apt-cache madison postgresql-client-18 | awk '$3 ~ /^18\.4-/ { print $3; exit }')"
+          test -n "$package_version"
+          sudo apt-get install --no-install-recommends --yes "postgresql-client-18=$package_version"
+          test "$(psql --version | awk '{print $3}')" = "18.4"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Static and unit gates
+        run: |
+          set -euo pipefail
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm run test:unit
+
+      - name: Reset isolated local Supabase
+        run: npm run supabase:reset
+
+      - name: Database, generated contracts and documentation gates
+        run: |
+          set -euo pipefail
+          npm run test:db
+          npm run docs:check
+
+      - name: Install pinned Playwright browsers
+        run: npm run test:e2e:install
+
+      - name: Affected browser contract on pull requests
+        if: github.event_name == 'pull_request'
+        run: npm run test:e2e:affected
+
+      - name: Complete browser contract on main
+        if: github.event_name == 'push'
+        run: npm run test:e2e
+
+      - name: Build web and backoffice standalone applications
+        run: npm run build
+
+      - name: Supply-chain and dead-code gates
+        run: |
+          set -euo pipefail
+          npm run audit
+          npm run knip
+
+      - name: Stop the scoped local Supabase stack
+        if: always()
+        run: npm run supabase:stop || true

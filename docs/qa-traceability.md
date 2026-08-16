@@ -43,11 +43,12 @@
 | SL-F005-E2E-003 | FEAT-005 |     P1     | regression    | mobile              | estado vazio oferece criação de estúdio                                        |  planejado   | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts`       |
 | SL-F005-E2E-004 | FEAT-005 |     P1     | regression    | desktop             | alerta de revisão/recebedor aponta a rota correta                              |  planejado   | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts`       |
 | SL-F005-E2E-005 | FEAT-005 |     P1     | regression    | mobile              | axe e nomes longos                                                             |  planejado   | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts`       |
-| SL-F006-E2E-001 | FEAT-006 |     P0     | critical      | desktop             | criar estúdio e salvar revisão em rascunho                                     |  planejado   | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
-| SL-F006-E2E-002 | FEAT-006 |     P0     | critical      | desktop             | editar publicado cria revisão sem alterar página pública                       |  planejado   | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
-| SL-F006-E2E-003 | FEAT-006 |     P0     | critical      | desktop             | dono A não edita estúdio B                                                     |  planejado   | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
-| SL-F006-E2E-004 | FEAT-006 |     P1     | regression    | mobile              | validação de endereço/capacidade                                               |  planejado   | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`            |
-| SL-F006-E2E-005 | FEAT-006 |     P1     | regression    | desktop             | conflito de concorrência otimista mostra recuperação                           |  planejado   | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`            |
+| SL-F006-E2E-001 | FEAT-006 |     P0     | critical      | desktop             | criar estúdio e salvar revisão em rascunho                                     | automatizado | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
+| SL-F006-E2E-002 | FEAT-006 |     P0     | critical      | desktop             | editar publicado cria revisão sem alterar a versão aprovada                    | automatizado | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
+| SL-F006-E2E-003 | FEAT-006 |     P0     | critical      | desktop             | dono A não edita estúdio B                                                     | automatizado | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`              |
+| SL-F006-E2E-004 | FEAT-006 |     P1     | regression    | mobile              | validação de endereço/capacidade por teclado                                   | automatizado | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`            |
+| SL-F006-E2E-005 | FEAT-006 |     P1     | regression    | desktop             | create ambíguo compara A/B, reaplica e salva B no único S1                     | automatizado | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`            |
+| SL-F006-E2E-006 | FEAT-006 |     P1     | reflow        | zoom 200%           | editor preserva conteúdo e operação em 160x360                                 | automatizado | `tests/e2e/reflow/feat-006-studio-core-revision.spec.ts`                |
 | SL-F007-E2E-001 | FEAT-007 |     P0     | critical      | desktop             | salvar tags, comodidades, regras e FAQ                                         |  planejado   | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`           |
 | SL-F007-E2E-002 | FEAT-007 |     P1     | regression    | mobile              | reordenar FAQ e preservar conteúdo                                             |  planejado   | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`         |
 | SL-F007-E2E-003 | FEAT-007 |     P0     | critical      | desktop             | tag inativa/externa é rejeitada                                                |  planejado   | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`           |
@@ -217,6 +218,8 @@ O catálogo, seus 198 cenários, os nove IDs da FEAT-003 e as prioridades perman
 
 ## Automação específica da FEAT-004 comprovada
 
+A FEAT-004 e seus sete IDs automatizados foram incorporados a `main` pelo [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6), no merge `b4f40035b3e7eda64d94726483d82ece9f01c7ed`, em `2026-08-16T09:24:06Z`. O HEAD final revisado foi `44854dca545ca3aa89e780d83a8a5025007f8b12`; depois da espera integral de 60 minutos, o comentário final REST `5306520356` registrou revisão limpa, e as seis threads ficaram resolvidas. Não há claim de `reviewDecision` nem check rollup final sem captura correspondente. Os totais permanecem 23 automatizados e 177 planejados; a próxima fatia é a FEAT-006.
+
 Contratos, comandos, DAL, adapter local, read model, UI e as quatro specs foram implementados; a rota canônica é `/dono`, e “sandbox” significa apenas o adapter local determinístico. `Verificar estado atual` fecha a superfície privada durante o GET, restaura foco no heading do checklist após sucesso ou no alerta seguro após falha; `Tentar novamente` reutiliza o intent e retorna ao heading somente após o novo GET 200. Os IDs 004/007 exigem `toBeFocused()` no caminho bem-sucedido, e o ID 007 cobre também GET 503, retry, GET real 200 e heading focado. No ID 005, o browser retém o GET de B sob a página/`QueryClient` de A, comprova boundary, desconexão de A no `pagehide`, SSR somente com B e zero erros; o callback tardio complementar é unitário com `MutationObserver` real/latch e com prova de que a key A não reaparece após o seed de B. Essa fotografia publicada passou no head `20260812000100`; a extensão pós-review e seu banco no head `20260812000200` estão registrados ao fim desta seção.
 
 Sem novo ID ou alteração nos totais, `SL-F004-E2E-004` também cobre a capability derivada no servidor. Um GET sintético válido alterna somente `recipientOnboardingCapability` sobre `nextAction=start_onboarding`: `unavailable` exige alerta `role=status`, título **Cadastro de recebimentos indisponível**, corpo **A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.**, ausência do notice local e dos CTAs start/refresh e zero POST; `local_adapter` restaura start. Depois de `pending`/`refresh_status`, a mesma alternância remove/restaura refresh sem aumentar o contador de POST. O oráculo passou na rodada focada 23/23 e na integral 114/114 do quarto P2; essa evidência permanece histórica para a extensão seguinte.
@@ -269,7 +272,7 @@ Um único build passou com exit `0`, 26 + 4 rotas, `BUILD_ID=local` e log SHA-25
 
 O gerador canônico executou exatamente uma vez para `969f30cd0f34b7e36e2a21550b5e3f28f8709406`, terminou com exit `0` em 21,15 segundos e produziu a release local auditada. Archive/sidecar/manifesto/log possuem 24.904.533/124/681.762/2.102 bytes e hashes `d5f544...`/`f3441a...`/`bc13a9...`/`5be766...`. A árvore possui 2.871 artefatos, e o tar 3.455 membros; ambos os `BUILD_ID` equivalem ao commit. Smoke embutido, secrets, paridade e cleanup ficaram verdes, e duas auditorias independentes terminaram `NO-BLOCKER`.
 
-O push `11464a3... → e51ab6f...` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. O PR #6 estava `OPEN`/draft, base `main@174ee163...`, head `e51ab6fc...`, com `mergeable=true` na fotografia do connector; o body foi atualizado. A resposta encadeada `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259`, criada por `PedroRomeroM` em `2026-08-16T00:43:03Z`, deixou `PRRT_kwDOTyzZrs6ZigTV` com `isResolved=true`, `isOutdated=true`, resolvida por ele. O script thread-aware encontrou cinco threads e zero não resolvidas, preservando as quatro anteriores. Naquela fotografia, o review seguinte, a espera mínima, a captura final, ready e merge ainda não tinham ocorrido, sem claim de `reviewDecision` ou checks. O quinto review posterior é documentado abaixo. A FEAT-004 continua **Em implementação**, e PEND-003/smoke ARM64 nativo permanecem obrigatórios para produção.
+O push `11464a3... → e51ab6f...` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. O PR #6 estava `OPEN`/draft, base `main@174ee163...`, head `e51ab6fc...`, com `mergeable=true` na fotografia do connector; o body foi atualizado. A resposta encadeada `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259`, criada por `PedroRomeroM` em `2026-08-16T00:43:03Z`, deixou `PRRT_kwDOTyzZrs6ZigTV` com `isResolved=true`, `isOutdated=true`, resolvida por ele. O script thread-aware encontrou cinco threads e zero não resolvidas, preservando as quatro anteriores. Naquela fotografia, o review seguinte, a espera mínima, a captura final, ready e merge ainda não tinham ocorrido, sem claim de `reviewDecision` ou checks. O quinto review posterior é documentado abaixo. Naquele recorte, a FEAT-004 continuava em implementação; PEND-003/smoke ARM64 nativo permanecem obrigatórios para produção.
 
 O quinto P2 foi aberto pelo review `PRR_kwDOTyzZrs8AAAABJsAUGQ`/REST `4945089561`, submetido em `2026-08-16T01:07:18Z` sobre `0decf00`. A thread `PRRT_kwDOTyzZrs6Zj15h`, comentário `PRRC_kwDOTyzZrs7h8LaV`/REST `3790648981`, estava atual, não resolvida e não desatualizada na captura. O patch adiciona `ownerActivationCapability` somente à projeção completa; `approved` é sempre `available`, enquanto `local_fixture` depende da allowlist `local | test`. A leitura conserva o contrato consultivo, o comando falha com `503 SERVICE_UNAVAILABLE` antes da escrita e a UI remove form/checkbox/CTA com copy exata.
 
@@ -287,23 +290,61 @@ A auditoria contou 140 ocorrências dos 88 e-mails QA exclusivamente em títulos
 
 As execuções rejeitadas anteriores permanecem histórico diagnóstico: o primeiro run revelou o defeito pré-hidratação já corrigido; os seguintes registram races ou incompatibilidades do harness/oráculo. Nenhum descreve falha atual do produto. Static 749/749, DB 358/358, focada 23/23 e integral 114/114 formaram o fechamento browser anterior ao hardening de build.
 
-Uma única invocação P5 de build terminou com exit `0`, 26 + 4 rotas, zero warning e `BUILD_ID=local`; ela não é evidência verde porque o audit recusou o standalone que havia copiado strings de conexão locais do `scripts.knip` raiz. O smoke permaneceu em zero. O fix torna `scripts.knip` igual a `knip`, mantém o carregamento físico de `.env.e2e.local` no config e acrescenta uma unidade que proíbe `E2E_DATABASE_URL`, `DATABASE_URL_APP_DAL` ou URI PostgreSQL nos scripts npm dos quatro manifests canônicos — raiz, backoffice, contracts e UI. O recorte 4/4, checks direcionados, Knip com as sete variáveis E2E explicitamente unset e diff-check passaram sem alteração no lockfile. A execução pós-manifesto que testou esse fix está registrada abaixo; naquele boundary, release, publicação, resposta e resolução ainda aguardavam execução. Os IDs e totais não mudam, a FEAT-004 permanece **Em implementação** e PEND-003/smoke ARM64 nativo continuam abertos.
+Uma única invocação P5 de build terminou com exit `0`, 26 + 4 rotas, zero warning e `BUILD_ID=local`; ela não é evidência verde porque o audit recusou o standalone que havia copiado strings de conexão locais do `scripts.knip` raiz. O smoke permaneceu em zero. O fix torna `scripts.knip` igual a `knip`, mantém o carregamento físico de `.env.e2e.local` no config e acrescenta uma unidade que proíbe `E2E_DATABASE_URL`, `DATABASE_URL_APP_DAL` ou URI PostgreSQL nos scripts npm dos quatro manifests canônicos — raiz, backoffice, contracts e UI. O recorte 4/4, checks direcionados, Knip com as sete variáveis E2E explicitamente unset e diff-check passaram sem alteração no lockfile. A execução pós-manifesto que testou esse fix está registrada abaixo; naquele boundary, release, publicação, resposta e resolução ainda aguardavam execução. Os IDs e totais não mudaram e a FEAT-004 permanecia em implementação; PEND-003/smoke ARM64 nativo continuam abertos.
 
 A build pós-manifesto seguinte terminou uma única vez com exit `0`; log privado SHA-256 `d8e50e0fb0b7080bf021aa910bef7ededc6677ba6dfaa71d4789a1d6226e1a8e`. O audit recusou uma ocorrência DAL em cada cache Turbopack, embora standalone/static/log estivessem limpos; o smoke continuou em zero. O wrapper único `scripts/next-build.mjs` agora atende os builds web/backoffice e `release-manifest.mjs`, com ambiente allowlisted. Dentro da operação primária, o resolver confiável valida ancestrais do app e toolchain Next antes do spawn; depois o wrapper sempre tenta a remoção física apenas do cache autorizado, mesmo em falha da validação/build. Cleanup falho reprova, falha dupla vira `AggregateError` e raízes/ancestrais simbólicos ou externos são recusados sem spawn/travessia. O preview limpa no supervisor pai depois do grupo de build e antes de validação/servidor; falha bloqueia o start e cache persistente reprova. O run final passou em 40/40 por quatro arquivos — 12 de cache/wrapper, quatro do npm confiável, 16 de Next/local server e oito do supervisor de preview —, ESLint zero, checks Node, Knip env-unset e diff-check.
 
 A cadeia estática final única avançou a matriz para 764/764 unitários em 76 arquivos e manteve DB 358/358, focada 23/23 e integral 114/114; npm ci 447/451/zero vulnerabilidades, cinco typechecks, docs 34/200/18, audit zero, Knip/diff-check e freeze 53/34/19 ficaram verdes. A build final via wrapper, após a remoção física dos dois `.next`, rodou exatamente uma vez: exit `0`, 14,733 s, log de 2.155 bytes/SHA-256 `44006829f25e63549e9e65ea17abbc483c891996130da34677ec67c932290ec9`. O audit independente SHA-256 `a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d` terminou `NO-BLOCKER`, com 26 + 4 rotas, warnings/cache/retired/resíduos zero e quatro `BUILD_ID=local`. Esse era o fechamento pré-release.
 
-Para `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`, o gerador canônico rodou exatamente uma vez, exit `0`/21,26 s, e o primeiro smoke P5 embutido passou. Archive/sidecar/manifesto/log: 24.896.963/124/681.762/2.097 bytes, hashes `282f9d...`/`8955c0...`/`d8b698...`/`505a5f...`; árvore 2.871, tar 3.455. Duas auditorias `NO-BLOCKER` fecharam paridade, privacidade e cleanup. A release é local/ignorada/não publicada; ARM64/remoto seguem pendentes. IDs e totais não mudam; próximo fluxo é docs commit/push, atualização do PR, resposta/resolução P5, novo review/60 min/captura, ready/merge.
+Para `2045d1a00c15889007b3c5c04c08d0467fc3d9b3`, o gerador canônico rodou exatamente uma vez, exit `0`/21,26 s, e o primeiro smoke P5 embutido passou. Archive/sidecar/manifesto/log: 24.896.963/124/681.762/2.097 bytes, hashes `282f9d...`/`8955c0...`/`d8b698...`/`505a5f...`; árvore 2.871, tar 3.455. Duas auditorias `NO-BLOCKER` fecharam paridade, privacidade e cleanup. A release permanece local, ignorada e não publicada; ARM64/PEND-003 seguem pendentes. IDs e totais não mudam; o fechamento pós-merge está no início desta seção.
 
 ## Totais atuais do catálogo 1.1
 
-- Total: **200** cenários.
+- Total: **201** cenários.
 - P0: **134**.
-- P1: **66**.
+- P1: **67**.
 - P2: **0**.
 - Smoke: **3**.
 - Critical: **131**.
 - Regression: **61**.
 - Accessibility: **2**.
-- Reflow: **3**.
-- Automação: **23 automatizados** — FEAT-002 7 + FEAT-003 9 + FEAT-004 7 — e **177 planejados**.
+- Reflow: **4**.
+- Automação: **29 automatizados** — FEAT-002 7 + FEAT-003 9 + FEAT-004 7 + FEAT-006 6 — e **172 planejados**. Os seis IDs FEAT-006 estão em fonte; a fotografia aceita de 17/17 por duas specs/sete projetos é histórica e anterior às extensões. Ela prova stale/compare, não tombstone/replay, cobertos em unit/SQL.
+
+As quatro focadas rejeitadas por trigger de cleanup, locator de comparação, trigger de publicação e
+status soft-404 permanecem histórico diagnóstico. A coleta integral enumerou 131 testes em 19
+specs/16 projetos; uma execução foi rejeitada pela race do body e outra foi interrompida
+externamente no teste 10. A matriz integral final permanece pendente porque o sandbox gerenciado
+atual não permite localhost; nenhum desses resultados incompletos é falha de produto ou matriz
+verde.
+
+As três specs FEAT-006 fixam trace, screenshot e vídeo em `off` porque o provisionamento atravessa
+senha, documentos e cookies. Os seis IDs preservam evidência equivalente por locators, HTTP,
+contadores, DOM, stdout/relatório redigidos e scans negativos; apenas fixtures sintéticas
+`qa_f006_*` são permitidas nos campos automáticos allowlisted. A última suíte unitária integral
+canônica, anterior aos helpers atuais, passou em 893/893 por 85 arquivos. O recorte dirigido anterior
+passou em 124/124 por dez arquivos; o atual passou em 141/141 por 12 arquivos FEAT-006/studio sob
+Node 24, incluindo correlação e remount. Nenhum é integral ou prova SQL. A tentativa completa atual
+falhou em 12 testes de infraestrutura por
+limites do sandbox — nested spawn `EPERM`, remapeamento de ownership raiz e timeouts de process group
+ou stdout vazio — e não constitui gate verde.
+O último DB verde é 431 no head anterior; o pgTAP atual declara 83 casos da feature e total esperado
+441, ainda sem reset/rerun. Schema e tipos gerados estão stale e precisam ser regenerados/comparados.
+A migration nova teve apenas inspeção estática/diff.
+
+A fonte atual amplia 001 para mutation pendente/same-scope com um POST e raw preservado, 002 para
+`draft_removed`, 003 para dirty A→B, 004 para teclado/foco e adiciona 006 para reflow nos três
+engines. No 005 desktop-chromium, a fonte fixa K1/S1/A ambígua → GET 404 → usuário B → commit tardio
+K1 → K2/S1/B 409 → comparação A/B → reaplicação → save explícito K3 como update do único S1 com
+versão esperada. Esse roteiro está implementado na fonte, mas não foi executado nem está verde. A
+matriz projeta 20 execuções por três specs/dez projetos e 134 na integral, sem execução. O histórico
+131/19/16 continua somente coleta sem green. Integral unitária, DB 441 + gerados, browser 20/134,
+build das duas apps, smoke/release, ARM64 e `docs:check` seguem pendentes; OPEN-012/013 e FEAT-031
+bloqueiam a conclusão.
+
+Depois do preclean físico dos dois `.next`, a única invocação
+`APP_RELEASE_SHA=local npm run build` compilou a etapa web em 3,9 s e foi rejeitada pelo pipe vazio
+de `tsc --showConfig` no sandbox; backoffice não iniciou e smoke ficou em zero. O comando direto e o
+spawn exato terminaram `0`, mas stdout/stderr do spawn tiveram length zero. O resultado é histórico
+de harness, não falha de produto nem build verde. O build final das duas apps permanece pendente.
+O `docs:check` atual também é inconclusivo no pipe de `git hash-object --stdin`.

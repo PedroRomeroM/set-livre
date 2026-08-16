@@ -157,7 +157,7 @@ Sem escrita pelo browser.
 
 ### 4.6 Taxonomias
 
-`studio_types`, `amenities`, `tags`:
+A FEAT-006 materializa somente `studio_types`, a única taxonomia consumida pelo editor central:
 
 - UUID;
 - nome;
@@ -168,31 +168,43 @@ Sem escrita pelo browser.
 - timestamps;
 - slug único.
 
-Browser lê ativos; somente backoffice altera via comando.
+O browser autenticado lê opções ativas pelo read model pequeno. Um tipo inativo já referenciado por
+uma revisão própria continua legível para preservar o snapshot, mas não pode ser escolhido numa
+nova gravação. Create/update adquirem `FOR SHARE` na linha ainda ativa antes do efeito, serializando a
+seleção com o futuro arquivamento. A FEAT-031 deve manter o archive tipo-only. Se também bloquear um
+estúdio existente, precisa seguir a ordem agregado → tipo usada pelo update ou redesenhá-la e provar
+concorrência bidirecional sem deadlock; estúdio depois do tipo não pode surgir silenciosamente.
+Administração e
+arquivamento pertencem à FEAT-031, e renomear tipo já usado permanece proibido enquanto `OPEN-013`
+estiver aberta. `amenities` e `tags` permanecem planejadas para a FEAT-007 e não existem
+antecipadamente no schema.
 
 ### 4.7 `studios`
 
-| Coluna                  | Tipo/Regra                |
-| ----------------------- | ------------------------- |
-| `id`                    | uuid PK                   |
-| `owner_user_id`         | FK profile, not null      |
-| `status`                | check de ciclo            |
-| `published_revision_id` | FK revision null          |
-| `draft_revision_id`     | FK revision null          |
-| `timezone`              | default America/Sao_Paulo |
-| `reservations_enabled`  | boolean                   |
-| `disabled_reason`       | text null                 |
-| `created_at/updated_at` | timestamptz               |
-| `paused_at/disabled_at` | timestamptz null          |
+| Coluna                  | Tipo/Regra                                      |
+| ----------------------- | ----------------------------------------------- |
+| `id`                    | uuid PK                                         |
+| `owner_user_id`         | FK `owner_profiles`, not null                   |
+| `status`                | `draft/published` nesta fatia                   |
+| `published_revision_id` | FK composta e diferida para revisão do agregado |
+| `draft_revision_id`     | FK composta e diferida para revisão do agregado |
+| `edit_version`          | bigint monotônico, inicia em 1                  |
+| `last_revision_number`  | maior número já alocado; descarte não o reduz   |
+| `created_at/updated_at` | timestamptz                                     |
 
-A FK circular revisão↔estúdio é criada em etapas de migration.
+As FKs `(id, revision_id) → studio_revisions(studio_id, id)` são diferidas e impedem ponteiro para
+revisão de outro estúdio. Constraint triggers exigem `approved` no ponteiro publicado e `draft` no
+ponteiro editável. `edit_version` pertence ao agregado, e não à revisão, para continuar monotônico
+mesmo após descarte e clone e evitar ABA. `last_revision_number` impede reutilizar um número de
+revisão depois de descartar um draft; o clone seguinte sempre recebe o próximo número. Timezone,
+elegibilidade de reserva, pausa e bloqueio entram somente com seus consumidores posteriores.
 
 ### 4.8 `studio_revisions`
 
 Campos públicos versionados:
 
 - `id`, `studio_id`, `revision_number`;
-- `status`;
+- `status`: `draft/pending/approved` no contrato mínimo;
 - `name` 2–120;
 - `description` 20–5000;
 - endereço estruturado;
@@ -200,14 +212,31 @@ Campos públicos versionados:
 - `state` = PR;
 - `postal_code`;
 - `capacity` 1–500;
-- `rules_text` até 5000;
-- `youtube_video_id` null;
 - `studio_type_id`;
-- `submitted_at`, `reviewed_at`, `reviewed_by`, `review_notes`;
 - timestamps;
 - unique `(studio_id, revision_number)`.
 
-Uma revisão submetida/aprovada/rejeitada é imutável por trigger/comando.
+Uma revisão não `draft` é imutável por trigger. A FEAT-006 não expõe submissão ou aprovação ao
+produto; `pending/approved` existem apenas para fixar a separação estrutural e permitir que o banco
+prove o clone de uma versão publicada. Regras, FAQ, vídeo e metadata de review entram em suas
+features proprietárias.
+
+#### Ledger privado de comandos do estúdio
+
+`private.studio_command_requests` registra ator, action, chave idempotente, hash do payload,
+`studio_id`, outcome e `resulting_edit_version`. A tabela tem RLS sem policy e zero grant runtime;
+somente os três comandos privados a acessam. Para create/update, mesma key + mesmo hash só pode
+reconstruir o efeito enquanto o agregado bloqueado ainda estiver exatamente na
+`resulting_edit_version` registrada. Se uma ação posterior já avançou o estúdio, o replay tardio
+falha com `40001`/`studio_result_no_longer_available` em vez de apresentar estado novo como se fosse
+o resultado antigo. O discard conserva tombstone apenas quando o pre-read/ledger comprovam a
+remoção segura. O pgTAP cobre esse fence; stale/comparação é contrato browser, enquanto replay e
+tombstone são SQL/unitários.
+
+O `requestId` não integra o payload nem o hash: chega à função privada como UUID separado e posterior
+à chave idempotente. Por isso retries da mesma tentativa lógica podem ter outra correlação HTTP sem
+virar payload divergente; o ledger continua sendo a autoridade de replay, enquanto `audit.events`
+preserva o request ID do primeiro efeito.
 
 ### 4.9 Relações da revisão
 
@@ -586,6 +615,15 @@ Snapshot:
 
 Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.contract_renewed` e `recipient.status_transitioned`. Em fatos novos, `request_id` correlaciona a request HTTP e `idempotency_key` identifica a tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não deduplica domínio. A migration `20260815000100` preenche `idempotency_key` das linhas legadas com o valor antigo de `request_id`, que naquela versão era a chave do browser, e preserva o campo legado sem inventar a correlação original irrecuperável. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna privada para replay e não entra em log operacional, DTO ou metadata; payload, requisito bruto, provider e referência externa também não entram na metadata.
 
+A migration `20260816000200` amplia a allowlist apenas para os efeitos reais da FEAT-006:
+`studio.created`, `studio.revision.updated`, `studio.draft.discarded` e `studio.deleted`, com
+`actor_role=authenticated`, `target_type=studio`, `result=succeeded` e `ip_hash=null`. As metadata
+permitidas são, respectivamente, `{ editVersion, revisionNumber }`,
+`{ draftCreated, editVersion, revisionNumber }`, `{ editVersion, revisionNumber }` e
+`{ lastRevisionNumber }`. Não entram core, nome, descrição, endereço, capacidade, tipo ou PII. O
+insert ocorre na mesma transação do efeito. Replay preserva o evento e a correlação originais; no-op
+de draft idêntico, validação, conflito ou falha produzem zero evento novo.
+
 ### 4.34 Idempotência e jobs
 
 `private.idempotency_keys`:
@@ -603,7 +641,7 @@ Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.
 
 ## 5. Read models
 
-Implementados nas FEAT-002/003/004:
+Implementados nas FEAT-002/003/004/006:
 
 - `public.get_current_legal_terms()`: retorna somente `id`, tipo, versão, título, Markdown, hash, origem e vigência atuais; `anon` e `authenticated` podem executar;
 - `public.get_own_identity_context()`: retorna 0/1 linha com usuário, tipo de pessoa, status e conclusão derivada; somente `authenticated` pode executar;
@@ -612,6 +650,10 @@ Implementados nas FEAT-002/003/004:
 - `public.get_current_owner_contract()`: retorna exclusivamente a versão vigente de `owner_contract` para `authenticated`; `anon` não recebe `EXECUTE` nem leitura dessa espécie jurídica;
 - `public.get_owner_activation_status()`: não recebe UUID, filtra `auth.uid()` e retorna 21 colunas, incluindo o contrato completo necessário exclusivamente à leitura/aceite em `/dono`;
 - `public.get_owner_recipient_status()`: não recebe UUID, filtra `auth.uid()`, repete o `scope` e retorna 16 colunas com somente a referência mínima do contrato, status internos, requisitos allowlisted, próxima ação, versões e elegibilidade derivada; nunca retorna título, versão textual, hash, corpo Markdown, PII, provider ou referência externa.
+- `public.list_active_studio_types()`: retorna somente `id/name` das opções ativas, ordenadas de
+  forma determinística, para o seletor do editor;
+- `public.get_owner_studio_editor(uuid)`: retorna rascunho e versão aprovada do estúdio próprio,
+  com `scope` e `edit_version`; estúdio inexistente e de outro dono produzem igualmente zero linhas.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -628,7 +670,6 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `public.list_my_reservations(...)`;
 - `public.get_my_reservation(uuid)`;
 - `public.list_owner_studios(...)`;
-- `public.get_owner_studio_editor(uuid)`;
 - `public.get_owner_calendar(...)`;
 - `public.list_owner_reservations(...)`;
 - `public.list_owner_payments(...)`;
@@ -647,7 +688,7 @@ Listas crescentes usam paginação **keyset** e retornam `items + nextCursor`. O
 
 ## 6. Comandos privados principais
 
-Implementados nas FEAT-002/003/004:
+Implementados nas FEAT-002/003/004/006:
 
 - `private.create_signup_legal_intent(uuid, uuid, text, uuid, jsonb)`: retorna o token opaco usado somente como metadata transitória do signup; SQLSTATE `23514` identifica versão jurídica stale;
 - `private.issue_identity_recovery_context(uuid, uuid, timestamptz)`: valida `auth.sessions` e cria atomicamente binding, scope opaco e grant de 15 minutos;
@@ -663,10 +704,20 @@ Implementados nas FEAT-002/003/004:
 - `private.activate_owner(uuid, uuid, uuid, uuid, text)`: recebe `user_id`, versão do contrato, `idempotency_key`, `request_id` e hash do user-agent em campos distintos; sob lock do perfil, cria/renova a autoridade e o aceite de forma idempotente, registra a correlação real e retorna a projeção completa de ativação;
 - `private.prepare_owner_recipient_operation(uuid, text, uuid)`: sob ordem global de locks, reserva `start | refresh`, sequência e versão do perfil antes de qualquer chamada ao adapter;
 - `private.apply_owner_recipient_operation(uuid, uuid, uuid, text, text, text, text[])`: recebe `user_id`, operação, `request_id`, provider, referência, status e requisitos; aplica somente a operação preparada ainda vigente, recusa resultado tardio/divergente e registra a transição redigida. A chave idempotente continua vinculada à operação reservada, sem ocupar o campo de correlação.
+- `private.create_studio(...)`: 13 parâmetros; depois da `idempotency_key`, recebe `request_id` UUID
+  fora do hash, bloqueia `studio_type` ativo com `FOR SHARE`, cria atomicamente agregado/primeiro draft
+  e audita `studio.created`. O UUID pré-gerado pelo app só recupera resposta ambígua;
+- `private.update_studio_revision_core(...)`: 14 parâmetros; recebe correlação separada, bloqueia o
+  tipo ativo, recusa versão divergente e audita somente efeito. Se já existe draft semanticamente
+  idêntico, converge sem versão/auditoria; sem draft, clona a aprovada mesmo com core idêntico e
+  incrementa `edit_version` uma vez sem alterar bytes publicados;
+- `private.discard_studio_draft(uuid, uuid, bigint, uuid, uuid)`: recebe `user_id`, estúdio, versão,
+  chave idempotente e `request_id`; exclui o shell nunca publicado ou apenas o draft do publicado,
+  preserva tombstone/monotonicidade e audita `studio.deleted` ou `studio.draft.discarded` uma vez.
 
 Planejados por suas features proprietárias:
 
-- studio/revision/media;
+- mídia e workflow posterior de revisão/publicação;
 - review;
 - calendar;
 - pricing/addons;
@@ -768,3 +819,32 @@ Qualquer outro índice precisa de evidência em `docs/changes`.
 - funções privadas sem execute público;
 - checks de texto/status/dinheiro;
 - cursor estável.
+
+### 1.2 Estado atual da FEAT-006
+
+O último snapshot autorizado por execução tem 16 migrations e head `20260816000100`. Seu reset,
+geração e `test:db` verdes ocorreram em cinco arquivos e passaram em 431 asserts
+(`158 + 78 + 57 + 65 + 73`). Readiness atual foi `true` e o predecessor `false`; o manifesto
+registra 20 dependências ACL, 19 rotinas, quatro fixtures locais e cleanup zero. A concorrência
+dblink provou same-key com um efeito e different-key com um vencedor/`40001` naquela fotografia.
+
+Depois desse gate, `20260816000100_studio_core_revision.sql` permaneceu imutável e a correção entrou
+na 17ª migration append-only, `20260816000200_studio_command_concurrency_hardening.sql`, novo
+head/readiness de fonte. O predecessor imediato esperado é `20260816000100` falso; o manifesto
+continua em 20 dependências/19 rotinas. O pgTAP da feature passou de 73 para 75 e agora 83 casos; o
+total esperado é 441 (`158 + 78 + 57 + 65 + 83`) e **não foi executado**. A migration nova recebeu
+inspeção estática/diff e auditoria estrutural independente `GO`, sem executar PostgreSQL.
+`supabase/schema.generated.sql` e
+`packages/contracts/src/database.generated.ts` permanecem stale. É obrigatório executar reset,
+`supabase:generate`, `test:db` e comparar schema/tipos antes de promover o DB; 431 continua sendo o
+último verde, nunca 441. Como `00100`, `00200` e `0005` seguem untracked, checksum Git não prova a
+história da cadeia; somente o banco resetado/aplicado poderá atestá-la.
+
+O recorte dirigido atual passou em 141/141 por 12 arquivos sob Node 24 e inclui contratos estáticos
+de assinatura/correlação, auditoria e remount; não executa PostgreSQL e não substitui a integral
+unitária nem o gate DB.
+
+A fonte browser atual projeta 20 execuções focadas/3 specs/10 projetos e 134 integrais, sem run. O
+17/17 por duas specs/sete projetos e a coleta 131/19/16 são históricos; esta última não foi verde.
+A integral unitária atual, `docs:check`, DB 441 + gerados, browser 20/134, build das duas apps,
+smoke, release, remoto e ARM64/PEND-003 permanecem pendentes.
