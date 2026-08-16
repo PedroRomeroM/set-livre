@@ -177,7 +177,7 @@ Um único build de validação passou com exit `0`, 26 rotas web, quatro do back
 
 O gerador canônico processou exatamente uma vez o commit funcional `969f30cd0f34b7e36e2a21550b5e3f28f8709406`, terminou com exit `0` em 21,15 segundos e produziu archive de 24.904.533 bytes/SHA-256 `d5f544bff8b72314060535333cd2c300a4c56a4e35295c1471beec5ee41cfeeb`, sidecar de 124 bytes/`f3441aee4c9d6758a539b2be2b3b325805bd6d977ad2cf915619bfbb9cd4d8d3`, manifesto de 681.762 bytes/`bc13a94c4084abc46bab677d1115871cb1327d7d17172b982b886c35eb200ada` e log de 2.102 bytes/`5be766c1c967ab7840335c120f2918ff555770efd69544f164023c32378456e7`.
 
-A árvore manifestada soma 2.871 artefatos — web 1.578, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, enquanto o tar soma 3.455 membros — 584 diretórios, 2.869 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem exatamente ao commit funcional. Smoke embutido, varredura de secrets, paridade e cleanup ficaram verdes; duas auditorias independentes terminaram `NO-BLOCKER`. A prova é local Linux x64 e não comprova ARM64 ou produção; PEND-003 e o smoke ARM64 nativo permanecem abertos. Publicação, resposta, resolução, novo review, espera, ready e merge continuam pendentes.
+A árvore manifestada soma 2.871 artefatos — web 1.578, backoffice 1.276, migrations 15, lockfile 1 e manifesto 1 —, enquanto o tar soma 3.455 membros — 584 diretórios, 2.869 arquivos e dois links seguros. Os `BUILD_ID` dos dois apps equivalem exatamente ao commit funcional. Smoke embutido, varredura de secrets, paridade e cleanup ficaram verdes; duas auditorias independentes terminaram `NO-BLOCKER`. A prova é local Linux x64 e não comprova ARM64 ou produção; PEND-003 e o smoke ARM64 nativo permanecem abertos. Publicação, resposta e resolução estão registradas abaixo; novo review, espera, captura final, ready e merge continuam pendentes.
 
 ## Publicação
 
@@ -189,11 +189,15 @@ Na captura remota verificada em `2026-08-15T19:38:32Z`, o push `3dd11cb → dda9
 
 Na mesma captura, o [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) estava `OPEN`/draft contra `main@174ee16342367caedf55521227d21d5bf076b1a9`, com head `dda95b3b9108930489a3b10275ef41c2f203ae24`, `MERGEABLE`/`CLEAN`, `reviewDecision` vazio e `statusCheckRollup=[]`. `PedroRomeroM` criou a resposta encadeada na thread `PRRC_kwDOTyzZrs7h6HnW`/REST `3790109142` em `2026-08-15T19:38:32Z`. A thread `PRRT_kwDOTyzZrs6ZhR_d` ficou `isResolved=true`, `isOutdated=false`, resolvida por ele; a leitura encontrou zero threads não resolvidas e confirmou as três anteriores ainda resolvidas.
 
-O commit/push deste registro documental, atualização do body do PR se necessária, novo `@codex review`, espera mínima de 60 minutos e captura final única continuam pendentes. A feature permanece **Em implementação**; `MERGEABLE`/`CLEAN` não declara ready ou merge e `statusCheckRollup=[]` não comprova checks remotos.
+Esse estado permanece apenas como fotografia histórica do terceiro P2. A publicação atual do quarto P2 é registrada na seção seguinte.
 
-### Review atual do quarto P2
+### Review, publicação e resolução do quarto P2
 
-O review `PRR_kwDOTyzZrs8AAAABJrjWnQ`/REST `4944615069` foi submetido em `2026-08-15T20:02:30Z` sobre `11464a37593d510f5774af6af6fe655e671a9c35`. Na captura, a thread `PRRT_kwDOTyzZrs6ZigTV` e seu comentário `PRRC_kwDOTyzZrs7h6SPS`/REST `3790152658` estavam não resolvidos e não desatualizados. A correção existe somente no snapshot local até nova publicação e verificação; reply, resolve, re-review, espera, ready e merge não são antecipados por este registro.
+O review `PRR_kwDOTyzZrs8AAAABJrjWnQ`/REST `4944615069` foi submetido em `2026-08-15T20:02:30Z` sobre `11464a37593d510f5774af6af6fe655e671a9c35`. Na captura original, a thread `PRRT_kwDOTyzZrs6ZigTV` e seu comentário `PRRC_kwDOTyzZrs7h6SPS`/REST `3790152658` estavam não resolvidos e não desatualizados.
+
+Na captura pós-write, o push `11464a37593d510f5774af6af6fe655e671a9c35 → e51ab6fcda041e3a9571477fe696dd7ec69e87e5` publicou o commit funcional `969f30cd...` e a documentação/evidência da release canônica local, inclusive `docs/technology-stack.md`. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. A release permanece vinculada ao funcional. O [PR #6](https://github.com/PedroRomeroM/set-livre/pull/6) continuava `OPEN`/draft contra `main@174ee16342367caedf55521227d21d5bf076b1a9`, com head `e51ab6fcda041e3a9571477fe696dd7ec69e87e5` e `mergeable=true` na fotografia do connector. O body foi atualizado com o P4, as evidências, a release e o estado resolvido.
+
+`PedroRomeroM` criou a resposta encadeada `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259` em `2026-08-16T00:43:03Z`. A thread `PRRT_kwDOTyzZrs6ZigTV` ficou `isResolved=true`, `isOutdated=true`, resolvida por ele. O script thread-aware pós-write encontrou cinco threads e zero não resolvidas; as quatro anteriores continuaram resolvidas. Não houve captura de `reviewDecision` nem de check rollup. Novo `@codex review`, espera mínima de 60 minutos, captura final, ready e merge continuam pendentes. A feature permanece **Em implementação**.
 
 ## Observabilidade e operação
 
@@ -209,4 +213,4 @@ Antes de qualquer aplicação remota, a branch pode ser revertida como unidade. 
 
 ## Evidência de conclusão
 
-Os três P2 anteriores foram implementados e possuem evidência histórica própria; a release do terceiro P2 não valida a capability nova. Para o quarto P2, o fechamento estático 734/734, banco 358/358, browser focado 23/23, browser integral 114/114 e build 26 + 4 passaram. O smoke customizado não produziu uma execução aceita, mas o gerador canônico executou exatamente uma vez, aprovou seu smoke embutido e produziu a release local auditada de `969f30cd...`. Publicação, reply/resolve, re-review, espera, ready e merge continuam pendentes. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.
+Os três P2 anteriores foram implementados e possuem evidência histórica própria; a release do terceiro P2 não valida a capability nova. Para o quarto P2, o fechamento estático 734/734, banco 358/358, browser focado 23/23, browser integral 114/114 e build 26 + 4 passaram. O smoke customizado não produziu uma execução aceita, mas o gerador canônico executou exatamente uma vez, aprovou seu smoke embutido e produziu a release local auditada de `969f30cd...`. Publicação, body, reply e resolução foram concluídos e verificados no head `e51ab6f...`; novo review, espera, captura final, ready e merge continuam pendentes. A feature permanece **Em implementação**, e nenhuma evidência x64 substitui PEND-003 ou o smoke ARM64 nativo.

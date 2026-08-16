@@ -754,10 +754,12 @@
                 somente para consulta.” O smoke customizado não produziu evidência verde: três
                 tentativas foram recusadas por problemas exclusivos do harness. O gerador canônico
                 executou uma vez para <code>969f30cd...</code>, aprovou seu smoke embutido e gerou a
-                release local auditada. Publicação, reply/resolve, re-review, ready e merge
-                permanecem pendentes. A release <code>2a86acc4...</code> pertence ao terceiro P2 e é
-                histórica. A feature continua <strong>Em implementação</strong>; PEND-003, smoke
-                ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
+                release local auditada. A correção foi publicada até <code>e51ab6f...</code>; o
+                body, a resposta e a resolução foram verificados, e as cinco threads ficaram
+                resolvidas. Novo review, espera, captura final, ready e merge permanecem pendentes.
+                A release <code>2a86acc4...</code> pertence ao terceiro P2 e é histórica. A feature
+                continua <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e
+                PEND-006 continuam bloqueando produção.
               </p>
             </article>
             <article class="card">
@@ -1393,7 +1395,8 @@
               locais, banco, browser, build, smoke e release canônica local final auditada;
               publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
               O quarto P2 possui fechamento estático, banco, browser focado/integral, build, smoke
-              embutido e release local auditada; apenas o ciclo remoto permanece pendente.
+              embutido e release local auditada; publicação, body, resposta e resolução também foram
+              verificados. Novo review, espera, captura final, ready e merge permanecem pendentes.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1443,13 +1446,31 @@
               ready ou merge.
             </p>
             <p>
-              O review atual <code>PRR_kwDOTyzZrs8AAAABJrjWnQ</code>/REST <code>4944615069</code>,
+              O quarto review <code>PRR_kwDOTyzZrs8AAAABJrjWnQ</code>/REST <code>4944615069</code>,
               submetido em <code>2026-08-15T20:02:30Z</code> sobre
               <code>11464a37593d510f5774af6af6fe655e671a9c35</code>, abriu
               <code>PRRT_kwDOTyzZrs6ZigTV</code>. O comentário
               <code>PRRC_kwDOTyzZrs7h6SPS</code>/REST <code>3790152658</code> estava atual e não
-              resolvido na captura. Publicação da correção, reply, resolve, re-review, espera,
-              captura final, ready e merge não foram realizados.
+              resolvido naquela captura.
+            </p>
+            <p>
+              Depois da correção, o push
+              <code
+                >11464a37593d510f5774af6af6fe655e671a9c35 →
+                e51ab6fcda041e3a9571477fe696dd7ec69e87e5</code
+              >
+              publicou o funcional <code>969f30cd...</code> e a documentação/evidência da release
+              canônica local. O archive permaneceu local e ignorado pelo Git; não houve publicação
+              em GitHub Release. O PR #6 continuava <code>OPEN</code>/draft contra
+              <code>main@174ee16342367caedf55521227d21d5bf076b1a9</code>, head
+              <code>e51ab6fc...</code>, com <code>mergeable=true</code> na fotografia do connector;
+              o body foi atualizado. <code>PedroRomeroM</code> criou a resposta encadeada
+              <code>PRRC_kwDOTyzZrs7h8CsL</code>/REST <code>3790613259</code> em
+              <code>2026-08-16T00:43:03Z</code>. <code>PRRT_kwDOTyzZrs6ZigTV</code> ficou
+              <code>isResolved=true</code>, <code>isOutdated=true</code>, resolvida por ele. A
+              leitura thread-aware encontrou cinco threads e zero não resolvidas. Não houve captura
+              de <code>reviewDecision</code> nem check rollup. Novo review, espera mínima, captura
+              final, ready e merge permanecem pendentes.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1667,7 +1688,8 @@
               <p>
                 Esta é uma prova local Linux x64, não ARM64 ou produção. A release P3
                 <code>2a86acc4...</code> e as anteriores permanecem fotografias históricas.
-                Publicação, reply/resolve, re-review, espera, ready e merge do quarto P2 ainda não
+                Publicação, body, resposta e resolução do quarto P2 foram verificados no head
+                <code>e51ab6f...</code>. Novo review, espera, captura final, ready e merge ainda não
                 foram realizados; PEND-003 e o smoke ARM64 nativo permanecem obrigatórios.
               </p>
             </article>
@@ -1825,12 +1847,11 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Publicar o commit funcional e a documentação da release canônica local do quarto
-                  P2, responder e resolver <code>PRRT_kwDOTyzZrs6ZigTV</code>, solicitar novo
-                  <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer uma captura
-                  final única antes de ready ou merge. PEND-003, trusted proxy e smoke ARM64
-                  continuam bloqueando produção; gateway externo, checkout, fallback e dados
-                  bancários permanecem fora.
+                  Solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer
+                  uma captura final única antes de ready ou merge. Publicação, body, resposta e
+                  resolução já foram verificados. PEND-003, trusted proxy e smoke ARM64 continuam
+                  bloqueando produção; gateway externo, checkout, fallback e dados bancários
+                  permanecem fora.
                 </li>
               </ol>
             </article>
