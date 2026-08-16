@@ -839,10 +839,19 @@
                 audit independente SHA-256
                 <code>a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d</code>
                 terminou <code>NO-BLOCKER</code>: 26 + 4 rotas, zero warnings/cache/retired/resíduos
-                e quatro <code>BUILD_ID=local</code>. Smoke executado permanece zero; o primeiro
-                será somente o embutido no gerador canônico após commit limpo. Release e remoto
-                seguem pendentes. A feature continua <strong>Em implementação</strong>; PEND-003,
-                smoke ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
+                e quatro <code>BUILD_ID=local</code>. Esse era o fechamento pré-release.
+              </p>
+              <p>
+                O gerador canônico processou <code>2045d1a00c15889007b3c5c04c08d0467fc3d9b3</code>
+                exatamente uma vez, exit 0 em 21,26 s, e aprovou o primeiro smoke P5 embutido. O
+                archive local modo 0600 tem 24.896.963 bytes/SHA-256
+                <code>282f9d173eebf99ba63466d81f4aa4b9061e7d73668c267fb0a25e9e86043b92</code>;
+                sidecar/manifesto/log têm 124/681.762/2.097 bytes. Duas auditorias
+                <code>NO-BLOCKER</code> validaram 2.871 artefatos, tar de 3.455 membros, paridade,
+                privacidade e cleanup sem resíduo. A release permanece local, ignorada e não
+                publicada; ARM64/Oracle/PEND-003 e remoto seguem pendentes. A feature continua
+                <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e PEND-006
+                continuam bloqueando produção.
               </p>
             </article>
             <article class="card">
@@ -1265,10 +1274,12 @@
               final passou em 764/764 por 76 arquivos. A build final via wrapper rodou exatamente
               uma vez após remover os dois <code>.next</code>, exit 0 em 14,733 s; log
               <code>44006829...</code> e audit independente <code>a1bb244b...</code>
-              <code>NO-BLOCKER</code>, com 26 + 4 rotas e caches/resíduos zero. Smoke executado
-              continua zero e será primeiro somente no gerador canônico após commit limpo. Os 23/23,
-              114/114, build e release <code>969f30cd...</code> são evidência histórica do quarto
-              P2. O catálogo continua com 23 IDs automatizados e 177 planejados.
+              <code>NO-BLOCKER</code>, com 26 + 4 rotas e caches/resíduos zero. Depois, o gerador
+              canônico executou exatamente uma vez para <code>2045d1a...</code>, e o primeiro smoke
+              P5 embutido ficou verde. Duas auditorias <code>NO-BLOCKER</code> fecharam release
+              local de 2.871 artefatos sem mismatch/segredo/PII/resíduo. Os 23/23, 114/114, build e
+              release <code>969f30cd...</code> são evidência histórica do quarto P2. O catálogo
+              continua com 23 IDs automatizados e 177 planejados.
             </p>
           </div>
 
@@ -1807,10 +1818,12 @@
               fisicamente apenas o cache autorizado mesmo em falha da validação/build; o preview
               limpa no supervisor antes de validação/servidor. A build final via wrapper rodou uma
               única vez após remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit
-              independente <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. Smoke
-              executado permanece zero. O primeiro será somente o embutido no gerador canônico após
-              commit limpo; release/remoto continuam pendentes. O patch não foi publicado,
-              respondido ou resolvido.
+              independente <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. O
+              gerador canônico processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0
+              em 21,26 s, e aprovou o primeiro smoke P5 embutido. A release local possui 2.871
+              artefatos/3.455 membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e
+              não publicado. ARM64/remoto continuam pendentes. O patch ainda não foi publicado no
+              Git, respondido ou resolvido no PR.
             </p>
           </div>
 
@@ -1999,16 +2012,9 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
+                <li>Criar o commit desta documentação e fazer push do fechamento pós-release.</li>
                 <li>
-                  Criar o commit funcional limpo e então executar o gerador canônico; seu smoke
-                  embutido será a primeira execução smoke P5.
-                </li>
-                <li>
-                  Auditar a release local resultante, preservando a prova de ARM64 como pendência
-                  separada.
-                </li>
-                <li>
-                  Publicar patch e evidências, atualizar o body, responder e resolver a thread
+                  Atualizar o body, responder e resolver a thread P5
                   <code>PRRT_kwDOTyzZrs6Zj15h</code> após verificar a resposta.
                 </li>
                 <li>
