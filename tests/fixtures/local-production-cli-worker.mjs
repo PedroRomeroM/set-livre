@@ -24,6 +24,7 @@ await runLocalProductionServerCli({
   runServer: async () => {
     if (requestedMode === "premature") {
       return runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {},
         platform: "linux",
         prepareBuild: () => {},
         signalProcessGroup: (_pid, signal) => {

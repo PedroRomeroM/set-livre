@@ -80,6 +80,18 @@
       "contract": "Direitos LGPD completos sobre identidade e histórico"
     },
     {
+      "provider": "FEAT-004",
+      "consumer": "FEAT-034",
+      "scenarioOwner": "FEAT-034",
+      "contract": "Exportação, anonimização, retenção e exclusão dos fatos de dono e recebedor"
+    },
+    {
+      "provider": "FEAT-004",
+      "consumer": "FEAT-032",
+      "scenarioOwner": "FEAT-032",
+      "contract": "Liberação administrativa e auditoria do fallback financeiro"
+    },
+    {
       "provider": "FEAT-006",
       "consumer": "FEAT-031",
       "scenarioOwner": "FEAT-031",
@@ -154,6 +166,7 @@
     { "feature": "FEAT-002", "pending": "PEND-005" },
     { "feature": "FEAT-002", "pending": "PEND-006" },
     { "feature": "FEAT-004", "pending": "PEND-004" },
+    { "feature": "FEAT-004", "pending": "PEND-006" },
     { "feature": "FEAT-008", "pending": "PEND-002" },
     { "feature": "FEAT-020", "pending": "PEND-004" },
     { "feature": "FEAT-021", "pending": "PEND-004" },

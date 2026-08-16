@@ -22,6 +22,7 @@ export async function GET(request: Request) {
     writeSafeOperationalEvent({
       action: "identity.recovery.status",
       durationMs: performance.now() - startedAt,
+      event: "identity.request",
       outcome,
       requestId,
       status,

@@ -24,7 +24,8 @@ flowchart LR
     RM --> PG
 
     WEB --> ST[Supabase Storage]
-    WEB --> PAY[PaymentProvider]
+    WEB --> PAD[PaymentProvider server-only adapter]
+    PAD --> PAY[Provider externo quando liberado]
     PAY --> WH[Webhook assinado]
     WH --> WEB
 
@@ -63,6 +64,14 @@ Não contém páginas ou bundles de backoffice.
 No callback de recovery, o servidor valida `sub`, `session_id` e `exp` assinados e exige a sessão correspondente em `auth.sessions` antes de criar uma binding/tombstone privada e seu grant one-shot de 15 minutos. O UUID `session_scope` exposto à interface é somente um namespace opaco para resposta e cache; a autoridade permanece no JWT validado, na binding e no grant. Proxy e read models consultam a tombstone pelo `session_id`, portanto uma sessão Auth de recovery nunca vira login comum mesmo depois de perder os cookies auxiliares. Fechamento, expiração ou uso fora da superfície recovery encerra a sessão local, enquanto uma sessão comum sem binding permanece comum. O tempo Auth fica pinado em `3600` segundos e a ausência canônica inicia retenção conservadora antes do purge.
 
 No cliente, `recoveryStatus(scope)` mantém scopes anônimo/UUID em queries distintas e valida que a resposta repita o mesmo recorte antes do cache. O formulário de nova senha só monta com autorização vigente, scope correspondente e `fetchStatus` ocioso; refetch ativo ou pausado conserva a fronteira fechada.
+
+#### Dono/recebedor local da FEAT-004
+
+`/dono` e `/dono/recebimentos` usam Server Components para sessão/read model inicial e Client Components somente nas mutations e no boundary interativo. A autoridade é `owner_profiles`; recipient/provider nunca vem de claim Auth ou papel administrativo. `POST /api/commands` recebe `expectedScope` e `idempotencyKey`, reserva a operação no DAL, chama o adapter server-only fora da transação e aplica o snapshot somente com fence de sequência. O `requestId` selecionado e validado na borda HTTP percorre handler, serviço, DAL e função SQL como contexto separado: ele correlaciona resposta, log e fato de auditoria, enquanto a chave do browser permanece exclusivamente responsável por deduplicação e replay. Uma nova request pode repetir `idempotencyKey` com outro `requestId` sem criar novo fato; o evento conserva a correlação da request que produziu o efeito.
+
+O estado comum expõe `recipientOnboardingCapability: "local_adapter" | "unavailable"` nas duas projeções e nos três retornos de comando. Essa capacidade é derivada server-side a cada request: `APP_ENV=local | test` habilita o adapter determinístico; `development | production`, valor ausente ou inválido falham fechados como `unavailable`. Ela não altera `providerMode`, `nextAction` nem o fato persistido. Em `unavailable`, leituras continuam factuais e somente consultivas; `recipient.onboarding.start | refresh` retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de reservar a operação. O adapter local nominal faz `start -> pending` e `refresh -> active`, não realiza rede, e a integração externa continua suspensa pelo ADR-018/PEND-004.
+
+A projeção completa acrescenta separadamente `ownerActivationCapability: "available" | "unavailable"`; a projeção compacta não recebe esse campo. A derivação server-only combina a fonte do contrato com o ambiente: `approved` é sempre `available`; `local_fixture` é `available` apenas em `local | test` e falha fechada em `development | production`, ambiente ausente ou valor inválido. Essa capability não é coluna nem altera `source`, `nextAction` ou qualquer fato. A leitura de ativação continua retornando o documento completo para consulta quando `unavailable`, enquanto `owner.activate` retorna `503 SERVICE_UNAVAILABLE` antes de `activateOwnerProfile` e da escrita. As tuples SQL permanecem com 21/16 colunas e nenhuma migration é necessária.
 
 ### 2.2 Backoffice
 
@@ -243,6 +252,8 @@ type CommandResponse<T> =
 - log;
 - invalidation map.
 
+O contexto interno do comando mantém `requestId` e `idempotencyKey` em campos distintos. O primeiro é correlação da execução HTTP; o segundo pertence ao envelope somente quando a action exige convergência de retry. Nenhuma camada pode derivar um do outro.
+
 Arquivos usam upload assinado; iCal usa limite específico de 2 MB.
 
 ## 7. Supabase
@@ -287,6 +298,10 @@ const reservationKeys = {
   mine: (userId: string, filter: string, cursor?: string) =>
     ["reservations", "mine", userId, filter, cursor ?? "first"] as const,
 };
+
+const ownerKeys = {
+  recipientStatus: (userId: string) => ["owner", "recipient", "status", userId] as const,
+};
 ```
 
 ### 8.2 Invalidação
@@ -300,6 +315,9 @@ Cada action declara domínios afetados. Exemplo:
 | `calendar.block.create`  | availability, owner calendar, quote                 |
 | `payment.confirm`        | reservation, calendar, owner/renter lists, payments |
 | `reservation.cancel`     | reservation, calendar, payments, payouts            |
+| `owner.activate`         | owner recipient status                              |
+| `recipient.onboarding.*` | owner recipient status e elegibilidade futura       |
+| `profile.*`              | profile e owner recipient status                    |
 
 ## 9. Segurança em camadas
 

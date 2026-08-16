@@ -88,6 +88,9 @@
 | Preferência visual         | `user_preferences`                           |
 | Versão jurídica            | `terms_versions`                             |
 | Aceite jurídico            | `terms_acceptances`                          |
+| Autoridade de dono         | `owner_profiles`                             |
+| Estado seguro do recebedor | `owner_payment_recipients`                   |
+| Operação/referência local  | `private.owner_recipient_operations`         |
 | Papel administrativo       | `platform_roles`                             |
 | Estúdio operacional        | `studios`                                    |
 | Conteúdo público           | revisão apontada por `published_revision_id` |
@@ -106,7 +109,7 @@
 | Reembolso                  | `refunds`                                    |
 | Repasse                    | `payouts`                                    |
 | E-mail pendente            | `email_outbox`                               |
-| Ação sensível              | `audit_events`                               |
+| Ação sensível              | `audit.events`                               |
 
 ## 4. Ownership
 
@@ -124,15 +127,21 @@ A FEAT-003 completa `profiles` com nome, telefone E.164, CPF/CNPJ, documento adi
 
 A leitura da conta usa `public.get_my_profile()` como read model `security invoker`, sem argumento de usuário e sempre filtrado por `auth.uid()`. Os comandos privados usam uma projeção interna sem grant runtime para devolver o mesmo estado mascarado; essa projeção não transfere autoridade nem constitui read model.
 
-### 4.2 Estúdio
+### 4.2 Dono e recebedor
+
+`owner_profiles.user_id = profiles.id` é a única autoridade canônica de dono; claim ou metadata Auth não concede esse estado. A linha guarda somente status, versão, instante de ativação e a versão vigente de `owner_contract` aceita. Identidade e PII continuam exclusivamente em `profiles`, enquanto cada aceite imutável permanece em `terms_acceptances`.
+
+`owner_payment_recipients.owner_user_id = owner_profiles.user_id` guarda somente status interno, requisitos allowlisted, versão sincronizada do perfil e versão do recebedor. Provider, referência e operações idempotentes ficam em `private.owner_recipient_operations`; o navegador nunca os recebe. A elegibilidade é derivada e falha fechada diante de contrato vencido, dono/recebedor inativo ou drift de perfil.
+
+### 4.3 Estúdio
 
 `studios.owner_user_id` é `not null`. Uma conta pode possuir vários estúdios. Não existe membership nesta versão.
 
-### 4.3 Reserva
+### 4.4 Reserva
 
 `reservations.renter_user_id` identifica o locatário. `reservations.studio_id` e snapshots preservam o dono/estúdio do momento.
 
-### 4.4 Backoffice
+### 4.5 Backoffice
 
 Papéis são globais e não alteram ownership. Ação administrativa passa por função específica e auditoria.
 

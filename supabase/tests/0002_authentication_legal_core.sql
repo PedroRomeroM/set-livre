@@ -149,17 +149,18 @@ select ok(
 
 select ok(
   (
-    select pg_catalog.count(*) = 3
+    select pg_catalog.count(*) = 4
     from pg_catalog.pg_policies as policy
     where policy.schemaname = 'public'
       and policy.policyname in (
         'profiles_select_own',
-        'terms_versions_select_current',
+        'terms_versions_select_current_public',
+        'terms_versions_select_current_authenticated',
         'terms_acceptances_select_own'
       )
       and policy.cmd = 'SELECT'
   ),
-  'a feature publica somente as três policies de leitura esperadas'
+  'a feature publica quatro policies, incluindo legal split por role'
 );
 
 select ok(
@@ -415,8 +416,8 @@ select is(
     where source = 'local_fixture'
       and retired_at is null
   ),
-  2,
-  'seed local possui exatamente termos e privacidade vigentes'
+  3,
+  'seed local possui termos, privacidade e owner_contract vigentes'
 );
 
 select ok(
@@ -1972,7 +1973,7 @@ select is(
           effective_at
         )
         values (
-          '00000000-0000-4000-8000-000000000204',
+          '00000000-0000-4000-8000-000000000206',
           'terms',
           'overlap-test',
           'Sobreposição — fixture local',
@@ -2350,8 +2351,8 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260811000500'),
-  'readiness permanece verde com treze dependências e doze rotinas DAL'
+  private.check_readiness('20260815000100'),
+  'readiness permanece verde com dezessete dependências e dezesseis rotinas DAL'
 );
 
 select is(

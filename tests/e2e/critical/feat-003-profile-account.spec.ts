@@ -16,6 +16,7 @@ import {
   completeFeat003Profile,
   createFeat003ProfileSecrets,
   createFeat003QaIdentity,
+  fillFeat003PhoneWithoutReportValue,
   formatFeat003PhoneForDisplay,
   loginFeat003Identity,
   maskedFeat003AdditionalDocument,
@@ -328,7 +329,10 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameB);
 
     await page.getByRole("textbox", { name: "Nome completo" }).fill(staleNameA);
-    await page.getByRole("textbox", { name: "Telefone" }).fill(stalePhoneA);
+    await fillFeat003PhoneWithoutReportValue(
+      page.getByRole("textbox", { name: "Telefone" }),
+      stalePhoneA,
+    );
     await page.getByRole("combobox", { name: "Alterar CPF" }).selectOption("replace");
     await stageFeat003SensitiveValue(
       page.getByRole("textbox", { name: "Novo CPF" }),

@@ -48,7 +48,7 @@ Este documento comprova onde cada requisito central foi transformado em decisão
 | ID      | Requisito                                             | Feature(s)                   | Documento(s)                     | Cenários                         |
 | ------- | ----------------------------------------------------- | ---------------------------- | -------------------------------- | -------------------------------- |
 | PRD-012 | Um dono por estúdio e vários estúdios por dono        | FEAT-005, FEAT-006           | `domain-model.md`, `database.md` | SL-F005/006                      |
-| PRD-013 | Onboarding do recebedor                               | FEAT-004                     | `payments.md`                    | SL-F004-E2E-001 a 005            |
+| PRD-013 | Onboarding do recebedor                               | FEAT-004                     | `payments.md`                    | SL-F004-E2E-001 a 007            |
 | PRD-014 | Cadastro completo do estúdio                          | FEAT-006, FEAT-007           | `specification.md`               | SL-F006/007                      |
 | PRD-015 | Fotos de alta qualidade, capa, ordem e aprovação      | FEAT-008, FEAT-030           | `media.md`                       | SL-F008, SL-F030                 |
 | PRD-016 | Vídeo por YouTube, sem upload                         | FEAT-007, FEAT-011           | `media.md`                       | SL-F007-E2E-004                  |

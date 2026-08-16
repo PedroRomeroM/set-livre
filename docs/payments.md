@@ -58,10 +58,20 @@ Onboarding precisa de dados exigidos pelo contrato. A plataforma não cria “ve
 - suspenso;
 - bloqueado.
 
+Enquanto o ADR-018 estiver vigente, “provider” nesta fatia significa somente uma interface server-only com adapter local determinístico, sem SDK, HTTP, credencial ou sandbox remoto. O fluxo nominal local faz `start -> pending` e `refresh -> active`; os estados restantes são exercitados por mapper e fixtures de teste, nunca por e-mail/UUID mágico.
+
+As projeções de ativação/recebimentos e os retornos dos três comandos incluem a capacidade obrigatória `recipientOnboardingCapability: "local_adapter" | "unavailable"`. Ela é calculada a cada request exclusivamente no servidor e não substitui o estado: `local | test` produz `local_adapter`; `development | production`, `APP_ENV` ausente ou inválido produzem `unavailable`. `providerMode` e `nextAction` continuam descrevendo o fato canônico mesmo quando a operação não está disponível naquele runtime.
+
+Com `unavailable`, o status permanece visível somente para consulta. O serviço recusa `recipient.onboarding.start | refresh` com `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de reservar a operação ou chamar `prepare`; não existe adapter externo, fallback, controle desabilitado ou mutação parcial nesse caminho.
+
+A projeção segura conserva `profile_version_synced`. A elegibilidade de reserva é verdadeira somente quando o dono está `active`, aceitou o `owner_contract` vigente, o recebedor está `active` e essa versão coincide com a versão canônica atual de `profiles`; qualquer ausência, refetch ou divergência falha fechada. Nova versão contratual preserva o histórico e exige novo aceite. O checkout real da FEAT-020 revalida o fato no banco antes de cobrar.
+
+Se essa nova versão se tornar vigente entre a leitura e `recipient.onboarding.start | refresh`, a preparação sinaliza `owner_contract_not_current`. O serviço publica `409 CONFLICT` e exige GET autoritativo antes de nova ação, sem repetir o POST; somente essa condição exata é recuperável por releitura. Dono ou recebedor bloqueado permanece `403 FORBIDDEN`.
+
 Estúdio pode ser publicado sem recipient ativo? Baseline:
 
 - conteúdo pode ser aprovado;
-- `reservations_enabled=false` até recipient ativo ou fallback financeiro explicitamente liberado por admin;
+- `reservations_enabled=false` até recipient ativo e sincronizado; fallback financeiro pertence à FEAT-032 e não existe nesta fatia;
 - listagem pode exibir estúdio, mas CTA de reserva informa indisponibilidade operacional apenas se produto aprovar. Default seguro: não listar como disponível.
 
 ## 5. Valores

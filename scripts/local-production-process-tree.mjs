@@ -11,6 +11,7 @@ function interruptionError(signal) {
 }
 
 export async function runLocalProductionPreviewProcessFlow({
+  cleanupBuild,
   clearShutdownTimeout = clearTimeout,
   forceShutdownMilliseconds = 5_000,
   platform = process.platform,
@@ -27,6 +28,7 @@ export async function runLocalProductionPreviewProcessFlow({
   for (const [label, operation] of [
     ["preparo", prepareBuild],
     ["build", startBuild],
+    ["cleanup do build", cleanupBuild],
     ["validação", validateBuild],
     ["servidor", startServer],
   ]) {
@@ -124,11 +126,44 @@ export async function runLocalProductionPreviewProcessFlow({
       throw interruptionError(requestedSignal);
     }
 
-    const buildExitCode = await runPhase(startBuild, "build do preview", {
-      requestShutdownOnSuccessfulExit: true,
-    });
-    if (buildExitCode !== 0) {
-      throw new Error(`O build fresco do preview encerrou com código ${buildExitCode}.`);
+    let buildFailure;
+    try {
+      const buildExitCode = await runPhase(startBuild, "build do preview", {
+        requestShutdownOnSuccessfulExit: true,
+      });
+      if (buildExitCode !== 0) {
+        throw new Error(`O build fresco do preview encerrou com código ${buildExitCode}.`);
+      }
+    } catch (error) {
+      buildFailure = error;
+    }
+
+    let cleanupFailure;
+    try {
+      cleanupBuild();
+    } catch (error) {
+      cleanupFailure = error;
+    }
+
+    if (buildFailure !== undefined && cleanupFailure !== undefined) {
+      const combinedFailure = new AggregateError(
+        [buildFailure, cleanupFailure],
+        "O build do preview falhou e o cache transitório também não pôde ser removido.",
+      );
+      if (
+        buildFailure instanceof Error &&
+        "exitCode" in buildFailure &&
+        Number.isSafeInteger(buildFailure.exitCode)
+      ) {
+        combinedFailure.exitCode = buildFailure.exitCode;
+      }
+      throw combinedFailure;
+    }
+    if (cleanupFailure !== undefined) {
+      throw cleanupFailure;
+    }
+    if (buildFailure !== undefined) {
+      throw buildFailure;
     }
 
     validateBuild();

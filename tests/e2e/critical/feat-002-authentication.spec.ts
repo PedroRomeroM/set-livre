@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 
 import {
   cleanupFeat002QaIdentity,
@@ -46,6 +46,45 @@ async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], e
 
 const loginFormRedactionMarker = "sl-qa-f002-login-form-redacted";
 
+async function expectRegistrationClosedWithoutHydration(browser: Browser, testInfo: TestInfo) {
+  const baseURL = testInfo.project.use.baseURL;
+  if (typeof baseURL !== "string") {
+    throw new Error("A origem QA do cadastro não está disponível no projeto Playwright.");
+  }
+
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  const page = await context.newPage();
+  try {
+    const navigation = await page.goto(new URL("/cadastro", baseURL).toString());
+    expect(navigation?.status()).toBe(200);
+    await expect(page.locator("h1", { hasText: /^Crie sua conta$/u })).toBeAttached();
+    await expect(
+      page.locator('[role="status"]', {
+        hasText: /^Preparando o formulário seguro…$/u,
+      }),
+    ).toBeAttached();
+
+    const form = page.locator("form", {
+      has: page.locator('input[name="email"]'),
+    });
+    await expect(form).toBeAttached();
+    await expect(form).toBeHidden();
+    await expect(form).toHaveAttribute("inert", "");
+    await expect(form).toHaveAttribute("method", "post");
+    await expect(form.locator("fieldset").first()).toHaveAttribute("disabled", "");
+    await expect(form.locator('input[name="email"]')).toHaveAttribute("disabled", "");
+    await expect(form.locator('input[name="password"]')).toHaveAttribute("disabled", "");
+    await expect(form.locator('input[name="confirmPassword"]')).toHaveAttribute("disabled", "");
+    await expect(form.locator('button[type="submit"]')).toHaveAttribute("disabled", "");
+
+    const address = new URL(page.url());
+    expect(address.pathname).toBe("/cadastro");
+    expect(address.search).toBe("");
+  } finally {
+    await context.close();
+  }
+}
+
 async function armLoginFormRedactionObservation(page: Page) {
   await page
     .getByRole("button", { name: "Entrar", exact: true })
@@ -83,12 +122,14 @@ async function expectLoginFormRedactedBeforeReload(page: Page) {
 }
 
 test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos", async ({
+  browser,
   page,
 }, testInfo) => {
   test.setTimeout(90_000);
   const identity = createFeat002QaIdentity(testInfo, "001");
 
   try {
+    await expectRegistrationClosedWithoutHydration(browser, testInfo);
     const notBefore = await submitFeat002Registration(page, identity);
     const session = await confirmFeat002Registration(page, identity, notBefore);
 

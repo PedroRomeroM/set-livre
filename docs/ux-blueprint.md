@@ -176,7 +176,7 @@ Ao clicar:
 
 - `/conta`: Server Component valida a sessão, lê o perfil próprio e entrega um boundary fechado; anônimo retorna a `/entrar?retorno=%2Fconta`;
 - `/conta/seguranca`: exibe o e-mail Auth somente leitura e oferece apenas os fluxos reais de recuperação de senha e logout; anônimo preserva o retorno allowlisted;
-- `/entrar`: `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta` ou `/conta/seguranca`; o servidor Auth continua sendo a decisão final;
+- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono` ou `/dono/recebimentos`; depois da validação ela vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
 - perfil incompleto: PF/PJ, nome, telefone, CPF/CNPJ e documento adicional opcional em uma coluna no mobile e grade no desktop;
 - perfil completo: tipo PF/PJ somente leitura, documentos já salvos apenas mascarados e ações explícitas `manter | substituir | remover` quando aplicáveis;
 - preferência: seletor nativo `Dispositivo | Claro | Escuro`, persistência autoritativa e aplicação sem paleta customizável;
@@ -238,6 +238,18 @@ Detalhe:
 - política usada.
 
 ## 10. Área do dono
+
+Bootstrap da FEAT-004:
+
+- `/dono` apresenta checklist factual, perfil canônico e contrato vigente; perfil incompleto aponta para `/conta`, e contrato local é identificado como fixture. O checkbox nunca inicia marcado e só existe quando `ownerActivationCapability=available`;
+- `/dono/recebimentos` apresenta somente estado interno, requisitos e próxima ação allowlisted, versões e elegibilidade derivada; nunca exibe provider ID, payload, KYC ou dados bancários;
+- a ação de ativação exige `ownerActivationCapability=available`. Fonte `approved` é sempre acionável; `local_fixture` só é acionável em `APP_ENV=local | test`. Quando a capability é `unavailable`, o documento completo e o aviso de fixture permanecem consultáveis, formulário/checkbox/CTA ficam ausentes e um alerta `role=status` mostra o título `Ativação como dono indisponível` e o texto `A versão aprovada do contrato do dono ainda não está disponível neste ambiente. O contrato atual permanece somente para consulta.`; não há controle desabilitado nem aprovação jurídica simulada;
+- a ação de onboarding exige `recipientOnboardingCapability=local_adapter`, além de `nextAction`. Quando a capability é `unavailable`, a interface preserva o estado factual, omite o aviso do adapter local e os CTAs de start/refresh e mostra um alerta com `role=status`: título `Cadastro de recebimentos indisponível` e texto `A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.`; nenhum controle desabilitado ou provider falso substitui a ação ausente;
+- desktop pode compor checklist e conteúdo lado a lado; mobile, 320 px e reflow 160x360 usam uma coluna sem sidebar comprimida nem CTA sticky que cubra o contrato;
+- loading/refetch/pausa/troca de sessão fecham status, elegibilidade e ações privados. Timeout ou resultado ambíguo oferece `Verificar estado atual`, sem afirmar falha nem reenviar cegamente; durante esse GET, a superfície privada fecha sob boundary neutro e, ao terminar, o foco programático vai ao heading do checklist no sucesso ou ao alerta seguro na falha. Nesse alerta, `Tentar novamente` repete o boundary e devolve foco ao heading somente após novo GET bem-sucedido;
+- se uma nova versão do contrato surgir entre a tela e `start | refresh`, a API devolve `409 CONFLICT` e conduz ao mesmo `Verificar estado atual`; nenhuma tentativa é repetida. Dono ou recebedor realmente bloqueado continua proibido e não é apresentado como simples estado stale recuperável;
+- `pending`, `active`, `refused`, `suspended` e `blocked` são apresentados por texto, não somente cor. Mudança assíncrona usa `role=status`, erro usa `role=alert` e foco retorna ao heading/alerta pertinente;
+- não há link para estúdios, checkout, financeiro, suporte inventado, fallback administrativo nem formulário bancário enquanto essas superfícies não existirem.
 
 Dashboard:
 

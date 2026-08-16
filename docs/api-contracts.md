@@ -33,7 +33,7 @@ type LogoutRequest = {
 };
 ```
 
-Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry de comandos, `expectedScope` pertence aos dois comandos de perfil. A rota Auth especializada de logout recebe a mesma asserção em seu schema próprio. Em ambos os casos ela é UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry implementado, `expectedScope` pertence aos dois comandos de perfil e aos três comandos de dono/recebedor; estes três também exigem `idempotencyKey`. A rota Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
 Headers:
 
@@ -41,13 +41,15 @@ Headers:
 - `X-Request-Id` opcional, validado;
 - cookie de sessão;
 - `Origin` confiável;
-- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código.
+- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código; os três comandos FEAT-004 usam exclusivamente `idempotencyKey` no envelope.
+
+`X-Request-Id`/`requestId` identifica a request HTTP e nunca substitui `idempotencyKey`. A chave de idempotência identifica a tentativa lógica repetível e pode atravessar retries com novos request IDs; ela não é copiada para o campo público de correlação.
 
 Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-002 usa o limite mais restritivo de 16 KiB e consome o stream independentemente de `Content-Length`.
 
 ### 2.1 Superfície implementada na FEAT-002
 
-- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os comandos de perfil implementados;
+- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os dois comandos de perfil e os três comandos de dono/recebedor registrados; action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
 - todos os `POST` exigem `Origin` e `Host` exatos de `NEXT_PUBLIC_APP_URL`; em produção, `X-Forwarded-Host` e `X-Forwarded-Proto=https` também precisam ter sido sobrescritos pela borda confiável;
 - um bucket de fachada é consumido antes do parse/Zod; depois do parse, cadastro/login/recovery/callback usam somente hashes de e-mail, usuário ou token. Em produção, a fachada exige um único IP canônico em `X-Forwarded-For`, sobrescrito pelo Nginx da borda confiável previsto em PEND-003; header ausente, composto ou inválido falha fechado;
 - somente `application/json` e schemas Zod `strict` são aceitos;
@@ -67,7 +69,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, logout usa uma closure one-shot sem `variables`, `networkMode: "always"` e `expectedScope` UUID como asserção do recorte SSR. O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`, `claimsResult.error` ou contexto assinado ausente retorna `401 UNAUTHENTICATED`, e somente um `userId` válido divergente retorna `409 SESSION_CHANGED`; os três ramos têm zero efeitos destrutivos explícitos de logout. Um erro posterior do provider só pode equivaler a logout concluído quando o cliente server-side comprova ausência da sessão local;
 - depois de `setSession`, a projeção de preferência chama `get_my_profile()` com o `AbortSignal` da operação e deadline server-side de um segundo. Timeout ou falha usa `system`; uma resolução tardia é ignorada e não pode publicar cookie nem iniciar `signOut` depois da resposta;
-- `returnTo` possui allowlist literal: `/entrar?sessao=ativa`, `/conta` e `/conta/seguranca`. Qualquer outro valor é descartado no Server Component antes de alcançar o payload efêmero de login.
+- o destino autenticado possui allowlist literal: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono` e `/dono/recebimentos`. A query da rota usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, valor codificado ou array falha fechado para o destino padrão.
 
 ## 3. Códigos de erro
 
@@ -78,9 +80,9 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 | `AUTH_SESSION_RECHECK_REQUIRED` |  503 | publicação de login ambígua                   |
 | `FORBIDDEN`                     |  403 | papel/ownership                               |
 | `ACCOUNT_SUSPENDED`             |  403 | conta suspensa                                |
-| `VALIDATION_FAILED`             |  422 | campos                                        |
+| `VALIDATION_FAILED`             |  422 | campos; sem `fieldErrors`, exige releitura    |
 | `NOT_FOUND`                     |  404 | recurso não visível                           |
-| `CONFLICT`                      |  409 | estado concorrente                            |
+| `CONFLICT`                      |  409 | estado concorrente ou contrato superado       |
 | `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
 | `QUOTE_EXPIRED`                 |  409 | cotação                                       |
 | `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                                    |
@@ -129,14 +131,42 @@ Na FEAT-003, os envelopes Zod estritos de `profile.complete` e `profile.update` 
 
 ### 5.2 Dono/recebedor
 
-| Action                         | Efeito                                                     |
-| ------------------------------ | ---------------------------------------------------------- |
-| `owner.activate`               | cria owner profile e aceite                                |
-| `recipient.onboarding.start`   | cria/atualiza recipient no provider                        |
-| `recipient.onboarding.refresh` | consulta requisitos/status                                 |
-| `recipient.bank.update`        | atualiza via provider, sem persistir segredo desnecessário |
+| Action                         | Efeito                                                  |
+| ------------------------------ | ------------------------------------------------------- |
+| `owner.activate`               | cria owner profile e aceite vigente de forma atômica    |
+| `recipient.onboarding.start`   | inicia operação idempotente quando a capability permite |
+| `recipient.onboarding.refresh` | consulta/aplica snapshot quando a capability permite    |
 
-A resposta contém status seguro e próximos passos, não payload bruto.
+Os três envelopes Zod estritos exigem `expectedScope` e `idempotencyKey` UUID, sem `ownerUserId`, status, provider, capability ou referência externa fornecidos pelo cliente. `recipient.bank.update` permanece ausente até existir token ou handoff provider-owned aprovado. A tuple SQL de ativação conserva 21 colunas porque a superfície precisa do documento jurídico completo; a tuple de recebimentos conserva 16, apenas com referência mínima do contrato (`id`, `source`, `effectiveAt`), status seguros, requisitos, próxima ação, versões monotônicas e `reservationsEligible`. Título, versão textual, hash e corpo Markdown não atravessam o contrato compacto. Nenhuma das respostas contém PII, provider ID ou payload bruto.
+
+Depois de normalizar a tuple, o servidor acrescenta ao estado comum o campo obrigatório `recipientOnboardingCapability: "local_adapter" | "unavailable"`. As projeções `activation` e `recipient`, assim como os retornos de `owner.activate`, `recipient.onboarding.start` e `recipient.onboarding.refresh`, carregam esse campo. Ele é derivado a cada request: `APP_ENV=local | test` produz `local_adapter`; `development | production`, valor ausente ou inválido produzem `unavailable`. A capability não é aceita do navegador, não é coluna do banco e não altera `providerMode`, `nextAction` ou o estado canônico.
+
+Somente a projeção `activation` exige ainda `ownerActivationCapability: "available" | "unavailable"`; por consequência, `GET /api/owner/activation` e o retorno de sucesso de `owner.activate` carregam o campo, enquanto a projeção compacta e os retornos de `recipient.onboarding.start | refresh` não o aceitam. A fonte `approved` produz `available` em qualquer `APP_ENV`. Para `local_fixture`, somente `local | test` produz `available`; `development | production`, ausência ou valor inválido produzem `unavailable`. A derivação ocorre no servidor, não é persistida e não altera a fonte jurídica ou `nextAction`.
+
+Nos três comandos, a rota encaminha o `requestId` da API fora do payload de domínio. Na ativação, o DAL envia correlação e chave lógica como parâmetros SQL distintos; no onboarding do recebedor, `prepare` reserva a `idempotencyKey` e `apply` recebe o `requestId`, recuperando a chave da operação reservada. Fatos novos em `audit.events` usam `request_id` somente para correlação e `idempotency_key` somente para unicidade/replay. Repetir a mesma chave lógica em outra request não cria outro fato nem troca a correlação do efeito original.
+
+As duas leituras autenticadas aplicam no servidor um deadline de 2.000 ms e usam contratos distintos:
+
+- `/dono` e `GET /api/owner/activation` chamam `get_owner_activation_status()` e retornam a projeção completa `activation` de 21 colunas;
+- `/dono/recebimentos` e `GET /api/owner/recipient` chamam `get_owner_recipient_status()` e retornam a projeção compacta `recipient` de 16 colunas, sem título, versão textual, hash ou corpo do contrato.
+
+Cada read model encaminha um `AbortSignal` real à RPC e usa race independente para encerrar no prazo mesmo se o transporte não cooperar; o timer é limpo em sucesso/erro, e resolução ou rejeição tardia não publica estado. Um signal externo também encerra a operação. Os GETs traduzem indisponibilidade para `503` seguro, e as rotas SSR permanecem sob seu estado de erro e recuperação, sem fallback factual inventado.
+
+Quando `recipientOnboardingCapability="unavailable"`, os GETs continuam retornando o estado factual somente para consulta. `recipient.onboarding.start | refresh` retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de chamar `prepare`; portanto não reservam operação, não chamam adapter e não produzem mutação parcial.
+
+Quando `ownerActivationCapability="unavailable"`, a leitura de ativação continua retornando o contrato completo e os fatos para consulta. `owner.activate` responde `503 SERVICE_UNAVAILABLE` com a mensagem pública já definida antes de chamar `activateOwnerProfile` ou produzir aceite, autoridade ou auditoria. Essa recusa pode ocorrer depois da leitura server-side necessária para classificar a fonte; ela não deve ser descrita como anterior a todo acesso DAL.
+
+Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo submit até `GET` autoritativo; o cliente nunca repete automaticamente o POST. `VALIDATION_FAILED` com `fieldErrors` continua sendo erro editável do formulário. Assim, uma corrida de estado usa recuperação por leitura, enquanto o checkbox do contrato ainda recebe feedback de campo normal. Em particular, SQLSTATE `42501` acompanhado exatamente de `owner_contract_not_current` é traduzido para `409 CONFLICT`, pois uma nova versão vigente exige releitura e novo aceite; qualquer outro `42501` permanece `403 FORBIDDEN`. A mensagem SQL serve apenas à classificação interna e não entra no payload público.
+
+O fechamento integral de correlação do terceiro P2 e o fechamento da capability do recebedor no quarto P2 permanecem históricos diante do novo delta. Em particular, 734/734 unitários, 358/358 pgTAP, browser 23/23 e 114/114, build e a release `969f30cd...` não validam `ownerActivationCapability`.
+
+No quinto P2, o snapshot da capability passou primeiro na cadeia estática com 747/747 unitários e no banco com 358/358. A primeira execução Playwright focada foi recusada depois de 12 testes passados, uma falha real de privacidade no cadastro compartilhado e dez não executados; ela não alcançou o oráculo de `SL-F004-E2E-004`, e a suíte integral não começou. Após o hardening pré-hidratação da FEAT-002, a cadeia estática passou novamente em 749/749, o banco em 358/358, a focada em 23/23 e a integral em 114/114. Uma única build compilou 26 + 4 rotas com exit `0`, mas o artefato foi recusado porque o standalone copiou strings de conexão locais do antigo `scripts.knip`; nenhum smoke iniciou. O script agora é somente `knip`, com valores vindos do `.env.e2e.local` físico e guarda unitária sobre os quatro manifests canônicos — raiz, backoffice, contracts e UI — contra URLs de banco em scripts npm. O recorte 4/4 e o Knip com as sete variáveis E2E explicitamente unset passaram. A execução pós-manifesto que testou esse fix está registrada a seguir; os contratos HTTP descritos nesta seção não mudaram.
+
+A build pós-manifesto seguinte terminou uma única vez com exit `0`, mas foi recusada ao restar uma ocorrência DAL em cada cache Turbopack; standalone, static e o log privado `d8e50e0f...` ficaram limpos, e o smoke continuou em zero. O wrapper único `scripts/next-build.mjs` agora atende os dois package scripts e o gerador de release; dentro da operação primária, o resolver confiável valida os ancestrais do app e a toolchain Next antes do spawn, e o wrapper tenta sempre remover fisicamente apenas `<app>/.next/cache`, inclusive quando validação/build falham. Cleanup falho aborta, falha dupla vira `AggregateError`, standalone/static são preservados e raiz/ancestral simbólico ou externo é recusado sem spawn/travessia. O preview aplica o mesmo cleanup no supervisor pai depois de qualquer desfecho do grupo de build, antes de validar/startar; falha impede o servidor e a integração prova cache sintético removido. O run direcionado final passou em 40/40 por quatro arquivos — 12 de cache/wrapper, quatro do npm confiável, 16 de Next/local server e oito do supervisor de preview —, além de ESLint zero, checks Node, Knip env-unset e diff-check.
+
+A cadeia estática final única passou em 764/764 testes por 76 arquivos sob Node 24/npm 11, com `npm ci` 447/451/zero vulnerabilidades, todos os typechecks, docs 34/200/18, audit zero, Knip/diff-check e freeze 53/34/19. Após a remoção física dos dois `.next`, a build final via wrapper rodou exatamente uma vez, exit `0` em 14,733 s; log privado de 2.155 bytes/SHA-256 `44006829f25e63549e9e65ea17abbc483c891996130da34677ec67c932290ec9`. A auditoria independente `build.audit.json`, SHA-256 `a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d`, terminou `NO-BLOCKER` para 26 + 4 rotas, zero warnings, quatro `BUILD_ID=local`, caches/retired zero e árvores/privacidade/inputs/cleanup verdes. Nesse fechamento pré-release, smoke/release ainda estavam pendentes.
+
+O gerador canônico processou `2045d1a00c15889007b3c5c04c08d0467fc3d9b3` exatamente uma vez, exit `0`/21,26 s, e aprovou o primeiro smoke P5 embutido. Duas auditorias `NO-BLOCKER` confirmaram 2.871 artefatos sem mismatch, tar de 3.455 membros, dois `BUILD_ID` iguais ao commit e zero caches/secrets/env/PII/incoming/retired/portas/processos/DB/Mailpit/dblink. A release é local Linux x64, ignorada e não publicada; ARM64/Oracle/PEND-003 e remoto seguem pendentes. Os contratos HTTP desta seção permanecem inalterados.
 
 ### 5.3 Estúdio e revisão
 
@@ -333,7 +363,8 @@ Cada um retorna somente campos de tela:
 - `get_owner_calendar`;
 - `list_owner_reservations`;
 - `list_owner_payments`;
-- `get_owner_recipient_status`.
+- `get_owner_activation_status`: contrato completo somente para `/dono`;
+- `get_owner_recipient_status`: status compacto para recebimentos e refetch.
 
 Durante o login, `get_my_profile()` também fornece somente a projeção allowlisted de aparência. Essa leitura recebe `AbortSignal`, tem deadline server-side de um segundo e degrada para `system`; retorno posterior ao encerramento da operação não pode escrever cookie nem disparar cleanup Auth.
 
@@ -408,6 +439,8 @@ Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo
 Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também substitui uma instância preexistente da mesma key pelo `initialData` SSR atual. Refetch em execução ou pausado, observer ainda ligado à Query removida e retorno de outro usuário mantêm a tela bloqueada; mudança autoritativa de escopo limpa o cache e recompõe `/entrar` no servidor. Login publica somente a sessão escopada; recovery remove a família privada e logout limpa integralmente o `QueryClient` antes da navegação SSR. Token de callback, senha, grant, `session_id` e e-mail de formulário nunca entram em query key ou cache.
 
 Na FEAT-003, cada mutation sensível de perfil envia `{ action, expectedScope, payload }` a partir de uma ref one-shot e usa `networkMode: "always"`; ausência de rede é executada como erro e nunca vira fila pausada retomável sob outra sessão. `SESSION_CHANGED` ou `UNAUTHENTICATED` fecham o DOM privado, limpam `MutationCache` e as famílias `account/profile` + `identity/session` e forçam nova composição SSR. O logout repete o fence com closure sem `variables` nas duas superfícies, mas limpa integralmente o `QueryClient` antes do reload SSR em qualquer resposta terminal ou incerta. Uma closure stale de A não encerra B: após `getClaims`, a classificação termina antes de o fluxo obter explicitamente o cookie store e antes dos efeitos destrutivos explícitos de recovery, deleção de cookies ou `signOut`; a tentativa offline executa uma única request sem retomada tardia. Reseeds autoritativos normais em login, perfil e segurança fazem a limpeza privada preservando queries públicas. No sucesso do perfil, a publicação sobrescreve a query observada sem removê-la, descarta scopes privados incompatíveis e rejeita callback tardio se a key esperada já tiver sido removida por uma transição A→B.
+
+Na FEAT-004, as famílias privadas são `owner/private/activation/<userId>` e `owner/private/recipient/<userId>`; projeção e usuário fazem parte da identidade do cache. O refetch de `/dono` chama somente o GET completo de ativação, enquanto recebimentos usa somente o GET compacto. Sucesso de `owner.activate` publica `activation`; `recipient.onboarding.start | refresh` publicam `recipient`. Um erro concorrente `409` ou uma validação sem campo exige GET explícito antes de habilitar nova ação, sem replay do comando.
 
 ## 10. Rate limits iniciais
 

@@ -1,30 +1,28 @@
-import { profileCompleteCommandSchema, profileUpdateCommandSchema } from "@set-livre/contracts";
-import { z } from "zod";
-
-import { executeIdentityCommand } from "@/domains/identity/server/identity-command-registry";
+import {
+  createPrivateCommandRegistry,
+  privateCommandSchema,
+} from "@/domains/commands/server/private-command-registry";
 import { readRouteIdentitySession } from "@/domains/identity/server/identity-read-model";
-import { runIdentityPostRoute } from "@/domains/identity/server/identity-route";
+import { runPrivateCommandPostRoute } from "@/domains/identity/server/identity-route";
+import { executeOwnerCommand } from "@/domains/owners/server/owner-command-handler";
 import { ApiRouteError, parseOrInputError, readLimitedJson } from "@/lib/server/api-route";
 
-const privateIdentityCommandSchema = z.discriminatedUnion("action", [
-  profileCompleteCommandSchema,
-  profileUpdateCommandSchema,
-]);
+const executePrivateCommand = createPrivateCommandRegistry({ executeOwnerCommand });
 
 export async function POST(request: Request) {
-  return runIdentityPostRoute(request, "identity.command", async (requestId, setAction) => {
+  return runPrivateCommandPostRoute(request, async (requestId, setAction, setResponseHeaders) => {
     const routeIdentity = await readRouteIdentitySession();
+    setResponseHeaders(routeIdentity.responseHeaders);
     if (!routeIdentity.session.authenticated) {
       throw new ApiRouteError(401, "UNAUTHENTICATED", "Entre novamente para continuar.");
     }
-    const command = parseOrInputError(
-      privateIdentityCommandSchema,
-      await readLimitedJson(request),
-      { code: "VALIDATION_FAILED", status: 422 },
-    );
+    const command = parseOrInputError(privateCommandSchema, await readLimitedJson(request), {
+      code: "VALIDATION_FAILED",
+      status: 422,
+    });
     setAction(command.action);
     return {
-      data: await executeIdentityCommand(command, {
+      data: await executePrivateCommand(command, {
         requestId,
         session: routeIdentity.session,
         userAgent: request.headers.get("user-agent"),

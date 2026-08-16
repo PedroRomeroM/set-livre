@@ -1,17 +1,16 @@
 import "server-only";
 
 import {
-  parseDalDatabaseUrl,
   profileCompletePayloadSchema,
   profileVersionSchema,
   profileUpdatePayloadSchema,
   type ProfileCompletePayload,
   type ProfileUpdatePayload,
 } from "@set-livre/contracts";
-import { Pool } from "pg";
 import { z } from "zod";
 
-const environmentSchema = z.object({ DATABASE_URL_APP_DAL: z.string() });
+import { commandDalPool } from "@/lib/server/dal-pool";
+
 const userIdSchema = z.uuid();
 const databaseProfileVersionSchema = z.union([
   profileVersionSchema,
@@ -37,28 +36,6 @@ const profileRowSchema = z.strictObject({
 
 export type ProfileDalRow = z.infer<typeof profileRowSchema>;
 
-let connection: Pool | undefined;
-
-function profileDatabaseConnection() {
-  if (connection !== undefined) {
-    return connection;
-  }
-  const environment = environmentSchema.parse(process.env);
-  const parsed = parseDalDatabaseUrl(environment.DATABASE_URL_APP_DAL);
-  connection = new Pool({
-    allowExitOnIdle: true,
-    application_name: "set-livre-web-profile",
-    connectionString: parsed.connectionString,
-    connectionTimeoutMillis: 1_000,
-    idleTimeoutMillis: 10_000,
-    max: 4,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
-  });
-  connection.on("error", () => undefined);
-  return connection;
-}
-
 function exactlyOneProfile(rows: readonly unknown[]) {
   if (rows.length !== 1) {
     throw new Error("O DAL de perfil recebeu uma cardinalidade inesperada.");
@@ -73,7 +50,7 @@ export function parseProfileDalRow(row: unknown) {
 export async function completeMyProfile(userId: string, input: ProfileCompletePayload) {
   const parsedUserId = userIdSchema.parse(userId);
   const payload = profileCompletePayloadSchema.parse(input);
-  const result = await profileDatabaseConnection().query(
+  const result = await commandDalPool().query(
     `select
        profile.user_id,
        profile.person_type,
@@ -122,7 +99,7 @@ export async function updateMyProfileIdentity(
   const taxId = payload.taxIdChange.action === "replace" ? payload.taxIdChange.value : null;
   const additionalDocument =
     payload.documentChange.action === "replace" ? payload.documentChange.value : null;
-  const result = await profileDatabaseConnection().query(
+  const result = await commandDalPool().query(
     `select
        profile.user_id,
        profile.person_type,
@@ -168,7 +145,7 @@ export async function updateMyProfileAppearance(
   if (payload.section !== "appearance") {
     throw new Error("O DAL recebeu uma seção de preferência inesperada.");
   }
-  const result = await profileDatabaseConnection().query(
+  const result = await commandDalPool().query(
     `select
        profile.user_id,
        profile.person_type,

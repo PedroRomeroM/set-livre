@@ -112,6 +112,8 @@ Gate: calendário, cancelamento, refund, payout, comunicações, áreas privadas
 | Provedor inicial                     | Proprietário da integração posterior | Evidência exigida                                                  |
 | ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------ |
 | FEAT-002 `legal-core`                | FEAT-034                             | exportação, exclusão, anonimização e retenção sobre histórico real |
+| FEAT-004 dono/recebedor              | FEAT-034                             | direitos LGPD sobre os novos fatos e referências privadas          |
+| FEAT-004 elegibilidade conservadora  | FEAT-032                             | fallback financeiro liberado por admin e auditado                  |
 | FEAT-006/FEAT-007 taxonomias         | FEAT-031                             | administração, arquivamento e preservação histórica                |
 | FEAT-008/FEAT-009 workflow editorial | FEAT-030                             | aprovação/rejeição, troca atômica da revisão publicada e auditoria |
 | FEAT-016 cálculo de preço            | FEAT-018 e FEAT-024                  | snapshot imutável da cotação e da reserva                          |

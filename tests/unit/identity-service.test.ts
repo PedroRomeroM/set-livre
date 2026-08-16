@@ -220,6 +220,19 @@ describe("identity recovery service", () => {
     }
   });
 
+  it.each(["/dono", "/dono/recebimentos"] as const)(
+    "returns to the exact owner target after a successful login: %s",
+    async (returnTo) => {
+      const result = await loginIdentity({
+        email: "qa-login@example.test",
+        password: "ValidPassword9",
+        returnTo,
+      });
+
+      expect(result.data).toMatchObject({ redirectTo: returnTo, session: authenticatedSession });
+    },
+  );
+
   it("keeps login available when the visual preference projection cannot be read", async () => {
     vi.useFakeTimers();
     try {

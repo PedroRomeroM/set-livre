@@ -97,6 +97,42 @@ describe("FEAT-003 Playwright helpers", () => {
     expect(criticalSpec).toContain('test.use({ screenshot: "off", trace: "off", video: "off" });');
   });
 
+  it("fills phone controls through a redacted native input event instead of report titles", () => {
+    const helper = readFileSync(
+      resolve(process.cwd(), "tests/helpers/feat-003-profile-account.ts"),
+      "utf8",
+    );
+    const phoneHelper = helper.slice(
+      helper.indexOf("export async function fillFeat003PhoneWithoutReportValue"),
+      helper.indexOf("export async function assertFeat003SecretsAbsentFromDom"),
+    );
+    const criticalSpec = readFileSync(
+      resolve(process.cwd(), "tests/e2e/critical/feat-003-profile-account.spec.ts"),
+      "utf8",
+    );
+    const regressionSpec = readFileSync(
+      resolve(process.cwd(), "tests/e2e/regression/feat-003-profile-account.spec.ts"),
+      "utf8",
+    );
+    const serializedPhoneAction =
+      /getByRole\("textbox",\s*\{\s*name: "Telefone"\s*\}\)\.(?:fill|pressSequentially|type)\(/u;
+
+    expect(phoneHelper).toContain("control.evaluate((element, phoneValue)");
+    expect(phoneHelper).toContain('element.name !== "phone"');
+    expect(phoneHelper).toContain(
+      'Object.getOwnPropertyDescriptor(inputConstructor.prototype, "value")',
+    );
+    expect(phoneHelper).toContain('new inputEventConstructor("input"');
+    expect(phoneHelper).toContain("valueSetter.call(element, phoneValue)");
+    expect(phoneHelper).not.toContain("control.fill(");
+    expect(phoneHelper).not.toContain("control.pressSequentially(");
+    expect(phoneHelper).not.toContain("control.type(");
+    expect(helper).not.toMatch(serializedPhoneAction);
+    expect(criticalSpec).not.toMatch(serializedPhoneAction);
+    expect(regressionSpec).not.toMatch(serializedPhoneAction);
+    expect(regressionSpec).not.toMatch(/phoneControl\.(?:fill|pressSequentially|type)\(/u);
+  });
+
   it("proves exact cleanup with parameterized identity and profile lookups", async () => {
     const calls: Array<Readonly<{ text: string; values: readonly [string, string] }>> = [];
     await verifyFeat003CleanupWithDependencies(

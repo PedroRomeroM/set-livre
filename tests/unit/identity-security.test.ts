@@ -228,7 +228,7 @@ describe("identity mutation cache security", () => {
     }
   });
 
-  it("reads the registration choice from the native form without hydration state", () => {
+  it("reads the registration choice from the native form without mirrored React state", () => {
     const content = readFileSync(
       resolve(process.cwd(), "src/domains/identity/components/registration-form.tsx"),
       "utf8",

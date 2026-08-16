@@ -122,12 +122,12 @@ describe("profile UI privacy guards", () => {
     );
   });
 
-  it("passes only account return targets through the ephemeral login payload", () => {
+  it("passes only exact private return targets through the ephemeral login payload", () => {
     const page = readFileSync(resolve(process.cwd(), "src/app/entrar/page.tsx"), "utf8");
     const panel = componentSource("login-panel.tsx");
 
-    expect(page).toContain('query.retorno === "/conta"');
-    expect(page).toContain('query.retorno === "/conta/seguranca"');
+    expect(page).toContain("resolveAccountLoginReturnTarget(query.retorno)");
+    expect(panel).toContain("returnTo?: AccountLoginReturnTarget | undefined");
     expect(panel).toContain("...(returnTo === undefined ? {} : { returnTo })");
     expect(panel).toContain("pendingLogin.current = parsed.data");
     expect(panel).toContain("mutation.mutate();");
@@ -170,6 +170,9 @@ describe("profile UI privacy guards", () => {
     );
     expect(login).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
     expect(security).toContain("seedAuthoritativeIdentitySession(queryClient, initialSession)");
+    expect(cache).toContain(
+      "queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });",
+    );
   });
 
   it("keeps the account composition usable at 320px and the 200% reflow viewport", () => {

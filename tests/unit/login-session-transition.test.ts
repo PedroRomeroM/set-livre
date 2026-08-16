@@ -8,6 +8,7 @@ import {
   hideAndResetLoginCredentialForm,
   isAmbiguousLoginTransportError,
   loginSessionVerificationPath,
+  resolveAccountLoginReturnTarget,
 } from "../../src/domains/identity/components/login-session-transition";
 
 describe("ambiguous login session transition", () => {
@@ -104,7 +105,7 @@ describe("ambiguous login session transition", () => {
     expect(form.reset).toHaveBeenCalledOnce();
   });
 
-  it("preserves only allowlisted account return targets in the verification reload", () => {
+  it("preserves only allowlisted private return targets in the verification reload", () => {
     expect(loginSessionVerificationPath()).toBe("/entrar?entrada=verificar");
     expect(loginSessionVerificationPath("/conta")).toBe(
       "/entrar?entrada=verificar&retorno=%2Fconta",
@@ -112,6 +113,29 @@ describe("ambiguous login session transition", () => {
     expect(loginSessionVerificationPath("/conta/seguranca")).toBe(
       "/entrar?entrada=verificar&retorno=%2Fconta%2Fseguranca",
     );
+    expect(loginSessionVerificationPath("/dono")).toBe("/entrar?entrada=verificar&retorno=%2Fdono");
+    expect(loginSessionVerificationPath("/dono/recebimentos")).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Frecebimentos",
+    );
+  });
+
+  it.each(["/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"] as const)(
+    "accepts the exact login return target %s",
+    (target) => {
+      expect(resolveAccountLoginReturnTarget(target)).toBe(target);
+    },
+  );
+
+  it.each([
+    "https://attacker.example/dono",
+    "//attacker.example/dono",
+    "/dono?next=https://attacker.example",
+    "/dono/../conta",
+    "/dono%2Frecebimentos",
+    ["/dono"],
+    undefined,
+  ])("rejects a non-allowlisted login return target: %s", (target) => {
+    expect(resolveAccountLoginReturnTarget(target)).toBeUndefined();
   });
 
   it("wires the form boundary without passing credentials through mutation variables or URLs", () => {
