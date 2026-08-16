@@ -721,7 +721,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quarto review · smoke canônico pendente</span>
+              <span class="tag review">Quarto review · release local auditada</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
@@ -752,12 +752,12 @@
                 <strong>Cadastro de recebimentos indisponível</strong> e informa: “A integração de
                 recebimentos ainda não está disponível neste ambiente. O estado atual permanece
                 somente para consulta.” O smoke customizado não produziu evidência verde: três
-                tentativas foram recusadas por problemas exclusivos do harness. O smoke embutido do
-                gerador canônico será o gate definitivo; release, publicação, reply/resolve,
-                re-review, ready e merge permanecem pendentes. A release <code>2a86acc4...</code>
-                pertence ao terceiro P2 e é histórica. A feature continua
-                <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e PEND-006
-                continuam bloqueando produção.
+                tentativas foram recusadas por problemas exclusivos do harness. O gerador canônico
+                executou uma vez para <code>969f30cd...</code>, aprovou seu smoke embutido e gerou a
+                release local auditada. Publicação, reply/resolve, re-review, ready e merge
+                permanecem pendentes. A release <code>2a86acc4...</code> pertence ao terceiro P2 e é
+                histórica. A feature continua <strong>Em implementação</strong>; PEND-003, smoke
+                ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
               </p>
             </article>
             <article class="card">
@@ -1151,9 +1151,10 @@
               migrations/head <code>20260815000100</code>. O browser focado passou em 23/23 e o
               integral em 114/114, preservando os sete IDs e 23/23 execuções da feature. Um único
               build passou com exit 0, 26 + 4 rotas e <code>BUILD_ID=local</code>. O smoke
-              customizado não produziu evidência verde, e a release/publicação
-              <code>2a86acc4.../dda95b3...</code> permanecem históricas do terceiro P2. O catálogo
-              continua com 23 IDs automatizados e 177 planejados.
+              customizado não produziu evidência verde. O gerador canônico executou uma vez e
+              produziu a release local auditada de <code>969f30cd...</code>, com smoke embutido,
+              secrets, paridade e cleanup verdes. O catálogo continua com 23 IDs automatizados e 177
+              planejados.
             </p>
           </div>
 
@@ -1235,8 +1236,14 @@
               <code>d84519...</code>/<code>7c9b2c...</code>/<code>63b674...</code>. A tentativa 3
               foi recusada antes dos probes porque o parser não aceitava <code>pgrp=0</code>; hashes
               stdout/server <code>bcd359...</code>/<code>b70a26...</code>. O cleanup terminou em
-              zero nas três. Nenhuma tentativa conta como smoke aprovado; o smoke embutido do
-              gerador canônico será o gate definitivo.
+              zero nas três. Nenhuma tentativa conta como smoke aprovado.
+            </p>
+            <p>
+              O gerador canônico executou exatamente uma vez para <code>969f30cd...</code>, terminou
+              com exit <code>0</code> em 21,15 segundos e gerou 2.871 artefatos em uma release local
+              auditada. O tar possui 3.455 membros, e os dois <code>BUILD_ID</code> equivalem ao
+              commit. Smoke embutido, secrets, paridade e cleanup ficaram verdes; duas auditorias
+              independentes terminaram <code>NO-BLOCKER</code>. A prova vale somente para Linux x64.
             </p>
             <p>
               <strong>Fotografia histórica do terceiro P2.</strong> A focada P3 permanece verde em
@@ -1385,8 +1392,8 @@
               também foram concluídas naquela fotografia, hoje histórica. O terceiro P2 possui gates
               locais, banco, browser, build, smoke e release canônica local final auditada;
               publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
-              O quarto P2 possui fechamento estático, banco, browser focado/integral e build verdes;
-              o smoke canônico, a release e o ciclo remoto permanecem pendentes.
+              O quarto P2 possui fechamento estático, banco, browser focado/integral, build, smoke
+              embutido e release local auditada; apenas o ciclo remoto permanece pendente.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1636,36 +1643,32 @@
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Fotografia histórica da release P3</span>
-              <h3>Artefato funcional auditado por SHA</h3>
+              <span class="tag done">Release canônica local do quarto P2</span>
+              <h3>Artefato funcional P4 auditado por SHA</h3>
               <p>
-                O commit funcional <code>2a86acc4dc3a005213d5f22384084e3aba0160be</code> gerou a
-                release canônica local final. O archive possui 24.903.588 bytes e SHA-256
-                <code>0e0c07f41d4a44f0673ce7a5013084942100e8baab1ba72ee6aeea6496be1566</code>; o
+                O gerador canônico processou exatamente uma vez o commit funcional
+                <code>969f30cd0f34b7e36e2a21550b5e3f28f8709406</code> e terminou com exit
+                <code>0</code> em 21,15 segundos. O archive possui 24.904.533 bytes e SHA-256
+                <code>d5f544bff8b72314060535333cd2c300a4c56a4e35295c1471beec5ee41cfeeb</code>; o
                 sidecar, 124 bytes e SHA-256
-                <code>1136df426039335971d515497ce8974dcb25ee583f3764d5c33f9ea1f76ca0ab</code>; o
-                manifesto, 681.529 bytes e SHA-256
-                <code>d3bfb5a5c517edab1004bde6eaf04c7f080c3036c94defbbfa1b82fad44d4d44</code>; e o
-                log, 2.099 bytes e SHA-256
-                <code>e7edaa919daa3b3ed4cd6cf1588c044d2a6efcf1ae84e9877edd5fa42062371e</code>.
+                <code>f3441aee4c9d6758a539b2be2b3b325805bd6d977ad2cf915619bfbb9cd4d8d3</code>; o
+                manifesto, 681.762 bytes e SHA-256
+                <code>bc13a94c4084abc46bab677d1115871cb1327d7d17172b982b886c35eb200ada</code>; e o
+                log, 2.102 bytes e SHA-256
+                <code>5be766c1c967ab7840335c120f2918ff555770efd69544f164023c32378456e7</code>.
               </p>
               <p>
-                São 2.870 artefatos: web 1.577, backoffice 1.276, migrations 15, lockfile 1 e
-                manifesto 1. O tar contém 3.454 membros: 584 diretórios, 2.868 arquivos e dois links
-                seguros. Os <code>BUILD_ID</code> dos dois apps equivalem ao commit; o head
-                empacotado é <code>20260815000100</code>, com prefixo SHA-256
-                <code>ca995243...</code>, e o lockfile possui prefixo <code>485ec8e7...</code>.
-                Smoke embutido, secrets/PII e cleanup final ficaram verdes em Linux x64, Node
-                24.18/npm 11.19; duas auditorias independentes terminaram <code>NO-BLOCKER</code>.
+                São 2.871 artefatos: web 1.578, backoffice 1.276, migrations 15, lockfile 1 e
+                manifesto 1. O tar contém 3.455 membros: 584 diretórios, 2.869 arquivos e dois links
+                seguros. Os <code>BUILD_ID</code> dos dois apps equivalem ao commit. Smoke embutido,
+                varredura de secrets, paridade e cleanup ficaram verdes; duas auditorias
+                independentes terminaram <code>NO-BLOCKER</code>.
               </p>
               <p>
-                A release <code>440c81f6...</code> e as anteriores permanecem fotografias
-                históricas. “Final” descreve o artefato funcional local do terceiro P2, não feature
-                concluída, ARM64 ou produção. A publicação da branch até <code>dda95b3...</code>, a
-                resposta e a resolução daquele P2 foram verificadas na captura de
-                <code>2026-08-15T19:38:32Z</code>. Este artefato não contém nem valida o quarto P2;
-                seu smoke canônico, release e ciclo remoto continuam pendentes. PEND-003 e o smoke
-                ARM64 nativo permanecem obrigatórios.
+                Esta é uma prova local Linux x64, não ARM64 ou produção. A release P3
+                <code>2a86acc4...</code> e as anteriores permanecem fotografias históricas.
+                Publicação, reply/resolve, re-review, espera, ready e merge do quarto P2 ainda não
+                foram realizados; PEND-003 e o smoke ARM64 nativo permanecem obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1822,12 +1825,11 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Concluir o quarto P2 do PR #6: executar o gerador canônico, cujo smoke embutido
-                  será a prova definitiva, e auditar a release sem reaproveitar o artefato do P3. Só
-                  depois publicar, responder e resolver <code>PRRT_kwDOTyzZrs6ZigTV</code>,
-                  solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer
-                  uma captura final única antes de ready ou merge. PEND-003, trusted proxy e smoke
-                  ARM64 continuam bloqueando produção; gateway externo, checkout, fallback e dados
+                  Publicar o commit funcional e a documentação da release canônica local do quarto
+                  P2, responder e resolver <code>PRRT_kwDOTyzZrs6ZigTV</code>, solicitar novo
+                  <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer uma captura
+                  final única antes de ready ou merge. PEND-003, trusted proxy e smoke ARM64
+                  continuam bloqueando produção; gateway externo, checkout, fallback e dados
                   bancários permanecem fora.
                 </li>
               </ol>

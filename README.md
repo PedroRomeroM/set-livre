@@ -4,6 +4,8 @@
 
 Este repositório contém a especificação viva e a implementação da **plataforma completa de aluguel de estúdios audiovisuais Set Livre**. A baseline documental define produto, arquitetura, contratos de dados, fluxos, qualidade e ordem; o código avança em fatias verticais rastreáveis.
 
+Para uma visão direta das tecnologias verificadas no repositório, consulte [`docs/technology-stack.md`](docs/technology-stack.md).
+
 O projeto não descreve o mini fórum comunitário. A aplicação é o marketplace comercial de estúdios, com calendário próprio, reservas, pagamentos, split, repasses, backoffice e operação de produção.
 
 ## Estado atual
@@ -14,7 +16,8 @@ O projeto não descreve o mini fórum comunitário. A aplicação é o marketpla
 - A correção torna obrigatório `recipientOnboardingCapability: "local_adapter" | "unavailable"` nas duas projeções e nos retornos dos três POSTs. O servidor deriva a capability por request: `APP_ENV=local | test` habilita apenas o adapter local; `development | production`, ausência ou valor inválido falham fechados como `unavailable`, sem mudar `nextAction`, `providerMode` ou fatos do banco.
 - Quando indisponível, start/refresh retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de `prepare` ou reserva de operação. A UI preserva o estado somente para consulta, remove notice e CTAs e exibe o alerta factual **Cadastro de recebimentos indisponível**; nenhum provider externo, fake de produção ou controle desabilitado foi criado.
 - No fechamento local em Node 24, `npm ci`, format, lint, typecheck, 734/734 unitários em 74 arquivos, docs:check 34/200/18, audit zero, Knip e diff-check passaram. Reset, geração e banco ficaram verdes em 358/358, com 15 migrations/head `20260815000100`. A rodada browser focada passou em 23/23 e a integral em 114/114, preservando 23/23 da FEAT-004; a correção do harness de auditoria integral reaproveitou o mesmo relatório sem nova invocação Playwright. Um único build passou com exit `0`, 26 + 4 rotas, `BUILD_ID=local` e log SHA-256 `ca7d5c3e...`.
-- O smoke customizado **não está verde**. Três tentativas foram recusadas por problemas exclusivos do harness: oráculo de tombstone de cookie, falso positivo do shell pai depois de o contrato completo passar e parser de `pgrp=0` antes dos probes. Nenhuma é apresentada como smoke aprovado; o smoke embutido do gerador canônico será o gate definitivo. A release `2a86acc4...` e a publicação até `dda95b3...` continuam históricas do P3. Release canônica do P4, publicação, reply/resolve, re-review, espera, ready, merge e smoke ARM64 permanecem pendentes.
+- O smoke customizado **não está verde**. Três tentativas foram recusadas por problemas exclusivos do harness: oráculo de tombstone de cookie, falso positivo do shell pai depois de o contrato completo passar e parser de `pgrp=0` antes dos probes. Nenhuma é apresentada como smoke aprovado.
+- A release canônica local do P4 foi gerada exatamente uma vez para `969f30cd0f34b7e36e2a21550b5e3f28f8709406`: exit `0` em 21,15 segundos, 2.871 artefatos, 3.455 membros no tar e `BUILD_ID` dos dois apps igual ao commit. O archive possui 24.904.533 bytes e SHA-256 `d5f544bff8b72314060535333cd2c300a4c56a4e35295c1471beec5ee41cfeeb`; smoke embutido, secrets, paridade e cleanup ficaram verdes, e duas auditorias terminaram `NO-BLOCKER`. É evidência local Linux x64, não ARM64 ou produção. Publicação, reply/resolve, re-review, espera, ready, merge, PEND-003 e smoke ARM64 permanecem pendentes.
 
 ### Fotografia histórica anterior ao quarto P2
 
