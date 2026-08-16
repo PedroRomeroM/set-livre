@@ -95,10 +95,12 @@ describe("local production preview process flow", () => {
 
   it("accepts build code 0 but rejects a natural server exit with code 0", async () => {
     let buildValidated = false;
+    const phaseOrder = [];
     let serverStarted = false;
 
     await expect(
       runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => phaseOrder.push("cleanup"),
         platform: "linux",
         prepareBuild: () => {},
         signalProcessGroup: (_pid, signal) => {
@@ -109,16 +111,19 @@ describe("local production preview process flow", () => {
         signalSource: new EventEmitter(),
         startBuild: (registerProcess) => registerProcess({ child: closingChild(611_001, 0) }),
         startServer: (registerProcess) => {
+          phaseOrder.push("server");
           serverStarted = true;
           registerProcess({ child: closingChild(611_002, 0) });
         },
         validateBuild: () => {
+          phaseOrder.push("validate");
           buildValidated = true;
         },
       }),
     ).rejects.toThrow("servidor do preview encerrou prematuramente com código 1");
 
     expect(buildValidated).toBe(true);
+    expect(phaseOrder).toEqual(["cleanup", "validate", "server"]);
     expect(serverStarted).toBe(true);
   });
 
@@ -131,6 +136,7 @@ describe("local production preview process flow", () => {
 
     await expect(
       runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {},
         platform: "win32",
         prepareBuild: () => {},
         signalSource: new EventEmitter(),
@@ -159,11 +165,15 @@ describe("local production preview process flow", () => {
     child.exitCode = null;
     child.pid = 622_001;
     child.signalCode = null;
+    let cleanupCount = 0;
     let handlersWereInstalledBeforeFactory = false;
     let serverStarted = false;
 
     await expect(
       runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {
+          cleanupCount += 1;
+        },
         platform: "linux",
         prepareBuild: () => {},
         signalProcessGroup: (_pid, signal) => {
@@ -192,6 +202,7 @@ describe("local production preview process flow", () => {
     ).rejects.toMatchObject({ exitCode: 129 });
 
     expect(handlersWereInstalledBeforeFactory).toBe(true);
+    expect(cleanupCount).toBe(1);
     expect(serverStarted).toBe(false);
     expect(signalSource.listenerCount("SIGHUP")).toBe(0);
   });
@@ -219,6 +230,7 @@ describe("local production preview process flow", () => {
       const signalSource = new EventEmitter();
       let handlersWereInstalledBeforeServerSpawn = false;
       const run = runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {},
         forceShutdownMilliseconds: 150,
         prepareBuild: () => {},
         signalSource,
@@ -258,4 +270,99 @@ describe("local production preview process flow", () => {
     },
     10_000,
   );
+
+  it("always cleans the build cache before validating or starting the server", async () => {
+    let cleanupCount = 0;
+    let serverStarted = false;
+
+    await expect(
+      runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {
+          cleanupCount += 1;
+        },
+        platform: "linux",
+        prepareBuild: () => {},
+        signalProcessGroup: (_pid, signal) => {
+          if (signal === 0) {
+            throw missingProcessGroup();
+          }
+        },
+        signalSource: new EventEmitter(),
+        startBuild: (registerProcess) => registerProcess({ child: closingChild(633_001, 1) }),
+        startServer: () => {
+          serverStarted = true;
+        },
+        validateBuild: () => {
+          throw new Error("a validação não deveria iniciar");
+        },
+      }),
+    ).rejects.toThrow("build fresco do preview encerrou com código 1");
+
+    expect(cleanupCount).toBe(1);
+    expect(serverStarted).toBe(false);
+  });
+
+  it("stops a successful build when cache cleanup fails", async () => {
+    let serverStarted = false;
+
+    await expect(
+      runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {
+          throw new Error("falha sintética do cleanup");
+        },
+        platform: "linux",
+        prepareBuild: () => {},
+        signalProcessGroup: (_pid, signal) => {
+          if (signal === 0) {
+            throw missingProcessGroup();
+          }
+        },
+        signalSource: new EventEmitter(),
+        startBuild: (registerProcess) => registerProcess({ child: closingChild(633_101, 0) }),
+        startServer: () => {
+          serverStarted = true;
+        },
+        validateBuild: () => {
+          throw new Error("a validação não deveria iniciar");
+        },
+      }),
+    ).rejects.toThrow("falha sintética do cleanup");
+
+    expect(serverStarted).toBe(false);
+  });
+
+  it("preserves simultaneous preview build and cache cleanup failures", async () => {
+    let failure;
+
+    try {
+      await runLocalProductionPreviewProcessFlow({
+        cleanupBuild: () => {
+          throw new Error("falha sintética do cleanup");
+        },
+        platform: "linux",
+        prepareBuild: () => {},
+        signalProcessGroup: (_pid, signal) => {
+          if (signal === 0) {
+            throw missingProcessGroup();
+          }
+        },
+        signalSource: new EventEmitter(),
+        startBuild: (registerProcess) => registerProcess({ child: closingChild(633_201, 1) }),
+        startServer: () => {
+          throw new Error("o servidor não deveria iniciar");
+        },
+        validateBuild: () => {
+          throw new Error("a validação não deveria iniciar");
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.errors.map((error) => error.message)).toEqual([
+      "O build fresco do preview encerrou com código 1.",
+      "falha sintética do cleanup",
+    ]);
+  });
 });

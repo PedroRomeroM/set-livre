@@ -1,8 +1,17 @@
 import "server-only";
 
-export function assertOwnerContractRuntime(source: "approved" | "local_fixture") {
-  const appEnvironment = process.env.APP_ENV;
-  if (source === "local_fixture" && appEnvironment !== "local" && appEnvironment !== "test") {
-    throw new Error("O contrato local do dono é proibido fora de local/test.");
-  }
+import type { OwnerActivationCapability, OwnerContractReference } from "@set-livre/contracts";
+
+function deriveOwnerActivationCapability(
+  source: OwnerContractReference["source"],
+  appEnvironment: string | undefined,
+): OwnerActivationCapability {
+  if (source === "approved") return "available";
+  return appEnvironment === "local" || appEnvironment === "test" ? "available" : "unavailable";
+}
+
+export function readOwnerActivationCapability(
+  source: OwnerContractReference["source"],
+): OwnerActivationCapability {
+  return deriveOwnerActivationCapability(source, process.env.APP_ENV);
 }

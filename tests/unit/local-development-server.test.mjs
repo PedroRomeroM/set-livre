@@ -316,6 +316,7 @@ describe("local development server launcher", () => {
       const externalMarkerPath = resolve(externalBuildOutput, "external-marker");
       const staleMarkerPath = resolve(buildOutputPath, "stale-cloud-bundle");
       const bundlePath = resolve(buildOutputPath, "preview-bundle.json");
+      const cachePath = resolve(buildOutputPath, "cache/turbopack/private.bin");
       const resultPath = resolve(fixture.root, "fresh-preview-result.json");
       mkdirSync(buildOutputPath);
       mkdirSync(externalBuildOutput);
@@ -324,7 +325,7 @@ describe("local development server launcher", () => {
       writeFileSync(staleMarkerPath, "https://cloud.example.com", "utf8");
       writeFileSync(
         fixture.nextCliPath,
-        `const fs = require("node:fs"); const path = require("node:path"); const command = process.argv[2]; const output = ${JSON.stringify(buildOutputPath)}; const stale = ${JSON.stringify(staleMarkerPath)}; const bundle = ${JSON.stringify(bundlePath)}; if (command === "build") { if (fs.existsSync(stale)) process.exit(41); fs.mkdirSync(output, { recursive: true }); fs.writeFileSync(path.join(output, "BUILD_ID"), "fresh-local-build\\n"); fs.writeFileSync(bundle, JSON.stringify({ APP_ENV: process.env.APP_ENV, DATABASE_URL_APP_DAL: process.env.DATABASE_URL_APP_DAL, NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL, nodeOptions: process.env.NODE_OPTIONS ?? null, serviceRole: process.env.SUPABASE_SERVICE_ROLE_KEY ?? null })); } else if (command === "start") { fs.writeFileSync(${JSON.stringify(resultPath)}, fs.readFileSync(bundle)); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000); } else { process.exit(42); }\n`,
+        `const fs = require("node:fs"); const path = require("node:path"); const command = process.argv[2]; const output = ${JSON.stringify(buildOutputPath)}; const stale = ${JSON.stringify(staleMarkerPath)}; const bundle = ${JSON.stringify(bundlePath)}; const cache = ${JSON.stringify(cachePath)}; if (command === "build") { if (fs.existsSync(stale)) process.exit(41); fs.mkdirSync(path.dirname(cache), { recursive: true }); fs.writeFileSync(path.join(output, "BUILD_ID"), "fresh-local-build\\n"); fs.writeFileSync(cache, process.env.DATABASE_URL_APP_DAL); fs.writeFileSync(bundle, JSON.stringify({ APP_ENV: process.env.APP_ENV, DATABASE_URL_APP_DAL: process.env.DATABASE_URL_APP_DAL, NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL, nodeOptions: process.env.NODE_OPTIONS ?? null, serviceRole: process.env.SUPABASE_SERVICE_ROLE_KEY ?? null })); } else if (command === "start") { if (fs.existsSync(cache)) process.exit(43); fs.writeFileSync(${JSON.stringify(resultPath)}, fs.readFileSync(bundle)); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000); } else { process.exit(42); }\n`,
       );
       const signalSource = new EventEmitter();
       const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
@@ -341,6 +342,7 @@ describe("local development server launcher", () => {
 
       await expect(run).rejects.toMatchObject({ exitCode: 143 });
       expect(existsSync(staleMarkerPath)).toBe(false);
+      expect(existsSync(resolve(buildOutputPath, "cache"))).toBe(false);
       expect(readFileSync(externalMarkerPath, "utf8")).toBe("must-survive");
       expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
         APP_ENV: "local",

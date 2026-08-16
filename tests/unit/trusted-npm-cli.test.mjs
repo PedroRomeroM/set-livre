@@ -74,6 +74,18 @@ describe("trusted npm CLI launch", () => {
     );
     expect(packageJson).not.toHaveProperty("scripts.dev:all");
     expect(packageJson).not.toHaveProperty("scripts.release:manifest");
+    expect(packageJson).toHaveProperty("scripts.knip", "knip");
+    for (const manifestPath of [
+      "../../package.json",
+      "../../apps/backoffice/package.json",
+      "../../packages/contracts/package.json",
+      "../../packages/ui/package.json",
+    ]) {
+      const manifest = JSON.parse(readFileSync(resolve(import.meta.dirname, manifestPath), "utf8"));
+      expect(Object.values(manifest.scripts ?? {}).join("\n")).not.toMatch(
+        /(?:E2E_DATABASE_URL|DATABASE_URL_APP_DAL|postgres(?:ql)?:\/\/)/u,
+      );
+    }
 
     const hostileHome = mkdtempSync(resolve(tmpdir(), "set-livre-hostile-npm-home-"));
     temporaryRoots.push(hostileHome);

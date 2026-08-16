@@ -71,6 +71,8 @@ No cliente, `recoveryStatus(scope)` mantém scopes anônimo/UUID em queries dist
 
 O estado comum expõe `recipientOnboardingCapability: "local_adapter" | "unavailable"` nas duas projeções e nos três retornos de comando. Essa capacidade é derivada server-side a cada request: `APP_ENV=local | test` habilita o adapter determinístico; `development | production`, valor ausente ou inválido falham fechados como `unavailable`. Ela não altera `providerMode`, `nextAction` nem o fato persistido. Em `unavailable`, leituras continuam factuais e somente consultivas; `recipient.onboarding.start | refresh` retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de reservar a operação. O adapter local nominal faz `start -> pending` e `refresh -> active`, não realiza rede, e a integração externa continua suspensa pelo ADR-018/PEND-004.
 
+A projeção completa acrescenta separadamente `ownerActivationCapability: "available" | "unavailable"`; a projeção compacta não recebe esse campo. A derivação server-only combina a fonte do contrato com o ambiente: `approved` é sempre `available`; `local_fixture` é `available` apenas em `local | test` e falha fechada em `development | production`, ambiente ausente ou valor inválido. Essa capability não é coluna nem altera `source`, `nextAction` ou qualquer fato. A leitura de ativação continua retornando o documento completo para consulta quando `unavailable`, enquanto `owner.activate` retorna `503 SERVICE_UNAVAILABLE` antes de `activateOwnerProfile` e da escrita. As tuples SQL permanecem com 21/16 colunas e nenhuma migration é necessária.
+
 ### 2.2 Backoffice
 
 Aplicação Next.js separada em `apps/backoffice`.

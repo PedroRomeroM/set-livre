@@ -59,6 +59,7 @@ function activationResult(
   return {
     acceptedOwnerContractVersionId: null,
     nextAction: "activate_owner",
+    ownerActivationCapability: "available",
     ownerContract: {
       bodyMarkdown: "# Contrato local\n\nConteúdo.",
       contentHash: "a".repeat(64),

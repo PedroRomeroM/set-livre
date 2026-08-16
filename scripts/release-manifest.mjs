@@ -32,6 +32,7 @@ import {
   withExclusiveReleaseLock,
 } from "./release-guards.mjs";
 import { runPackagedReleaseSmokeWithProcessCleanup } from "./release-process-tree.mjs";
+import { runNextBuildWithCacheCleanup } from "./next-build.mjs";
 import { removePhysicalTree } from "./physical-tree-removal.mjs";
 import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
@@ -40,7 +41,6 @@ const artifactsRoot = resolve(root, ".artifacts");
 const releaseRoot = resolve(artifactsRoot, "release");
 const manifestPath = resolve(releaseRoot, "manifest.json");
 const migrationsSource = resolve(root, "supabase/migrations");
-const nextExecutable = resolve(root, "node_modules/next/dist/bin/next");
 const applications = [
   {
     application: "web",
@@ -1024,12 +1024,14 @@ async function generateRelease(commit) {
   );
   const secretSourceEnvironments = [process.env, ...Object.values(localEnvironments)];
 
-  requireRegularFile(nextExecutable, "CLI Next.js fixada pelo lockfile");
   for (const application of applications) {
-    execFileSync(process.execPath, [nextExecutable, "build"], {
-      cwd: application.projectRoot,
-      env: releaseBuildEnvironment(process.env, localEnvironments[application.application], commit),
-      stdio: "inherit",
+    runNextBuildWithCacheCleanup({
+      applicationRoot: application.projectRoot,
+      buildEnvironment: releaseBuildEnvironment(
+        process.env,
+        localEnvironments[application.application],
+        commit,
+      ),
     });
   }
   assertSameCommit(commit, "durante o build");

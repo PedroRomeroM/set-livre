@@ -7,6 +7,7 @@ import {
   profileVersionSchema,
   recipientRequirementSchema,
   recipientStatusSchema,
+  type OwnerActivationCapability,
   type OwnerActivationResult,
   type OwnerRecipientStatus,
   type RecipientOnboardingCapability,
@@ -16,8 +17,6 @@ import {
 import { z } from "zod";
 
 import { commandDalPool } from "@/lib/server/dal-pool";
-
-import { assertOwnerContractRuntime } from "./owner-runtime";
 
 const databaseVersionSchema = z.union([
   profileVersionSchema,
@@ -258,7 +257,6 @@ function assertOwnerRecipientScope(row: OwnerRecipientStatusDalRow, expectedUser
   if (row.scope !== expectedUserId) {
     throw new Error("O cadastro de dono retornado não corresponde à sessão autenticada.");
   }
-  assertOwnerContractRuntime(row.owner_contract_source);
 }
 
 function mapOwnerRecipientState(row: OwnerRecipientStatusDalRow) {
@@ -301,10 +299,12 @@ export function mapOwnerActivationDalRow(
   row: OwnerActivationDalRow,
   expectedUserId: string,
   recipientOnboardingCapability: RecipientOnboardingCapability,
+  ownerActivationCapability: OwnerActivationCapability,
 ): OwnerActivationResult {
   assertOwnerRecipientScope(row, expectedUserId);
   return ownerActivationResultSchema.parse({
     ...mapOwnerRecipientState(row),
+    ownerActivationCapability,
     ownerContract: {
       bodyMarkdown: row.owner_contract_body_markdown,
       contentHash: row.owner_contract_content_hash,

@@ -65,6 +65,7 @@ export {
   type PersonType,
 } from "./identity";
 export {
+  ownerActivationCapabilitySchema,
   ownerActivationResultSchema,
   ownerActivateCommandSchema,
   ownerActivatePayloadSchema,
@@ -82,6 +83,7 @@ export {
   recipientOnboardingStartCommandSchema,
   recipientRequirementSchema,
   recipientStatusSchema,
+  type OwnerActivationCapability,
   type OwnerActivationResult,
   type OwnerActivatePayload,
   type OwnerCommand,

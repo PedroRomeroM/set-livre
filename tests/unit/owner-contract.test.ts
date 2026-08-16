@@ -39,8 +39,10 @@ describe("owner and recipient contracts", () => {
       { ...command, ownerUserId: scope },
       { ...command, status: "active" },
       { ...command, provider: "local" },
+      { ...command, ownerActivationCapability: "available" },
       { ...command, idempotencyKey: "not-a-uuid" },
       { ...command, payload: { ...command.payload, acceptOwnerContract: false } },
+      { ...command, payload: { ...command.payload, ownerActivationCapability: "available" } },
       { ...command, payload: { ...command.payload, ownerStatus: "active" } },
     ]) {
       expect(ownerActivateCommandSchema.safeParse(invalid).success).toBe(false);
@@ -74,6 +76,7 @@ describe("owner and recipient contracts", () => {
     const result = {
       acceptedOwnerContractVersionId: ownerContractVersionId,
       nextAction: "none",
+      ownerActivationCapability: "available",
       ownerContract,
       ownerContractAccepted: true,
       ownerStatus: "active",
@@ -116,7 +119,12 @@ describe("owner and recipient contracts", () => {
       reservationsEligible: false,
       scope,
     } as const;
-    const activation = { ...state, ownerContract, projection: "activation" } as const;
+    const activation = {
+      ...state,
+      ownerActivationCapability: "available",
+      ownerContract,
+      projection: "activation",
+    } as const;
     const recipient = {
       ...state,
       ownerContract: {
@@ -136,6 +144,12 @@ describe("owner and recipient contracts", () => {
     expect(
       ownerRecipientStatusSchema.safeParse({
         ...recipient,
+        ownerActivationCapability: "available",
+      }).success,
+    ).toBe(false);
+    expect(
+      ownerRecipientStatusSchema.safeParse({
+        ...recipient,
         ownerContract: { ...recipient.ownerContract, bodyMarkdown: "# não permitido" },
       }).success,
     ).toBe(false);
@@ -148,6 +162,7 @@ describe("owner and recipient contracts", () => {
     const base = {
       acceptedOwnerContractVersionId: null,
       nextAction: "activate_owner",
+      ownerActivationCapability: "available",
       ownerContract,
       ownerContractAccepted: false,
       ownerStatus: "inactive",
@@ -164,6 +179,24 @@ describe("owner and recipient contracts", () => {
       scope,
     } as const;
     expect(ownerRecipientResultSchema.safeParse(base).success).toBe(true);
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
+        ownerActivationCapability: "unavailable",
+      }).success,
+    ).toBe(true);
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
+        ownerActivationCapability: "browser_enabled",
+      }).success,
+    ).toBe(false);
+    expect(
+      ownerRecipientResultSchema.safeParse({
+        ...base,
+        ownerActivationCapability: undefined,
+      }).success,
+    ).toBe(false);
     expect(
       ownerRecipientResultSchema.safeParse({
         ...base,
@@ -200,6 +233,7 @@ describe("owner and recipient contracts", () => {
     const initial = {
       acceptedOwnerContractVersionId: null,
       nextAction: "activate_owner",
+      ownerActivationCapability: "available",
       ownerContract,
       ownerContractAccepted: false,
       ownerStatus: "inactive",
@@ -281,6 +315,7 @@ describe("owner and recipient contracts", () => {
     const active = {
       acceptedOwnerContractVersionId: ownerContractVersionId,
       nextAction: "none",
+      ownerActivationCapability: "available",
       ownerContract,
       ownerContractAccepted: true,
       ownerStatus: "active",
@@ -319,6 +354,7 @@ describe("owner and recipient contracts", () => {
       ownerRecipientResultSchema.safeParse({
         acceptedOwnerContractVersionId: "44444444-4444-4444-8444-444444444444",
         nextAction: "activate_owner",
+        ownerActivationCapability: "available",
         ownerContract,
         ownerContractAccepted: false,
         ownerStatus: "active",
@@ -341,6 +377,7 @@ describe("owner and recipient contracts", () => {
     const result = ownerRecipientResultSchema.safeParse({
       acceptedOwnerContractVersionId: ownerContractVersionId,
       nextAction: "activate_owner",
+      ownerActivationCapability: "available",
       ownerContract,
       ownerContractAccepted: false,
       ownerStatus: "active",
@@ -376,6 +413,7 @@ describe("owner and recipient contracts", () => {
       ownerRecipientResultSchema.safeParse({
         acceptedOwnerContractVersionId: ownerContractAccepted ? ownerContractVersionId : null,
         nextAction,
+        ownerActivationCapability: "available",
         ownerContract,
         ownerContractAccepted,
         ownerStatus: states.ownerStatus,

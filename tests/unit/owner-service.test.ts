@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 import { createOwnerService } from "../../src/domains/owners/server/owner-service";
+import { readOwnerActivationCapability } from "../../src/domains/owners/server/owner-runtime";
 import { readRecipientOnboardingCapability } from "../../src/domains/owners/server/recipient-provider";
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -115,6 +116,7 @@ function service(providerDeadlineMs = 2_000) {
     getOwnerRecipientStatusForUser: mocks.getOwnerRecipientStatusForUser,
     prepareOwnerRecipientOperation: mocks.prepareOwnerRecipientOperation,
     providerDeadlineMs,
+    readOwnerActivationCapability,
     readRecipientOnboardingCapability,
   });
 }
@@ -145,28 +147,37 @@ describe("owner service", () => {
     resetIdentityRateLimitForTests();
   });
 
-  it("activates the current owner contract with only a server-side user-agent hash", async () => {
-    await expect(
-      service().activateOwner(
-        {
-          action: "owner.activate",
-          expectedScope: userId,
-          idempotencyKey,
-          payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
-        },
-        context,
-      ),
-    ).resolves.toMatchObject({ ownerStatus: "active", ownerVersion: 1, scope: userId });
+  it.each(["local", "test"] as const)(
+    "activates a local fixture in APP_ENV=%s with only a server-side user-agent hash",
+    async (environment) => {
+      process.env.APP_ENV = environment;
+      await expect(
+        service().activateOwner(
+          {
+            action: "owner.activate",
+            expectedScope: userId,
+            idempotencyKey,
+            payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
+          },
+          context,
+        ),
+      ).resolves.toMatchObject({
+        ownerActivationCapability: "available",
+        ownerStatus: "active",
+        ownerVersion: 1,
+        scope: userId,
+      });
 
-    expect(mocks.activateOwnerProfile).toHaveBeenCalledWith({
-      idempotencyKey,
-      ownerContractVersionId: contractId,
-      requestId: context.requestId,
-      userAgentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
-      userId,
-    });
-    expect(JSON.stringify(mocks.activateOwnerProfile.mock.calls)).not.toContain(userAgent);
-  });
+      expect(mocks.activateOwnerProfile).toHaveBeenCalledWith({
+        idempotencyKey,
+        ownerContractVersionId: contractId,
+        requestId: context.requestId,
+        userAgentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        userId,
+      });
+      expect(JSON.stringify(mocks.activateOwnerProfile.mock.calls)).not.toContain(userAgent);
+    },
+  );
 
   it.each(unavailableRecipientOperationCases)(
     "refuses recipient onboarding %s in APP_ENV=%s before reserving an operation",
@@ -203,48 +214,61 @@ describe("owner service", () => {
     },
   );
 
-  it("refuses a local fixture contract outside local/test before activating", async () => {
-    process.env.APP_ENV = "production";
-    await expect(
-      service().activateOwner(
-        {
-          action: "owner.activate",
-          expectedScope: userId,
-          idempotencyKey,
-          payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
-        },
-        context,
-      ),
-    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
-    expect(mocks.activateOwnerProfile).not.toHaveBeenCalled();
-  });
+  it.each(["development", "production", "preview", undefined] as const)(
+    "refuses a local fixture contract in APP_ENV=%s before the activation write",
+    async (environment) => {
+      if (environment === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = environment;
+      await expect(
+        service().activateOwner(
+          {
+            action: "owner.activate",
+            expectedScope: userId,
+            idempotencyKey,
+            payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
+          },
+          context,
+        ),
+      ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+      expect(mocks.activateOwnerProfile).not.toHaveBeenCalled();
+      expect(mocks.prepareOwnerRecipientOperation).not.toHaveBeenCalled();
+      expect(mocks.createProvider).not.toHaveBeenCalled();
+    },
+  );
 
-  it("allows a later approved contract and does not turn active owner into an unconditional no-op", async () => {
-    process.env.APP_ENV = "production";
-    mocks.getOwnerRecipientStatusForUser.mockResolvedValueOnce({
-      ...activeOwnerStatusRow,
-      accepted_owner_contract_version_id: "66666666-6666-4666-8666-666666666666",
-      next_action: "activate_owner",
-      owner_contract_accepted: false,
-      owner_contract_source: "approved",
-    });
-    mocks.activateOwnerProfile.mockResolvedValueOnce({
-      ...activeOwnerRow,
-      owner_contract_source: "approved",
-    });
-    await expect(
-      service().activateOwner(
-        {
-          action: "owner.activate",
-          expectedScope: userId,
-          idempotencyKey,
-          payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
-        },
-        context,
-      ),
-    ).resolves.toMatchObject({ recipientOnboardingCapability: "unavailable" });
-    expect(mocks.activateOwnerProfile).toHaveBeenCalledOnce();
-  });
+  it.each(["production", "preview", undefined] as const)(
+    "allows an approved contract in APP_ENV=%s without turning an active owner into a no-op",
+    async (environment) => {
+      if (environment === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = environment;
+      mocks.getOwnerRecipientStatusForUser.mockResolvedValueOnce({
+        ...activeOwnerStatusRow,
+        accepted_owner_contract_version_id: "66666666-6666-4666-8666-666666666666",
+        next_action: "activate_owner",
+        owner_contract_accepted: false,
+        owner_contract_source: "approved",
+      });
+      mocks.activateOwnerProfile.mockResolvedValueOnce({
+        ...activeOwnerRow,
+        owner_contract_source: "approved",
+      });
+      await expect(
+        service().activateOwner(
+          {
+            action: "owner.activate",
+            expectedScope: userId,
+            idempotencyKey,
+            payload: { acceptOwnerContract: true, ownerContractVersionId: contractId },
+          },
+          context,
+        ),
+      ).resolves.toMatchObject({
+        ownerActivationCapability: "available",
+        recipientOnboardingCapability: "unavailable",
+      });
+      expect(mocks.activateOwnerProfile).toHaveBeenCalledOnce();
+    },
+  );
 
   it("executes prepare, provider and conditional apply in order with server-owned data", async () => {
     const calls: string[] = [];

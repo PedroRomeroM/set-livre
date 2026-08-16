@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { superviseDevelopmentProcesses } from "./development-process-tree.mjs";
 import { readLocalDevelopmentEnvironmentFile } from "./local-development-environment.mjs";
 import { runLocalProductionPreviewProcessFlow } from "./local-production-process-tree.mjs";
+import { removeNextBuildCache } from "./remove-next-build-cache.mjs";
 import { readCurrentLinuxMountInformation, removePhysicalTree } from "./physical-tree-removal.mjs";
 import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
 
@@ -363,6 +364,11 @@ export async function runLocalProductionServer({
   });
 
   return runLocalProductionPreviewProcessFlow({
+    cleanupBuild: () =>
+      removeNextBuildCache({
+        applicationRoot: preview.start.options.cwd,
+        repositoryRoot,
+      }),
     clearShutdownTimeout,
     forceShutdownMilliseconds,
     platform,

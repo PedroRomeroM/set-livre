@@ -191,8 +191,14 @@ describe("owner DAL", () => {
       ),
     ).toThrow("não corresponde");
     expect(
-      mapOwnerActivationDalRow(parseOwnerActivationDalRow(row), userId, "local_adapter"),
+      mapOwnerActivationDalRow(
+        parseOwnerActivationDalRow(row),
+        userId,
+        "local_adapter",
+        "available",
+      ),
     ).toMatchObject({
+      ownerActivationCapability: "available",
       ownerContract: { bodyMarkdown: row.owner_contract_body_markdown },
       projection: "activation",
       recipientOnboardingCapability: "local_adapter",
@@ -216,12 +222,24 @@ describe("owner DAL", () => {
     await expect(getOwnerRecipientStatusForUser(userId)).rejects.toThrow("cardinalidade");
   });
 
-  it("refuses a local fixture DTO outside local/test while allowing an approved contract", () => {
+  it("keeps contract facts readable while accepting only server-derived capabilities", () => {
     process.env.APP_ENV = "production";
     const parsedRow = parseOwnerRecipientStatusDalRow(recipientRow);
-    expect(() => mapOwnerRecipientStatusDalRow(parsedRow, userId, "unavailable")).toThrow(
-      "proibido",
-    );
+    expect(mapOwnerRecipientStatusDalRow(parsedRow, userId, "unavailable")).toMatchObject({
+      ownerContract: { source: "local_fixture" },
+      recipientOnboardingCapability: "unavailable",
+    });
+    expect(
+      mapOwnerActivationDalRow(
+        parseOwnerActivationDalRow(row),
+        userId,
+        "unavailable",
+        "unavailable",
+      ),
+    ).toMatchObject({
+      ownerActivationCapability: "unavailable",
+      ownerContract: { bodyMarkdown: row.owner_contract_body_markdown, source: "local_fixture" },
+    });
     expect(() =>
       mapOwnerRecipientStatusDalRow(
         parseOwnerRecipientStatusDalRow({

@@ -17,6 +17,7 @@ const ownerContractVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const ownerResult = {
   acceptedOwnerContractVersionId: null,
   nextAction: "activate_owner",
+  ownerActivationCapability: "available",
   ownerContract: {
     bodyMarkdown: "# Contrato local\n\nConteúdo de teste.",
     contentHash: "a".repeat(64),
@@ -131,6 +132,22 @@ describe("owner browser API", () => {
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
     await expect(readOwnerRecipient()).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
+  });
+
+  it("fails closed when an activation response omits the server-derived capability", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        {
+          data: { ...ownerResult, ownerActivationCapability: undefined },
+          requestId,
+        },
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    await expect(readOwnerActivation()).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
   });
 
   it.each([

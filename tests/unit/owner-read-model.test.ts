@@ -116,6 +116,7 @@ describe("owner recipient read model", () => {
   it("reads the full contract only from the activation RPC", async () => {
     mocks.maybeSingle.mockResolvedValueOnce({ data: row, error: null });
     await expect(readOwnerActivation(userId)).resolves.toMatchObject({
+      ownerActivationCapability: "available",
       ownerContract: {
         bodyMarkdown: row.owner_contract_body_markdown,
         id: row.owner_contract_id,
@@ -225,17 +226,42 @@ describe("owner recipient read model", () => {
     await expect(readOwnerRecipient(userId)).rejects.toThrow("Não foi possível carregar");
   });
 
-  it("refuses local fixtures in production without receiving a legal body on recipient reads", async () => {
+  it("keeps the compact local-fixture facts readable in production", async () => {
     process.env.APP_ENV = "production";
-    const error = await readOwnerRecipient(userId).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(Error);
+    await expect(readOwnerRecipient(userId)).resolves.toMatchObject({
+      ownerContract: { source: "local_fixture" },
+      recipientOnboardingCapability: "unavailable",
+    });
     expect(JSON.stringify(recipientRow)).not.toContain(row.owner_contract_body_markdown);
+  });
 
+  it.each(["development", "production", "preview", undefined] as const)(
+    "keeps the complete local-fixture contract readable with activation unavailable in APP_ENV=%s",
+    async (environment) => {
+      if (environment === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = environment;
+      mocks.maybeSingle.mockResolvedValueOnce({ data: row, error: null });
+
+      await expect(readOwnerActivation(userId)).resolves.toMatchObject({
+        ownerActivationCapability: "unavailable",
+        ownerContract: {
+          bodyMarkdown: row.owner_contract_body_markdown,
+          source: "local_fixture",
+        },
+        recipientOnboardingCapability: "unavailable",
+      });
+    },
+  );
+
+  it("keeps an approved contract executable when the local recipient adapter is unavailable", async () => {
+    process.env.APP_ENV = "production";
     mocks.maybeSingle.mockResolvedValueOnce({
-      data: { ...recipientRow, owner_contract_source: "approved" },
+      data: { ...row, owner_contract_source: "approved" },
       error: null,
     });
-    await expect(readOwnerRecipient(userId)).resolves.toMatchObject({
+
+    await expect(readOwnerActivation(userId)).resolves.toMatchObject({
+      ownerActivationCapability: "available",
       ownerContract: { source: "approved" },
       recipientOnboardingCapability: "unavailable",
     });

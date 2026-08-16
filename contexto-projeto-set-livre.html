@@ -639,21 +639,19 @@
           construído na plataforma de aluguel de estúdios audiovisuais.
         </p>
         <ul class="meta" aria-label="Fotografia atual do projeto">
-          <li>Atualizado em 15 de agosto de 2026</li>
+          <li>Atualizado em 16 de agosto de 2026</li>
           <li>Fundação local</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
           <li>FEAT-003 · concluída e incorporada a main</li>
           <li>FEAT-004 · em implementação local</li>
           <li>Sem integração cloud nesta etapa</li>
         </ul>
-        <div class="stats" aria-label="Indicadores atuais">
+        <div class="stats" aria-label="Indicadores atuais e históricos identificados">
           <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
-          <div class="stat"><strong>23/23</strong><span>browser focado do quarto P2</span></div>
-          <div class="stat"><strong>358</strong><span>asserts pgTAP do quarto P2</span></div>
+          <div class="stat"><strong>2/2 + 22/22</strong><span>hardening SSR do cadastro</span></div>
+          <div class="stat"><strong>358/358</strong><span>pgTAP pós-hardening P5</span></div>
           <div class="stat"><strong>114/114</strong><span>browser integral do quarto P2</span></div>
-          <div class="stat">
-            <strong>734/734</strong><span>unitários integrais do quarto P2</span>
-          </div>
+          <div class="stat"><strong>764/764</strong><span>unitários finais P5</span></div>
           <div class="stat"><strong>15</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
@@ -721,45 +719,130 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quarto review · release local auditada</span>
+              <span class="tag review">Quinto review · gates pendentes</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
                 <code>/dono/recebimentos</code>. O recorte local cria aceite
                 <code>owner_contract</code>, autoridade de dono, status seguro do recebedor e
                 elegibilidade derivada, sem gateway externo, checkout, fallback ou dados bancários.
-                O review <code>PRR_kwDOTyzZrs8AAAABJrjWnQ</code>/REST <code>4944615069</code>,
-                submetido em <code>2026-08-15T20:02:30Z</code> sobre
-                <code>11464a37593d510f5774af6af6fe655e671a9c35</code>, abriu a thread
-                <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790152658"
-                  ><code>PRRT_kwDOTyzZrs6ZigTV</code></a
-                >, comentário <code>PRRC_kwDOTyzZrs7h6SPS</code>/REST <code>3790152658</code>, atual
-                e não resolvida na captura. A correção adiciona
-                <code>recipientOnboardingCapability: "local_adapter" | "unavailable"</code> às duas
-                projeções e aos três retornos POST. O servidor deriva a capability por request:
-                <code>APP_ENV=local | test</code> habilita apenas o adapter local;
-                <code>development | production</code>, ausência ou valor inválido falham fechados.
-                Start/refresh indisponíveis retornam
-                <code>503 PAYMENT_PROVIDER_UNAVAILABLE</code> antes de <code>prepare</code> ou
-                reservar operação. O fechamento local passou em 734/734 unitários, banco 358/358,
-                browser focado 23/23 e integral 114/114. Um único build passou com 26 + 4 rotas e
-                <code>BUILD_ID=local</code>.
+                O quinto review <code>PRR_kwDOTyzZrs8AAAABJsAUGQ</code>/REST
+                <code>4945089561</code>, submetido em <code>2026-08-16T01:07:18Z</code> sobre
+                <code>0decf00</code>, abriu a thread
+                <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790648981"
+                  ><code>PRRT_kwDOTyzZrs6Zj15h</code></a
+                >, comentário <code>PRRC_kwDOTyzZrs7h8LaV</code>/REST <code>3790648981</code>, em
+                <code>owner-recipient-panel.tsx:489</code>. Na captura, o comentário estava atual,
+                não resolvido e não obsoleto. A correção mantém
+                <code>recipientOnboardingCapability</code> e a projeção compacta inalterados e
+                adiciona <code>ownerActivationCapability: "available" | "unavailable"</code>
+                somente à projeção completa de ativação e ao resultado de
+                <code>owner.activate</code>. O servidor deriva o campo: contrato
+                <code>approved</code> fica sempre disponível; <code>local_fixture</code> fica
+                disponível somente em <code>APP_ENV=local | test</code>. Development, production,
+                ausência ou valor inválido ficam indisponíveis.
               </p>
               <p>
-                Em <code>unavailable</code>, o estado factual continua visível somente para
-                consulta, sem notice local, CTA de início/refresh, provider falso ou controle
-                desabilitado. Um alerta <code>role=status</code> apresenta
-                <strong>Cadastro de recebimentos indisponível</strong> e informa: “A integração de
-                recebimentos ainda não está disponível neste ambiente. O estado atual permanece
-                somente para consulta.” O smoke customizado não produziu evidência verde: três
-                tentativas foram recusadas por problemas exclusivos do harness. O gerador canônico
-                executou uma vez para <code>969f30cd...</code>, aprovou seu smoke embutido e gerou a
-                release local auditada. A correção foi publicada até <code>e51ab6f...</code>; o
-                body, a resposta e a resolução foram verificados, e as cinco threads ficaram
-                resolvidas. Novo review, espera, captura final, ready e merge permanecem pendentes.
-                A release <code>2a86acc4...</code> pertence ao terceiro P2 e é histórica. A feature
-                continua <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e
-                PEND-006 continuam bloqueando produção.
+                As leituras não falham por fixture: documento e fatos permanecem consultáveis. Em
+                <code>unavailable</code>, a interface não monta checkbox, formulário ou CTA e exibe
+                o alerta <code>role=status</code> com o título
+                <strong>Ativação como dono indisponível</strong> e o texto “A versão aprovada do
+                contrato do dono ainda não está disponível neste ambiente. O contrato atual
+                permanece somente para consulta.” O comando recusa a ativação com
+                <code>503 SERVICE_UNAVAILABLE</code> e a mensagem pública existente antes de
+                <code>activateOwnerProfile</code> ou qualquer escrita. O snapshot inicial passou em
+                747/747 unitários e 358/358 no banco. A primeira focada coletou 23 testes em quatro
+                specs/14 projetos (<code>615bf589...</code>) e terminou uma vez com exit 1: 12
+                passados, falha em <code>SL-F004-E2E-001</code>/<code>critical-webkit</code>, dez
+                não executados e zero rerun. O provisionamento revelou submit GET nativo do cadastro
+                antes da hidratação, com campos sintéticos na query: falha real de privacidade da
+                FEAT-002, não evidência da capability. O ID 004 não foi alcançado e a integral não
+                iniciou. Somente stdout redigido <code>f4d0595a...</code> e auditoria
+                <code>13859c3c...</code> foram preservados; os brutos foram removidos sem reproduzir
+                valores ou endereço, e o cleanup ficou em zero.
+              </p>
+              <p>
+                O cadastro agora usa <code>useSyncExternalStore</code> com snapshot servidor false e
+                cliente true. O status <strong>Preparando o formulário seguro…</strong> fica fora do
+                único form SSR; form inerte com POST/<code>aria-busy</code>, fieldset, sete
+                controles nomeados e submit permanecem disabled até a hidratação. Depois dela, o
+                fluxo normal volta a operar. Os unitários passaram em 2/2 e a guarda combinada em
+                22/22; <code>SL-F002-E2E-001</code> ganhou contexto sem JavaScript sem novo ID. A
+                cadeia estática pós-hardening passou em Node 24/npm 11: npm ci 447/451/zero
+                vulnerabilidades, format, lint, typecheck, 749/749 unitários em 75 arquivos naquele
+                snapshot, docs:check 34/200/18, audit zero, Knip e diff-check. Uma asserção auxiliar
+                incorreta do hash de <code>next-env</code> interrompeu apenas a orquestração após
+                typecheck; os gates restantes continuaram com autorização, sem falha em gate do
+                projeto. O banco passou em 358/358, com gerados byte-identical e head de 15
+                migrations.
+              </p>
+              <p>
+                A focada race-fixed executou os mesmos 23 testes em quatro specs/14 projetos, passou
+                em 23/23 e teve seu reuse validado pela auditoria final. A rodada attribute-fixed
+                coletou 114 testes em 17 specs/16 projetos; sua única execução passou em 114/114 em
+                5,6 minutos, com zero retry, erro ou attachment. A FEAT-004 preservou 23/23 em 3 + 3
+                + 3 + 4 + 3 + 4 + 3, e o no-JS da FEAT-002 passou nos três engines sem novo ID ou
+                contagem.
+              </p>
+              <p>
+                A auditoria contou 140 ocorrências dos 88 e-mails QA somente em títulos allowlisted:
+                FEAT-002 60, FEAT-003 54, FEAT-004 26; Fill 110, Type 8 e Expect 22. Secret, PII e
+                outro dado sensível ficaram em zero, assim como o cleanup. A evidência segura está
+                em
+                <code
+                  >.artifacts/p5-owner-activation-capability-attribute-fixed/full.audit.json</code
+                >, SHA-256
+                <code>5704c67cf21bdcc6e92b733bfdb8788972c216d48f850c885200b6d4d78a37d6</code>. As
+                execuções rejeitadas anteriores permanecem histórico diagnóstico: o defeito inicial
+                foi corrigido, e os demais desfechos pertencem ao harness/oráculo, sem falha atual
+                do produto. Static 749/749, DB 358/358, focada 23/23 e integral 114/114 formaram o
+                fechamento browser anterior ao hardening de build. Depois do browser, uma única
+                build P5 em Node 24/npm 11 terminou com exit 0, 26 rotas web, quatro do backoffice,
+                zero warning e <code>BUILD_ID=local</code>. O gate não ficou verde: a auditoria
+                recusou o standalone porque ele copiou o <code>package.json</code> raiz com strings
+                de conexão administrativas/DAL locais no antigo <code>scripts.knip</code>. Nenhum
+                smoke foi iniciado.
+              </p>
+              <p>
+                O script agora é exatamente <code>knip</code>; os valores E2E continuam no
+                <code>.env.e2e.local</code> físico já lido pelo config, e a unidade de npm confiável
+                recusa URL de banco nos scripts npm dos quatro manifests canônicos: raiz,
+                backoffice, contracts e UI. Prettier/ESLint direcionados, 4/4 unitários, Knip com as
+                sete variáveis E2E explicitamente unset e diff-check passaram sem alterar o
+                lockfile. A build pós-manifesto seguinte terminou uma única vez com exit 0 e log
+                privado SHA-256 <code>d8e50e0f...</code>, mas o audit encontrou uma ocorrência DAL
+                em cada cache Turbopack; standalone, static e log ficaram limpos e o smoke continuou
+                em zero.
+              </p>
+              <p>
+                O wrapper único <code>scripts/next-build.mjs</code> atende sozinho os builds
+                web/backoffice e também o gerador de release, com ambiente allowlisted. Na operação
+                primária, o resolver confiável valida ancestrais físicos/protegidos do app, Node/npm
+                e pacote/binário/versão Next antes do spawn; depois o wrapper sempre tenta remover
+                fisicamente apenas <code>&lt;app&gt;/.next/cache</code>, mesmo se validação ou build
+                falharem. Cleanup falho reprova o comando, falha dupla vira
+                <code>AggregateError</code>, standalone/static são preservados e raiz/ancestral
+                simbólico ou externo é recusado sem spawn/travessia. O preview também limpa no
+                supervisor pai depois do grupo de build e antes de validação/servidor; cleanup falho
+                bloqueia o start e cache persistente reprova. O run direcionado final passou em
+                40/40 por quatro arquivos: 12 de wrapper/cache, quatro do npm confiável, 16 de
+                Next/local server e oito do supervisor de preview; ESLint zero, checks Node, Knip
+                env-unset e diff-check também passaram.
+              </p>
+              <p>
+                A cadeia estática final única passou em 764/764 testes por 76 arquivos, com npm ci
+                447/451/zero vulnerabilidades, cinco typechecks, docs 34/200/18, audit zero,
+                Knip/diff-check e freeze 53/34/19. Depois da remoção física dos dois
+                <code>.next</code>, a build final via wrapper rodou exatamente uma vez: exit 0 em
+                14,733 s; log de 2.155 bytes/SHA-256
+                <code>44006829f25e63549e9e65ea17abbc483c891996130da34677ec67c932290ec9</code>. O
+                audit independente SHA-256
+                <code>a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d</code>
+                terminou <code>NO-BLOCKER</code>: 26 + 4 rotas, zero warnings/cache/retired/resíduos
+                e quatro <code>BUILD_ID=local</code>. Smoke executado permanece zero; o primeiro
+                será somente o embutido no gerador canônico após commit limpo. Release e remoto
+                seguem pendentes. A feature continua <strong>Em implementação</strong>; PEND-003,
+                smoke ARM64, PEND-004 e PEND-006 continuam bloqueando produção.
               </p>
             </article>
             <article class="card">
@@ -782,7 +865,10 @@
                 também redige credenciais/cache e recompõe SSR quando o browser perde a resposta do
                 login ou o servidor devolve <code>AUTH_SESSION_RECHECK_REQUIRED</code> depois de
                 iniciar uma publicação inconclusiva; no recovery, somente copy pública e scope opaco
-                sobrevivem ao refetch no mesmo contexto autorizado.
+                sobrevivem ao refetch no mesmo contexto autorizado. O hardening atual também fecha o
+                cadastro pré-hidratação: status fora do form inerte, método POST, fieldset, sete
+                controles e submit disabled até o snapshot cliente; o E2E 001 cobre o SSR sem
+                JavaScript sem criar novo ID.
               </p>
             </article>
           </div>
@@ -851,7 +937,7 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Banco revalidado no quarto P2:</strong>
+            <strong>Banco P5 pós-hardening verde:</strong>
             <p>
               A árvore possui 15 migrations e head <code>20260815000100</code>. Um único reset,
               geração e <code>test:db</code> passou em 358/358 (<code>158 + 78 + 57 + 65</code>). A
@@ -861,9 +947,13 @@
               <code>idempotency_key</code>, mas não houve ensaio de upgrade com linhas
               pré-existentes que permita chamar esse backfill de testado. Readiness aceitou o head e
               recusou <code>20260812000200</code>; trigger, gerados/diff e tabelas finais ficaram
-              corretos. O quarto P2 não cria migration, mas repetiu reset, geração e banco no mesmo
-              head em 358/358; a capability continua sendo um fato efêmero derivado no servidor, não
-              coluna persistida.
+              corretos. O quarto P2 não criou migration, mas repetiu reset, geração e banco no mesmo
+              head em 358/358. O quinto P2 também não cria migration: as capabilities continuam
+              sendo fatos efêmeros derivados no servidor, não colunas persistidas. No snapshot
+              pós-hardening, os gerados permaneceram byte-identical e o banco passou novamente em
+              358/358. A pausa cruzou reset/geração; a primeira invocação <code>test:db</code>,
+              interrompida após <code>0001</code>, é inválida e teve cleanup limpo. Uma única nova
+              invocação autorizada passou sem repetir reset/geração.
             </p>
           </div>
         </section>
@@ -939,8 +1029,11 @@
                 <code>owner.activate</code>, <code>recipient.onboarding.start</code> e
                 <code>recipient.onboarding.refresh</code>. Start e refresh só alcançam o adapter em
                 <code>APP_ENV=local | test</code>; nos demais ambientes falham com 503 antes de
-                preparar ou reservar uma operação. Catálogo, checkout e reserva continuam ausentes
-                até suas próprias features.
+                preparar ou reservar uma operação. Para ativação do dono, contrato
+                <code>approved</code> fica sempre disponível e <code>local_fixture</code> apenas em
+                local/test. O documento continua legível quando a ativação está indisponível, mas o
+                comando falha com <code>503 SERVICE_UNAVAILABLE</code> antes da escrita. Catálogo,
+                checkout e reserva continuam ausentes até suas próprias features.
               </p>
             </article>
             <article class="card">
@@ -962,8 +1055,10 @@
                 Contratos Zod de health, release, URL DAL, identidade, perfil, dono e recebedor;
                 readiness server-only; tipos gerados do banco. A projeção pública inclui somente os
                 campos seguros de perfil/dono/recebedor e mantém PII e referências do provider fora
-                do DTO. A capability obrigatória é derivada no servidor e não representa estado do
-                banco ou prontidão de provider externo.
+                do DTO. As capabilities obrigatórias são derivadas no servidor e não representam
+                estado do banco ou prontidão de provider externo;
+                <code>ownerActivationCapability</code> existe somente na projeção completa de
+                ativação, sem alterar a projeção compacta do recebedor.
               </p>
             </article>
             <article class="card">
@@ -1148,30 +1243,47 @@
               fundação, a baseline incorporada passou em 59/59. A FEAT-003 acrescenta 32 execuções
               para nove IDs estáveis de perfil, conta, preferência, acessibilidade, reflow e estados
               adversos. O snapshot histórico da FEAT-003 passou em 91/91 numa única execução de 3,9
-              minutos, incluindo 32/32 da feature. No quarto P2 da FEAT-004, o fechamento estático
-              passou com 734/734 unitários em 74 arquivos; o banco passou em 358/358, com 15
-              migrations/head <code>20260815000100</code>. O browser focado passou em 23/23 e o
-              integral em 114/114, preservando os sete IDs e 23/23 execuções da feature. Um único
-              build passou com exit 0, 26 + 4 rotas e <code>BUILD_ID=local</code>. O smoke
-              customizado não produziu evidência verde. O gerador canônico executou uma vez e
-              produziu a release local auditada de <code>969f30cd...</code>, com smoke embutido,
-              secrets, paridade e cleanup verdes. O catálogo continua com 23 IDs automatizados e 177
-              planejados.
+              minutos, incluindo 32/32 da feature. O snapshot P5 pré-hardening passou em 747/747
+              unitários e 358/358 no banco. A primeira focada terminou em 12 passados, uma falha e
+              dez não executados, sem rerun; o ID 004 não foi alcançado e a integral não iniciou. O
+              hardening SSR passou em 2/2 unitários próprios e 22/22 na guarda combinada. O snapshot
+              pós-hardening fechou a cadeia estática em 749/749 por 75 arquivos e o banco em
+              358/358. A focada race-fixed passou em 23/23 e teve reuse validado. A attribute-fixed
+              coletou 114/17/16 e passou uma única vez em 114/114, 5,6 minutos, com zero retry, erro
+              ou attachment. A FEAT-004 manteve 23/23 em 3 + 3 + 3 + 4 + 3 + 4 + 3; o no-JS da
+              FEAT-002 passou nos três engines sem nova contagem. A auditoria encontrou 140
+              ocorrências/88 e-mails somente em títulos allowlisted, zero secret/PII e cleanup zero;
+              seu SHA-256 é <code>5704c67c...</code>. As rejeições anteriores seguem como histórico
+              diagnóstico, não falha atual do produto. Uma única build P5 compilou 26 + 4 rotas, mas
+              o standalone foi recusado por strings locais copiadas do antigo
+              <code>scripts.knip</code>; o smoke ficou em zero. O script foi limpo e seus checks
+              direcionados passaram. A build pós-manifesto seguinte também terminou com exit 0,
+              porém uma ocorrência DAL em cada cache Turbopack recusou o audit; standalone, static e
+              log ficaram limpos, e o smoke permaneceu em zero. O wrapper único agora limpa
+              fisicamente só o cache autorizado em todos os desfechos da validação/build; o preview
+              limpa antes de validar/startar, e o run direcionado final passou em 40/40. A cadeia
+              final passou em 764/764 por 76 arquivos. A build final via wrapper rodou exatamente
+              uma vez após remover os dois <code>.next</code>, exit 0 em 14,733 s; log
+              <code>44006829...</code> e audit independente <code>a1bb244b...</code>
+              <code>NO-BLOCKER</code>, com 26 + 4 rotas e caches/resíduos zero. Smoke executado
+              continua zero e será primeiro somente no gerador canônico após commit limpo. Os 23/23,
+              114/114, build e release <code>969f30cd...</code> são evidência histórica do quarto
+              P2. O catálogo continua com 23 IDs automatizados e 177 planejados.
             </p>
           </div>
 
           <div class="grid three">
             <article class="card">
-              <span class="tag done">734/734 · quarto P2</span>
+              <span class="tag done">764/764 · final P5</span>
               <h3>Vitest</h3>
               <p>
-                Health/CSP, ambientes, Docker, CLI, processos, release, arquivos seguros, schema,
-                tipos, docs, preflight E2E, parser Markdown jurídico seguro e remoção física
-                protegida contra mounts.
+                A cadeia final única passou por npm ci 447/451/zero vulnerabilidades, format, lint
+                zero, cinco typechecks, 764/764 unitários em 76 arquivos, docs:check 34/200/18,
+                audit zero, Knip e diff-check. O snapshot anterior de 749/749 permanece histórico.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">358/358 · quarto P2</span>
+              <span class="tag done">358/358 · pós-hardening P5</span>
               <h3>pgTAP</h3>
               <p>
                 Migrations do zero, deny-by-default, roles e memberships, grants, ownership,
@@ -1179,17 +1291,27 @@
                 binding/tombstone por sessão, pin JWT, ausência canônica, retenção em duas fases,
                 perfil PF/PJ, máscaras, autoridade de dono, recebedor versionado, renovação,
                 prepare/apply idempotente, concorrência com a mesma chave e personas adversariais
-                owner/admin sem bypass.
+                owner/admin sem bypass. O pós-hardening passou em 358/358, gerados byte-identical e
+                head de 15 migrations. A primeira invocação interrompida após <code>0001</code> é
+                inválida; a nova invocação autorizada passou sem novo reset/geração.
               </p>
             </article>
             <article class="card">
-              <span class="tag done">114/114 · quarto P2</span>
+              <span class="tag done">Browser P5 · 114/114</span>
               <h3>Playwright + axe</h3>
               <p>
-                No quarto P2, a focada passou em 23/23, quatro specs e 14 projetos. A integral
-                passou em 114/114, 17 specs e 16 projetos, preservando 23/23 da FEAT-004, com
-                privacidade e cleanup verdes. A capability foi exercitada pelo ID 004 sem criar
-                cenário novo.
+                O ID 004 foi ampliado sem criar cenário, spec, projeto ou total novo: prova leitura
+                consultiva e ausência do formulário em <code>unavailable</code>, restauração dos
+                controles em <code>available</code> e zero POST antes do fluxo existente. A primeira
+                focada P5 parou no ID 001 por submit GET pré-hidratação; 12 passaram, uma falhou,
+                dez não executaram e não houve rerun. A focada race-fixed posterior passou em 23/23,
+                com reuse validado. A attribute-fixed coletou 114 testes em 17 specs/16 projetos e
+                passou em uma única execução: 114/114 em 5,6 minutos, sem retry, erro ou attachment.
+                A FEAT-004 preservou 23/23 em 3 + 3 + 3 + 4 + 3 + 4 + 3; o no-JS da FEAT-002 passou
+                nos três engines sem nova contagem. A auditoria <code>5704c67c...</code> encontrou
+                140 ocorrências dos 88 e-mails apenas em títulos allowlisted, zero secret/PII e
+                cleanup zero. As rodadas rejeitadas anteriores permanecem histórico diagnóstico do
+                defeito já corrigido e do harness/oráculo, não falha atual do produto.
               </p>
             </article>
           </div>
@@ -1208,7 +1330,7 @@
           </div>
 
           <div class="callout info" style="margin-top: 0.9rem">
-            <strong>Estado dos gates do quarto P2 da FEAT-004:</strong>
+            <strong>Fotografia histórica dos gates do quarto P2 da FEAT-004:</strong>
             <p>
               <code>npm ci</code>, format, lint, typecheck, 734/734 unitários em 74 arquivos,
               docs:check 34/200/18, audit zero, Knip e diff-check passaram. Reset, geração e banco
@@ -1220,7 +1342,7 @@
               <code>438da6...</code
               >/<code>c6a76b...</code>/<code>8bd8f1...</code>/<code>293848...</code>. Um único build
               passou com 26 + 4 rotas, <code>BUILD_ID=local</code> e log SHA-256
-              <code>ca7d5c3e...</code>.
+              <code>ca7d5c3e...</code>. Essa fotografia não valida a correção do quinto P2.
             </p>
             <p>
               A primeira auditoria integral parou depois de estrutura e privacidade por
@@ -1302,7 +1424,7 @@
             </p>
             <p>
               Os blocos seguintes registram fotografias históricas anteriores; seus hashes não
-              substituem a evidência local atual do quarto P2 acima.
+              substituem a evidência provisória direcionada do quinto P2 registrada acima.
             </p>
             <p>
               A primeira matriz integral pós-FEAT-004 terminou funcionalmente em 114/114, mas a
@@ -1396,7 +1518,9 @@
               publicação até <code>dda95b3...</code>, resposta e resolução também foram verificadas.
               O quarto P2 possui fechamento estático, banco, browser focado/integral, build, smoke
               embutido e release local auditada; publicação, body, resposta e resolução também foram
-              verificados. Novo review, espera, captura final, ready e merge permanecem pendentes.
+              verificados. O quinto review abriu a correção local atual, ainda sem publicação,
+              resposta ou resolução; novo review pós-patch, espera, captura final, ready e merge
+              permanecem pendentes.
             </p>
             <p>
               Na fotografia publicada do segundo P2, a branch
@@ -1469,8 +1593,22 @@
               <code>2026-08-16T00:43:03Z</code>. <code>PRRT_kwDOTyzZrs6ZigTV</code> ficou
               <code>isResolved=true</code>, <code>isOutdated=true</code>, resolvida por ele. A
               leitura thread-aware encontrou cinco threads e zero não resolvidas. Não houve captura
-              de <code>reviewDecision</code> nem check rollup. Novo review, espera mínima, captura
-              final, ready e merge permanecem pendentes.
+              de <code>reviewDecision</code> nem check rollup. Naquela fotografia, o review
+              seguinte, a espera mínima, a captura final, ready e merge ainda não tinham ocorrido; o
+              quinto review posterior está registrado abaixo.
+            </p>
+            <p>
+              O quinto review <code>PRR_kwDOTyzZrs8AAAABJsAUGQ</code>/REST <code>4945089561</code>,
+              submetido em <code>2026-08-16T01:07:18Z</code> sobre <code>0decf00</code>, abriu
+              <code>PRRT_kwDOTyzZrs6Zj15h</code>. O comentário
+              <a href="https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790648981"
+                ><code>PRRC_kwDOTyzZrs7h8LaV</code></a
+              >/REST <code>3790648981</code>, em <code>owner-recipient-panel.tsx:489</code>, estava
+              atual, não resolvido e não obsoleto na captura. A causa era o bloqueio de leitura do
+              contrato <code>local_fixture</code> fora de local/test; o contrato corrigido separa a
+              leitura consultiva da capability de ativação e mantém o bloqueio no comando antes da
+              escrita. O patch do quinto P2 ainda não foi publicado, respondido ou resolvido; novo
+              review, captura final, ready e merge permanecem pendentes.
             </p>
             <p>
               Dentro da segunda execução inconclusiva, o trecho browser do ID 005 comprovou GET de B
@@ -1573,10 +1711,12 @@
             <p>
               A etapa atual usa somente a máquina local e Supabase via Docker. A FEAT-003 completa o
               perfil próprio; a FEAT-004 acrescenta autoridade de dono e recebedor versionado,
-              mantendo documentos e referências do provider na fronteira privada. A capability é
-              server-derived e falha fechada: somente <code>APP_ENV=local | test</code> habilita o
-              adapter local; development, production, ausência e valor inválido mantêm o estado
-              consultivo e recusam mutações antes de qualquer efeito.
+              mantendo documentos e referências do provider na fronteira privada. As capabilities
+              são derivadas no servidor e falham fechadas. O adapter de recebimentos e o contrato
+              <code>local_fixture</code> para ativação só ficam disponíveis em
+              <code>APP_ENV=local | test</code>; contrato <code>approved</code> fica sempre
+              disponível. Development, production, ausência e valor inválido preservam as leituras
+              factuais, mas recusam os respectivos comandos antes de qualquer escrita.
             </p>
           </div>
 
@@ -1658,13 +1798,25 @@
             <h2>Release e deploy</h2>
             <p>
               Já existe um caminho local reproduzível para o artefato. Infraestrutura real e go-live
-              permanecem deliberadamente bloqueados pelo ADR-018.
+              permanecem deliberadamente bloqueados pelo ADR-018. O quinto P2 executou uma única
+              build que compilou com exit 0, mas o artefato standalone foi recusado por copiar
+              strings de conexão locais do manifesto raiz; nenhum smoke ou geração de release foi
+              iniciado. Depois da correção do manifesto, uma segunda build única terminou com exit
+              0, mas foi recusada por uma ocorrência DAL em cada cache Turbopack; standalone, static
+              e log ficaram limpos e o smoke permaneceu em zero. O wrapper único agora limpa
+              fisicamente apenas o cache autorizado mesmo em falha da validação/build; o preview
+              limpa no supervisor antes de validação/servidor. A build final via wrapper rodou uma
+              única vez após remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit
+              independente <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. Smoke
+              executado permanece zero. O primeiro será somente o embutido no gerador canônico após
+              commit limpo; release/remoto continuam pendentes. O patch não foi publicado,
+              respondido ou resolvido.
             </p>
           </div>
 
           <div class="grid">
             <article class="card">
-              <span class="tag done">Release canônica local do quarto P2</span>
+              <span class="tag done">Release histórica do quarto P2</span>
               <h3>Artefato funcional P4 auditado por SHA</h3>
               <p>
                 O gerador canônico processou exatamente uma vez o commit funcional
@@ -1689,8 +1841,9 @@
                 Esta é uma prova local Linux x64, não ARM64 ou produção. A release P3
                 <code>2a86acc4...</code> e as anteriores permanecem fotografias históricas.
                 Publicação, body, resposta e resolução do quarto P2 foram verificados no head
-                <code>e51ab6f...</code>. Novo review, espera, captura final, ready e merge ainda não
-                foram realizados; PEND-003 e o smoke ARM64 nativo permanecem obrigatórios.
+                <code>e51ab6f...</code>. Essa evidência não valida o quinto P2, para o qual release,
+                publicação, resposta, resolução, novo review, espera, captura final, ready e merge
+                permanecem pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios.
               </p>
             </article>
             <article class="card">
@@ -1847,11 +2000,22 @@
               <h3>Próxima execução</h3>
               <ol class="step-list">
                 <li>
-                  Solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos e fazer
-                  uma captura final única antes de ready ou merge. Publicação, body, resposta e
-                  resolução já foram verificados. PEND-003, trusted proxy e smoke ARM64 continuam
-                  bloqueando produção; gateway externo, checkout, fallback e dados bancários
-                  permanecem fora.
+                  Criar o commit funcional limpo e então executar o gerador canônico; seu smoke
+                  embutido será a primeira execução smoke P5.
+                </li>
+                <li>
+                  Auditar a release local resultante, preservando a prova de ARM64 como pendência
+                  separada.
+                </li>
+                <li>
+                  Publicar patch e evidências, atualizar o body, responder e resolver a thread
+                  <code>PRRT_kwDOTyzZrs6Zj15h</code> após verificar a resposta.
+                </li>
+                <li>
+                  Só então solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos
+                  e fazer uma captura final única antes de ready ou merge. PEND-003, trusted proxy e
+                  smoke ARM64 continuam bloqueando produção; gateway externo, checkout, fallback e
+                  dados bancários permanecem fora.
                 </li>
               </ol>
             </article>
@@ -1896,7 +2060,10 @@
               As pendências externas não bloqueiam o que pode ser comprovado localmente, mas impedem
               go-live. Adapters locais nunca serão apresentados como provider real ou prontidão de
               produção. Em development/production, a capability de onboarding permanece indisponível
-              até uma integração externa ser escolhida e implementada em mudança própria.
+              até uma integração externa ser escolhida e implementada em mudança própria. O contrato
+              do dono continua consultável em qualquer ambiente; contrato
+              <code>approved</code> permite ativação, enquanto <code>local_fixture</code> só a
+              permite em local/test e permanece consultivo nos demais ambientes.
             </p>
           </div>
 

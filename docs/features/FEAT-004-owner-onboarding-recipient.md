@@ -36,7 +36,8 @@ Permitir que um usuário atue como dono e conclua o cadastro exigido pelo gatewa
 - Criação do perfil de dono.
 - Encaminhamento server-side do contexto minimizado exigido pelo contrato local do provider.
 - Status e requisitos pendentes.
-- Capability server-derived para distinguir operação local permitida de leitura somente consultiva.
+- Capability de ativação server-derived para distinguir aceite permitido de contrato somente consultivo.
+- Capability de onboarding server-derived para distinguir operação local permitida de leitura somente consultiva.
 - Atualização de status e retentativa somente quando a capability permite.
 - Bloqueio de reservas quando o recebedor não está apto.
 
@@ -60,8 +61,10 @@ Permitir que um usuário atue como dono e conclua o cadastro exigido pelo gatewa
 - Nesta fatia, somente dono `active` com contrato vigente aceito e recebedor `active` na versão atual do perfil libera a elegibilidade; o fallback pertence à FEAT-032.
 - Nova versão vigente do contrato preserva o aceite anterior como histórico, fecha a elegibilidade e exige novo aceite idempotente.
 - “Sandbox” nos cenários significa exclusivamente o adapter local determinístico enquanto o ADR-018 estiver vigente.
-- Contrato com `source=local_fixture` e adapter local são recusados fora de `local | test`; nenhum deles representa aprovação jurídica ou comercial.
+- Contrato com `source=local_fixture` permanece legível fora de `local | test`, mas sua ativação é recusada; o adapter local também é recusado nesses ambientes. Nenhum deles representa aprovação jurídica ou comercial.
 - Os únicos requisitos públicos são `identity_review | additional_information | provider_contact`; a próxima ação usa `activate_owner | start_onboarding | refresh_status | none`.
+- `ownerActivationCapability` é obrigatória somente na projeção completa `activation` e no retorno de sucesso de `owner.activate`. Fonte `approved` produz `available`; `local_fixture` produz `available` apenas em `local | test`, enquanto `development | production`, `APP_ENV` ausente ou inválido produzem `unavailable`. Ela não é persistida nem altera `source` ou `nextAction`.
+- Em `ownerActivationCapability=unavailable`, a leitura mantém o documento e os fatos para consulta; `owner.activate` retorna `503 SERVICE_UNAVAILABLE` antes de `activateOwnerProfile` e da escrita, sem criar aceite, autoridade ou auditoria.
 - `recipientOnboardingCapability` é obrigatória no estado comum das duas projeções e nos três retornos POST. Ela não altera `providerMode`, `nextAction` nem o fato no banco: `local | test` produz `local_adapter`; `development | production`, `APP_ENV` ausente ou inválido produzem `unavailable` de forma fail-closed.
 - Em `unavailable`, o estado continua disponível somente para consulta; `recipient.onboarding.start | refresh` retornam `503 PAYMENT_PROVIDER_UNAVAILABLE` antes de `prepare`, sem operação reservada, chamada ao adapter ou mutação parcial.
 - O adapter local nominal faz `start -> pending` e `refresh -> active`. Os demais estados e falhas são fixtures locais de teste e nunca dependem de e-mail ou UUID mágico.
@@ -81,7 +84,7 @@ Permitir que um usuário atue como dono e conclua o cadastro exigido pelo gatewa
 - `get_owner_activation_status`: projeção completa exclusiva da ativação;
 - `get_owner_recipient_status`: projeção compacta do recebedor.
 
-As tuples SQL permanecem com 21 e 16 colunas. O normalizer server-side acrescenta `recipientOnboardingCapability` aos dois estados HTTP sem criar coluna ou segunda fonte canônica.
+As tuples SQL permanecem com 21 e 16 colunas. O normalizer server-side acrescenta `recipientOnboardingCapability` aos dois estados HTTP e `ownerActivationCapability` somente ao estado completo `activation`, sem criar coluna ou segunda fonte canônica.
 
 ## Comandos e integrações
 
@@ -95,7 +98,10 @@ As tuples SQL permanecem com 21 e 16 colunas. O normalizer server-side acrescent
 - Checklist com status factual.
 - Os erros do provider são traduzidos para mensagens seguras.
 - Sem mostrar payload/KYC desnecessário.
+- O formulário de aceite depende de `ownerActivationCapability=available`.
 - CTA depende simultaneamente do requisito pendente e de `recipientOnboardingCapability=local_adapter`.
+
+Quando `ownerActivationCapability=unavailable`, `/dono` preserva o título, o corpo e o aviso de `local_fixture`, não monta formulário, checkbox ou CTA e mostra um alerta com `role=status`: `Ativação como dono indisponível` e `A versão aprovada do contrato do dono ainda não está disponível neste ambiente. O contrato atual permanece somente para consulta.` O controle não aparece desabilitado e a leitura não sugere aprovação jurídica.
 
 Quando a capability é `unavailable`, a interface preserva o status factual, omite o aviso do adapter local e qualquer CTA de start/refresh e mostra um alerta com `role=status`: `Cadastro de recebimentos indisponível` e `A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.` Não existe controle desabilitado, provider falso ou integração externa antecipada.
 
@@ -110,14 +116,15 @@ Quando a preparação de `recipient.onboarding.start | refresh` encontra uma nov
 ## Segurança e privacidade
 
 - O provider é chamado somente no servidor.
-- A capability é derivada somente de `APP_ENV` server-side e nunca aceita do browser.
+- As capabilities são derivadas server-side e nunca aceitas do browser; ativação combina `ownerContract.source` com `APP_ENV`, enquanto onboarding depende apenas da allowlist do ambiente.
 - Dados sensíveis minimizados.
 - Limite de taxa.
 - O adapter e a consulta server-side mapeiam somente estados allowlisted; webhook pertence à integração externa futura.
 
 ## Critérios de aceitação
 
-- Usuário vira dono após aceite.
+- Usuário vira dono após aceite quando `ownerActivationCapability=available`.
+- Um contrato `local_fixture` fora de `local | test` permanece consultável, mas não oferece controle nem produz escrita.
 - Os estados pendente, ativo e recusado do recebedor são apresentados corretamente.
 - Um recebedor inativo impede o checkout.
 - Outro usuário não lê status.
@@ -132,7 +139,7 @@ Quando a preparação de `recipient.onboarding.start | refresh` encontra uma nov
 | SL-F004-E2E-001 | P0         | critical      | desktop        | ativar perfil de dono com aceite                        | `tests/e2e/critical/feat-004-owner-onboarding-recipient.spec.ts`      |
 | SL-F004-E2E-002 | P0         | critical      | desktop        | iniciar onboarding no adapter local e exibir pendência  | `tests/e2e/critical/feat-004-owner-onboarding-recipient.spec.ts`      |
 | SL-F004-E2E-003 | P0         | critical      | desktop        | recebedor ativo libera elegibilidade de reserva         | `tests/e2e/critical/feat-004-owner-onboarding-recipient.spec.ts`      |
-| SL-F004-E2E-004 | P1         | regression    | mobile         | concorrência/capability impedem POST indevido           | `tests/e2e/regression/feat-004-owner-onboarding-recipient.spec.ts`    |
+| SL-F004-E2E-004 | P1         | regression    | mobile         | concorrência/capabilities impedem POST indevido         | `tests/e2e/regression/feat-004-owner-onboarding-recipient.spec.ts`    |
 | SL-F004-E2E-005 | P0         | critical      | desktop        | GET retido fecha A e recompõe SSR somente com B         | `tests/e2e/critical/feat-004-owner-onboarding-recipient.spec.ts`      |
 | SL-F004-E2E-006 | P1         | accessibility | desktop/mobile | axe, teclado, foco e nomes acessíveis nas duas rotas    | `tests/e2e/accessibility/feat-004-owner-onboarding-recipient.spec.ts` |
 | SL-F004-E2E-007 | P1         | reflow        | 160x360        | 503/GET fecham a superfície e restauram foco em 160x360 | `tests/e2e/reflow/feat-004-owner-onboarding-recipient.spec.ts`        |
@@ -144,6 +151,7 @@ Regras:
 - locators semânticos primeiro;
 - os IDs 004/007 comprovam com `toBeFocused()` o foco restaurado no heading do checklist após o `GET` bem-sucedido; o ID 007 também simula GET 503, aciona `Tentar novamente`, observa um GET real 200 e exige o heading focado;
 - sem criar ID novo, o ID 004 alterna somente a capability sobre estados factuais `start_onboarding` e `refresh_status`: `unavailable` mantém o alerta/copy exatos, remove aviso e CTAs e não emite POST; `local_adapter` restaura a ação correspondente. Esse cenário passou na rodada focada 23/23 e na integral 114/114 do novo delta;
+- no quinto P2, o mesmo ID 004 recebeu uma extensão que aguarda checkbox e CTA ociosos antes da simulação; os publishers de ativação e recebedor marcam a resposta esperada e exigem exatamente um hit. A execução race-fixed passou em 23/23, com privacidade e cleanup verdes. O contrato continua sendo alternar `ownerActivationCapability` sem mudar contrato ou fatos: `unavailable` mantém título/corpo/aviso da fixture, mostra a copy de ativação exata, omite checkbox/formulário/CTA e conserva zero POST; `available` restaura aviso, checkbox e CTA, ainda sem POST até a ação explícita. Não há novo ID, spec, projeto ou total;
 - no ID 005, o browser retém o GET de B na página e no `QueryClient` ainda montados sob A, exige o boundary antes do hard reload, comprova no `pagehide` que a superfície de A foi desconectada, recompõe SSR somente com B e observa zero `pageerror`/erro React. O callback tardio complementar não é alegado como browser: testes unitários usam `MutationObserver` real com latch e provam que a key de A não é recriada depois do seed autoritativo de B;
 - axe no cenário indicado ou no principal da feature;
 - sem `waitForTimeout`;
@@ -152,9 +160,10 @@ Regras:
 
 ## Testes unitários, integração e banco
 
-- unitário: provider status mapping e matriz fail-closed de `APP_ENV`
-- unitário: capability obrigatória em contratos/API/read models e recusa antes de `prepare`
+- unitário: matriz `source + APP_ENV -> ownerActivationCapability`, com `approved` sempre disponível
+- unitário: capabilities obrigatórias nas projeções corretas, leitura consultiva da fixture e recusas antes das respectivas escritas
 - unitário: decisão visual independente para start/refresh
+- unitário: decisão visual de ativação mantém documento e remove integralmente formulário/checkbox/CTA
 - integração: contrato do adapter local determinístico
 - DB/RLS owner recipient
 - auditoria da ativação/renovação e das transições do recebedor, com correlação e idempotência separadas
@@ -209,7 +218,25 @@ O review `PRR_kwDOTyzZrs8AAAABJrjWnQ`/REST `4944615069`, submetido em `2026-08-1
 
 O patch congelado acrescenta a capability server-derived, a recusa 503 antes de `prepare` e o estado visual consultivo. No fechamento local em Node 24, a suíte estática passou com 734/734 unitários em 74 arquivos, o banco com 358/358 e as rodadas browser focada/integral com 23/23 e 114/114, preservando os sete IDs da feature. As auditorias browser finais ficaram verdes; a primeira auditoria integral parou por uma variável inexistente no próprio harness e, depois da correção, reaproveitou o mesmo relatório sem nova invocação Playwright. Um único build passou com exit `0`, 26 + 4 rotas, `BUILD_ID=local` e log SHA-256 `ca7d5c3e...`. O smoke customizado não produziu evidência verde após três rejeições exclusivas do harness. O gerador canônico executou exatamente uma vez para `969f30cd...`, passou seu smoke embutido e gerou uma release local com 2.871 artefatos; secrets, paridade, cleanup e duas auditorias `NO-BLOCKER` ficaram verdes. A prova permanece Linux x64, não ARM64 ou produção.
 
-Na captura pós-publicação, o push `11464a3... → e51ab6f...` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. A release permanece ligada a `969f30cd...`. O PR #6 estava `OPEN`/draft, base `main@174ee163...`, head `e51ab6fc...`, e o connector registrou apenas `mergeable=true`; o body foi atualizado. A resposta `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259`, criada por `PedroRomeroM` em `2026-08-16T00:43:03Z`, foi verificada na thread. `PRRT_kwDOTyzZrs6ZigTV` ficou `isResolved=true`, `isOutdated=true`, resolvida por ele; a leitura thread-aware encontrou cinco threads e zero não resolvidas. Novo review, espera mínima, captura final, ready e merge permanecem pendentes, sem claim de `reviewDecision` ou checks. O PR e a feature continuam **Em implementação**; PEND-003/smoke ARM64 nativo continuam obrigatórios para produção.
+Na captura pós-publicação, o push `11464a3... → e51ab6f...` publicou o funcional `969f30cd...` e a documentação/evidência da release canônica local. O archive permaneceu local e ignorado pelo Git; não houve publicação em GitHub Release. A release permanece ligada a `969f30cd...`. O PR #6 estava `OPEN`/draft, base `main@174ee163...`, head `e51ab6fc...`, e o connector registrou apenas `mergeable=true`; o body foi atualizado. A resposta `PRRC_kwDOTyzZrs7h8CsL`/REST `3790613259`, criada por `PedroRomeroM` em `2026-08-16T00:43:03Z`, foi verificada na thread. `PRRT_kwDOTyzZrs6ZigTV` ficou `isResolved=true`, `isOutdated=true`, resolvida por ele; a leitura thread-aware encontrou cinco threads e zero não resolvidas. Naquela fotografia, o review seguinte, a espera mínima, a captura final, ready e merge ainda não tinham ocorrido, sem claim de `reviewDecision` ou checks. O quinto review posterior e seu estado pendente aparecem abaixo. O PR e a feature continuam **Em implementação**; PEND-003/smoke ARM64 nativo continuam obrigatórios para produção.
+
+O review seguinte `PRR_kwDOTyzZrs8AAAABJsAUGQ`/REST `4945089561`, submetido em `2026-08-16T01:07:18Z` sobre `0decf00`, abriu [`PRRT_kwDOTyzZrs6Zj15h`](https://github.com/PedroRomeroM/set-livre/pull/6#discussion_r3790648981), comentário `PRRC_kwDOTyzZrs7h8LaV`/REST `3790648981`, em `owner-recipient-panel.tsx` linha 489. Na captura, a thread estava atual, não resolvida e não desatualizada. O patch local introduz a capability exclusiva de ativação, a leitura consultiva e o estado visual sem formulário. Seu snapshot inicial passou na cadeia estática com 747/747 unitários e no banco com 358/358.
+
+A primeira rodada browser focada coletou 23 testes em quatro specs/14 projetos — lista SHA-256 `615bf589...` — e terminou uma única vez com exit `1`: 12 passados, falha em `SL-F004-E2E-001`/`critical-webkit`, dez não executados e zero rerun. O provisionamento compartilhado encontrou um submit HTML nativo pré-hidratação no cadastro da FEAT-002: o fallback GET colocou campos sintéticos na query. A falha é real de privacidade, não evidência da capability P5; o ID 004 não foi alcançado e a suíte integral não iniciou. Permaneceram somente stdout redigido `f4d0595a...` e auditoria `13859c3c...`; os artefatos brutos foram removidos sem reproduzir valores/endereço, e o cleanup fechou em zero.
+
+O hardening compartilhado deixa o único `RegistrationForm` SSR inerte, com método POST, `aria-busy`, `fieldset`, sete controles nomeados e submit disabled até o snapshot hidratado; o status de preparo fica fora do formulário. Seus unitários passaram em 2/2 e a guarda combinada de identidade em 22/22; `SL-F002-E2E-001` foi ampliado sem novo ID com contexto sem JavaScript.
+
+Depois da correção da race, a focada executou os mesmos 23 testes em quatro specs/14 projetos e passou em 23/23; seu reuse foi validado pela auditoria final. A rodada attribute-fixed coletou 114 testes em 17 specs/16 projetos e sua única execução passou em 114/114 em 5,6 minutos, com zero retry, erro ou attachment. A FEAT-004 permaneceu em 23/23, com os IDs 001–007 distribuídos em `3 + 3 + 3 + 4 + 3 + 4 + 3`; o contexto sem JavaScript da FEAT-002 passou nos três engines sem criar contagem nova.
+
+A auditoria contou 140 ocorrências dos 88 e-mails QA apenas em títulos allowlisted — FEAT-002 60, FEAT-003 54, FEAT-004 26; `Fill` 110, `Type` 8 e `Expect` 22 —, com zero secret, PII ou outro dado sensível e cleanup zero. Evidência segura: `.artifacts/p5-owner-activation-capability-attribute-fixed/full.audit.json`, SHA-256 `5704c67cf21bdcc6e92b733bfdb8788972c216d48f850c885200b6d4d78a37d6`. As execuções rejeitadas anteriores permanecem histórico diagnóstico; o defeito inicial já foi corrigido e as rejeições seguintes pertencem ao harness/oráculo, sem falha atual do produto.
+
+No snapshot pós-hardening, Node 24/npm 11 passou por `npm ci` 447/451/zero vulnerabilidades, format, lint, typecheck, 749/749 unitários em 75 arquivos, docs:check 34/200/18, audit zero, Knip e diff-check. Uma asserção auxiliar incorreta do hash de `next-env` interrompeu o orquestrador depois do typecheck; a continuação autorizada executou somente os gates restantes, sem falha em gate do projeto. O banco passou em 358/358 (`158 + 78 + 57 + 65`), com gerados byte-identical e 15 migrations/head `20260815000100`. A pausa cruzou reset/geração; o primeiro `test:db`, interrompido após `0001`, é inválido, teve cleanup limpo e foi substituído por uma única invocação autorizada sem novo reset/geração. Static 749/749, DB 358/358, focada 23/23 e integral 114/114 estão verdes.
+
+Depois desse fechamento, exatamente uma build P5 sob Node 24/npm 11 terminou com exit `0`, 26 rotas web, quatro do backoffice, zero warning e `BUILD_ID=local`; o log privado tem SHA-256 `3b03b8f64e70dcf29e713f8b6ab006f4a544e43fd761ce0eb8b283eac9de432c`. O artefato, porém, foi recusado porque o standalone copiou strings de conexão administrativas/DAL locais do antigo `scripts.knip`; nenhum smoke iniciou. A correção reduz o script a `knip`, conserva os valores no `.env.e2e.local` físico e adiciona uma guarda unitária sobre os quatro manifests canônicos — raiz, backoffice, contracts e UI — contra URLs de banco em scripts npm. Prettier/ESLint direcionados, 4/4 unitários, Knip com as sete variáveis E2E explicitamente unset e diff-check passaram, com lockfile idêntico. A execução pós-manifesto que testou esse fix está registrada abaixo. Toda evidência do quarto P2 permanece histórica, a feature continua **Em implementação** e PEND-003/smoke ARM64 nativo continuam obrigatórios.
+
+A build pós-manifesto seguinte terminou uma única vez com exit `0` e log privado SHA-256 `d8e50e0fb0b7080bf021aa910bef7ededc6677ba6dfaa71d4789a1d6226e1a8e`, mas foi recusada por uma ocorrência DAL em cada cache Turbopack; standalone/static/log ficaram limpos e o smoke permaneceu em zero. O wrapper único `scripts/next-build.mjs`, usado sozinho pelos builds web/backoffice e reutilizado pelo gerador de release com ambiente allowlisted, valida app/toolchain física antes do spawn e sempre tenta remover apenas o cache autorizado, inclusive se validação ou build falharem. Cleanup falho aborta, falha dupla vira `AggregateError`, raízes/ancestrais simbólicos ou externos são recusados sem spawn/travessia e standalone/static são preservados. O preview limpa no supervisor pai antes de validar/startar e falha fechado se o cache persistir. O run direcionado final passou em 40/40 — 12 de cache/wrapper, quatro do npm confiável, 16 de Next/local server e oito do supervisor de preview —, ESLint zero, checks Node, Knip env-unset e diff-check.
+
+A cadeia estática final única ficou verde em 764/764 unitários por 76 arquivos, com npm ci 447/451/zero vulnerabilidades, cinco typechecks, docs 34/200/18, audit zero, Knip/diff-check e freeze 53/34/19. A build final via wrapper, depois da remoção física dos dois `.next`, rodou exatamente uma vez: exit `0`, 14,733 s, log de 2.155 bytes/SHA-256 `44006829f25e63549e9e65ea17abbc483c891996130da34677ec67c932290ec9`. O audit independente SHA-256 `a1bb244bd53cb09034644bf7a5151cc887abbfb08eed5eceb8a8b7905157081d` terminou `NO-BLOCKER`: 26 + 4 rotas, zero warning, quatro `BUILD_ID=local`, zero cache/retired e cleanup verde. Smoke executado permanece `0`; o primeiro será somente o embutido no gerador canônico após commit limpo. Release/remoto seguem pendentes, e a FEAT-004 continua **Em implementação**.
 
 ## Documentação viva afetada
 

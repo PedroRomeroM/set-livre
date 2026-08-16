@@ -31,6 +31,7 @@ const result = {
 };
 const activationResult = {
   ...result,
+  ownerActivationCapability: "available",
   ownerContract: {
     ...result.ownerContract,
     bodyMarkdown: "# Contrato integral somente na ativação",
@@ -119,17 +120,25 @@ describe("owner recipient read route", () => {
     expect(JSON.stringify(await response.json())).not.toContain("provider reference");
   });
 
-  it("fails safely when production refuses a local fixture read", async () => {
+  it("returns a local fixture as consultative activation state in production", async () => {
     process.env.APP_ENV = "production";
-    mocks.readOwnerRecipient.mockRejectedValueOnce(
-      new Error("O contrato local do dono é proibido fora de local/test. # corpo privado"),
-    );
-    const { GET } = await import("../../src/app/api/owner/recipient/route");
-    const response = await GET(ownerRequest());
-    expect(response.status).toBe(503);
+    mocks.readOwnerActivation.mockResolvedValueOnce({
+      ...activationResult,
+      ownerActivationCapability: "unavailable",
+    });
+    const { GET } = await import("../../src/app/api/owner/activation/route");
+    const response = await GET(ownerActivationRequest());
+    expect(response.status).toBe(200);
     expect(response.headers.get("x-owner-session")).toBe("refreshed");
-    const serialized = JSON.stringify(await response.json());
-    expect(serialized).not.toContain("corpo privado");
-    expect(serialized).not.toContain("local/test");
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        ownerActivationCapability: "unavailable",
+        ownerContract: {
+          bodyMarkdown: activationResult.ownerContract.bodyMarkdown,
+          source: "local_fixture",
+        },
+      },
+      requestId,
+    });
   });
 });

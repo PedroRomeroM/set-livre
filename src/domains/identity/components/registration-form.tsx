@@ -17,7 +17,7 @@ import {
 } from "@set-livre/ui";
 import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import type { z } from "zod";
 
 import {
@@ -35,6 +35,18 @@ type RegistrationFormProps = {
   legalDocuments: CurrentLegalDocuments;
 };
 
+function subscribeToHydration() {
+  return () => undefined;
+}
+
+function readHydratedClientSnapshot() {
+  return true;
+}
+
+function readHydratedServerSnapshot() {
+  return false;
+}
+
 function registrationPayload(input: z.infer<typeof identityRegistrationFormSchema>) {
   return {
     acceptPrivacy: input.acceptPrivacy,
@@ -48,6 +60,11 @@ function registrationPayload(input: z.infer<typeof identityRegistrationFormSchem
 }
 
 export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
+  const isHydrated = useSyncExternalStore(
+    subscribeToHydration,
+    readHydratedClientSnapshot,
+    readHydratedServerSnapshot,
+  );
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [passwordRequirementState, setPasswordRequirementState] = useState(() =>
     passwordRequirements(""),
@@ -119,116 +136,140 @@ export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
   const visibleFieldErrors = apiError?.fieldErrors ?? fieldErrors;
   const termsError = fieldError(visibleFieldErrors, "acceptTerms");
   const privacyError = fieldError(visibleFieldErrors, "acceptPrivacy");
+  const controlsDisabled = !isHydrated || mutation.isPending;
 
   return (
-    <form className={styles.form} noValidate onSubmit={submitRegistration}>
-      <p className={styles.formIntro}>
-        Todos os campos são obrigatórios. O perfil detalhado será concluído em uma etapa própria.
-      </p>
-
-      {apiError === undefined ? null : (
-        <Alert title="Não foi possível criar a conta" variant="error">
-          {apiError.message}
-        </Alert>
+    <Stack space={5}>
+      {isHydrated ? null : (
+        <p className={styles.statusText} role="status">
+          Preparando o formulário seguro…
+        </p>
       )}
 
-      <ChoiceGroup
-        {...fieldErrorProp(visibleFieldErrors, "personType")}
-        defaultValue="individual"
-        disabled={mutation.isPending}
-        legend="Tipo de cadastro"
-        name="personType"
-        required
-      />
-
-      <Field {...fieldErrorProp(visibleFieldErrors, "email")} label="E-mail" required>
-        <Input
-          autoComplete="email"
-          disabled={mutation.isPending}
-          inputMode="email"
-          maxLength={254}
-          name="email"
-          spellCheck={false}
-          type="email"
-        />
-      </Field>
-
-      <Field {...fieldErrorProp(visibleFieldErrors, "password")} label="Senha" required>
-        <PasswordInput
-          autoComplete="new-password"
-          disabled={mutation.isPending}
-          maxLength={128}
-          name="password"
-          onChange={(event) =>
-            setPasswordRequirementState(passwordRequirements(event.currentTarget.value))
-          }
-          requirements={passwordRequirementState}
-        />
-      </Field>
-
-      <Field
-        {...fieldErrorProp(visibleFieldErrors, "confirmPassword")}
-        label="Confirme a senha"
-        required
+      <form
+        aria-busy={!isHydrated || mutation.isPending}
+        className={styles.form}
+        inert={!isHydrated}
+        method="post"
+        noValidate
+        onSubmit={submitRegistration}
       >
-        <PasswordInput
-          autoComplete="new-password"
-          disabled={mutation.isPending}
-          maxLength={128}
-          name="confirmPassword"
-        />
-      </Field>
+        <fieldset className={styles.hydrationBoundary} disabled={!isHydrated}>
+          <p className={styles.formIntro}>
+            Todos os campos são obrigatórios. O perfil detalhado será concluído em uma etapa
+            própria.
+          </p>
 
-      <div className={styles.legalChoice}>
-        <Checkbox
-          {...(termsError === undefined
-            ? {}
-            : { "aria-describedby": "acceptTerms-error", "aria-invalid": true })}
-          disabled={mutation.isPending}
-          id="acceptTerms"
-          label={`Li e aceito os Termos de Uso, versão ${legalDocuments.terms.version}.`}
-          name="acceptTerms"
-          required
-        />
-        {termsError === undefined ? null : (
-          <Alert id="acceptTerms-error" variant="error">
-            {termsError}
-          </Alert>
-        )}
-        <Link className={styles.legalLink} href="/termos" rel="noopener" target="_blank">
-          Ler os Termos de Uso (abre em nova guia)
-        </Link>
-      </div>
+          {apiError === undefined ? null : (
+            <Alert title="Não foi possível criar a conta" variant="error">
+              {apiError.message}
+            </Alert>
+          )}
 
-      <div className={styles.legalChoice}>
-        <Checkbox
-          {...(privacyError === undefined
-            ? {}
-            : { "aria-describedby": "acceptPrivacy-error", "aria-invalid": true })}
-          disabled={mutation.isPending}
-          id="acceptPrivacy"
-          label={`Li e aceito a Política de Privacidade, versão ${legalDocuments.privacy.version}.`}
-          name="acceptPrivacy"
-          required
-        />
-        {privacyError === undefined ? null : (
-          <Alert id="acceptPrivacy-error" variant="error">
-            {privacyError}
-          </Alert>
-        )}
-        <Link className={styles.legalLink} href="/privacidade" rel="noopener" target="_blank">
-          Ler a Política de Privacidade (abre em nova guia)
-        </Link>
-      </div>
+          <ChoiceGroup
+            {...fieldErrorProp(visibleFieldErrors, "personType")}
+            defaultValue="individual"
+            disabled={controlsDisabled}
+            legend="Tipo de cadastro"
+            name="personType"
+            required
+          />
 
-      <div className={styles.actions}>
-        <Button loading={mutation.isPending} loadingLabel="Criando conta" type="submit">
-          Criar conta
-        </Button>
-        <Link className={styles.textLink} href="/entrar">
-          Já tenho uma conta
-        </Link>
-      </div>
-    </form>
+          <Field {...fieldErrorProp(visibleFieldErrors, "email")} label="E-mail" required>
+            <Input
+              autoComplete="email"
+              disabled={controlsDisabled}
+              inputMode="email"
+              maxLength={254}
+              name="email"
+              spellCheck={false}
+              type="email"
+            />
+          </Field>
+
+          <Field {...fieldErrorProp(visibleFieldErrors, "password")} label="Senha" required>
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={controlsDisabled}
+              maxLength={128}
+              name="password"
+              onChange={(event) =>
+                setPasswordRequirementState(passwordRequirements(event.currentTarget.value))
+              }
+              requirements={passwordRequirementState}
+            />
+          </Field>
+
+          <Field
+            {...fieldErrorProp(visibleFieldErrors, "confirmPassword")}
+            label="Confirme a senha"
+            required
+          >
+            <PasswordInput
+              autoComplete="new-password"
+              disabled={controlsDisabled}
+              maxLength={128}
+              name="confirmPassword"
+            />
+          </Field>
+
+          <div className={styles.legalChoice}>
+            <Checkbox
+              {...(termsError === undefined
+                ? {}
+                : { "aria-describedby": "acceptTerms-error", "aria-invalid": true })}
+              disabled={controlsDisabled}
+              id="acceptTerms"
+              label={`Li e aceito os Termos de Uso, versão ${legalDocuments.terms.version}.`}
+              name="acceptTerms"
+              required
+            />
+            {termsError === undefined ? null : (
+              <Alert id="acceptTerms-error" variant="error">
+                {termsError}
+              </Alert>
+            )}
+            <Link className={styles.legalLink} href="/termos" rel="noopener" target="_blank">
+              Ler os Termos de Uso (abre em nova guia)
+            </Link>
+          </div>
+
+          <div className={styles.legalChoice}>
+            <Checkbox
+              {...(privacyError === undefined
+                ? {}
+                : { "aria-describedby": "acceptPrivacy-error", "aria-invalid": true })}
+              disabled={controlsDisabled}
+              id="acceptPrivacy"
+              label={`Li e aceito a Política de Privacidade, versão ${legalDocuments.privacy.version}.`}
+              name="acceptPrivacy"
+              required
+            />
+            {privacyError === undefined ? null : (
+              <Alert id="acceptPrivacy-error" variant="error">
+                {privacyError}
+              </Alert>
+            )}
+            <Link className={styles.legalLink} href="/privacidade" rel="noopener" target="_blank">
+              Ler a Política de Privacidade (abre em nova guia)
+            </Link>
+          </div>
+
+          <div className={styles.actions}>
+            <Button
+              disabled={controlsDisabled}
+              loading={mutation.isPending}
+              loadingLabel="Criando conta"
+              type="submit"
+            >
+              Criar conta
+            </Button>
+            <Link className={styles.textLink} href="/entrar">
+              Já tenho uma conta
+            </Link>
+          </div>
+        </fieldset>
+      </form>
+    </Stack>
   );
 }

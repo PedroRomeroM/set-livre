@@ -1,4 +1,8 @@
-import { apiSuccessSchema, ownerRecipientStatusSchema } from "@set-livre/contracts";
+import {
+  apiSuccessSchema,
+  ownerActivationResultSchema,
+  ownerRecipientStatusSchema,
+} from "@set-livre/contracts";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 import {
@@ -18,9 +22,12 @@ async function publishRecipientOnboardingCapability(
   page: Page,
   capability: "local_adapter" | "unavailable",
 ) {
+  const responseMarker = "x-set-livre-e2e-recipient-capability";
+  let routeHits = 0;
   await page.route(
     "**/api/owner/recipient",
     async (route) => {
+      routeHits += 1;
       const response = await route.fetch();
       const payload: unknown = await response.json();
       const parsed = apiSuccessSchema(ownerRecipientStatusSchema).parse(payload);
@@ -30,6 +37,10 @@ async function publishRecipientOnboardingCapability(
       });
       await route.fulfill({
         body: JSON.stringify({ data, requestId: parsed.requestId }),
+        headers: {
+          ...response.headers(),
+          [responseMarker]: capability,
+        },
         response,
       });
     },
@@ -38,10 +49,52 @@ async function publishRecipientOnboardingCapability(
   const response = page.waitForResponse(
     (candidate) =>
       candidate.request().method() === "GET" &&
-      new URL(candidate.url()).pathname === "/api/owner/recipient",
+      new URL(candidate.url()).pathname === "/api/owner/recipient" &&
+      candidate.headers()[responseMarker] === capability,
   );
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
   expect((await response).status()).toBe(200);
+  expect(routeHits).toBe(1);
+}
+
+async function publishOwnerActivationCapability(
+  page: Page,
+  capability: "available" | "unavailable",
+) {
+  const responseMarker = "x-set-livre-e2e-activation-capability";
+  let routeHits = 0;
+  await page.route(
+    "**/api/owner/activation",
+    async (route) => {
+      routeHits += 1;
+      const response = await route.fetch();
+      const payload: unknown = await response.json();
+      const parsed = apiSuccessSchema(ownerActivationResultSchema).parse(payload);
+      expect(parsed.data.ownerContract.source).toBe("local_fixture");
+      const data = ownerActivationResultSchema.parse({
+        ...parsed.data,
+        ownerActivationCapability: capability,
+      });
+      await route.fulfill({
+        body: JSON.stringify({ data, requestId: parsed.requestId }),
+        headers: {
+          ...response.headers(),
+          [responseMarker]: capability,
+        },
+        response,
+      });
+    },
+    { times: 1 },
+  );
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.request().method() === "GET" &&
+      new URL(candidate.url()).pathname === "/api/owner/activation" &&
+      candidate.headers()[responseMarker] === capability,
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  expect((await response).status()).toBe(200);
+  expect(routeHits).toBe(1);
 }
 
 test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repetir POST", async ({
@@ -65,7 +118,55 @@ test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repet
       name: "Pessoa QA Dono Recuperação",
       phone: "(41) 99999-4004",
     });
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "POST" && path === "/api/commands") ownerPostRequests += 1;
+    });
+
+    await expect(
+      page.getByRole("checkbox", { name: /Li e aceito o Contrato do Dono/iu }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ativar perfil de dono" })).toBeEnabled();
+    await publishOwnerActivationCapability(page, "unavailable");
+    await expect(
+      page.getByRole("heading", {
+        level: 2,
+        name: "Contrato do dono — fixture local",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Contrato não aprovado para produção", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        "Conteúdo exclusivo para desenvolvimento e testes locais. Não constitui contrato jurídico aprovado para produção.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(page.getByRole("status")).toContainText("Ativação como dono indisponível");
+    await expect(page.getByRole("status")).toContainText(
+      "A versão aprovada do contrato do dono ainda não está disponível neste ambiente. O contrato atual permanece somente para consulta.",
+    );
+    await expect(
+      page.getByRole("checkbox", { name: /Li e aceito o Contrato do Dono/iu }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Ativar perfil de dono" })).toHaveCount(0);
+    expect(ownerPostRequests).toBe(0);
+
+    await publishOwnerActivationCapability(page, "available");
+    await expect(page.getByRole("status")).toHaveCount(0);
+    await expect(
+      page.getByText("Contrato não aprovado para produção", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("checkbox", { name: /Li e aceito o Contrato do Dono/iu }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ativar perfil de dono" })).toBeEnabled();
+    expect(ownerPostRequests).toBe(0);
+
     await activateFeat004Owner(page);
+    expect(ownerPostRequests).toBe(1);
+    ownerPostRequests = 0;
     await gotoFeat004Recipient(page);
     const recipientStartButton = page.getByRole("button", {
       name: "Iniciar validação local",
@@ -73,11 +174,13 @@ test("SL-F004-E2E-004 @p1 recupera estado concorrente e falha ambígua sem repet
     await expect(recipientStartButton).toBeVisible();
     await expect(recipientStartButton).toBeEnabled();
     page.on("request", (request) => {
-      const path = new URL(request.url()).pathname;
-      if (request.method() === "POST" && path === "/api/commands") ownerPostRequests += 1;
-      if (request.method() === "GET" && path === "/api/owner/recipient") ownerGetRequests += 1;
+      if (
+        request.method() === "GET" &&
+        new URL(request.url()).pathname === "/api/owner/recipient"
+      ) {
+        ownerGetRequests += 1;
+      }
     });
-
     await publishRecipientOnboardingCapability(page, "unavailable");
     await expect(page.getByRole("status")).toContainText("Cadastro de recebimentos indisponível");
     await expect(page.getByRole("status")).toContainText(

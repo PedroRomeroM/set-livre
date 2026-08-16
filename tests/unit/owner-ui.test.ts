@@ -4,6 +4,7 @@ import type { OwnerActivationResult } from "@set-livre/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  ownerActivationAvailable,
   ownerHasCurrentContract,
   ownerNeedsCurrentContractAcceptance,
   ownerRecipientActionsAvailable,
@@ -29,6 +30,7 @@ function activeOwner(overrides: Partial<OwnerActivationResult> = {}): OwnerActiv
       version: "local-1",
     },
     ownerContractAccepted: true,
+    ownerActivationCapability: "available",
     ownerStatus: "active",
     ownerVersion: 1,
     profileVersion: 1,
@@ -112,6 +114,29 @@ describe("FEAT-004 owner UI", () => {
     expect(ownerRecipientOnboardingAvailable(unavailableRefresh)).toBe(false);
   });
 
+  it("keeps the factual activation state separate from the runtime contract capability", () => {
+    const available = activeOwner({
+      acceptedOwnerContractVersionId: null,
+      nextAction: "activate_owner",
+      ownerContractAccepted: false,
+      ownerStatus: "inactive",
+      ownerVersion: 0,
+    });
+    const unavailable = activeOwner({
+      ...available,
+      ownerActivationCapability: "unavailable",
+    });
+
+    expect(available.ownerContract.source).toBe("local_fixture");
+    expect(unavailable.ownerContract).toEqual(available.ownerContract);
+    expect(unavailable.nextAction).toBe("activate_owner");
+    expect(unavailable.ownerStatus).toBe("inactive");
+    expect(available.ownerActivationCapability).toBe("available");
+    expect(unavailable.ownerActivationCapability).toBe("unavailable");
+    expect(ownerActivationAvailable(available)).toBe(true);
+    expect(ownerActivationAvailable(unavailable)).toBe(false);
+  });
+
   it("exposes only the canonical owner routes and real navigation", () => {
     const frame = ownerComponent("owner-page-frame.tsx");
     const overview = appFile("page.tsx");
@@ -171,6 +196,7 @@ describe("FEAT-004 owner UI", () => {
     const panel = ownerComponent("owner-recipient-panel.tsx");
     const api = ownerComponent("owner-api.ts");
     const combined = `${panel}\n${api}`;
+    const normalizedPanel = panel.replace(/\s+/gu, " ");
 
     for (const status of ["not_started", "pending", "active", "refused", "suspended", "blocked"]) {
       expect(panel).toContain(`${status}:`);
@@ -187,6 +213,11 @@ describe("FEAT-004 owner UI", () => {
     expect(panel).toContain("O estado atual");
     expect(panel).toContain("permanece somente para consulta.");
     expect(panel).toContain("Contrato não aprovado para produção");
+    expect(panel).toContain("ownerActivationAvailable(result)");
+    expect(panel).toContain("Ativação como dono indisponível");
+    expect(normalizedPanel).toContain(
+      "A versão aprovada do contrato do dono ainda não está disponível neste ambiente. O contrato atual permanece somente para consulta.",
+    );
     expect(panel).toContain('view: "overview"');
     expect(panel).toContain('view: "recipient"');
     expect(panel).toContain('result.projection === "activation"');

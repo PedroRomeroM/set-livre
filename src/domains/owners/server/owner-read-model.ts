@@ -10,6 +10,7 @@ import {
   parseOwnerActivationDalRow,
   parseOwnerRecipientStatusDalRow,
 } from "./owner-dal";
+import { readOwnerActivationCapability } from "./owner-runtime";
 import { readRecipientOnboardingCapability } from "./recipient-provider";
 
 const ownerReadDeadlineMs = 2_000;
@@ -41,17 +42,20 @@ async function readOwnerRecipientWithClient(
       if (error !== null) {
         throw new Error("Não foi possível carregar o cadastro de dono autenticado.");
       }
-      return projection === "activation"
-        ? mapOwnerActivationDalRow(
-            parseOwnerActivationDalRow(data),
-            userId,
-            recipientOnboardingCapability,
-          )
-        : mapOwnerRecipientStatusDalRow(
-            parseOwnerRecipientStatusDalRow(data),
-            userId,
-            recipientOnboardingCapability,
-          );
+      if (projection === "activation") {
+        const row = parseOwnerActivationDalRow(data);
+        return mapOwnerActivationDalRow(
+          row,
+          userId,
+          recipientOnboardingCapability,
+          readOwnerActivationCapability(row.owner_contract_source),
+        );
+      }
+      return mapOwnerRecipientStatusDalRow(
+        parseOwnerRecipientStatusDalRow(data),
+        userId,
+        recipientOnboardingCapability,
+      );
     });
     const outcome = Promise.race([rpcOutcome, abortOutcome]);
 

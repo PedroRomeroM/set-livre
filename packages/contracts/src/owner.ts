@@ -23,6 +23,7 @@ export const ownerNextActionSchema = z.enum([
   "none",
 ]);
 export const ownerProviderModeSchema = z.literal("local");
+export const ownerActivationCapabilitySchema = z.enum(["available", "unavailable"]);
 export const recipientOnboardingCapabilitySchema = z.enum(["local_adapter", "unavailable"]);
 
 export const ownerContractReferenceSchema = z.strictObject({
@@ -179,6 +180,7 @@ export const ownerRecipientStatusSchema = ownerRecipientStatusBaseSchema.superRe
 export const ownerActivationResultSchema = z
   .strictObject({
     ...ownerRecipientStateShape,
+    ownerActivationCapability: ownerActivationCapabilitySchema,
     ownerContract: ownerContractSchema,
     projection: z.literal("activation"),
   })
@@ -234,6 +236,7 @@ export const ownerCommandSchema = z.discriminatedUnion("action", [
 ]);
 
 export type OwnerActivatePayload = z.infer<typeof ownerActivatePayloadSchema>;
+export type OwnerActivationCapability = z.infer<typeof ownerActivationCapabilitySchema>;
 export type OwnerActivationResult = z.infer<typeof ownerActivationResultSchema>;
 export type OwnerCommand = z.infer<typeof ownerCommandSchema>;
 export type OwnerCommandAction = z.infer<typeof ownerCommandActionSchema>;

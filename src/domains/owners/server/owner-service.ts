@@ -1,10 +1,6 @@
 import "server-only";
 
-import type {
-  OwnerActivationResult,
-  OwnerCommand,
-  OwnerRecipientStatus,
-} from "@set-livre/contracts";
+import type { OwnerActivationResult, OwnerCommand } from "@set-livre/contracts";
 import { z } from "zod";
 
 import type { PrivateCommandContext } from "@/domains/commands/server/private-command-context";
@@ -21,6 +17,7 @@ import {
   prepareOwnerRecipientOperation,
   type PreparedRecipientOperation,
 } from "./owner-dal";
+import { readOwnerActivationCapability } from "./owner-runtime";
 import {
   createLocalRecipientOnboardingProvider,
   readRecipientOnboardingCapability,
@@ -46,6 +43,7 @@ export type OwnerServiceDependencies = Readonly<{
   getOwnerRecipientStatusForUser: typeof getOwnerRecipientStatusForUser;
   prepareOwnerRecipientOperation: typeof prepareOwnerRecipientOperation;
   providerDeadlineMs: number;
+  readOwnerActivationCapability: typeof readOwnerActivationCapability;
   readRecipientOnboardingCapability: typeof readRecipientOnboardingCapability;
 }>;
 
@@ -56,6 +54,7 @@ const ownerServiceDefaults: OwnerServiceDependencies = {
   getOwnerRecipientStatusForUser,
   prepareOwnerRecipientOperation,
   providerDeadlineMs: defaultProviderDeadlineMs,
+  readOwnerActivationCapability,
   readRecipientOnboardingCapability,
 };
 
@@ -76,16 +75,10 @@ function assertMutableAccount(context: PrivateCommandContext) {
   }
 }
 
-function assertFixtureContractAllowed(
-  source:
-    | OwnerActivationResult["ownerContract"]["source"]
-    | OwnerRecipientStatus["ownerContract"]["source"],
+function assertOwnerActivationAvailable(
+  capability: OwnerActivationResult["ownerActivationCapability"],
 ) {
-  if (
-    source === "local_fixture" &&
-    process.env.APP_ENV !== "local" &&
-    process.env.APP_ENV !== "test"
-  ) {
+  if (capability !== "available") {
     throw new ApiRouteError(
       503,
       "SERVICE_UNAVAILABLE",
@@ -155,22 +148,27 @@ export function createOwnerService(dependencies: OwnerServiceDependencies = owne
     try {
       const recipientOnboardingCapability = dependencies.readRecipientOnboardingCapability();
       const currentRow = await dependencies.getOwnerRecipientStatusForUser(context.session.userId);
-      assertFixtureContractAllowed(currentRow.owner_contract_source);
+      const ownerActivationCapability = dependencies.readOwnerActivationCapability(
+        currentRow.owner_contract_source,
+      );
       mapOwnerRecipientStatusDalRow(
         currentRow,
         context.session.userId,
         recipientOnboardingCapability,
       );
+      assertOwnerActivationAvailable(ownerActivationCapability);
+      const updatedRow = await dependencies.activateOwnerProfile({
+        idempotencyKey: command.idempotencyKey,
+        ownerContractVersionId: command.payload.ownerContractVersionId,
+        requestId: context.requestId,
+        userAgentHash: hashOptionalPrivateEvidence(context.userAgent),
+        userId: context.session.userId,
+      });
       return mapOwnerActivationDalRow(
-        await dependencies.activateOwnerProfile({
-          idempotencyKey: command.idempotencyKey,
-          ownerContractVersionId: command.payload.ownerContractVersionId,
-          requestId: context.requestId,
-          userAgentHash: hashOptionalPrivateEvidence(context.userAgent),
-          userId: context.session.userId,
-        }),
+        updatedRow,
         context.session.userId,
         recipientOnboardingCapability,
+        dependencies.readOwnerActivationCapability(updatedRow.owner_contract_source),
       );
     } catch (error) {
       if (error instanceof ApiRouteError) throw error;

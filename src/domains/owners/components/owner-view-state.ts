@@ -1,4 +1,8 @@
-import type { OwnerRecipientResult } from "@set-livre/contracts";
+import type { OwnerActivationResult, OwnerRecipientResult } from "@set-livre/contracts";
+
+export function ownerActivationAvailable(result: OwnerActivationResult) {
+  return result.ownerActivationCapability === "available";
+}
 
 export function ownerHasCurrentContract(result: OwnerRecipientResult) {
   return (

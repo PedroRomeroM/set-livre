@@ -4,6 +4,15 @@
   gap: var(--sl-space-5);
 }
 
+.hydrationBoundary {
+  display: grid;
+  min-width: 0;
+  gap: var(--sl-space-5);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .formIntro,
 .supportingText,
 .statusText,

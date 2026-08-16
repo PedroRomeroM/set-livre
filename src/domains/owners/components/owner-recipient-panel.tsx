@@ -60,6 +60,7 @@ import {
   seedAuthoritativeOwnerPrivate,
 } from "./owner-query-keys";
 import {
+  ownerActivationAvailable,
   ownerHasCurrentContract,
   ownerNeedsCurrentContractAcceptance,
   ownerRecipientActionsAvailable,
@@ -481,20 +482,28 @@ function OwnerActivationSection({
           {result.ownerContract.title}
         </h2>
         <p className={styles.sectionDescription}>
-          Leia o conteúdo integral antes de registrar o aceite. O aceite ativa apenas a autoridade
-          de dono e não concede papel administrativo.
+          {ownerActivationAvailable(result)
+            ? "Leia o conteúdo integral antes de registrar o aceite. O aceite ativa apenas a autoridade de dono e não concede papel administrativo."
+            : "O conteúdo atual permanece disponível somente para consulta até existir uma versão aprovada para este ambiente."}
         </p>
       </div>
       <OwnerContractDocument contract={result.ownerContract} />
-      <OwnerActivationForm
-        key={result.ownerContract.id}
-        expectedScope={expectedScope}
-        onRefresh={onRefresh}
-        onSave={onSave}
-        onSessionChanged={onSessionChanged}
-        result={result}
-        scopeTransitionGuard={scopeTransitionGuard}
-      />
+      {ownerActivationAvailable(result) ? (
+        <OwnerActivationForm
+          key={result.ownerContract.id}
+          expectedScope={expectedScope}
+          onRefresh={onRefresh}
+          onSave={onSave}
+          onSessionChanged={onSessionChanged}
+          result={result}
+          scopeTransitionGuard={scopeTransitionGuard}
+        />
+      ) : (
+        <Alert title="Ativação como dono indisponível" variant="status">
+          A versão aprovada do contrato do dono ainda não está disponível neste ambiente. O contrato
+          atual permanece somente para consulta.
+        </Alert>
+      )}
     </section>
   );
 }
