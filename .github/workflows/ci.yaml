@@ -1,0 +1,663 @@
+name: CI
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('{0} approved {1}/{2} archive {3} config {4}', inputs.release_sha, inputs.approved_run_id, inputs.approved_run_attempt, inputs.archive_sha256, inputs.public_build_config_sha256)
+      || format('CI {0}', github.sha) }}
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full merged SHA whose expired artifact must be regenerated
+        required: true
+        type: string
+      approved_run_id:
+        description: Immutable successful production workflow run ID
+        required: true
+        type: string
+      approved_run_attempt:
+        description: Immutable successful production workflow run attempt
+        required: true
+        type: string
+      archive_sha256:
+        description: SHA-256 of the originally published canonical tar archive
+        required: true
+        type: string
+      public_build_config_sha256:
+        description: SHA-256 of the originally published public build configuration
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  quality:
+    name: Quality, local Supabase and browser gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm-cache
+      NPM_CLI_TARBALL_SHA256: 31e9770f7dc71119a58509353b27917557aaf0ac9b5ef1a0465ee7d8ec67ae75
+      NPM_CLI_TARBALL_SHA512: 48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003
+      NPM_CLI_TARBALL_URL: https://registry.npmjs.org/npm/-/npm-11.19.0.tgz
+      NPM_CLI_VERSION: "11.19.0"
+      PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+      PRD_BACKOFFICE_APP_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}
+      PRD_SUPABASE_PROJECT_REF: ${{ vars.PRD_SUPABASE_PROJECT_REF }}
+      PRD_SUPABASE_URL: ${{ vars.PRD_SUPABASE_URL }}
+      PRD_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_ANON_KEY }}
+    steps:
+      # actions/checkout@v5.1.0
+      - name: Checkout exact revision
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate immutable delivery identities and approved recovery source
+        id: delivery_identity
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && vars.PRD_DEPLOY_ENABLED == 'true')
+        env:
+          DELIVERY_ENABLED: ${{ vars.PRD_DEPLOY_ENABLED }}
+          EXPECTED_REPOSITORY_ID: ${{ vars.SET_LIVRE_REPOSITORY_ID }}
+          EXPECTED_CI_WORKFLOW_ID: ${{ vars.CI_GITHUB_WORKFLOW_ID }}
+          EXPECTED_PRD_WORKFLOW_ID: ${{ vars.PRD_GITHUB_WORKFLOW_ID }}
+          APPROVED_RUN_ID: ${{ inputs.approved_run_id }}
+          APPROVED_RUN_ATTEMPT: ${{ inputs.approved_run_attempt }}
+          EXPECTED_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          EXPECTED_PUBLIC_BUILD_CONFIG_SHA256: ${{ inputs.public_build_config_sha256 }}
+        # actions/github-script@v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fail = (message) => {
+              throw new Error(`Identidade de entrega inválida: ${message}`);
+            };
+            const positiveInteger = (name) => {
+              const raw = process.env[name] ?? "";
+              if (!/^[1-9][0-9]*$/u.test(raw)) fail(name);
+              const value = Number(raw);
+              if (!Number.isSafeInteger(value)) fail(name);
+              return value;
+            };
+            const releaseSha = process.env.RELEASE_SHA ?? "";
+            if (process.env.DELIVERY_ENABLED !== "true") fail("delivery disabled");
+            if (!/^[a-f0-9]{40}$/u.test(releaseSha)) fail("release SHA");
+
+            const expectedRepositoryId = positiveInteger("EXPECTED_REPOSITORY_ID");
+            const expectedCiWorkflowId = positiveInteger("EXPECTED_CI_WORKFLOW_ID");
+            const expectedPrdWorkflowId = positiveInteger("EXPECTED_PRD_WORKFLOW_ID");
+            const currentRunId = positiveInteger("GITHUB_RUN_ID");
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const repositoryMatches = (value) =>
+              value?.id === expectedRepositoryId && value?.full_name === repository;
+            const request = async (route, parameters = {}) =>
+              (
+                await github.request(route, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ...parameters,
+                })
+              ).data;
+            const git = async (...arguments_) => {
+              const result = await exec.getExecOutput("git", arguments_, {
+                ignoreReturnCode: true,
+                silent: true,
+              });
+              if (result.exitCode !== 0) fail(`git ${arguments_[0]}`);
+              return result.stdout.trim();
+            };
+
+            if ((await git("rev-parse", "--verify", "HEAD^{commit}")) !== releaseSha) {
+              fail("checked out SHA");
+            }
+            await git("fetch", "--no-tags", "origin", "main");
+            await git("merge-base", "--is-ancestor", releaseSha, "refs/remotes/origin/main");
+
+            const current = await request("GET /repos/{owner}/{repo}/actions/runs/{run_id}", {
+              run_id: currentRunId,
+            });
+            const prdWorkflow = await request(
+              "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}",
+              { workflow_id: expectedPrdWorkflowId },
+            );
+            if (
+              current.id !== currentRunId ||
+              current.workflow_id !== expectedCiWorkflowId ||
+              current.path !== ".github/workflows/ci.yaml" ||
+              !repositoryMatches(current.repository) ||
+              !repositoryMatches(current.head_repository) ||
+              prdWorkflow.id !== expectedPrdWorkflowId ||
+              prdWorkflow.path !== ".github/workflows/prd-deploy.yaml" ||
+              prdWorkflow.state !== "active"
+            ) {
+              fail("current workflow");
+            }
+
+            if (context.eventName !== "workflow_dispatch") {
+              if (context.eventName !== "push" || current.head_sha !== releaseSha) {
+                fail("main push");
+              }
+              return;
+            }
+
+            const approvedRunId = positiveInteger("APPROVED_RUN_ID");
+            const approvedRunAttempt = positiveInteger("APPROVED_RUN_ATTEMPT");
+            const expectedArchiveSha256 = process.env.EXPECTED_ARCHIVE_SHA256 ?? "";
+            const expectedPublicBuildConfigSha256 =
+              process.env.EXPECTED_PUBLIC_BUILD_CONFIG_SHA256 ?? "";
+            if (
+              !/^[a-f0-9]{64}$/u.test(expectedArchiveSha256) ||
+              !/^[a-f0-9]{64}$/u.test(expectedPublicBuildConfigSha256)
+            ) {
+              fail("approved release digests");
+            }
+            const approved = await request(
+              "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}",
+              { run_id: approvedRunId, attempt_number: approvedRunAttempt },
+            );
+            const jobs = await request(
+              "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+              { run_id: approvedRunId, attempt_number: approvedRunAttempt, per_page: 100, page: 1 },
+            );
+            if (
+              approved.id !== approvedRunId ||
+              approved.run_attempt !== approvedRunAttempt ||
+              approved.workflow_id !== expectedPrdWorkflowId ||
+              approved.path !== ".github/workflows/prd-deploy.yaml" ||
+              approved.event !== "workflow_run" ||
+              approved.head_branch !== "main" ||
+              !/^[a-f0-9]{40}$/u.test(approved.head_sha ?? "") ||
+              approved.status !== "completed" ||
+              approved.conclusion !== "success" ||
+              approved.display_title !== `Release ${releaseSha}` ||
+              !repositoryMatches(approved.repository) ||
+              !repositoryMatches(approved.head_repository) ||
+              jobs.total_count !== 1 ||
+              !Array.isArray(jobs.jobs) ||
+              jobs.jobs.length !== 1
+            ) {
+              fail("approved production run");
+            }
+            const job = jobs.jobs[0];
+            const matchingPublicationSteps = Array.isArray(job.steps)
+              ? job.steps.filter(
+                  (step) =>
+                    step?.name === "Publish immutable release artifact" &&
+                    step?.conclusion === "success",
+                ).length
+              : 0;
+            if (
+              job.run_id !== approvedRunId ||
+              job.head_sha !== approved.head_sha ||
+              job.name !== "Verify and publish canonical Linux x64 release" ||
+              job.status !== "completed" ||
+              job.conclusion !== "success" ||
+              matchingPublicationSteps !== 1
+            ) {
+              fail("approved publication job");
+            }
+            const approvedArtifacts = await github.paginate(
+              "GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: approvedRunId,
+                per_page: 100,
+              },
+            );
+            const approvedIdentity = new RegExp(
+              `^set-livre-${releaseSha}-([a-f0-9]{64})-([a-f0-9]{64})$`,
+              "u",
+            );
+            const matchingApprovedArtifacts = approvedArtifacts.filter((artifact) =>
+              approvedIdentity.test(artifact?.name ?? ""),
+            );
+            if (matchingApprovedArtifacts.length !== 1) {
+              fail("approved publication artifact identity");
+            }
+            const approvedMatch = approvedIdentity.exec(matchingApprovedArtifacts[0].name);
+            if (
+              approvedMatch === null ||
+              approvedMatch[1] !== expectedArchiveSha256 ||
+              approvedMatch[2] !== expectedPublicBuildConfigSha256
+            ) {
+              fail("approved publication digests");
+            }
+
+      - name: Lint workflows and shell scripts with pinned binaries
+        id: workflow_tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -s)" = "Linux"
+          test "$(uname -m)" = "x86_64"
+          test "${RUNNER_ARCH:-}" = "X64"
+          tool_root="$(mktemp -d "${RUNNER_TEMP}/set-livre-workflow-tools.XXXXXX")"
+          cleanup_tools() { rm -rf -- "$tool_root"; }
+          trap cleanup_tools EXIT
+          chmod 0700 "$tool_root"
+          actionlint_archive="$tool_root/actionlint_1.7.12_linux_amd64.tar.gz"
+          shellcheck_archive="$tool_root/shellcheck-v0.11.0.linux.x86_64.tar.xz"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 0 \
+            --output "$actionlint_archive" \
+            'https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz'
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 0 \
+            --output "$shellcheck_archive" \
+            'https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz'
+          (
+            cd "$tool_root"
+            printf '%s  %s\n' \
+              '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+              "$(basename "$actionlint_archive")" \
+              '8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198' \
+              "$(basename "$shellcheck_archive")" |
+              sha256sum --check --strict
+          )
+          tar --extract --gzip --file "$actionlint_archive" --directory "$tool_root" actionlint
+          tar --extract --xz --file "$shellcheck_archive" --directory "$tool_root" \
+            shellcheck-v0.11.0/shellcheck
+          actionlint_binary="$tool_root/actionlint"
+          shellcheck_binary="$tool_root/shellcheck-v0.11.0/shellcheck"
+          test -x "$actionlint_binary"
+          test -x "$shellcheck_binary"
+          test "$("$actionlint_binary" -version | head -n 1)" = "1.7.12"
+          test "$("$shellcheck_binary" --version | awk '$1 == "version:" { print $2 }')" = "0.11.0"
+          PATH="$(dirname "$shellcheck_binary"):$PATH" "$actionlint_binary"
+          shell_scripts_inventory="$tool_root/shell-scripts.inventory"
+          find scripts -type f -name '*.sh' -print0 | sort -z >"$shell_scripts_inventory"
+          mapfile -d '' -t shell_scripts <"$shell_scripts_inventory"
+          test "${#shell_scripts[@]}" -gt 0
+          "$shellcheck_binary" "${shell_scripts[@]}"
+
+      # actions/setup-node@v5.0.0
+      - name: Install Node.js 24.18.0
+        id: setup_node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install and verify npm 11.19.0
+        id: npm_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          npm_bootstrap_root="$(mktemp -d "${RUNNER_TEMP}/set-livre-npm.XXXXXX")"
+          cleanup_npm_bootstrap() { rm -rf -- "$npm_bootstrap_root"; }
+          trap cleanup_npm_bootstrap EXIT
+          npm_archive="$npm_bootstrap_root/npm-${NPM_CLI_VERSION}.tgz"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 0 \
+            --output "$npm_archive" "$NPM_CLI_TARBALL_URL"
+          (
+            cd "$npm_bootstrap_root"
+            printf '%s  %s\n' "$NPM_CLI_TARBALL_SHA512" "$(basename "$npm_archive")" |
+              sha512sum --check --strict
+            printf '%s  %s\n' "$NPM_CLI_TARBALL_SHA256" "$(basename "$npm_archive")" |
+              sha256sum --check --strict
+          )
+          npm install --global --ignore-scripts --offline --no-audit --no-fund "$npm_archive"
+          hash -r
+          test "$(node --version)" = "v24.18.0"
+          test "$(npm --version)" = "$NPM_CLI_VERSION"
+
+      - name: Install locked dependencies
+        id: dependencies
+        run: npm ci
+
+      - name: Static and unit gates
+        id: static_unit
+        run: |
+          set -euo pipefail
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm run test:unit
+
+      - name: Reset isolated local Supabase
+        id: supabase_reset
+        run: npm run supabase:reset
+
+      - name: Database, generated contracts and documentation gates
+        id: database_docs
+        run: |
+          set -euo pipefail
+          npm run test:db
+          npm run docs:check
+
+      - name: Install pinned Playwright browsers
+        id: playwright_install
+        run: npm run test:e2e:install
+
+      - name: Affected browser contract on pull requests
+        id: e2e_affected
+        if: github.event_name == 'pull_request'
+        run: npm run test:e2e:affected
+
+      - name: Complete browser contract on main
+        id: e2e_complete
+        if: github.event_name != 'pull_request'
+        run: npm run test:e2e
+
+      - name: Build pull request or generate the canonical Linux x64 release
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            npm run build
+          else
+            node scripts/release-manifest.mjs generate "$RELEASE_SHA"
+          fi
+
+      - name: Resolve and bind the immutable release digests
+        id: release_identity
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          EXPECTED_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+          EXPECTED_PUBLIC_BUILD_CONFIG_SHA256: ${{ inputs.public_build_config_sha256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          archive=".artifacts/set-livre-${RELEASE_SHA}.tar.gz"
+          sidecar="${archive}.sha256"
+          test -f "$archive" && test ! -L "$archive"
+          test -f "$sidecar" && test ! -L "$sidecar"
+          archive_sha256="$(sha256sum -- "$archive" | awk '{print $1}')"
+          [[ "$archive_sha256" =~ ^[a-f0-9]{64}$ ]]
+          test "$(cat -- "$sidecar")" = "$archive_sha256  $(basename -- "$archive")"
+          public_build_config_sha256="$(
+            tar -xOf "$archive" release/manifest.json |
+              node -e '
+                let source = "";
+                process.stdin.setEncoding("utf8");
+                process.stdin.on("data", (chunk) => { source += chunk; });
+                process.stdin.on("end", () => {
+                  const manifest = JSON.parse(source);
+                  const digest = manifest?.publicBuildConfigSha256;
+                  if (!/^[a-f0-9]{64}$/u.test(digest ?? "")) process.exit(1);
+                  process.stdout.write(digest + "\n");
+                });
+              '
+          )"
+          [[ "$public_build_config_sha256" =~ ^[a-f0-9]{64}$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            test "$archive_sha256" = "$EXPECTED_ARCHIVE_SHA256"
+            test "$public_build_config_sha256" = "$EXPECTED_PUBLIC_BUILD_CONFIG_SHA256"
+          fi
+          {
+            printf 'archive_sha256=%s\n' "$archive_sha256"
+            printf 'public_build_config_sha256=%s\n' "$public_build_config_sha256"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Supply-chain and dead-code gates
+        id: supply_chain
+        run: |
+          set -euo pipefail
+          npm run audit
+          npm run knip
+
+      - name: Stop the scoped local Supabase stack
+        id: cleanup_supabase
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -x node_modules/.bin/supabase ]]; then
+            npm run supabase:stop
+          fi
+
+      # actions/upload-artifact@v4.6.2
+      - name: Deliver canonical release artifact to the production workflow
+        id: release_upload
+        if: >-
+          github.event_name != 'pull_request' &&
+          vars.PRD_DEPLOY_ENABLED == 'true' &&
+          vars.SET_LIVRE_REPOSITORY_ID != '' &&
+          vars.CI_GITHUB_WORKFLOW_ID != '' &&
+          vars.PRD_GITHUB_WORKFLOW_ID != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: set-livre-ci-${{ env.RELEASE_SHA }}-${{ steps.release_identity.outputs.archive_sha256 }}-${{ steps.release_identity.outputs.public_build_config_sha256 }}
+          path: |
+            .artifacts/set-livre-${{ env.RELEASE_SHA }}.tar.gz
+            .artifacts/set-livre-${{ env.RELEASE_SHA }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          include-hidden-files: true
+
+      - name: Write allowlisted CI failure report
+        id: failure_report
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          report_root=ci-failure-artifact
+          rm -rf -- "$report_root"
+          install -d -m 0700 "$report_root"
+          node --input-type=module - \
+            "$report_root/ci-failure.json" \
+            "$RELEASE_SHA" \
+            "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_NUMBER" \
+            "$GITHUB_RUN_ATTEMPT" \
+            "${{ steps.checkout.outcome }}" \
+            "${{ steps.delivery_identity.outcome }}" \
+            "${{ steps.workflow_tooling.outcome }}" \
+            "${{ steps.setup_node.outcome }}" \
+            "${{ steps.npm_toolchain.outcome }}" \
+            "${{ steps.dependencies.outcome }}" \
+            "${{ steps.static_unit.outcome }}" \
+            "${{ steps.supabase_reset.outcome }}" \
+            "${{ steps.database_docs.outcome }}" \
+            "${{ steps.playwright_install.outcome }}" \
+            "${{ steps.e2e_affected.outcome }}" \
+            "${{ steps.e2e_complete.outcome }}" \
+            "${{ steps.build.outcome }}" \
+            "${{ steps.supply_chain.outcome }}" \
+            "${{ steps.cleanup_supabase.outcome }}" \
+            "${{ steps.release_upload.outcome }}" <<'NODE'
+          import { writeFileSync } from "node:fs";
+
+          const stepNames = [
+            "checkout",
+            "delivery_identity",
+            "workflow_tooling",
+            "setup_node",
+            "npm_toolchain",
+            "dependencies",
+            "static_unit",
+            "supabase_reset",
+            "database_docs",
+            "playwright_install",
+            "e2e_affected",
+            "e2e_complete",
+            "build",
+            "supply_chain",
+            "cleanup_supabase",
+            "release_upload",
+          ];
+          const [destination, sha, runId, runNumber, runAttempt, ...outcomeValues] =
+            process.argv.slice(2);
+          const allowedOutcomes = new Set(["", "success", "failure", "cancelled", "skipped"]);
+          if (
+            !/^[a-f0-9]{40}$/.test(sha) ||
+            ![runId, runNumber, runAttempt].every((value) => /^[1-9][0-9]*$/.test(value)) ||
+            outcomeValues.length !== stepNames.length ||
+            !outcomeValues.every((value) => allowedOutcomes.has(value))
+          ) {
+            process.exit(1);
+          }
+          const steps = Object.fromEntries(
+            stepNames.map((name, index) => [name, outcomeValues[index] || "not-run"]),
+          );
+          const report = {
+            sha,
+            run: { id: runId, number: runNumber, attempt: runAttempt },
+            steps,
+          };
+          writeFileSync(destination, `${JSON.stringify(report, null, 2)}\n`, {
+            encoding: "utf8",
+            flag: "wx",
+            mode: 0o600,
+          });
+          NODE
+
+      # actions/upload-artifact@v4.6.2
+      - name: Upload allowlisted CI failure report
+        id: upload_failure_report
+        if: failure() && steps.failure_report.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-failure-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-failure-artifact/ci-failure.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
+          include-hidden-files: false
+
+  windows-native:
+    name: Windows native contracts
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      NPM_CONFIG_CACHE: ${{ github.workspace }}\.npm-cache
+      NPM_CLI_TARBALL_SHA256: 31e9770f7dc71119a58509353b27917557aaf0ac9b5ef1a0465ee7d8ec67ae75
+      NPM_CLI_TARBALL_SHA512: 48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003
+      NPM_CLI_TARBALL_URL: https://registry.npmjs.org/npm/-/npm-11.19.0.tgz
+      NPM_CLI_VERSION: "11.19.0"
+    steps:
+      # actions/checkout@v5.1.0
+      - name: Checkout exact revision for Windows contracts
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # actions/setup-node@v5.0.0
+      - name: Install Node.js 24.18.0 for Windows contracts
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install and verify npm 11.19.0 on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $npmRoot = Join-Path $env:RUNNER_TEMP ("set-livre-npm-" + [Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $npmRoot | Out-Null
+          try {
+            $npmArchive = Join-Path $npmRoot ("npm-" + $env:NPM_CLI_VERSION + ".tgz")
+            & curl.exe --fail --silent --show-error --location `
+              --proto "=https" --proto-redir "=https" --tlsv1.2 `
+              --connect-timeout 10 --max-time 120 --retry 0 `
+              --output $npmArchive $env:NPM_CLI_TARBALL_URL
+            if ($LASTEXITCODE -ne 0) { throw "O download fixado do npm falhou." }
+            if ((Get-FileHash -LiteralPath $npmArchive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:NPM_CLI_TARBALL_SHA256) {
+              throw "O SHA-256 do npm fixado divergiu."
+            }
+            if ((Get-FileHash -LiteralPath $npmArchive -Algorithm SHA512).Hash.ToLowerInvariant() -cne $env:NPM_CLI_TARBALL_SHA512) {
+              throw "O SHA-512 do npm fixado divergiu."
+            }
+            & npm install --global --ignore-scripts --offline --no-audit --no-fund $npmArchive
+            if ($LASTEXITCODE -ne 0) { throw "A instalação lockada do npm falhou." }
+            if ((node --version) -cne "v24.18.0") { throw "A versão do Node divergiu." }
+            if ((npm --version) -cne $env:NPM_CLI_VERSION) { throw "A versão do npm divergiu." }
+          } finally {
+            $npmRootItem = Get-Item -LiteralPath $npmRoot -Force -ErrorAction Stop
+            if (-not $npmRootItem.PSIsContainer -or
+                ($npmRootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+              throw "A raiz temporária do npm deixou de ser um diretório físico."
+            }
+            Remove-Item -LiteralPath $npmRoot -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $npmRoot) {
+              throw "A limpeza da raiz temporária do npm não foi concluída."
+            }
+          }
+
+      - name: Install locked dependencies on Windows
+        run: npm ci
+
+      - name: Run complete Windows unit contract
+        run: npm run test:unit
+
+      - name: Build the public application natively on Windows
+        shell: pwsh
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://app_runtime_ci:windows-ci-password@db.windows-ci.invalid:5432/postgres?sslmode=require&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://web.windows-ci.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: windows-ci-public-key-no-authority
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.windows-ci.invalid
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm run build:web
+          if ($LASTEXITCODE -ne 0) { throw "O build Windows da aplicação pública falhou." }
+          $buildId = (Get-Content -LiteralPath ".next/BUILD_ID" -Raw -ErrorAction Stop).Trim()
+          if ($buildId -cne $env:APP_RELEASE_SHA) { throw "O BUILD_ID público divergiu do SHA aprovado." }
+          $standalone = Get-Item -LiteralPath ".next/standalone" -Force -ErrorAction Stop
+          if (-not $standalone.PSIsContainer -or
+              ($standalone.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "O standalone público não é um diretório físico."
+          }
+
+      - name: Build the backoffice natively on Windows
+        shell: pwsh
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.release_sha || github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://app_runtime_ci:windows-ci-password@db.windows-ci.invalid:5432/postgres?sslmode=require&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://backoffice.windows-ci.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: windows-ci-public-key-no-authority
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.windows-ci.invalid
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          npm run build:backoffice
+          if ($LASTEXITCODE -ne 0) { throw "O build Windows do backoffice falhou." }
+          $buildId = (Get-Content -LiteralPath "apps/backoffice/.next/BUILD_ID" -Raw -ErrorAction Stop).Trim()
+          if ($buildId -cne $env:APP_RELEASE_SHA) { throw "O BUILD_ID do backoffice divergiu do SHA aprovado." }
+          $standalone = Get-Item -LiteralPath "apps/backoffice/.next/standalone" -Force -ErrorAction Stop
+          if (-not $standalone.PSIsContainer -or
+              ($standalone.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "O standalone do backoffice não é um diretório físico."
+          }
+
+      - name: Prove Windows builds did not rewrite tracked environment declarations
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git diff --exit-code -- next-env.d.ts apps/backoffice/next-env.d.ts
+          if ($LASTEXITCODE -ne 0) { throw "O build Windows alterou declarações versionadas do Next." }

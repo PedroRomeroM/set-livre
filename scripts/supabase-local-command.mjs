@@ -2,20 +2,32 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 import { assertDatabaseGeneratedArtifactsCurrent } from "./check-database-generated-artifacts.mjs";
-import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
+import {
+  assertLocalDockerDaemon,
+  canonicalDockerCliPath,
+  resolveTrustedDockerCli,
+} from "./docker-local-context.mjs";
 import { generateDatabaseTypes } from "./generate-database-types.mjs";
 import { generateSchemaSnapshot } from "./generate-schema-snapshot.mjs";
 import {
   assertSupabaseLoopbackBindings,
   assertSupabaseProjectStopped,
+  describeSupabaseLocalPublication,
   ensureSupabaseLoopbackNetwork,
   supabaseLocalProjectId,
   supabaseProjectContainersAreRunning,
 } from "./supabase-local-network.mjs";
 import { executeSupabaseLocalCommand } from "./supabase-command-executor.mjs";
+import { acquireSupabaseOperationLock } from "./supabase-operation-lock.mjs";
 
 const command = process.argv[2];
+const supportedCommands = new Set(["schema", "start", "status", "stop", "test-db", "types"]);
+if (!supportedCommands.has(command)) {
+  throw new Error("Comando Supabase local não suportado.");
+}
+await using supabaseOperationLock = await acquireSupabaseOperationLock();
 const localDockerEnvironment = assertLocalDockerDaemon();
+const localNetworkDescription = describeSupabaseLocalPublication();
 
 function supabase(argumentsList, capture = false, includeNetwork = true) {
   return executeSupabaseLocalCommand(argumentsList, {
@@ -34,7 +46,14 @@ if (command === "stop") {
   stopScopedSupabaseStack();
   process.stdout.write("Stack Supabase local encerrada.\n");
 } else {
-  execFileSync("docker", ["info"], { env: localDockerEnvironment, stdio: "ignore" });
+  const dockerCliPath = resolveTrustedDockerCli();
+  if (dockerCliPath !== canonicalDockerCliPath()) {
+    throw new Error("A CLI Docker validada diverge do caminho canônico permitido.");
+  }
+  execFileSync(dockerCliPath, ["info"], {
+    env: localDockerEnvironment,
+    stdio: "ignore",
+  });
   if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
     try {
       assertSupabaseLoopbackBindings(localDockerEnvironment);
@@ -54,11 +73,11 @@ if (command === "stop") {
       }
       throw error;
     }
-    process.stdout.write("Stack Supabase local restrita a 127.0.0.1.\n");
+    process.stdout.write(`Stack Supabase local ${localNetworkDescription}.\n`);
   } else if (command === "status") {
     supabase(["status", "--output", "env"], true);
     assertSupabaseLoopbackBindings(localDockerEnvironment);
-    process.stdout.write("Stack Supabase local ativa e restrita a 127.0.0.1.\n");
+    process.stdout.write(`Stack Supabase local ativa e ${localNetworkDescription}.\n`);
   } else if (command === "test-db") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
     supabase(["test", "db", "--local"]);
@@ -107,7 +126,6 @@ if (command === "stop") {
   } else if (command === "types") {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
     supabase(["gen", "types", "typescript", "--local", "--schema", "public"]);
-  } else {
-    throw new Error("Comando Supabase local não suportado.");
   }
 }
+await supabaseOperationLock.release();

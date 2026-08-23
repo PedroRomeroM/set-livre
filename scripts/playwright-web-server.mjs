@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createLocalDevelopmentServerLaunch } from "./local-development-server.mjs";
-import { terminateWindowsProcessTree } from "./windows-process-tree.mjs";
+import { spawnSupervisedProcess } from "./development-process-tree.mjs";
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
 const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
@@ -20,13 +20,17 @@ function exitCodeForUnexpectedClose(code, signal) {
 
 export function createPlaywrightWebServerLaunch({
   application,
+  fileSecurityOptions,
   inheritedEnvironment = process.env,
+  platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
 } = {}) {
   return createLocalDevelopmentServerLaunch({
     application,
     detached: false,
+    fileSecurityOptions,
     inheritedEnvironment,
+    platform,
     repositoryRoot,
     runtimeMode: "test",
   });
@@ -34,18 +38,21 @@ export function createPlaywrightWebServerLaunch({
 
 export async function runPlaywrightWebServer({
   application,
+  fileSecurityOptions,
   forceShutdownMilliseconds = 5_000,
   inheritedEnvironment = process.env,
   platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
   signalProcessGroup = process.kill,
   signalSource = process,
+  spawnManagedProcess = spawnSupervisedProcess,
   spawnProcess = spawn,
-  terminateWindowsTree = terminateWindowsProcessTree,
 } = {}) {
   const launch = createPlaywrightWebServerLaunch({
     application,
+    fileSecurityOptions,
     inheritedEnvironment,
+    platform,
     repositoryRoot,
   });
   return new Promise((resolveRun, rejectRun) => {
@@ -60,11 +67,9 @@ export async function runPlaywrightWebServer({
       }
       if (platform === "win32") {
         try {
-          terminateWindowsTree(child.pid, {
-            systemRoot: launch.options.env.SystemRoot ?? launch.options.env.SYSTEMROOT,
-          });
+          child.kill("SIGKILL");
         } catch {
-          // O timeout repetirá a tentativa sem expor ambiente ou detalhes do processo.
+          // O timeout repetirá o fechamento do guardian sem expor detalhes do processo.
         }
         return;
       }
@@ -122,7 +127,10 @@ export async function runPlaywrightWebServer({
     signalSource.on("SIGTERM", handleSigterm);
 
     try {
-      child = spawnProcess(launch.command, launch.argumentsList, launch.options);
+      child = spawnManagedProcess(launch.command, launch.argumentsList, launch.options, {
+        platform,
+        spawnProcess,
+      });
     } catch {
       settled = true;
       cleanup();

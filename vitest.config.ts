@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { availableParallelism } from "node:os";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -11,6 +12,7 @@ export default defineConfig({
     },
     environment: "node",
     include: ["tests/unit/**/*.{test,spec}.{ts,tsx,mts,mjs}"],
+    maxWorkers: Math.min(4, availableParallelism()),
     passWithNoTests: false,
     reporters: ["default"],
   },

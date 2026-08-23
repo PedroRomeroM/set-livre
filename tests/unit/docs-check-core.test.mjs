@@ -18,8 +18,11 @@ import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { directorySymbolicLinkType } from "../fixtures/filesystem-capabilities.mjs";
+
 import {
   collectMatches,
+  containsEncodedPrivateKey,
   findDuplicates,
   findForbiddenInstallDependencies,
   gitChangedFileArgumentLists,
@@ -72,6 +75,31 @@ function withProcessEnvironment(overrides, operation) {
       }
     }
   }
+}
+
+function createDirectoryLink(targetPath, linkPath) {
+  symlinkSync(targetPath, linkPath, directorySymbolicLinkType);
+}
+
+function stageGitBlob(repository, path, source, mode) {
+  const objectId = execFileSync("git", ["hash-object", "-w", "--stdin"], {
+    cwd: repository,
+    encoding: "utf8",
+    input: source,
+    stdio: ["pipe", "pipe", "ignore"],
+  }).trim();
+  execFileSync("git", ["update-index", "--add", "--cacheinfo", mode, objectId, path], {
+    cwd: repository,
+    stdio: "ignore",
+  });
+}
+
+function stageGitSymbolicLink(repository, path, target) {
+  stageGitBlob(repository, path, target, "120000");
+}
+
+function stageGitRegularFile(repository, path, source) {
+  stageGitBlob(repository, path, source, "100644");
 }
 
 describe("docs check core", () => {
@@ -311,14 +339,29 @@ describe("docs check core", () => {
       mkdirSync(join(repository, "apps/coverage"));
       expect(() => readCanonicalPackageManifests(repository)).toThrow("conjunto canônico");
       rmSync(join(repository, "apps/coverage"), { recursive: true });
-      symlinkSync("backoffice", join(repository, "apps/symbolic-workspace"));
+      createDirectoryLink(
+        join(repository, "apps/backoffice"),
+        join(repository, "apps/symbolic-workspace"),
+      );
       expect(() => readCanonicalPackageManifests(repository)).toThrow("precisa ser físico");
       rmSync(join(repository, "apps/symbolic-workspace"));
-      rmSync(join(repository, "packages/ui/package.json"));
-      symlinkSync("../contracts/package.json", join(repository, "packages/ui/package.json"));
-      expect(() => readCanonicalPackageManifests(repository)).toThrow("físico e regular");
-      rmSync(join(repository, "packages/ui/package.json"));
-      writeFileSync(join(repository, "packages/ui/package.json"), "{}\n");
+      if (process.platform === "win32") {
+        rmSync(join(repository, "packages/ui"), { recursive: true });
+        createDirectoryLink(
+          join(repository, "packages/contracts"),
+          join(repository, "packages/ui"),
+        );
+        expect(() => readCanonicalPackageManifests(repository)).toThrow("físico");
+        rmSync(join(repository, "packages/ui"));
+        mkdirSync(join(repository, "packages/ui"));
+        writeFileSync(join(repository, "packages/ui/package.json"), "{}\n");
+      } else {
+        rmSync(join(repository, "packages/ui/package.json"));
+        symlinkSync("../contracts/package.json", join(repository, "packages/ui/package.json"));
+        expect(() => readCanonicalPackageManifests(repository)).toThrow("físico e regular");
+        rmSync(join(repository, "packages/ui/package.json"));
+        writeFileSync(join(repository, "packages/ui/package.json"), "{}\n");
+      }
       writeFileSync(join(repository, "packages/ui/binding.gyp"), "{}\n");
       expect(() => readCanonicalPackageManifests(repository)).toThrow("binding.gyp");
       rmSync(join(repository, "packages/ui/binding.gyp"));
@@ -576,7 +619,10 @@ ${rows.join("\n")}
     const specRoot = join(repository, "tests/e2e/critical");
     const validSpec = "tests/e2e/critical/valid.spec.ts";
     const otherSpec = "tests/e2e/critical/other.spec.ts";
-    const symbolicSpec = "tests/e2e/critical/symbolic.spec.ts";
+    const symbolicSpec =
+      process.platform === "win32"
+        ? "tests/e2e/critical/symbolic-spec/valid.spec.ts"
+        : "tests/e2e/critical/symbolic.spec.ts";
     const symbolicParentSpec = "tests/e2e/symbolic-suite/parent.spec.ts";
     const directorySpec = "tests/e2e/critical/directory.spec.ts";
     const scenarioId = "SL-F001-E2E-001";
@@ -591,13 +637,29 @@ ${rows.join("\n")}
         join(repository, otherSpec),
         `${playwrightImport}test("SL-F001-E2E-002 outro cenário", () => {});\n`,
       );
-      symlinkSync("valid.spec.ts", join(repository, symbolicSpec));
       mkdirSync(join(repository, "outside-suite"));
       writeFileSync(
         join(repository, "outside-suite/parent.spec.ts"),
         `${playwrightImport}test("${scenarioId} fora da árvore física", () => {});\n`,
       );
-      symlinkSync("../../outside-suite", join(repository, "tests/e2e/symbolic-suite"));
+      if (process.platform === "win32") {
+        const externalSpecDirectory = join(repository, "outside-symbolic-spec");
+        mkdirSync(externalSpecDirectory);
+        writeFileSync(
+          join(externalSpecDirectory, "valid.spec.ts"),
+          `${playwrightImport}test("${scenarioId} por ancestral não físico", () => {});\n`,
+        );
+        createDirectoryLink(
+          externalSpecDirectory,
+          join(repository, "tests/e2e/critical/symbolic-spec"),
+        );
+      } else {
+        symlinkSync("valid.spec.ts", join(repository, symbolicSpec));
+      }
+      createDirectoryLink(
+        join(repository, "outside-suite"),
+        join(repository, "tests/e2e/symbolic-suite"),
+      );
       mkdirSync(join(repository, directorySpec));
 
       expect(validateAutomatedQaSpec(repository, { id: scenarioId, spec: validSpec })).toBeNull();
@@ -717,6 +779,18 @@ ${rows.join("\n")}
       { path: "new.ts", status: "R" },
       { path: "type-changed.ts", status: "T" },
     ]);
+    for (const invalidPath of [
+      "NUL",
+      "nested/con.txt",
+      "nested/COM1.json",
+      "trailing-dot.",
+      "trailing-space ",
+      "back\\slash.ts",
+    ]) {
+      expect(() => parseGitChanges(`${invalidPath}\0`, "A"), invalidPath).toThrow(
+        /não é portável/u,
+      );
+    }
     expect(parsedChanges.filter(isAddedChangeRecord)).toEqual([
       { path: "docs/changes/2026-08-09-new.md", status: "A" },
     ]);
@@ -736,6 +810,18 @@ ${rows.join("\n")}
       ),
     ).toBe(false);
     expect(isProgressSummaryChange({ path: "docs/context.md", status: "M" })).toBe(false);
+
+    const encodedKeyBody = Buffer.alloc(300, 7).toString("base64");
+    expect(
+      containsEncodedPrivateKey(
+        `-----BEGIN PRIVATE KEY-----\n${encodedKeyBody}\n-----END PRIVATE KEY-----\n`,
+      ),
+    ).toBe(true);
+    expect(
+      containsEncodedPrivateKey(
+        "-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----\n",
+      ),
+    ).toBe(false);
 
     for (const path of [
       ".editorconfig",
@@ -808,49 +894,139 @@ ${rows.join("\n")}
     }
 
     const repository = mkdtempSync(join(tmpdir(), "set-livre-git-changes-"));
-    const git = (...argumentsList) =>
-      execFileSync("git", argumentsList, {
-        cwd: repository,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+    const canonicalRepository = repository.split("\\").join("/");
+    const rootRevision = "1".repeat(40);
+    const mainRevision = "2".repeat(40);
+    const featureRevision = "3".repeat(40);
+    const deterministicReader = ({
+      committedPath,
+      expectedBase,
+      headMarker,
+      headRevision,
+      localMainRevision,
+    }) => {
+      const observedArguments = [];
+      const executeGit = (command, argumentsList, options) => {
+        expect(command).toBe("git");
+        expect(options.cwd).toBe(repository);
+        observedArguments.push(argumentsList);
+
+        if (
+          argumentsList[0] === "rev-parse" &&
+          argumentsList[1] === "--show-toplevel" &&
+          argumentsList[2] === "HEAD^{commit}"
+        ) {
+          return canonicalRepository + "\n" + headRevision + "\n";
+        }
+        if (argumentsList[0] === "for-each-ref") {
+          return headMarker + "\0refs/heads/main\0" + localMainRevision + "\0commit\n";
+        }
+        if (argumentsList[0] === "merge-base") {
+          expect(argumentsList).toEqual(["merge-base", localMainRevision, "HEAD"]);
+          return localMainRevision + "\n";
+        }
+        if (argumentsList[0] === "rev-list" && argumentsList[1] === "--max-parents=0") {
+          return rootRevision + "\n";
+        }
+        if (argumentsList[0] === "diff") {
+          return argumentsList.includes(expectedBase + "...HEAD")
+            ? "A\0" + committedPath + "\0"
+            : "";
+        }
+        if (argumentsList[0] === "ls-files") {
+          return "";
+        }
+        throw new Error("Comando Git inesperado no cenário determinístico.");
+      };
+
+      return {
+        observedArguments,
+        result: readGitChanges(repository, executeGit),
+      };
+    };
+
     try {
-      git("init", "--initial-branch", "main");
-      git("config", "user.email", "qa@set-livre.local");
-      git("config", "user.name", "Set Livre QA");
-      writeFileSync(join(repository, "README.md"), "# Baseline\n", "utf8");
-      git("add", "README.md");
-      git("commit", "-m", "baseline");
-      const rootRevision = git("rev-parse", "HEAD").trim();
-
-      mkdirSync(join(repository, "docs"));
-      writeFileSync(join(repository, "docs/on-main.md"), "# Markdown na main local\n", "utf8");
-      git("add", "docs/on-main.md");
-      git("commit", "-m", "docs on main");
-      const mainRevision = git("rev-parse", "HEAD").trim();
-
-      const localMainAtHeadChanges = readGitChanges(repository);
-      expect(localMainAtHeadChanges.comparisonBase).toBe(rootRevision);
-      expect(localMainAtHeadChanges.changes).toContainEqual({
+      const localMainAtHead = deterministicReader({
+        committedPath: "docs/on-main.md",
+        expectedBase: rootRevision,
+        headMarker: "*",
+        headRevision: mainRevision,
+        localMainRevision: mainRevision,
+      });
+      expect(localMainAtHead.result.comparisonBase).toBe(rootRevision);
+      expect(localMainAtHead.result.changes).toContainEqual({
         path: "docs/on-main.md",
         status: "A",
       });
+      expect(
+        localMainAtHead.observedArguments.filter(([command]) => command === "for-each-ref"),
+      ).toHaveLength(1);
+      expect(
+        localMainAtHead.observedArguments.some(([command]) => command === "symbolic-ref"),
+      ).toBe(false);
 
-      git("switch", "--create", "feature");
-      writeFileSync(join(repository, "docs/committed.md"), "# Markdown commitado\n", "utf8");
-      git("add", "docs/committed.md");
-      git("commit", "-m", "docs");
-
-      const localMainChanges = readGitChanges(repository);
-      expect(localMainChanges.comparisonBase).toBe(mainRevision);
-      expect(localMainChanges.changes).toContainEqual({
+      const localMain = deterministicReader({
+        committedPath: "docs/committed.md",
+        expectedBase: mainRevision,
+        headMarker: " ",
+        headRevision: featureRevision,
+        localMainRevision: mainRevision,
+      });
+      expect(localMain.result.comparisonBase).toBe(mainRevision);
+      expect(localMain.result.changes).toContainEqual({
         path: "docs/committed.md",
         status: "A",
       });
+      expect(
+        localMain.observedArguments.filter(([command]) => command === "merge-base"),
+      ).toHaveLength(1);
+      expect(
+        localMain.observedArguments.some(
+          ([command, argument]) => command === "rev-list" && argument === "--count",
+        ),
+      ).toBe(false);
 
-      git("branch", "--delete", "--force", "main");
+      const git = (...argumentsList) =>
+        execFileSync("git", argumentsList, {
+          cwd: repository,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+      git("init", "--initial-branch", "main");
+      const dataCommand = (value) => `data ${Buffer.byteLength(value, "utf8")}\n${value}`;
+      const identity = "Set Livre QA <qa@set-livre.local> 0 +0000\n";
+      const importedMarks = execFileSync("git", ["fast-import", "--quiet"], {
+        cwd: repository,
+        encoding: "utf8",
+        input: [
+          "commit refs/heads/feature\n",
+          "mark :1\n",
+          "author " + identity,
+          "committer " + identity,
+          dataCommand("baseline\n"),
+          "M 100644 inline README.md\n",
+          dataCommand("# Baseline\n"),
+          "\n",
+          "commit refs/heads/feature\n",
+          "mark :2\n",
+          "author " + identity,
+          "committer " + identity,
+          dataCommand("docs\n"),
+          "from :1\n",
+          "M 100644 inline docs/committed.md\n",
+          dataCommand("# Markdown commitado\n"),
+          "\n",
+          "get-mark :1\n",
+          "done\n",
+        ].join(""),
+        stdio: ["pipe", "pipe", "ignore"],
+      }).trim();
+      expect(importedMarks).toMatch(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u);
+      const realRootRevision = importedMarks;
+      git("switch", "feature");
+
       const rootFallbackChanges = readGitChanges(repository);
-      expect(rootFallbackChanges.comparisonBase).toBe(rootRevision);
+      expect(rootFallbackChanges.comparisonBase).toBe(realRootRevision);
       expect(rootFallbackChanges.changes).toContainEqual({
         path: "docs/committed.md",
         status: "A",
@@ -860,195 +1036,247 @@ ${rows.join("\n")}
     }
   });
 
-  it("enforces append-only migrations against the real Git comparison base", () => {
-    const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-git-"));
-    const baselineName = "20260810000100_baseline.sql";
-    const baselinePath = `supabase/migrations/${baselineName}`;
-    const createRepository = (name) => {
-      const repository = join(testRoot, name);
-      mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
-      const git = (...argumentsList) =>
-        execFileSync("git", argumentsList, {
-          cwd: repository,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-      git("init", "--initial-branch", "main");
-      git("config", "user.email", "qa@set-livre.local");
-      git("config", "user.name", "Set Livre QA");
-      git("config", "diff.renames", "true");
-      writeFileSync(join(repository, baselinePath), "select 1;\n", "utf8");
-      git("add", baselinePath);
-      git("commit", "-m", "database baseline");
-      git("switch", "--create", "feature");
-      return { git, repository };
-    };
-    const migrationGate = (repository) => {
-      const gitState = readGitChanges(repository);
-      const baselineMigrationPaths = readGitMigrationPathsAtRevision(
-        repository,
-        gitState.comparisonBase,
-      );
-      return {
-        errors: validateMigrationGitChanges(gitState.changes, baselineMigrationPaths, {
-          repositoryRoot: repository,
-        }),
-        gitState,
+  it(
+    "enforces append-only migrations against the real Git comparison base",
+    { timeout: 15_000 },
+    () => {
+      const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-git-"));
+      const migrationPath = (name) => "supabase/migrations/" + name;
+      const baselineNames = {
+        deleted: "20260810000200_deleted.sql",
+        modified: "20260810000100_modified.sql",
+        renamed: "20260810000300_renamed.sql",
+        typeChanged: "20260810000400_type_changed.sql",
       };
-    };
+      const baselineHead = "20260810000400";
+      const baselinePath = migrationPath(baselineNames.modified);
+      const templateRepository = join(testRoot, "template");
+      mkdirSync(join(templateRepository, "supabase/migrations"), { recursive: true });
 
-    try {
-      const legitimate = createRepository("legitimate");
-      const legitimatePath = "supabase/migrations/20260810000200_legitimate.sql";
-      writeFileSync(join(legitimate.repository, legitimatePath), "select 2;\n", "utf8");
-      expect(migrationGate(legitimate.repository).errors).toEqual([]);
-      legitimate.git("add", legitimatePath);
-      legitimate.git("commit", "-m", "add migration");
-      writeFileSync(join(legitimate.repository, legitimatePath), "select 2;\nselect 3;\n", "utf8");
-      expect(migrationGate(legitimate.repository).errors).toEqual([]);
+      const executeFixtureGit = (repository, argumentsList) =>
+        execFileSync(
+          "git",
+          ["-c", "user.email=qa@set-livre.local", "-c", "user.name=Set Livre QA", ...argumentsList],
+          {
+            cwd: repository,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        );
+      const templateGit = (...argumentsList) =>
+        executeFixtureGit(templateRepository, argumentsList);
+      templateGit("init", "--initial-branch", "main");
+      templateGit("config", "diff.renames", "true");
+      for (const name of Object.values(baselineNames)) {
+        writeFileSync(join(templateRepository, migrationPath(name)), "select 1;\n", "utf8");
+      }
+      templateGit("add", "supabase/migrations");
+      templateGit("commit", "-m", "database baseline");
+      templateGit("switch", "--detach");
 
-      const modified = createRepository("modified");
-      writeFileSync(join(modified.repository, baselinePath), "select 99;\n", "utf8");
-      expect(migrationGate(modified.repository).errors).toContain(
-        `Migration aplicada é imutável: ${baselinePath} recebeu status M.`,
-      );
+      const createRepository = (name) => {
+        const repository = join(testRoot, name);
+        templateGit("worktree", "add", "--detach", repository, "main");
+        return {
+          git: (...argumentsList) => executeFixtureGit(repository, argumentsList),
+          repository,
+        };
+      };
+      const baselineMigrationPathsByRevision = new Map();
+      const migrationGate = (repository) => {
+        const gitState = readGitChanges(repository);
+        let baselineMigrationPaths = [];
+        if (gitState.comparisonBase !== null) {
+          baselineMigrationPaths = baselineMigrationPathsByRevision.get(gitState.comparisonBase);
+          if (baselineMigrationPaths === undefined) {
+            baselineMigrationPaths = readGitMigrationPathsAtRevision(
+              repository,
+              gitState.comparisonBase,
+            );
+            baselineMigrationPathsByRevision.set(gitState.comparisonBase, baselineMigrationPaths);
+          }
+        }
+        return {
+          errors: validateMigrationGitChanges(gitState.changes, baselineMigrationPaths, {
+            repositoryRoot: repository,
+          }),
+          gitState,
+        };
+      };
 
-      const deleted = createRepository("deleted");
-      rmSync(join(deleted.repository, baselinePath));
-      expect(migrationGate(deleted.repository).errors).toContain(
-        `Migration aplicada é imutável: ${baselinePath} recebeu status D.`,
-      );
+      try {
+        const legitimate = createRepository("legitimate");
+        const legitimatePath = migrationPath("20260810000500_legitimate.sql");
+        writeFileSync(join(legitimate.repository, legitimatePath), "select 2;\n", "utf8");
+        expect(migrationGate(legitimate.repository).errors).toEqual([]);
+        legitimate.git("add", legitimatePath);
+        legitimate.git("commit", "-m", "add migration");
+        writeFileSync(
+          join(legitimate.repository, legitimatePath),
+          "select 2;\nselect 3;\n",
+          "utf8",
+        );
+        expect(migrationGate(legitimate.repository).errors).toEqual([]);
 
-      const renamed = createRepository("renamed");
-      const renamedPath = "supabase/migrations/20260810000200_renamed.sql";
-      renamed.git("mv", baselinePath, renamedPath);
-      const renamedResult = migrationGate(renamed.repository);
-      expect(renamedResult.gitState.changes).toEqual(
-        expect.arrayContaining([
-          { path: baselinePath, status: "R" },
-          { path: renamedPath, status: "R" },
-        ]),
-      );
-      expect(renamedResult.errors).toContain(
-        `Migration aplicada é imutável: ${baselinePath} recebeu status R.`,
-      );
+        const invalid = createRepository("invalid-matrix");
+        const modifiedPath = migrationPath(baselineNames.modified);
+        writeFileSync(join(invalid.repository, modifiedPath), "select 99;\n", "utf8");
 
-      const typeChanged = createRepository("type-changed");
-      rmSync(join(typeChanged.repository, baselinePath));
-      symlinkSync("external.sql", join(typeChanged.repository, baselinePath));
-      expect(migrationGate(typeChanged.repository).errors).toEqual(
-        expect.arrayContaining([
-          `Migration aplicada é imutável: ${baselinePath} recebeu status T.`,
-          `Migration precisa permanecer arquivo regular: ${baselinePath}.`,
-        ]),
-      );
+        const deletedPath = migrationPath(baselineNames.deleted);
+        rmSync(join(invalid.repository, deletedPath));
 
-      const symbolicAddition = createRepository("symbolic-addition");
-      const symbolicAdditionPath = "supabase/migrations/20260810000200_symbolic.sql";
-      symlinkSync(baselineName, join(symbolicAddition.repository, symbolicAdditionPath));
-      expect(migrationGate(symbolicAddition.repository).errors).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining(
-            `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${symbolicAdditionPath}`,
-          ),
-        ]),
-      );
+        const renamedPath = migrationPath(baselineNames.renamed);
+        const renamedTargetPath = migrationPath("20260810000900_renamed.sql");
+        invalid.git("mv", renamedPath, renamedTargetPath);
 
-      const hardLinkedAddition = createRepository("hard-linked-addition");
-      const hardLinkSource = join(testRoot, "outside-migration.sql");
-      const hardLinkedAdditionPath = "supabase/migrations/20260810000200_hard_linked.sql";
-      writeFileSync(hardLinkSource, "select 2;\n", "utf8");
-      linkSync(hardLinkSource, join(hardLinkedAddition.repository, hardLinkedAdditionPath));
-      expect(migrationGate(hardLinkedAddition.repository).errors).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining(
-            `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${hardLinkedAdditionPath}`,
-          ),
-        ]),
-      );
+        const typeChangedPath = migrationPath(baselineNames.typeChanged);
+        rmSync(join(invalid.repository, typeChangedPath));
+        if (process.platform === "win32") {
+          stageGitSymbolicLink(invalid.repository, typeChangedPath, "external.sql");
+        } else {
+          symlinkSync("external.sql", join(invalid.repository, typeChangedPath));
+        }
 
-      if (process.platform !== "win32") {
-        const fifoAddition = createRepository("fifo-addition");
-        const fifoAdditionPath = "supabase/migrations/20260810000200_fifo.sql";
-        execFileSync("mkfifo", [join(fifoAddition.repository, fifoAdditionPath)]);
-        expect(migrationGate(fifoAddition.repository).errors).toEqual(
+        const symbolicAdditionPath = migrationPath("20260810000500_symbolic.sql");
+        if (process.platform === "win32") {
+          stageGitSymbolicLink(invalid.repository, symbolicAdditionPath, baselineNames.modified);
+          mkdirSync(join(invalid.repository, symbolicAdditionPath));
+        } else {
+          symlinkSync(baselineNames.modified, join(invalid.repository, symbolicAdditionPath));
+        }
+
+        const hardLinkSource = join(testRoot, "outside-migration.sql");
+        const hardLinkedAdditionPath = migrationPath("20260810000600_hard_linked.sql");
+        writeFileSync(hardLinkSource, "select 2;\n", "utf8");
+        linkSync(hardLinkSource, join(invalid.repository, hardLinkedAdditionPath));
+
+        if (process.platform !== "win32") {
+          const fifoAdditionPath = migrationPath("20260810000700_fifo.sql");
+          execFileSync("mkfifo", [join(invalid.repository, fifoAdditionPath)]);
+        }
+
+        const directoryAdditionPath = migrationPath("20260810000750_directory.sql");
+        mkdirSync(join(invalid.repository, directoryAdditionPath));
+        writeFileSync(
+          join(invalid.repository, directoryAdditionPath, "payload"),
+          "select 2;\n",
+          "utf8",
+        );
+
+        const backdatedPath = migrationPath("20260809000100_backdated.sql");
+        const sameHeadPath = migrationPath("20260810000400_same_head.sql");
+        writeFileSync(join(invalid.repository, backdatedPath), "select 2;\n", "utf8");
+        writeFileSync(join(invalid.repository, sameHeadPath), "select 2;\n", "utf8");
+
+        const firstDuplicate = migrationPath("20260810000800_first.sql");
+        const secondDuplicate = migrationPath("20260810000800_second.sql");
+        writeFileSync(join(invalid.repository, firstDuplicate), "select 2;\n", "utf8");
+        writeFileSync(join(invalid.repository, secondDuplicate), "select 3;\n", "utf8");
+
+        const invalidResult = migrationGate(invalid.repository);
+        expect(invalidResult.gitState.changes).toEqual(
           expect.arrayContaining([
-            expect.stringContaining(
-              `Migration nova precisa ser arquivo físico regular exclusivo e estável: ${fifoAdditionPath}`,
-            ),
+            { path: modifiedPath, status: "M" },
+            { path: deletedPath, status: "D" },
+            { path: renamedPath, status: "R" },
+            { path: renamedTargetPath, status: "R" },
+            { path: typeChangedPath, status: "T" },
           ]),
         );
-      }
-
-      const directoryAddition = createRepository("directory-addition");
-      const directoryAdditionPath = "supabase/migrations/20260810000200_directory.sql";
-      mkdirSync(join(directoryAddition.repository, directoryAdditionPath));
-      writeFileSync(
-        join(directoryAddition.repository, directoryAdditionPath, "payload"),
-        "select 2;\n",
-        "utf8",
-      );
-      expect(migrationGate(directoryAddition.repository).errors).toContain(
-        `Nome de migration alterada inválido: ${directoryAdditionPath}/payload.`,
-      );
-
-      for (const [name, migrationName] of [
-        ["backdated", "20260809000100_backdated.sql"],
-        ["same-head", "20260810000100_same_head.sql"],
-      ]) {
-        const addition = createRepository(name);
-        const migrationPath = `supabase/migrations/${migrationName}`;
-        writeFileSync(join(addition.repository, migrationPath), "select 2;\n", "utf8");
-        expect(migrationGate(addition.repository).errors).toContain(
-          `Migration nova ${migrationPath} precisa avançar estritamente o head 20260810000100 da base Git.`,
+        expect(invalidResult.errors).toEqual(
+          expect.arrayContaining([
+            "Migration aplicada é imutável: " + modifiedPath + " recebeu status M.",
+            "Migration aplicada é imutável: " + deletedPath + " recebeu status D.",
+            "Migration aplicada é imutável: " + renamedPath + " recebeu status R.",
+            "Migration aplicada é imutável: " + typeChangedPath + " recebeu status T.",
+            "Migration precisa permanecer arquivo regular: " + typeChangedPath + ".",
+            expect.stringContaining(
+              "Migration nova precisa ser arquivo físico regular exclusivo e estável: " +
+                symbolicAdditionPath,
+            ),
+            expect.stringContaining(
+              "Migration nova precisa ser arquivo físico regular exclusivo e estável: " +
+                hardLinkedAdditionPath,
+            ),
+            "Nome de migration alterada inválido: " + directoryAdditionPath + "/payload.",
+            "Migration nova " +
+              backdatedPath +
+              " precisa avançar estritamente o head " +
+              baselineHead +
+              " da base Git.",
+            "Migration nova " +
+              sameHeadPath +
+              " precisa avançar estritamente o head " +
+              baselineHead +
+              " da base Git.",
+            "Migrations novas repetem a versão 20260810000800: " +
+              firstDuplicate +
+              " e " +
+              secondDuplicate +
+              ".",
+          ]),
         );
+        if (process.platform !== "win32") {
+          expect(invalidResult.errors).toEqual(
+            expect.arrayContaining([
+              expect.stringContaining(
+                "Migration nova precisa ser arquivo físico regular exclusivo e estável: " +
+                  migrationPath("20260810000700_fifo.sql"),
+              ),
+            ]),
+          );
+        }
+
+        const bootstrap = join(testRoot, "bootstrap");
+        mkdirSync(join(bootstrap, "supabase/migrations"), { recursive: true });
+        const bootstrapGit = (...argumentsList) =>
+          execFileSync(
+            "git",
+            [
+              "-c",
+              "user.email=qa@set-livre.local",
+              "-c",
+              "user.name=Set Livre QA",
+              ...argumentsList,
+            ],
+            {
+              cwd: bootstrap,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "ignore"],
+            },
+          );
+        bootstrapGit("init", "--initial-branch", "main");
+        writeFileSync(join(bootstrap, baselinePath), "select 1;\n", "utf8");
+        const bootstrapWithoutHead = migrationGate(bootstrap);
+        expect(bootstrapWithoutHead.gitState.comparisonBase).toBeNull();
+        expect(bootstrapWithoutHead.errors).toEqual([]);
+        bootstrapGit("add", baselinePath);
+        bootstrapGit("commit", "-m", "root migration");
+        const bootstrapAtRoot = migrationGate(bootstrap);
+        expect(bootstrapAtRoot.gitState.comparisonBase).toBeNull();
+        expect(bootstrapAtRoot.errors).toEqual([]);
+
+        const noOrigin = createRepository("no-origin-root-fallback");
+        noOrigin.git("branch", "--delete", "--force", "main");
+        const laterPath = migrationPath("20260810000500_later.sql");
+        writeFileSync(join(noOrigin.repository, laterPath), "select 2;\n", "utf8");
+        noOrigin.git("add", laterPath);
+        noOrigin.git("commit", "-m", "advance feature without main");
+        expect(migrationGate(noOrigin.repository).gitState.comparisonBase).not.toBeNull();
+        const invalidNoOriginPath = migrationPath("20260809000200_invalid.sql");
+        writeFileSync(join(noOrigin.repository, invalidNoOriginPath), "select 0;\n", "utf8");
+        expect(migrationGate(noOrigin.repository).errors).toContain(
+          "Migration nova " +
+            invalidNoOriginPath +
+            " precisa avançar estritamente o head " +
+            baselineHead +
+            " da base Git.",
+        );
+      } finally {
+        rmSync(testRoot, { force: true, recursive: true });
       }
-
-      const duplicated = createRepository("duplicated-version");
-      const firstDuplicate = "supabase/migrations/20260810000200_first.sql";
-      const secondDuplicate = "supabase/migrations/20260810000200_second.sql";
-      writeFileSync(join(duplicated.repository, firstDuplicate), "select 2;\n", "utf8");
-      writeFileSync(join(duplicated.repository, secondDuplicate), "select 3;\n", "utf8");
-      expect(migrationGate(duplicated.repository).errors).toContain(
-        `Migrations novas repetem a versão 20260810000200: ${firstDuplicate} e ${secondDuplicate}.`,
-      );
-
-      const bootstrap = join(testRoot, "bootstrap");
-      mkdirSync(join(bootstrap, "supabase/migrations"), { recursive: true });
-      const bootstrapGit = (...argumentsList) =>
-        execFileSync("git", argumentsList, {
-          cwd: bootstrap,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-      bootstrapGit("init", "--initial-branch", "main");
-      bootstrapGit("config", "user.email", "qa@set-livre.local");
-      bootstrapGit("config", "user.name", "Set Livre QA");
-      writeFileSync(join(bootstrap, baselinePath), "select 1;\n", "utf8");
-      expect(migrationGate(bootstrap).gitState.comparisonBase).toBeNull();
-      expect(migrationGate(bootstrap).errors).toEqual([]);
-      bootstrapGit("add", baselinePath);
-      bootstrapGit("commit", "-m", "root migration");
-      expect(migrationGate(bootstrap).gitState.comparisonBase).toBeNull();
-      expect(migrationGate(bootstrap).errors).toEqual([]);
-
-      const noOrigin = createRepository("no-origin-root-fallback");
-      noOrigin.git("branch", "--delete", "--force", "main");
-      const laterPath = "supabase/migrations/20260810000200_later.sql";
-      writeFileSync(join(noOrigin.repository, laterPath), "select 2;\n", "utf8");
-      noOrigin.git("add", laterPath);
-      noOrigin.git("commit", "-m", "advance feature without main");
-      expect(migrationGate(noOrigin.repository).gitState.comparisonBase).not.toBeNull();
-      const invalidNoOriginPath = "supabase/migrations/20260809000100_invalid.sql";
-      writeFileSync(join(noOrigin.repository, invalidNoOriginPath), "select 0;\n", "utf8");
-      expect(migrationGate(noOrigin.repository).errors).toContain(
-        `Migration nova ${invalidNoOriginPath} precisa avançar estritamente o head 20260810000100 da base Git.`,
-      );
-    } finally {
-      rmSync(testRoot, { force: true, recursive: true });
-    }
-  });
-
+    },
+  );
   it("keeps committed migration blobs and modes immutable on main, features, index and worktree", () => {
     const testRoot = mkdtempSync(join(tmpdir(), "set-livre-migration-history-"));
     const firstPath = "supabase/migrations/20260810000100_first.sql";
@@ -1210,7 +1438,7 @@ ${rows.join("\n")}
     } finally {
       rmSync(testRoot, { force: true, recursive: true });
     }
-  });
+  }, 30_000);
 
   it("requires every physical migration to be indexed or canonically visible as untracked", () => {
     const repository = mkdtempSync(join(tmpdir(), "set-livre-migration-visibility-"));
@@ -1330,11 +1558,15 @@ ${rows.join("\n")}
     const secondPath = "supabase/migrations/20260810000200_second.sql";
     mkdirSync(join(repository, "supabase/migrations"), { recursive: true });
     const git = (...argumentsList) =>
-      execFileSync("git", argumentsList, {
-        cwd: repository,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
+      execFileSync(
+        "git",
+        ["-c", "user.email=qa@set-livre.local", "-c", "user.name=Set Livre QA", ...argumentsList],
+        {
+          cwd: repository,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        },
+      ).trim();
     const historyGate = (root) => {
       const { comparisonBase } = readGitChanges(root);
       return validateMigrationRepositoryHistory(root, comparisonBase);
@@ -1342,19 +1574,47 @@ ${rows.join("\n")}
 
     try {
       git("init", "--initial-branch", "main");
-      git("config", "user.email", "qa@set-livre.local");
-      git("config", "user.name", "Set Livre QA");
-      writeFileSync(join(repository, firstPath), "select 1;\n", "utf8");
-      git("add", firstPath);
-      git("commit", "-m", "root migration");
-      const rootRevision = git("rev-parse", "HEAD");
-      writeFileSync(join(repository, secondPath), "select 2;\n", "utf8");
-      git("add", secondPath);
-      git("commit", "-m", "add migration");
-      writeFileSync(join(repository, secondPath), "select 999;\n", "utf8");
-      git("add", secondPath);
-      git("commit", "-m", "mutate committed migration");
-      const headRevision = git("rev-parse", "HEAD");
+      const dataCommand = (value) => `data ${Buffer.byteLength(value, "utf8")}\n${value}`;
+      const identity = "Set Livre QA <qa@set-livre.local> 0 +0000\n";
+      const [rootRevision, headRevision] = execFileSync("git", ["fast-import", "--quiet"], {
+        cwd: repository,
+        encoding: "utf8",
+        input: [
+          "commit refs/heads/main\n",
+          "mark :1\n",
+          "author " + identity,
+          "committer " + identity,
+          dataCommand("root migration\n"),
+          `M 100644 inline ${firstPath}\n`,
+          dataCommand("select 1;\n"),
+          "\n",
+          "commit refs/heads/main\n",
+          "mark :2\n",
+          "author " + identity,
+          "committer " + identity,
+          dataCommand("add migration\n"),
+          "from :1\n",
+          `M 100644 inline ${secondPath}\n`,
+          dataCommand("select 2;\n"),
+          "\n",
+          "commit refs/heads/main\n",
+          "mark :3\n",
+          "author " + identity,
+          "committer " + identity,
+          dataCommand("mutate committed migration\n"),
+          "from :2\n",
+          `M 100644 inline ${secondPath}\n`,
+          dataCommand("select 999;\n"),
+          "\n",
+          "get-mark :1\n",
+          "get-mark :3\n",
+          "done\n",
+        ].join(""),
+        stdio: ["pipe", "pipe", "ignore"],
+      })
+        .trim()
+        .split(/\r?\n/u);
+      git("reset", "--hard", "HEAD");
 
       expect(historyGate(repository)).toEqual(
         expect.arrayContaining([
@@ -1529,10 +1789,26 @@ ${rows.join("\n")}
       );
 
       const symbolicChange = change("2026-08-10-symbolic.md");
-      symlinkSync("2026-08-10-stable.md", join(validRepository, symbolicChange.path));
-      expect(() => readAddedChangeRecord(validRepository, symbolicChange)).toThrow(
-        "físico e regular",
-      );
+      if (process.platform === "win32") {
+        const symbolicFileRepository = join(testRoot, "symbolic-file");
+        const externalSymbolicChanges = join(testRoot, "external-symbolic-changes");
+        mkdirSync(join(symbolicFileRepository, "docs"), { recursive: true });
+        mkdirSync(externalSymbolicChanges);
+        writeFileSync(
+          join(externalSymbolicChanges, "2026-08-10-symbolic.md"),
+          "# Registro por ancestral não físico\n",
+          "utf8",
+        );
+        createDirectoryLink(externalSymbolicChanges, join(symbolicFileRepository, "docs/changes"));
+        expect(() => readAddedChangeRecord(symbolicFileRepository, symbolicChange)).toThrow(
+          "diretório não físico",
+        );
+      } else {
+        symlinkSync("2026-08-10-stable.md", join(validRepository, symbolicChange.path));
+        expect(() => readAddedChangeRecord(validRepository, symbolicChange)).toThrow(
+          "físico e regular",
+        );
+      }
 
       const hardLinkSource = join(testRoot, "hard-link-source.md");
       writeFileSync(hardLinkSource, "# Fora do repositório\n", "utf8");
@@ -1552,13 +1828,13 @@ ${rows.join("\n")}
       mkdirSync(externalChanges);
       const ancestorChange = change("2026-08-10-ancestor.md");
       writeFileSync(join(externalChanges, "2026-08-10-ancestor.md"), "# Externo\n", "utf8");
-      symlinkSync(externalChanges, join(symbolicAncestorRepository, "docs/changes"), "dir");
+      createDirectoryLink(externalChanges, join(symbolicAncestorRepository, "docs/changes"));
       expect(() => readAddedChangeRecord(symbolicAncestorRepository, ancestorChange)).toThrow(
         "diretório não físico",
       );
 
       const symbolicRoot = join(testRoot, "symbolic-root");
-      symlinkSync(validRepository, symbolicRoot, "dir");
+      createDirectoryLink(validRepository, symbolicRoot);
       expect(() => readAddedChangeRecord(symbolicRoot, validChange)).toThrow("raiz do repositório");
 
       const replacedRepository = createRepository("replaced-during-read");
@@ -1599,16 +1875,37 @@ ${rows.join("\n")}
         "# Ancestral original\n",
         "utf8",
       );
-      expect(() =>
-        readAddedChangeRecord(swappedAncestorRepository, swappedAncestorChange, {
-          readDescriptor(descriptor) {
-            const source = readFileSync(descriptor, "utf8");
-            renameSync(changesDirectory, movedChangesDirectory);
-            symlinkSync(movedChangesDirectory, changesDirectory, "dir");
-            return source;
-          },
-        }),
-      ).toThrow("caminho do arquivo mudou durante a leitura");
+      if (process.platform === "win32") {
+        let renameFailure;
+        expect(
+          readAddedChangeRecord(swappedAncestorRepository, swappedAncestorChange, {
+            readDescriptor(descriptor) {
+              const source = readFileSync(descriptor, "utf8");
+              try {
+                renameSync(changesDirectory, movedChangesDirectory);
+              } catch (error) {
+                renameFailure = error;
+              }
+              return source;
+            },
+          }),
+        ).toBe("# Ancestral original\n");
+        expect(renameFailure).toMatchObject({ code: "EPERM" });
+        expect(readFileSync(join(changesDirectory, "2026-08-10-swapped-ancestor.md"), "utf8")).toBe(
+          "# Ancestral original\n",
+        );
+      } else {
+        expect(() =>
+          readAddedChangeRecord(swappedAncestorRepository, swappedAncestorChange, {
+            readDescriptor(descriptor) {
+              const source = readFileSync(descriptor, "utf8");
+              renameSync(changesDirectory, movedChangesDirectory);
+              createDirectoryLink(movedChangesDirectory, changesDirectory);
+              return source;
+            },
+          }),
+        ).toThrow("caminho do arquivo mudou durante a leitura");
+      }
     } finally {
       rmSync(testRoot, { force: true, recursive: true });
     }
@@ -1636,8 +1933,15 @@ ${rows.join("\n")}
       );
       writeFileSync(join(repository, "docs/contracts/target.json"), '{"target":true}\n', "utf8");
       writeFileSync(join(repository, "docs/contracts/regular.json"), '{"regular":true}\n', "utf8");
-      symlinkSync("target.json", join(repository, "docs/contracts/linked.json"));
+      if (process.platform === "win32") {
+        writeFileSync(join(repository, "docs/contracts/linked.json"), "target.json", "utf8");
+      } else {
+        symlinkSync("target.json", join(repository, "docs/contracts/linked.json"));
+      }
       git("add", "docs");
+      if (process.platform === "win32") {
+        stageGitSymbolicLink(repository, "docs/contracts/linked.json", "target.json");
+      }
       git("commit", "-m", "main history");
       const mainRevision = git("rev-parse", "HEAD").trim();
 
@@ -1647,9 +1951,17 @@ ${rows.join("\n")}
       expect(freshFeatureChanges.changes.filter(isAddedChangeRecord)).toEqual([]);
 
       rmSync(join(repository, "docs/contracts/regular.json"));
-      symlinkSync("target.json", join(repository, "docs/contracts/regular.json"));
+      if (process.platform === "win32") {
+        writeFileSync(join(repository, "docs/contracts/regular.json"), "target.json", "utf8");
+        stageGitSymbolicLink(repository, "docs/contracts/regular.json", "target.json");
+      } else {
+        symlinkSync("target.json", join(repository, "docs/contracts/regular.json"));
+      }
       rmSync(join(repository, "docs/contracts/linked.json"));
       writeFileSync(join(repository, "docs/contracts/linked.json"), '{"linked":false}\n', "utf8");
+      if (process.platform === "win32") {
+        stageGitRegularFile(repository, "docs/contracts/linked.json", '{"linked":false}\n');
+      }
 
       const expectedTypeChanges = [
         { path: "docs/contracts/linked.json", status: "T" },
@@ -1679,7 +1991,11 @@ ${rows.join("\n")}
   it("refuses a type-changed symlink before format --write can touch its target", () => {
     const testRoot = mkdtempSync(join(tmpdir(), "set-livre-format-symlink-"));
     const repository = join(testRoot, "repository");
-    const externalTarget = join(testRoot, "external.json");
+    const externalDirectory = join(testRoot, "external-contracts");
+    const externalTarget =
+      process.platform === "win32"
+        ? join(externalDirectory, "config.json")
+        : join(testRoot, "external.json");
     const projectRoot = join(import.meta.dirname, "../..");
     const git = (...argumentsList) =>
       execFileSync("git", argumentsList, {
@@ -1699,9 +2015,12 @@ ${rows.join("\n")}
         join(projectRoot, "scripts/format-scope.mjs"),
         join(repository, "scripts/format-scope.mjs"),
       );
-      symlinkSync(join(projectRoot, "node_modules"), join(repository, "node_modules"), "dir");
+      createDirectoryLink(join(projectRoot, "node_modules"), join(repository, "node_modules"));
       writeFileSync(join(repository, ".gitignore"), "/node_modules\n", "utf8");
       writeFileSync(join(repository, "docs/contracts/config.json"), '{"local":true}\n', "utf8");
+      if (process.platform === "win32") {
+        mkdirSync(externalDirectory);
+      }
       writeFileSync(externalTarget, '{"external":"preserve exactly"}\n', "utf8");
 
       git("init", "--initial-branch", "main");
@@ -1710,8 +2029,13 @@ ${rows.join("\n")}
       git("add", ".gitignore", "docs", "scripts");
       git("commit", "-m", "baseline");
       git("switch", "--create", "feature");
-      rmSync(join(repository, "docs/contracts/config.json"));
-      symlinkSync(externalTarget, join(repository, "docs/contracts/config.json"));
+      if (process.platform === "win32") {
+        rmSync(join(repository, "docs/contracts"), { recursive: true });
+        createDirectoryLink(externalDirectory, join(repository, "docs/contracts"));
+      } else {
+        rmSync(join(repository, "docs/contracts/config.json"));
+        symlinkSync(externalTarget, join(repository, "docs/contracts/config.json"));
+      }
 
       const result = spawnSync(
         process.execPath,
@@ -1727,7 +2051,12 @@ ${rows.join("\n")}
       expect(result.stderr).toContain("docs/contracts/config.json");
       expect(readFileSync(externalTarget, "utf8")).toBe('{"external":"preserve exactly"}\n');
 
-      rmSync(join(repository, "docs/contracts/config.json"));
+      if (process.platform === "win32") {
+        rmSync(join(repository, "docs/contracts"));
+        mkdirSync(join(repository, "docs/contracts"));
+      } else {
+        rmSync(join(repository, "docs/contracts/config.json"));
+      }
       mkdirSync(join(repository, "docs/contracts/config.json"));
       writeFileSync(
         join(repository, "docs/contracts/config.json/child.json"),

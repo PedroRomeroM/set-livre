@@ -15,8 +15,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { readOptionalE2EEnvironmentFile } from "../helpers/e2e-environment-file";
+import { protectWindowsPrivateFile } from "../../scripts/windows-filesystem-security.mjs";
 
 const privateEnvironment = "E2E_ALLOW_LOCAL=1\nE2E_DATABASE_MARKER=private-marker\n";
+const logicalFileSecurity =
+  process.platform === "win32"
+    ? {
+        assertWindowsPath: () => undefined,
+        assertWindowsPrivate: () => undefined,
+        platform: "win32" as const,
+      }
+    : undefined;
 
 function temporaryRepository() {
   const root = mkdtempSync(join(tmpdir(), "set-livre-e2e-environment-"));
@@ -35,6 +44,10 @@ function errorMessage(operation: () => unknown) {
   throw new Error("A operação de teste deveria falhar.");
 }
 
+function writePrivateEnvironment(path: string, contents: string) {
+  writeFileSync(path, contents, { mode: 0o600 });
+}
+
 describe("private E2E environment file", () => {
   it("reads a private file, accepts absence and models the Windows permission branch", () => {
     const privateRepository = temporaryRepository();
@@ -42,20 +55,26 @@ describe("private E2E environment file", () => {
     const windowsRepository = temporaryRepository();
 
     try {
-      writeFileSync(privateRepository.environmentPath, privateEnvironment, { mode: 0o600 });
-      expect(readOptionalE2EEnvironmentFile(privateRepository.root)).toEqual({
+      writePrivateEnvironment(privateRepository.environmentPath, privateEnvironment);
+      expect(readOptionalE2EEnvironmentFile(privateRepository.root, logicalFileSecurity)).toEqual({
         E2E_ALLOW_LOCAL: "1",
         E2E_DATABASE_MARKER: "private-marker",
       });
-      expect(readOptionalE2EEnvironmentFile(missingRepository.root)).toEqual({});
+      expect(readOptionalE2EEnvironmentFile(missingRepository.root, logicalFileSecurity)).toEqual(
+        {},
+      );
 
       writeFileSync(windowsRepository.environmentPath, privateEnvironment, { mode: 0o644 });
-      expect(readOptionalE2EEnvironmentFile(windowsRepository.root, { platform: "win32" })).toEqual(
-        {
-          E2E_ALLOW_LOCAL: "1",
-          E2E_DATABASE_MARKER: "private-marker",
-        },
-      );
+      expect(
+        readOptionalE2EEnvironmentFile(windowsRepository.root, {
+          assertWindowsPath: () => undefined,
+          assertWindowsPrivate: () => undefined,
+          platform: "win32",
+        }),
+      ).toEqual({
+        E2E_ALLOW_LOCAL: "1",
+        E2E_DATABASE_MARKER: "private-marker",
+      });
     } finally {
       rmSync(privateRepository.root, { force: true, recursive: true });
       rmSync(missingRepository.root, { force: true, recursive: true });
@@ -89,6 +108,29 @@ describe("private E2E environment file", () => {
         rmSync(repository.root, { force: true, recursive: true });
       }
     },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "rejects a broad Windows DACL and accepts the protected equivalent",
+    () => {
+      const repository = temporaryRepository();
+      try {
+        expect(readOptionalE2EEnvironmentFile(repository.root)).toEqual({});
+        writeFileSync(repository.environmentPath, privateEnvironment, "utf8");
+        expect(() => readOptionalE2EEnvironmentFile(repository.root)).toThrow(
+          "DACL privada protegida",
+        );
+
+        protectWindowsPrivateFile(repository.environmentPath);
+        expect(readOptionalE2EEnvironmentFile(repository.root)).toEqual({
+          E2E_ALLOW_LOCAL: "1",
+          E2E_DATABASE_MARKER: "private-marker",
+        });
+      } finally {
+        rmSync(repository.root, { force: true, recursive: true });
+      }
+    },
+    20_000,
   );
 
   it.runIf(process.platform !== "win32" && typeof process.geteuid === "function")(
@@ -193,9 +235,10 @@ describe("private E2E environment file", () => {
     const replacement = "E2E_DATABASE_MARKER=replacement-marker\n";
 
     try {
-      writeFileSync(repository.environmentPath, privateEnvironment, { mode: 0o600 });
+      writePrivateEnvironment(repository.environmentPath, privateEnvironment);
       const message = errorMessage(() =>
         readOptionalE2EEnvironmentFile(repository.root, {
+          ...logicalFileSecurity,
           readDescriptor: (descriptor) => {
             const source = readFileSync(descriptor, "utf8");
             renameSync(repository.environmentPath, retiredPath);

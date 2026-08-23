@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260815000100" as const;
+export const databaseMigrationHead = "20260819000100" as const;
 
 const privilegedRoleNames = new Set(["postgres", "service_role", "supabase_admin"]);
 const authorityOverrideParameters = new Set([
@@ -12,6 +12,7 @@ const authorityOverrideParameters = new Set([
   "user",
   "username",
 ]);
+const connectionStringTlsParameters = new Set(["sslcert", "sslkey", "sslmode", "sslrootcert"]);
 
 const dalDatabaseUrlSchema = z.url().superRefine((value, context) => {
   const parsed = new URL(value);
@@ -53,6 +54,14 @@ const dalDatabaseUrlSchema = z.url().superRefine((value, context) => {
       context.addIssue({
         code: "custom",
         message: "A conexão DAL tenta sobrescrever sua identidade na query.",
+      });
+    }
+  }
+  for (const parameter of connectionStringTlsParameters) {
+    if (parsed.searchParams.has(parameter)) {
+      context.addIssue({
+        code: "custom",
+        message: "A conexão DAL não aceita parâmetros TLS na URL.",
       });
     }
   }

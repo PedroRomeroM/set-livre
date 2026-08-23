@@ -13,6 +13,11 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 
+import {
+  assertWindowsPathWithoutReparse,
+  assertWindowsPrivateFile,
+} from "./windows-filesystem-security.mjs";
+
 const linuxMountEscapes = new Map([
   ["011", "\t"],
   ["012", "\n"],
@@ -196,6 +201,7 @@ export function readPrivatePhysicalFile(
   filePath,
   {
     allowMissing = false,
+    assertWindowsPrivate = assertWindowsPrivateFile,
     description = "O arquivo privado",
     expectedPosixUserId = process.geteuid?.(),
     platform = process.platform,
@@ -214,6 +220,13 @@ export function readPrivatePhysicalFile(
     throw new Error(messages.invalidPath);
   }
 
+  if (platform === "win32") {
+    assertWindowsPrivate(filePath, {
+      allowMissing,
+      description,
+    });
+  }
+
   const ancestry = captureStablePhysicalAncestry(filePath, messages);
   const pathInformation = lstatSync(filePath, { bigint: true, throwIfNoEntry: false });
   if (pathInformation === undefined && allowMissing) {
@@ -221,7 +234,6 @@ export function readPrivatePhysicalFile(
     return undefined;
   }
   assertPrivatePhysicalFile(pathInformation, messages, platform, expectedPosixUserId);
-
   let descriptor;
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -251,6 +263,9 @@ export function readPrivatePhysicalFile(
       throw new Error(messages.fileChanged);
     }
     assertStablePhysicalAncestry(ancestry, messages);
+    if (platform === "win32") {
+      assertWindowsPrivate(filePath, { description });
+    }
     return source;
   } finally {
     if (descriptor !== undefined) {
@@ -414,20 +429,53 @@ function removalMessages(description, overrides = {}) {
     unsupportedPlatformMessage:
       overrides.unsupportedPlatformMessage ??
       `${description} precisa ser removido manualmente nesta plataforma.`,
+    windowsUnauthorizedPathMessage:
+      overrides.windowsUnauthorizedPathMessage ??
+      `${description} não é um alvo autorizado para remoção física no Windows.`,
   };
 }
 
-export function assertPhysicalDirectoryTree(
+function assertAuthorizedWindowsRemoval(path, authorizedWindowsPaths, messages) {
+  if (
+    !Array.isArray(authorizedWindowsPaths) ||
+    !authorizedWindowsPaths.some(
+      (authorizedPath) =>
+        typeof authorizedPath === "string" &&
+        authorizedPath !== "" &&
+        !authorizedPath.includes("\0") &&
+        isAbsolute(authorizedPath) &&
+        resolve(authorizedPath) === authorizedPath &&
+        resolve(authorizedPath).toLowerCase() === path.toLowerCase(),
+    )
+  ) {
+    throw new Error(messages.windowsUnauthorizedPathMessage);
+  }
+}
+
+function assertWindowsPhysicalTree(path, description, assertWindowsPath) {
+  assertWindowsPath(path, {
+    description,
+    leafKind: "directory",
+    recursive: true,
+  });
+}
+
+function inspectPhysicalDirectoryTree(
   directory,
   {
     description = "A árvore física",
+    assertWindowsPath = assertWindowsPathWithoutReparse,
     messages: messageOverrides,
     platform = process.platform,
     readLinuxMountInformation = readCurrentLinuxMountInformation,
+    windowsPathAlreadyInspected = false,
   } = {},
 ) {
   const resolvedDirectory = resolve(directory);
   const messages = removalMessages(description, messageOverrides);
+  if (platform === "win32" && !windowsPathAlreadyInspected) {
+    assertWindowsPhysicalTree(resolvedDirectory, description, assertWindowsPath);
+  }
   assertPhysicalAncestry(resolvedDirectory, messages);
   const information = lstatSync(resolvedDirectory, { throwIfNoEntry: false });
   if (information === undefined || !information.isDirectory() || information.isSymbolicLink()) {
@@ -452,10 +500,16 @@ export function assertPhysicalDirectoryTree(
   return { information, nodes, path: resolvedDirectory };
 }
 
+export function assertPhysicalDirectoryTree(directory, options = {}) {
+  return inspectPhysicalDirectoryTree(directory, options);
+}
+
 export function removePhysicalTree(
   path,
   {
     allowRegularFile = false,
+    assertWindowsPath = assertWindowsPathWithoutReparse,
+    authorizedWindowsPaths = [],
     description = "A árvore física",
     messages: messageOverrides,
     platform = process.platform,
@@ -465,16 +519,27 @@ export function removePhysicalTree(
   } = {},
 ) {
   const resolvedPath = resolve(path);
+  const messages = removalMessages(description, messageOverrides);
+  if (platform === "win32") {
+    assertWindowsPath(resolvedPath, {
+      allowMissingLeaf: true,
+      description,
+      leafKind: "any",
+      recursive: true,
+    });
+  }
   const initialInformation = lstatSync(resolvedPath, { throwIfNoEntry: false });
   if (initialInformation === undefined) {
     return;
   }
-  const messages = removalMessages(description, messageOverrides);
   if (dirname(resolvedPath) === resolvedPath) {
     throw new Error(messages.invalidPathMessage);
   }
 
   if (initialInformation.isFile() && !initialInformation.isSymbolicLink() && allowRegularFile) {
+    if (platform === "win32") {
+      assertAuthorizedWindowsRemoval(resolvedPath, authorizedWindowsPaths, messages);
+    }
     assertPhysicalAncestry(resolvedPath, messages);
     unlinkSync(resolvedPath);
     if (lstatSync(resolvedPath, { throwIfNoEntry: false }) !== undefined) {
@@ -486,15 +551,20 @@ export function removePhysicalTree(
   if (!initialInformation.isDirectory() || initialInformation.isSymbolicLink()) {
     throw new Error(messages.directoryRequiredMessage);
   }
-  if (platform !== "linux") {
+  if (platform !== "linux" && platform !== "win32") {
     throw new Error(messages.unsupportedPlatformMessage);
   }
+  if (platform === "win32") {
+    assertAuthorizedWindowsRemoval(resolvedPath, authorizedWindowsPaths, messages);
+  }
 
-  const initialTree = assertPhysicalDirectoryTree(resolvedPath, {
+  const initialTree = inspectPhysicalDirectoryTree(resolvedPath, {
+    assertWindowsPath,
     description,
     messages,
     platform,
     readLinuxMountInformation,
+    windowsPathAlreadyInspected: platform === "win32",
   });
   const retiredPath = resolve(dirname(resolvedPath), `${retiredNamePrefix}${uuid()}`);
   if (dirname(retiredPath) !== dirname(resolvedPath)) {
@@ -516,10 +586,14 @@ export function removePhysicalTree(
     throw new Error(messages.changedRetirementMessage);
   }
 
-  assertNoLinuxMountAtOrBelow(retiredPath, {
-    ...messages,
-    readLinuxMountInformation,
-  });
+  if (platform === "linux") {
+    assertNoLinuxMountAtOrBelow(retiredPath, {
+      ...messages,
+      readLinuxMountInformation,
+    });
+  } else {
+    assertWindowsPhysicalTree(retiredPath, description, assertWindowsPath);
+  }
   assertSamePhysicalTree(
     initialTree.nodes,
     inspectPhysicalTree(retiredPath, initialTree.information.dev, messages),
@@ -527,10 +601,14 @@ export function removePhysicalTree(
   );
   // A inspeção da forma pode levar tempo; confirme o namespace novamente no último instante
   // observável antes da única operação recursiva.
-  assertNoLinuxMountAtOrBelow(retiredPath, {
-    ...messages,
-    readLinuxMountInformation,
-  });
+  if (platform === "linux") {
+    assertNoLinuxMountAtOrBelow(retiredPath, {
+      ...messages,
+      readLinuxMountInformation,
+    });
+  } else {
+    assertWindowsPhysicalTree(retiredPath, description, assertWindowsPath);
+  }
 
   rmSync(retiredPath, { recursive: true });
   if (lstatSync(retiredPath, { throwIfNoEntry: false }) !== undefined) {

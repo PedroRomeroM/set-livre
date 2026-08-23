@@ -1872,7 +1872,7 @@ select is(
 );
 
 select ok(
-  private.check_readiness('20260815000100'),
+  private.check_readiness('20260819000100'),
   'readiness aceita head FEAT-004 e allowlist DAL ampliada exata'
 );
 

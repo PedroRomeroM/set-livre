@@ -35,7 +35,7 @@ Somente um `package-lock.json` é versionado. CI usa `npm ci`.
 ## 3. Branches e commits
 
 - `main` deve estar sempre implantável;
-- branches curtas por feature/correção;
+- branches curtas por feature/correção, sempre criadas de uma `main` atualizada;
 - commit de documentação/governança separado da implementação quando isso facilita revisão;
 - migrations não são misturadas com refatorações sem relação;
 - mensagem de commit em Conventional Commits;
@@ -105,9 +105,19 @@ Dependência nova exige no PR:
 Merge exige:
 
 - gates verdes;
+- PR não draft para `main` e ciclo integral de [`review-deploy-cycle.md`](review-deploy-cycle.md);
+- `@codex review` do SHA final, espera mínima real de 60 minutos e declaração explícita de que não
+  há problema relevante;
+- inspeção de reviews, comentários de topo, comentários inline, threads e checks;
 - documentação coerente;
 - comentários resolvidos;
 - migration reproduzível;
 - rollback conhecido;
 - risco e dívida registrados;
 - nenhuma decisão estrutural sem ADR.
+
+Novo push invalida a revisão anterior. Finding corrigido exige teste de regressão, busca da mesma
+classe de falha e novo ciclo; finding rejeitado exige justificativa técnica no PR. Timeout, ausência de
+resposta ou serviço externo indisponível são inconclusivos. Push direto, autoaprovação, merge
+administrativo e bypass de check são proibidos. Depois do merge, deploy e health são acompanhados
+até estado terminal; correção pós-merge usa nova branch e novo PR com o mesmo ciclo.

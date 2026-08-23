@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdtempSync,
@@ -17,6 +18,12 @@ import {
   readLocalDevelopmentEnvironmentFile,
   validateLocalDalDatabaseUrl,
 } from "../../scripts/local-development-environment.mjs";
+import {
+  assertWindowsPathWithoutReparse,
+  assertWindowsPrivateFile,
+  protectWindowsPrivateFile,
+  runWindowsFilesystemSecurityCommand,
+} from "../../scripts/windows-filesystem-security.mjs";
 
 const localDatabaseUrl =
   "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
@@ -34,6 +41,12 @@ const nonLiteralLocalHosts = [
   "127。0。0。1",
 ];
 const temporaryRoots = [];
+const repositoryRoot = resolve(import.meta.dirname, "../..");
+const testTemporaryDirectory = resolve(repositoryRoot, "node_modules/.cache");
+const logicalFileSecurity =
+  process.platform === "win32"
+    ? { assertWindowsPrivate: () => undefined, platform: "win32" }
+    : undefined;
 
 function localEnvironment(overrides = {}) {
   return {
@@ -57,6 +70,42 @@ function temporaryRoot() {
   const root = mkdtempSync(resolve(tmpdir(), "set-livre-dev-environment-"));
   temporaryRoots.push(root);
   return root;
+}
+
+function repositoryTemporaryRoot() {
+  mkdirSync(testTemporaryDirectory, { recursive: true });
+  const root = mkdtempSync(resolve(testTemporaryDirectory, "set-livre-dev-environment-"));
+  temporaryRoots.push(root);
+  return root;
+}
+
+function physicalWindowsPath(path) {
+  const normalizedPath = path.toLowerCase();
+  return {
+    isDirectory: () =>
+      normalizedPath === "c:\\windows" || normalizedPath === "c:\\windows\\system32",
+    isFile: () => normalizedPath === "c:\\windows\\system32\\cmd.exe",
+    isSymbolicLink: () => false,
+  };
+}
+
+function nativeWindowsInheritedEnvironment() {
+  return {
+    Path: process.env.Path ?? process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+  };
+}
+
+function grantAuthenticatedUsersModify(path) {
+  const systemRoot = process.env.SystemRoot;
+  if (typeof systemRoot !== "string" || systemRoot === "") {
+    throw new Error("SystemRoot não está disponível para o teste Windows nativo.");
+  }
+  execFileSync(resolve(systemRoot, "System32/icacls.exe"), [path, "/grant", "*S-1-5-11:(OI)(CI)M"]);
+}
+
+function writePrivateFile(path, contents) {
+  writeFileSync(path, contents, { mode: 0o600 });
 }
 
 afterEach(() => {
@@ -92,6 +141,7 @@ describe("local development child environment", () => {
       },
       localEnvironment(),
       "http://127.0.0.1:3000",
+      { platform: "linux" },
     );
 
     expect(environment).toEqual({
@@ -117,6 +167,7 @@ describe("local development child environment", () => {
       { PATH: "/usr/bin" },
       localEnvironment(),
       "http://127.0.0.1:3000",
+      { platform: "linux" },
     );
     const backoffice = createLocalDevelopmentEnvironment(
       { PATH: "/usr/bin" },
@@ -125,6 +176,7 @@ describe("local development child environment", () => {
         NEXT_PUBLIC_SUPABASE_ANON_KEY: "backoffice-anon-key",
       }),
       "http://127.0.0.1:3001",
+      { platform: "linux" },
     );
 
     expect(web.NEXT_PUBLIC_APP_URL).toBe("http://127.0.0.1:3000");
@@ -133,10 +185,10 @@ describe("local development child environment", () => {
     expect(backoffice.NEXT_PUBLIC_SUPABASE_ANON_KEY).toBe("backoffice-anon-key");
   });
 
-  it("preserves the minimum Windows operational names without host application data", () => {
+  it("rebuilds the Windows environment case-insensitively and derives the physical ComSpec", () => {
     const environment = createLocalDevelopmentEnvironment(
       {
-        COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+        COMSPEC: "C:\\attacker\\cmd.exe",
         Path: "C:\\Windows\\System32;C:\\Program Files\\nodejs",
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
         SystemRoot: "C:\\Windows",
@@ -145,16 +197,56 @@ describe("local development child environment", () => {
       },
       localEnvironment(),
       "http://127.0.0.1:3000",
+      { inspectPhysicalPath: physicalWindowsPath, platform: "win32" },
     );
 
     expect(environment).toMatchObject({
-      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
-      Path: "C:\\Windows\\System32;C:\\Program Files\\nodejs",
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      PATH: "C:\\Windows\\System32;C:\\Program Files\\nodejs",
       PATHEXT: ".COM;.EXE;.BAT;.CMD",
       SystemRoot: "C:\\Windows",
       TEMP: "C:\\Users\\tester\\AppData\\Local\\Temp",
       USERPROFILE: "C:\\Users\\tester",
+      WINDIR: "C:\\Windows",
     });
+    expect(environment).not.toHaveProperty("COMSPEC");
+    expect(JSON.stringify(environment)).not.toContain("attacker");
+  });
+
+  it.each([
+    [{ PATH: "C:\\trusted", Path: "C:\\trusted" }, "PATH"],
+    [{ PATH: "C:\\trusted", Path: "C:\\hostile" }, "PATH"],
+    [{ SYSTEMROOT: "C:\\Windows", SystemRoot: "C:\\Windows" }, "SystemRoot"],
+  ])("rejects duplicate Windows casing variants for %s", (variants, expectedName) => {
+    expect(() =>
+      createLocalDevelopmentEnvironment(
+        {
+          Path: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+          ...variants,
+        },
+        localEnvironment(),
+        "http://127.0.0.1:3000",
+        { inspectPhysicalPath: physicalWindowsPath, platform: "win32" },
+      ),
+    ).toThrow(`variantes duplicadas de ${expectedName}`);
+  });
+
+  it("rejects a non-physical SystemRoot or command processor", () => {
+    expect(() =>
+      createLocalDevelopmentEnvironment(
+        { Path: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" },
+        localEnvironment(),
+        "http://127.0.0.1:3000",
+        {
+          inspectPhysicalPath: (path) => ({
+            ...physicalWindowsPath(path),
+            isSymbolicLink: () => path.toLowerCase().endsWith("cmd.exe"),
+          }),
+          platform: "win32",
+        },
+      ),
+    ).toThrow("executável físico regular");
   });
 
   it("rejects every tested deviation from the local DAL identity contract", () => {
@@ -190,6 +282,7 @@ describe("local development child environment", () => {
           { PATH: "/usr/bin" },
           localEnvironment({ NEXT_PUBLIC_APP_URL: applicationUrl }),
           "http://127.0.0.1:3000",
+          { platform: "linux" },
         ),
       ).toThrow("host IPv4 literal 127.0.0.1");
       expect(() =>
@@ -197,6 +290,7 @@ describe("local development child environment", () => {
           { PATH: "/usr/bin" },
           localEnvironment({ NEXT_PUBLIC_SUPABASE_URL: supabaseUrl }),
           "http://127.0.0.1:3000",
+          { platform: "linux" },
         ),
       ).toThrow("host IPv4 literal 127.0.0.1");
     },
@@ -221,7 +315,9 @@ describe("local development child environment", () => {
       [localEnvironment({ NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3001" }), "http://127.0.0.1:3000"],
     ]) {
       expect(() =>
-        createLocalDevelopmentEnvironment({ PATH: "/usr/bin" }, local, expectedApplicationUrl),
+        createLocalDevelopmentEnvironment({ PATH: "/usr/bin" }, local, expectedApplicationUrl, {
+          platform: "linux",
+        }),
       ).toThrow();
     }
   });
@@ -235,6 +331,7 @@ describe("local development child environment", () => {
         { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: "/usr/bin" },
         local,
         "http://127.0.0.1:3000",
+        { platform: "linux" },
       ),
     ).toThrow("DATABASE_URL_APP_DAL");
   });
@@ -245,6 +342,7 @@ describe("local development child environment", () => {
         { PATH: "/usr/bin" },
         localEnvironment({ NODE_OPTIONS: "--require=/tmp/inject.cjs" }),
         "http://127.0.0.1:3000",
+        { platform: "linux" },
       ),
     ).toThrow("NODE_OPTIONS");
   });
@@ -253,7 +351,7 @@ describe("local development child environment", () => {
     const root = temporaryRoot();
     const environmentPath = resolve(root, ".env.local");
     const originalDatabaseUrl = process.env.DATABASE_URL_APP_DAL;
-    writeFileSync(environmentPath, serializeEnvironment(localEnvironment()), { mode: 0o600 });
+    writePrivateFile(environmentPath, serializeEnvironment(localEnvironment()));
 
     const childEnvironment = readLocalDevelopmentEnvironmentFile(
       environmentPath,
@@ -262,10 +360,139 @@ describe("local development child environment", () => {
         PATH: "/usr/bin",
       },
       "http://127.0.0.1:3000",
+      { ...logicalFileSecurity, trustedRoot: root },
+      { platform: "linux" },
     );
 
     expect(childEnvironment.DATABASE_URL_APP_DAL).toBe(localDatabaseUrl);
     expect(process.env.DATABASE_URL_APP_DAL).toBe(originalDatabaseUrl);
+  });
+
+  it.runIf(process.platform === "win32")(
+    "rejects a broad Windows DACL before parsing and accepts the protected equivalent",
+    () => {
+      const root = repositoryTemporaryRoot();
+      const environmentPath = resolve(root, ".env.local");
+      const contents = serializeEnvironment(localEnvironment());
+      writeFileSync(environmentPath, contents, "utf8");
+
+      expect(() =>
+        readLocalDevelopmentEnvironmentFile(
+          environmentPath,
+          nativeWindowsInheritedEnvironment(),
+          "http://127.0.0.1:3000",
+          { trustedRoot: repositoryRoot },
+          { platform: "win32" },
+        ),
+      ).toThrow("DACL protegida");
+
+      protectWindowsPrivateFile(environmentPath, { trustedRoot: repositoryRoot });
+      expect(() =>
+        assertWindowsPrivateFile(environmentPath, { trustedRoot: repositoryRoot }),
+      ).not.toThrow();
+      expect(
+        readLocalDevelopmentEnvironmentFile(
+          environmentPath,
+          nativeWindowsInheritedEnvironment(),
+          "http://127.0.0.1:3000",
+          { trustedRoot: repositoryRoot },
+          { platform: "win32" },
+        ).DATABASE_URL_APP_DAL,
+      ).toBe(localDatabaseUrl);
+    },
+    20_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "rejects an untrusted writable ancestor before reading the environment",
+    () => {
+      const root = repositoryTemporaryRoot();
+      const parent = resolve(root, "application");
+      const environmentPath = resolve(parent, ".env.local");
+      const contents = serializeEnvironment(localEnvironment());
+      mkdirSync(parent);
+      writeFileSync(environmentPath, contents, "utf8");
+      protectWindowsPrivateFile(environmentPath, { trustedRoot: repositoryRoot });
+      grantAuthenticatedUsersModify(parent);
+
+      expect(() =>
+        readLocalDevelopmentEnvironmentFile(
+          environmentPath,
+          nativeWindowsInheritedEnvironment(),
+          "http://127.0.0.1:3000",
+          { trustedRoot: repositoryRoot },
+          { platform: "win32" },
+        ),
+      ).toThrow("ancestrais Windows confiáveis");
+      expect(readFileSync(environmentPath, "utf8")).toBe(contents);
+    },
+    20_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "requires the declared checkout root to establish a protected DACL boundary",
+    () => {
+      const unprotectedRoot = repositoryTemporaryRoot();
+      const environmentPath = resolve(unprotectedRoot, ".env.local");
+      writeFileSync(environmentPath, serializeEnvironment(localEnvironment()), "utf8");
+      protectWindowsPrivateFile(environmentPath);
+
+      expect(() =>
+        readLocalDevelopmentEnvironmentFile(
+          environmentPath,
+          nativeWindowsInheritedEnvironment(),
+          "http://127.0.0.1:3000",
+          { trustedRoot: unprotectedRoot },
+          { platform: "win32" },
+        ),
+      ).toThrow("ancestrais Windows confiáveis");
+    },
+    20_000,
+  );
+
+  it("bounds every native Windows filesystem inspection", () => {
+    let invocation;
+    runWindowsFilesystemSecurityCommand(
+      { action: "assert-path", path: "C:\\bounded-inspection" },
+      {
+        execute(command, argumentsList, options) {
+          invocation = { argumentsList, command, options };
+          return { status: 0, stdout: "ok" };
+        },
+        resolvePowerShell: () => "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        systemRoot: "C:\\Windows",
+      },
+    );
+
+    expect(invocation.argumentsList).toContain("-EncodedCommand");
+    expect(invocation.argumentsList).not.toContain("-ExecutionPolicy");
+    expect(invocation.argumentsList).not.toContain("Bypass");
+    expect(invocation.options).toMatchObject({
+      env: { SystemRoot: "C:\\Windows", WINDIR: "C:\\Windows" },
+      killSignal: "SIGKILL",
+      shell: false,
+      timeout: 30_000,
+      windowsHide: true,
+    });
+  }, 5_000);
+
+  it("passes the unconditional recursive policy to the native Windows inspection", () => {
+    let request;
+    assertWindowsPathWithoutReparse("C:\\repository\\.next", {
+      leafKind: "directory",
+      recursive: true,
+      runCommand: (value) => {
+        request = value;
+      },
+    });
+
+    expect(request).toEqual({
+      action: "assert-path",
+      allowMissingLeaf: false,
+      leafKind: "directory",
+      path: "C:\\repository\\.next",
+      recursive: true,
+    });
   });
 
   it("refuses a symlinked or non-regular environment without touching its target", () => {
@@ -275,8 +502,14 @@ describe("local development child environment", () => {
     const directory = resolve(root, "environment-directory");
     const permissive = resolve(root, "permissive.env");
     const contents = serializeEnvironment(localEnvironment());
-    writeFileSync(target, contents, "utf8");
-    symlinkSync(target, link);
+    if (process.platform === "win32") {
+      mkdirSync(target);
+      writeFileSync(resolve(target, "marker"), contents, "utf8");
+      symlinkSync(target, link, "junction");
+    } else {
+      writeFileSync(target, contents, "utf8");
+      symlinkSync(target, link);
+    }
     mkdirSync(directory);
     writeFileSync(permissive, contents, "utf8");
 
@@ -296,6 +529,8 @@ describe("local development child environment", () => {
         ),
       ).toThrow("modo 0600");
     }
-    expect(readFileSync(target, "utf8")).toBe(contents);
+    expect(
+      readFileSync(process.platform === "win32" ? resolve(target, "marker") : target, "utf8"),
+    ).toBe(contents);
   });
 });

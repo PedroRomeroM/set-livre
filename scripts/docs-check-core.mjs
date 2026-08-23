@@ -3,12 +3,16 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
+  fsyncSync,
   fstatSync,
+  ftruncateSync,
   lstatSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
   realpathSync,
+  writeSync,
 } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
@@ -789,7 +793,7 @@ function gitExecutionOptions(root) {
   };
 }
 
-function assertCanonicalGitWorktreeRoot(runGit, repositoryRoot) {
+function assertCanonicalGitWorktreeRoot(runGit, repositoryRoot, observedTopLevelOutput) {
   const resolvedRoot = resolve(repositoryRoot);
   const initialRootInformation = lstatSync(resolvedRoot, {
     bigint: true,
@@ -810,7 +814,7 @@ function assertCanonicalGitWorktreeRoot(runGit, repositoryRoot) {
     throw new Error("Não foi possível resolver a raiz física auditada do repositório.");
   }
 
-  const topLevelOutput = runGit(["rev-parse", "--show-toplevel"]);
+  const topLevelOutput = observedTopLevelOutput ?? runGit(["rev-parse", "--show-toplevel"]);
   const topLevelWithoutLineFeed = topLevelOutput.endsWith("\n")
     ? topLevelOutput.slice(0, -1)
     : topLevelOutput;
@@ -873,56 +877,116 @@ function assertCanonicalGitWorktreeRoot(runGit, repositoryRoot) {
   }
 }
 
-function resolveGitComparisonBase(runGit) {
-  let headRevision = "";
+function readCanonicalGitWorktreeHead(runGit, repositoryRoot) {
+  let output;
   try {
-    headRevision = runGit(["rev-parse", "--verify", "HEAD^{commit}"]).trim();
+    output = runGit(["rev-parse", "--show-toplevel", "HEAD^{commit}"]);
   } catch {
+    assertCanonicalGitWorktreeRoot(runGit, repositoryRoot);
     return null;
   }
 
-  let currentBranchReference = "";
-  try {
-    currentBranchReference = runGit(["symbolic-ref", "--quiet", "HEAD"]).trim();
-  } catch {
-    // HEAD destacado continua podendo usar uma candidata válida no mesmo commit.
+  const match = output.match(/^([^\0\r\n]+)\r?\n((?:[0-9a-f]{40}|[0-9a-f]{64}))\r?\n?$/u);
+  if (match === null) {
+    throw new Error("O Git não informou raiz e HEAD canônicos de forma inequívoca.");
   }
-  const isMainCheckout = currentBranchReference === "refs/heads/main";
+  assertCanonicalGitWorktreeRoot(runGit, repositoryRoot, `${match[1]}\n`);
+  return match[2];
+}
 
-  let closestCandidate = null;
-  for (const reference of ["refs/remotes/origin/main", "refs/heads/main"]) {
+const canonicalMainReferences = ["refs/remotes/origin/main", "refs/heads/main"];
+
+function readCanonicalMainCandidates(runGit) {
+  const output = runGit([
+    "for-each-ref",
+    "--format=%(HEAD)%00%(refname)%00%(objectname)%00%(objecttype)",
+    ...canonicalMainReferences,
+  ]);
+  const revisionsByReference = new Map();
+
+  for (const record of output.split(/\r?\n/u).filter(Boolean)) {
+    const [headMarker, reference, revision, objectType, ...unexpected] = record.split("\0");
+    if (
+      unexpected.length > 0 ||
+      !/^[ *]$/u.test(headMarker) ||
+      !canonicalMainReferences.includes(reference) ||
+      objectType !== "commit" ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(revision)
+    ) {
+      throw new Error("O Git informou uma referência main não canônica.");
+    }
+    if (revisionsByReference.has(reference)) {
+      throw new Error(`O Git informou mais de uma revisão para ${reference}.`);
+    }
+    revisionsByReference.set(reference, { headMarker, reference, revision });
+  }
+
+  return canonicalMainReferences.flatMap((reference) => {
+    const candidate = revisionsByReference.get(reference);
+    return candidate === undefined ? [] : [candidate];
+  });
+}
+
+function resolveGitComparisonBase(runGit, headRevision) {
+  const mainCandidates = readCanonicalMainCandidates(runGit);
+  const isMainCheckout = mainCandidates.some(
+    ({ headMarker, reference }) => headMarker === "*" && reference === "refs/heads/main",
+  );
+
+  const candidatesByRevision = new Map();
+  for (const { reference, revision } of mainCandidates) {
+    if (revision === headRevision && isMainCheckout) {
+      continue;
+    }
+
+    const existingCandidate = candidatesByRevision.get(revision);
+    if (existingCandidate === undefined) {
+      candidatesByRevision.set(revision, { reference, revision });
+    }
+  }
+
+  const validCandidates = [];
+  for (const candidate of candidatesByRevision.values()) {
     try {
-      const revision = runGit(["rev-parse", "--verify", "--quiet", `${reference}^{commit}`]).trim();
       const mergeBase =
-        revision === "" || (revision === headRevision && isMainCheckout)
-          ? ""
-          : revision === headRevision
-            ? headRevision
-            : runGit(["merge-base", revision, "HEAD"]).trim();
+        candidate.revision === headRevision
+          ? headRevision
+          : runGit(["merge-base", candidate.revision, "HEAD"]).trim();
       if (mergeBase === "") {
         continue;
       }
-
-      const distanceOutput = runGit([
-        "rev-list",
-        "--count",
-        `${mergeBase}..${headRevision}`,
-      ]).trim();
-      const distance = /^\d+$/.test(distanceOutput) ? Number(distanceOutput) : Number.NaN;
-      if (!Number.isSafeInteger(distance)) {
-        continue;
-      }
-
-      if (closestCandidate === null || distance < closestCandidate.distance) {
-        closestCandidate = { distance, revision };
-      }
+      validCandidates.push({ ...candidate, mergeBase });
     } catch {
       // A ausência de uma ref candidata é esperada em clones e pacotes locais.
     }
   }
 
-  if (closestCandidate !== null) {
-    return closestCandidate.revision;
+  if (validCandidates.length === 1) {
+    return validCandidates[0].revision;
+  }
+  if (validCandidates.length > 1) {
+    let closestCandidate = null;
+    for (const candidate of validCandidates) {
+      try {
+        const distanceOutput = runGit([
+          "rev-list",
+          "--count",
+          `${candidate.mergeBase}..${headRevision}`,
+        ]).trim();
+        const distance = /^\d+$/u.test(distanceOutput) ? Number(distanceOutput) : Number.NaN;
+        if (
+          Number.isSafeInteger(distance) &&
+          (closestCandidate === null || distance < closestCandidate.distance)
+        ) {
+          closestCandidate = { distance, revision: candidate.revision };
+        }
+      } catch {
+        // Uma candidata que mudou durante a leitura não pode definir a base.
+      }
+    }
+    if (closestCandidate !== null) {
+      return closestCandidate.revision;
+    }
   }
 
   let rootRevision = "";
@@ -966,10 +1030,51 @@ export function gitChangedFileArgumentLists(comparisonBase) {
   ];
 }
 
+export function containsEncodedPrivateKey(source) {
+  if (typeof source !== "string") {
+    throw new TypeError("A varredura de chave privada exige conteúdo textual.");
+  }
+  const header = /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----/gu;
+  for (const match of source.matchAll(header)) {
+    const label = match[1];
+    const bodyStart = (match.index ?? 0) + match[0].length;
+    const footer = `-----END ${label}-----`;
+    const bodyEnd = source.indexOf(footer, bodyStart);
+    if (bodyEnd === -1) {
+      continue;
+    }
+    const compactBody = source.slice(bodyStart, bodyEnd).replaceAll(/\s/gu, "");
+    if (compactBody.length >= 256 && /^[A-Za-z0-9+/]+={0,2}$/u.test(compactBody)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function parseGitChanges(output, implicitStatus) {
   const tokens = output.split("\0").filter(Boolean);
+  const assertPortablePath = (path) => {
+    if (typeof path !== "string" || path === "" || path.includes("\\")) {
+      throw new Error(`O caminho Git não é portável para Windows: ${String(path)}.`);
+    }
+    const components = path.split("/");
+    for (const component of components) {
+      const baseName = component.split(".", 1)[0];
+      if (
+        component === "" ||
+        component === "." ||
+        component === ".." ||
+        /[<>:"|?*\u0000-\u001f]/u.test(component) ||
+        /[ .]$/u.test(component) ||
+        /^(?:aux|con|nul|prn|com[1-9]|lpt[1-9])$/iu.test(baseName)
+      ) {
+        throw new Error(`O caminho Git não é portável para Windows: ${path}.`);
+      }
+    }
+    return path;
+  };
   if (implicitStatus !== undefined) {
-    return tokens.map((path) => ({ path, status: implicitStatus }));
+    return tokens.map((path) => ({ path: assertPortablePath(path), status: implicitStatus }));
   }
 
   const changes = [];
@@ -988,7 +1093,7 @@ export function parseGitChanges(output, implicitStatus) {
       if (path === undefined) {
         throw new Error(`Saída Git incompleta para status ${statusToken}.`);
       }
-      changes.push({ path, status });
+      changes.push({ path: assertPortablePath(path), status });
     }
   }
 
@@ -997,8 +1102,9 @@ export function parseGitChanges(output, implicitStatus) {
 
 export function readGitChanges(root, executeGit = execFileSync) {
   const runGit = (argumentsList) => executeGit("git", argumentsList, gitExecutionOptions(root));
-  assertCanonicalGitWorktreeRoot(runGit, root);
-  const comparisonBase = resolveGitComparisonBase(runGit);
+  const headRevision = readCanonicalGitWorktreeHead(runGit, root);
+  const comparisonBase =
+    headRevision === null ? null : resolveGitComparisonBase(runGit, headRevision);
   const changes = gitChangedFileArgumentLists(comparisonBase).flatMap(
     ({ argumentsList, implicitStatus }) => parseGitChanges(runGit(argumentsList), implicitStatus),
   );
@@ -2011,11 +2117,7 @@ function assertStablePhysicalAncestry(ancestry) {
   }
 }
 
-function readPhysicalRepositoryFile(
-  repositoryRoot,
-  repositoryPath,
-  { readBuffer = false, readDescriptor, requireExclusive = false } = {},
-) {
+function inspectPhysicalRepositoryFile(repositoryRoot, repositoryPath, requireExclusive) {
   const resolvedRoot = resolve(repositoryRoot);
   const absolutePath = resolve(resolvedRoot, repositoryPath);
   const normalizedPath = relative(resolvedRoot, absolutePath).split(sep).join("/");
@@ -2062,6 +2164,20 @@ function readPhysicalRepositoryFile(
     );
   }
 
+  return { absolutePath, ancestry, pathInformation };
+}
+
+export function readPhysicalRepositoryFile(
+  repositoryRoot,
+  repositoryPath,
+  { readBuffer = false, readDescriptor, requireExclusive = false } = {},
+) {
+  const { absolutePath, ancestry, pathInformation } = inspectPhysicalRepositoryFile(
+    repositoryRoot,
+    repositoryPath,
+    requireExclusive,
+  );
+
   let descriptor;
   try {
     descriptor = openSync(absolutePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
@@ -2099,6 +2215,105 @@ function readPhysicalRepositoryFile(
     }
     assertStablePhysicalAncestry(ancestry);
     return source;
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+    }
+  }
+}
+
+export function writePhysicalRepositoryFile(
+  repositoryRoot,
+  repositoryPath,
+  contents,
+  { expectedSource, requireExclusive = true } = {},
+) {
+  if (typeof contents !== "string" || typeof expectedSource !== "string") {
+    throw new TypeError("A escrita física exige conteúdo e fonte esperada textuais.");
+  }
+  const { absolutePath, ancestry, pathInformation } = inspectPhysicalRepositoryFile(
+    repositoryRoot,
+    repositoryPath,
+    requireExclusive,
+  );
+
+  let descriptor;
+  try {
+    descriptor = openSync(absolutePath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const openedInformation = fstatSync(descriptor, { bigint: true });
+    if (
+      !openedInformation.isFile() ||
+      !sameStableFileSnapshot(pathInformation, openedInformation) ||
+      (requireExclusive && openedInformation.nlink !== 1n)
+    ) {
+      throw new Error("O arquivo mudou antes da escrita física.");
+    }
+    const currentSource = readFileSync(descriptor, "utf8");
+    const stableDescriptorInformation = fstatSync(descriptor, { bigint: true });
+    const stablePathInformation = lstatSync(absolutePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
+    if (
+      currentSource !== expectedSource ||
+      stablePathInformation === undefined ||
+      stablePathInformation.isSymbolicLink() ||
+      !stablePathInformation.isFile() ||
+      !sameStableFileSnapshot(openedInformation, stableDescriptorInformation) ||
+      !sameStableFileSnapshot(openedInformation, stablePathInformation)
+    ) {
+      throw new Error("O arquivo mudou durante a preparação da escrita física.");
+    }
+    assertStablePhysicalAncestry(ancestry);
+
+    const output = Buffer.from(contents, "utf8");
+    ftruncateSync(descriptor, 0);
+    let offset = 0;
+    while (offset < output.length) {
+      offset += writeSync(descriptor, output, offset, output.length - offset, offset);
+    }
+    fsyncSync(descriptor);
+
+    const persisted = Buffer.alloc(output.length);
+    let readOffset = 0;
+    while (readOffset < persisted.length) {
+      const bytesRead = readSync(
+        descriptor,
+        persisted,
+        readOffset,
+        persisted.length - readOffset,
+        readOffset,
+      );
+      if (bytesRead === 0) {
+        throw new Error("A releitura física terminou antes do conteúdo persistido.");
+      }
+      readOffset += bytesRead;
+    }
+    if (!persisted.equals(output)) {
+      throw new Error("O conteúdo persistido divergiu da formatação calculada.");
+    }
+
+    const finalDescriptorInformation = fstatSync(descriptor, { bigint: true });
+    const finalInformation = lstatSync(absolutePath, {
+      bigint: true,
+      throwIfNoEntry: false,
+    });
+    if (
+      finalInformation === undefined ||
+      finalInformation.isSymbolicLink() ||
+      !finalInformation.isFile() ||
+      !samePhysicalFile(openedInformation, finalDescriptorInformation) ||
+      !samePhysicalFile(openedInformation, finalInformation) ||
+      finalDescriptorInformation.mode !== openedInformation.mode ||
+      finalInformation.mode !== openedInformation.mode ||
+      finalDescriptorInformation.nlink !== openedInformation.nlink ||
+      finalInformation.nlink !== openedInformation.nlink ||
+      finalDescriptorInformation.size !== BigInt(output.length) ||
+      finalInformation.size !== BigInt(output.length)
+    ) {
+      throw new Error("O arquivo mudou durante a conclusão da escrita física.");
+    }
+    assertStablePhysicalAncestry(ancestry);
   } finally {
     if (descriptor !== undefined) {
       closeSync(descriptor);

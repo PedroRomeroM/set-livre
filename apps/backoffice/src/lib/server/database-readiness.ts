@@ -1,17 +1,14 @@
 import "server-only";
 
-import { databaseMigrationHead, parseDalDatabaseUrl } from "@set-livre/contracts";
+import { databaseMigrationHead } from "@set-livre/contracts";
 import { Pool } from "pg";
-import { z } from "zod";
 
 import {
   databaseReadinessQuery,
   isDatabaseReadinessSatisfied,
 } from "@set-livre/contracts/server/database-readiness";
+import { loadDalPostgresConnectionConfig } from "@set-livre/contracts/server/postgres-connection-config";
 
-const environmentSchema = z.object({
-  DATABASE_URL_APP_DAL: z.string(),
-});
 let databaseConnection: { pool: Pool; sessionRole: string } | undefined;
 
 function getDatabaseConnection() {
@@ -19,8 +16,7 @@ function getDatabaseConnection() {
     return databaseConnection;
   }
 
-  const environment = environmentSchema.parse(process.env);
-  const configuration = parseDalDatabaseUrl(environment.DATABASE_URL_APP_DAL);
+  const configuration = loadDalPostgresConnectionConfig(process.env);
   const pool = new Pool({
     allowExitOnIdle: true,
     application_name: "set-livre-backoffice-readiness",
@@ -29,6 +25,7 @@ function getDatabaseConnection() {
     idleTimeoutMillis: 10_000,
     max: 2,
     query_timeout: 1_000,
+    ssl: configuration.ssl,
     statement_timeout: 1_000,
   });
   pool.on("error", () => undefined);

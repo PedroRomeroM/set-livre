@@ -11,8 +11,6 @@ export async function runPackagedReleaseSmokeWithProcessCleanup({
   signalSource = process,
   smokeOperation,
   startProcesses,
-  systemRoot = process.env.SystemRoot,
-  terminateWindowsTree,
 } = {}) {
   if (typeof startProcesses !== "function" || typeof smokeOperation !== "function") {
     throw new Error("O smoke da release exige processos empacotados e uma operação válida.");
@@ -69,8 +67,6 @@ export async function runPackagedReleaseSmokeWithProcessCleanup({
       scheduleShutdownTimeout,
       signalProcessGroup,
       signalSource,
-      systemRoot,
-      terminateWindowsTree,
       writeError: () => {},
     });
     let exitCode;

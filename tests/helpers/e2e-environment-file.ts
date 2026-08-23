@@ -6,7 +6,11 @@ import { readPrivatePhysicalFile } from "../../scripts/physical-tree-removal.mjs
 
 type E2EEnvironmentFileOptions = Pick<
   PrivatePhysicalFileReadOptions,
-  "expectedPosixUserId" | "platform" | "readDescriptor"
+  | "assertWindowsPath"
+  | "assertWindowsPrivate"
+  | "expectedPosixUserId"
+  | "platform"
+  | "readDescriptor"
 >;
 
 export function readOptionalE2EEnvironmentFile(
@@ -22,7 +26,7 @@ export function readOptionalE2EEnvironmentFile(
     });
   } catch {
     throw new Error(
-      "O ambiente E2E local precisa ser um arquivo regular exclusivo, permanecer sob ancestrais físicos e, em sistemas POSIX, pertencer ao usuário efetivo e usar modo 0600.",
+      "O ambiente E2E local precisa ser um arquivo regular exclusivo, permanecer sob ancestrais físicos e, em sistemas POSIX, pertencer ao usuário efetivo e usar modo 0600; no Windows, precisa pertencer ao usuário atual e usar DACL privada protegida.",
     );
   }
 

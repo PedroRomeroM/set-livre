@@ -1,0 +1,378 @@
+name: Build production artifact
+
+run-name: >-
+  ${{ github.event.workflow_run.event == 'workflow_dispatch'
+      && format('Recovered release {0}', github.event.workflow_run.display_title)
+      || format('Release {0}', github.event.workflow_run.head_sha) }}
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish canonical Linux x64 release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' ||
+       github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.path == '.github/workflows/ci.yaml' &&
+      github.event.workflow_run.repository.full_name == github.repository &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+       format('{0}', github.event.workflow_run.repository.id) == vars.SET_LIVRE_REPOSITORY_ID &&
+       format('{0}', github.event.workflow_run.head_repository.id) == vars.SET_LIVRE_REPOSITORY_ID &&
+      format('{0}', github.event.workflow_run.workflow_id) == vars.CI_GITHUB_WORKFLOW_ID &&
+      vars.PRD_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.npm-cache
+      NPM_CLI_TARBALL_SHA256: 31e9770f7dc71119a58509353b27917557aaf0ac9b5ef1a0465ee7d8ec67ae75
+      NPM_CLI_TARBALL_SHA512: 48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003
+      NPM_CLI_TARBALL_URL: https://registry.npmjs.org/npm/-/npm-11.19.0.tgz
+      NPM_CLI_VERSION: "11.19.0"
+      PRD_BACKOFFICE_APP_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}
+      PRD_PUBLIC_APP_URL: ${{ vars.PRD_PUBLIC_APP_URL }}
+      PRD_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_ANON_KEY }}
+      PRD_SUPABASE_PROJECT_REF: ${{ vars.PRD_SUPABASE_PROJECT_REF }}
+      PRD_SUPABASE_URL: ${{ vars.PRD_SUPABASE_URL }}
+      UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+      UPSTREAM_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+    steps:
+      - name: Resolve and prove the immutable release identity
+        id: identity
+        env:
+          EXPECTED_REPOSITORY_ID: ${{ vars.SET_LIVRE_REPOSITORY_ID }}
+          EXPECTED_CI_WORKFLOW_ID: ${{ vars.CI_GITHUB_WORKFLOW_ID }}
+          EXPECTED_PRD_WORKFLOW_ID: ${{ vars.PRD_GITHUB_WORKFLOW_ID }}
+        # actions/github-script@v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fail = (message) => {
+              throw new Error(`Identidade de publicação inválida: ${message}`);
+            };
+            const positiveInteger = (name) => {
+              const raw = process.env[name] ?? "";
+              if (!/^[1-9][0-9]*$/u.test(raw)) fail(name);
+              const value = Number(raw);
+              if (!Number.isSafeInteger(value)) fail(name);
+              return value;
+            };
+            const expectedRepositoryId = positiveInteger("EXPECTED_REPOSITORY_ID");
+            const expectedCiWorkflowId = positiveInteger("EXPECTED_CI_WORKFLOW_ID");
+            const expectedPrdWorkflowId = positiveInteger("EXPECTED_PRD_WORKFLOW_ID");
+            const currentRunId = positiveInteger("GITHUB_RUN_ID");
+            const upstreamRunId = positiveInteger("UPSTREAM_RUN_ID");
+            const upstreamRunAttempt = positiveInteger("UPSTREAM_RUN_ATTEMPT");
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const repositoryMatches = (value) =>
+              value?.id === expectedRepositoryId && value?.full_name === repository;
+            const request = async (route, parameters = {}) =>
+              (
+                await github.request(route, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ...parameters,
+                })
+              ).data;
+
+            const eventRun = context.payload.workflow_run;
+            const current = await request("GET /repos/{owner}/{repo}/actions/runs/{run_id}", {
+              run_id: currentRunId,
+            });
+            const upstream = await request(
+              "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}",
+              { run_id: upstreamRunId, attempt_number: upstreamRunAttempt },
+            );
+            if (
+              eventRun?.id !== upstreamRunId ||
+              eventRun?.run_attempt !== upstreamRunAttempt ||
+              eventRun?.workflow_id !== expectedCiWorkflowId ||
+              eventRun?.path !== ".github/workflows/ci.yaml" ||
+              !repositoryMatches(eventRun?.repository) ||
+              !repositoryMatches(eventRun?.head_repository) ||
+              current.id !== currentRunId ||
+              current.workflow_id !== expectedPrdWorkflowId ||
+              current.path !== ".github/workflows/prd-deploy.yaml" ||
+              current.event !== "workflow_run" ||
+              current.head_branch !== "main" ||
+              !repositoryMatches(current.repository) ||
+              !repositoryMatches(current.head_repository) ||
+              upstream.id !== upstreamRunId ||
+              upstream.run_attempt !== upstreamRunAttempt ||
+              upstream.workflow_id !== expectedCiWorkflowId ||
+              upstream.path !== ".github/workflows/ci.yaml" ||
+              upstream.head_branch !== "main" ||
+              upstream.status !== "completed" ||
+              upstream.conclusion !== "success" ||
+              !repositoryMatches(upstream.repository) ||
+              !repositoryMatches(upstream.head_repository)
+            ) {
+              fail("workflow run chain");
+            }
+
+            let releaseSha;
+            let approvedRunId = "";
+            let approvedRunAttempt = "";
+            let expectedArchiveSha256 = "";
+            let expectedPublicBuildConfigSha256 = "";
+            if (upstream.event === "push") {
+              releaseSha = upstream.head_sha;
+              if (
+                !/^[a-f0-9]{40}$/u.test(releaseSha ?? "") ||
+                upstream.display_title !== `CI ${releaseSha}` ||
+                current.display_title !== `Release ${releaseSha}`
+              ) {
+                fail("main release title");
+              }
+            } else if (upstream.event === "workflow_dispatch") {
+              const match = /^([a-f0-9]{40}) approved ([1-9][0-9]*)\/([1-9][0-9]*) archive ([a-f0-9]{64}) config ([a-f0-9]{64})$/u.exec(
+                upstream.display_title ?? "",
+              );
+              if (match === null) fail("recovery title");
+              [
+                ,
+                releaseSha,
+                approvedRunId,
+                approvedRunAttempt,
+                expectedArchiveSha256,
+                expectedPublicBuildConfigSha256,
+              ] = match;
+              if (current.display_title !== `Recovered release ${upstream.display_title}`) {
+                fail("recovery publication title");
+              }
+            } else {
+              fail("upstream event");
+            }
+
+            if (approvedRunId !== "") {
+              const runId = Number(approvedRunId);
+              const attempt = Number(approvedRunAttempt);
+              if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(attempt)) {
+                fail("approved recovery identity");
+              }
+              const approved = await request(
+                "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}",
+                { run_id: runId, attempt_number: attempt },
+              );
+              const jobs = await request(
+                "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                { run_id: runId, attempt_number: attempt, per_page: 100, page: 1 },
+              );
+              if (
+                approved.id !== runId ||
+                approved.run_attempt !== attempt ||
+                approved.workflow_id !== expectedPrdWorkflowId ||
+                approved.path !== ".github/workflows/prd-deploy.yaml" ||
+                approved.event !== "workflow_run" ||
+                approved.head_branch !== "main" ||
+                !/^[a-f0-9]{40}$/u.test(approved.head_sha ?? "") ||
+                approved.status !== "completed" ||
+                approved.conclusion !== "success" ||
+                approved.display_title !== `Release ${releaseSha}` ||
+                !repositoryMatches(approved.repository) ||
+                !repositoryMatches(approved.head_repository) ||
+                jobs.total_count !== 1 ||
+                !Array.isArray(jobs.jobs) ||
+                jobs.jobs.length !== 1
+              ) {
+                fail("approved production run");
+              }
+              const job = jobs.jobs[0];
+              const matchingPublicationSteps = Array.isArray(job.steps)
+                ? job.steps.filter(
+                    (step) =>
+                      step?.name === "Publish immutable release artifact" &&
+                      step?.conclusion === "success",
+                  ).length
+                : 0;
+              if (
+                job.run_id !== runId ||
+                job.head_sha !== approved.head_sha ||
+                job.name !== "Verify and publish canonical Linux x64 release" ||
+                job.status !== "completed" ||
+                job.conclusion !== "success" ||
+                matchingPublicationSteps !== 1
+              ) {
+                fail("approved publication job");
+              }
+              const approvedArtifacts = await github.paginate(
+                "GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: runId,
+                  per_page: 100,
+                },
+              );
+              const approvedIdentity = new RegExp(
+                `^set-livre-${releaseSha}-([a-f0-9]{64})-([a-f0-9]{64})$`,
+                "u",
+              );
+              const matchingApprovedArtifacts = approvedArtifacts.filter((artifact) =>
+                approvedIdentity.test(artifact?.name ?? ""),
+              );
+              if (matchingApprovedArtifacts.length !== 1) {
+                fail("approved publication artifact identity");
+              }
+              const approvedMatch = approvedIdentity.exec(matchingApprovedArtifacts[0].name);
+              if (
+                approvedMatch === null ||
+                approvedMatch[1] !== expectedArchiveSha256 ||
+                approvedMatch[2] !== expectedPublicBuildConfigSha256
+              ) {
+                fail("approved publication digests");
+              }
+            }
+
+            const upstreamArtifacts = await github.paginate(
+              "GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts",
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: upstreamRunId,
+                per_page: 100,
+              },
+            );
+            const upstreamIdentity = new RegExp(
+              `^set-livre-ci-${releaseSha}-([a-f0-9]{64})-([a-f0-9]{64})$`,
+              "u",
+            );
+            const matchingUpstreamArtifacts = upstreamArtifacts.filter((artifact) =>
+              upstreamIdentity.test(artifact?.name ?? ""),
+            );
+            if (matchingUpstreamArtifacts.length !== 1) {
+              fail("upstream artifact identity");
+            }
+            const upstreamMatch = upstreamIdentity.exec(matchingUpstreamArtifacts[0].name);
+            if (upstreamMatch === null) fail("upstream artifact digests");
+            if (expectedArchiveSha256 === "") {
+              [, expectedArchiveSha256, expectedPublicBuildConfigSha256] = upstreamMatch;
+            } else if (
+              upstreamMatch[1] !== expectedArchiveSha256 ||
+              upstreamMatch[2] !== expectedPublicBuildConfigSha256
+            ) {
+              fail("reconstructed artifact identity");
+            }
+
+            core.setOutput("release_sha", releaseSha);
+            core.setOutput("approved_run_id", approvedRunId);
+            core.setOutput("approved_run_attempt", approvedRunAttempt);
+            core.setOutput("archive_sha256", expectedArchiveSha256);
+            core.setOutput("public_build_config_sha256", expectedPublicBuildConfigSha256);
+            core.setOutput("ci_artifact_name", matchingUpstreamArtifacts[0].name);
+
+      # actions/checkout@v5.1.0
+      - name: Checkout the approved merged SHA
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ${{ steps.identity.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove the checked out SHA remains merged in main
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test "${RUNNER_ARCH:-}" = X64
+          [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$RELEASE_SHA" = "$(git rev-parse --verify 'HEAD^{commit}')"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main
+
+      # actions/setup-node@v5.0.0
+      - name: Install Node.js 24.18.0
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install npm 11.19.0 and locked verifier dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          npm_bootstrap_root="$(mktemp -d "${RUNNER_TEMP}/set-livre-npm.XXXXXX")"
+          cleanup_npm_bootstrap() { rm -rf -- "$npm_bootstrap_root"; }
+          trap cleanup_npm_bootstrap EXIT
+          npm_archive="$npm_bootstrap_root/npm-${NPM_CLI_VERSION}.tgz"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 120 --retry 0 \
+            --output "$npm_archive" "$NPM_CLI_TARBALL_URL"
+          (
+            cd "$npm_bootstrap_root"
+            printf '%s  %s\n' "$NPM_CLI_TARBALL_SHA512" "$(basename "$npm_archive")" |
+              sha512sum --check --strict
+            printf '%s  %s\n' "$NPM_CLI_TARBALL_SHA256" "$(basename "$npm_archive")" |
+              sha256sum --check --strict
+          )
+          npm install --global --ignore-scripts --offline --no-audit --no-fund "$npm_archive"
+          hash -r
+          test "$(node --version)" = v24.18.0
+          test "$(npm --version)" = "$NPM_CLI_VERSION"
+          npm ci
+
+      # actions/download-artifact@v8.0.1
+      - name: Download the canonical artifact from the exact CI run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ steps.identity.outputs.ci_artifact_name }}
+          path: .artifacts/production-handoff
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Verify the canonical archive and schema 4 contract
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
+          EXPECTED_ARCHIVE_SHA256: ${{ steps.identity.outputs.archive_sha256 }}
+          EXPECTED_PUBLIC_BUILD_CONFIG_SHA256: ${{ steps.identity.outputs.public_build_config_sha256 }}
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs verify \
+            ".artifacts/production-handoff/set-livre-${RELEASE_SHA}.tar.gz" \
+            "$RELEASE_SHA"
+          archive=".artifacts/production-handoff/set-livre-${RELEASE_SHA}.tar.gz"
+          test "$(sha256sum -- "$archive" | awk '{print $1}')" = "$EXPECTED_ARCHIVE_SHA256"
+          test "$(
+            tar -xOf "$archive" release/manifest.json |
+              node -e '
+                let source = "";
+                process.stdin.setEncoding("utf8");
+                process.stdin.on("data", (chunk) => { source += chunk; });
+                process.stdin.on("end", () => {
+                  const digest = JSON.parse(source)?.publicBuildConfigSha256;
+                  if (!/^[a-f0-9]{64}$/u.test(digest ?? "")) process.exit(1);
+                  process.stdout.write(digest + "\n");
+                });
+              '
+          )" = "$EXPECTED_PUBLIC_BUILD_CONFIG_SHA256"
+          git diff --exit-code
+
+      # actions/upload-artifact@v4.6.2
+      - name: Publish immutable release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: set-livre-${{ steps.identity.outputs.release_sha }}-${{ steps.identity.outputs.archive_sha256 }}-${{ steps.identity.outputs.public_build_config_sha256 }}
+          path: |
+            .artifacts/production-handoff/set-livre-${{ steps.identity.outputs.release_sha }}.tar.gz
+            .artifacts/production-handoff/set-livre-${{ steps.identity.outputs.release_sha }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          include-hidden-files: true

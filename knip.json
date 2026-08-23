@@ -2,8 +2,9 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/dev-all.mjs", "scripts/release-manifest.mjs", "tests/fixtures/*.mjs"],
-      "ignoreBinaries": ["flock", "mkfifo"]
+      "entry": ["scripts/dev-all.mjs", "tests/fixtures/*.mjs"],
+      "ignoreDependencies": ["supabase"],
+      "ignoreBinaries": ["flock", "mkfifo", "reg.exe", "where.exe"]
     },
     "apps/backoffice": {},
     "packages/contracts": {},

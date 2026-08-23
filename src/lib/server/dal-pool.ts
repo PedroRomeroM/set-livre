@@ -1,10 +1,7 @@
 import "server-only";
 
-import { parseDalDatabaseUrl } from "@set-livre/contracts";
+import { loadDalPostgresConnectionConfig } from "@set-livre/contracts/server/postgres-connection-config";
 import { Pool } from "pg";
-import { z } from "zod";
-
-const environmentSchema = z.object({ DATABASE_URL_APP_DAL: z.string() });
 
 let commandPool: Pool | undefined;
 
@@ -13,8 +10,7 @@ export function commandDalPool() {
     return commandPool;
   }
 
-  const environment = environmentSchema.parse(process.env);
-  const database = parseDalDatabaseUrl(environment.DATABASE_URL_APP_DAL);
+  const database = loadDalPostgresConnectionConfig(process.env);
   commandPool = new Pool({
     allowExitOnIdle: true,
     application_name: "set-livre-web-command-dal",
@@ -23,6 +19,7 @@ export function commandDalPool() {
     idleTimeoutMillis: 10_000,
     max: 6,
     query_timeout: 2_000,
+    ssl: database.ssl,
     statement_timeout: 2_000,
   });
   commandPool.on("error", () => undefined);

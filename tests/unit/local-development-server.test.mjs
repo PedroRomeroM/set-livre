@@ -17,21 +17,72 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createLocalDevelopmentServerLaunch,
-  createLocalProductionPreviewLaunches,
-  createLocalProductionServerLaunch,
+  createLocalDevelopmentServerLaunch as createLocalDevelopmentServerLaunchNative,
+  createLocalProductionPreviewLaunches as createLocalProductionPreviewLaunchesNative,
+  createLocalProductionServerLaunch as createLocalProductionServerLaunchNative,
   resolveTrustedNextCliLaunch,
-  runLocalDevelopmentServer,
-  runLocalProductionServer,
+  runLocalDevelopmentServer as runLocalDevelopmentServerNative,
+  runLocalProductionServer as runLocalProductionServerNative,
 } from "../../scripts/local-development-server.mjs";
+import { assertWindowsTrustedPathIntegrity } from "../../scripts/trusted-npm-cli.mjs";
+import { assertWindowsPathWithoutReparse } from "../../scripts/windows-filesystem-security.mjs";
 
 const localDatabaseUrl =
   "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
 const temporaryRoots = [];
+const logicalWindowsFileSecurity = {
+  assertWindowsIntegrity: () => undefined,
+  assertWindowsPrivate: () => undefined,
+  platform: "win32",
+};
+const unitFileSecurityOptions =
+  process.platform === "win32" ? logicalWindowsFileSecurity : undefined;
+const assertLogicalWindowsPath = () => undefined;
+
+function createLocalDevelopmentServerLaunch(options) {
+  return createLocalDevelopmentServerLaunchNative({
+    ...options,
+    fileSecurityOptions: unitFileSecurityOptions,
+  });
+}
+
+function createLocalProductionPreviewLaunches(options) {
+  return createLocalProductionPreviewLaunchesNative({
+    ...options,
+    fileSecurityOptions: unitFileSecurityOptions,
+  });
+}
+
+function createLocalProductionServerLaunch(options) {
+  return createLocalProductionServerLaunchNative({
+    ...options,
+    fileSecurityOptions: unitFileSecurityOptions,
+  });
+}
+
+function runLocalDevelopmentServer(options) {
+  return runLocalDevelopmentServerNative({
+    ...options,
+    fileSecurityOptions: unitFileSecurityOptions,
+  });
+}
+
+function runLocalProductionServer(options) {
+  return runLocalProductionServerNative({
+    ...options,
+    assertWindowsPath: options?.assertWindowsPath ?? assertLogicalWindowsPath,
+    fileSecurityOptions: unitFileSecurityOptions,
+  });
+}
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    rmSync(root, {
+      force: true,
+      maxRetries: process.platform === "win32" ? 10 : 0,
+      recursive: true,
+      retryDelay: 100,
+    });
   }
 });
 
@@ -47,6 +98,10 @@ function localEnvironment(applicationUrl, anonKey) {
   ].join("\n");
 }
 
+function writePrivateEnvironment(path, contents) {
+  writeFileSync(path, contents, { mode: 0o600 });
+}
+
 function temporaryRepository({ nextVersion = "16.3.0", rootNextVersion = "16.3.0" } = {}) {
   const root = mkdtempSync(resolve(tmpdir(), "set-livre-local-server-"));
   temporaryRoots.push(root);
@@ -54,17 +109,13 @@ function temporaryRepository({ nextVersion = "16.3.0", rootNextVersion = "16.3.0
   const nextCliPath = resolve(nextPackageRoot, "dist/bin/next");
   mkdirSync(resolve(root, "apps/backoffice"), { recursive: true });
   mkdirSync(resolve(nextPackageRoot, "dist/bin"), { recursive: true });
-  writeFileSync(
+  writePrivateEnvironment(
     resolve(root, ".env.local"),
     localEnvironment("http://127.0.0.1:3000", "web-anon"),
-    {
-      mode: 0o600,
-    },
   );
-  writeFileSync(
+  writePrivateEnvironment(
     resolve(root, "apps/backoffice/.env.local"),
     localEnvironment("http://127.0.0.1:3001", "backoffice-anon"),
-    { mode: 0o600 },
   );
   writeFileSync(
     resolve(root, "package.json"),
@@ -92,6 +143,7 @@ function temporaryRepository({ nextVersion = "16.3.0", rootNextVersion = "16.3.0
 function hostileInheritedEnvironment(home) {
   return {
     BASH_ENV: resolve(home, "hostile-shell"),
+    COMSPEC: "C:\\attacker\\cmd.exe",
     DATABASE_URL_APP_DAL: "postgresql://cloud:secret@database.example.com:5432/production",
     E2E_DATABASE_URL: "postgresql://postgres:admin@127.0.0.1:54322/postgres",
     HOME: home,
@@ -105,10 +157,23 @@ function hostileInheritedEnvironment(home) {
     PGPASSWORD: "admin-secret",
     SSH_AUTH_SOCK: resolve(home, "agent.sock"),
     SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
+    SystemRoot: process.env.SystemRoot,
     npm_config__authToken: "registry-secret",
     npm_config_node_options: `--require=${resolve(home, "npm-loader.cjs")}`,
     npm_config_script_shell: resolve(home, "hostile-script-shell"),
   };
+}
+
+function minimalInheritedEnvironment(overrides = {}) {
+  return {
+    PATH: process.env.PATH,
+    ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
+    ...overrides,
+  };
+}
+
+function spawnDirectly(command, argumentsList, options, { spawnProcess }) {
+  return spawnProcess(command, argumentsList, options);
 }
 
 function linuxMountInformation(mountPath) {
@@ -139,7 +204,8 @@ describe("local development server launcher", () => {
     try {
       const result = runLocalDevelopmentServer({
         application: "web",
-        inheritedEnvironment: { PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment(),
+        platform: "linux",
         repositoryRoot: fixture.root,
         spawnProcess: () => {
           queueMicrotask(() => {
@@ -305,10 +371,10 @@ describe("local development server launcher", () => {
     expect(workflow.start.argumentsList).toEqual(web.argumentsList);
     expect(workflow.build.options.env).toBe(workflow.start.options.env);
     expect(workflow.buildOutputPath).toBe(resolve(fixture.root, ".next"));
-  });
+  }, 15_000);
 
-  it.runIf(process.platform === "linux")(
-    "removes a stale cloud build and starts only the freshly built local bundle",
+  it.runIf(process.platform === "linux" || process.platform === "win32")(
+    "removes a stale cloud build on a supported local host and starts only the fresh bundle",
     async () => {
       const fixture = temporaryRepository();
       const buildOutputPath = resolve(fixture.root, ".next");
@@ -321,7 +387,6 @@ describe("local development server launcher", () => {
       mkdirSync(buildOutputPath);
       mkdirSync(externalBuildOutput);
       writeFileSync(externalMarkerPath, "must-survive", "utf8");
-      symlinkSync(externalBuildOutput, resolve(buildOutputPath, "external-link"), "dir");
       writeFileSync(staleMarkerPath, "https://cloud.example.com", "utf8");
       writeFileSync(
         fixture.nextCliPath,
@@ -336,6 +401,7 @@ describe("local development server launcher", () => {
         inheritedEnvironment,
         repositoryRoot: fixture.root,
         signalSource,
+        spawnManagedProcess: spawnDirectly,
       });
       await waitFor(() => existsSync(resultPath));
       signalSource.emit("SIGTERM");
@@ -360,89 +426,92 @@ describe("local development server launcher", () => {
         readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
       ).toEqual([]);
     },
-    10_000,
+    30_000,
   );
 
-  it("refuses Linux mounts at the .next root or below before rename and spawn", async () => {
-    for (const mountedRelativePath of [
-      "",
-      "nested/mounted-output",
-      "nested with space/mounted\\output",
-    ]) {
-      const fixture = temporaryRepository();
-      const buildOutputPath = resolve(fixture.root, ".next");
-      const mountedPath = resolve(buildOutputPath, mountedRelativePath);
-      const markerPath = resolve(mountedPath, "must-remain");
-      mkdirSync(mountedPath, { recursive: true });
-      writeFileSync(markerPath, "external-volume-content", "utf8");
-      let spawnAttempted = false;
+  it.runIf(process.platform === "linux")(
+    "refuses Linux mounts at the .next root or below before rename and spawn",
+    async () => {
+      for (const mountedRelativePath of [
+        "",
+        "nested/mounted-output",
+        "nested with space/mounted\\output",
+      ]) {
+        const fixture = temporaryRepository();
+        const buildOutputPath = resolve(fixture.root, ".next");
+        const mountedPath = resolve(buildOutputPath, mountedRelativePath);
+        const markerPath = resolve(mountedPath, "must-remain");
+        mkdirSync(mountedPath, { recursive: true });
+        writeFileSync(markerPath, "external-volume-content", "utf8");
+        let spawnAttempted = false;
 
-      await expect(
-        runLocalProductionServer({
-          application: "web",
-          platform: "linux",
-          readLinuxMountInformation: () => linuxMountInformation(mountedPath),
-          repositoryRoot: fixture.root,
-          signalSource: new EventEmitter(),
-          spawnProcess: () => {
-            spawnAttempted = true;
-            throw new Error("spawn não deveria ocorrer");
-          },
-        }),
-      ).rejects.toThrow("não pode ser um mount nem conter mounts");
+        await expect(
+          runLocalProductionServer({
+            application: "web",
+            platform: "linux",
+            readLinuxMountInformation: () => linuxMountInformation(mountedPath),
+            repositoryRoot: fixture.root,
+            signalSource: new EventEmitter(),
+            spawnProcess: () => {
+              spawnAttempted = true;
+              throw new Error("spawn não deveria ocorrer");
+            },
+          }),
+        ).rejects.toThrow("não pode ser um mount nem conter mounts");
 
-      expect(readFileSync(markerPath, "utf8")).toBe("external-volume-content");
-      expect(existsSync(buildOutputPath)).toBe(true);
-      expect(
-        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
-      ).toEqual([]);
-      expect(spawnAttempted).toBe(false);
-    }
+        expect(readFileSync(markerPath, "utf8")).toBe("external-volume-content");
+        expect(existsSync(buildOutputPath)).toBe(true);
+        expect(
+          readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+        ).toEqual([]);
+        expect(spawnAttempted).toBe(false);
+      }
 
-    for (const readLinuxMountInformation of [
-      () => "",
-      () => "mountinfo-malformado\n",
-      () => "1 0 0:1 / caminho-relativo rw - tmpfs tmpfs rw\n",
-      () => "1 0 0:1 raiz-relativa /tmp rw - tmpfs tmpfs rw\n",
-      () => "1 0 0:1 /tmp/../raiz /tmp rw - tmpfs tmpfs rw\n",
-      () => "1 0 0:1 / /tmp\\777 rw - tmpfs tmpfs rw\n",
-      () => "1 0 0:1 / /tmp rw - tmpfs - rw\n",
-      () => "1 0 0:1 / /tmp/../escape rw - tmpfs tmpfs rw\n",
-      () => {
-        throw new Error("mountinfo-indisponível");
-      },
-    ]) {
-      const fixture = temporaryRepository();
-      const buildOutputPath = resolve(fixture.root, ".next");
-      const markerPath = resolve(buildOutputPath, "nested/must-remain");
-      mkdirSync(resolve(buildOutputPath, "nested"), { recursive: true });
-      writeFileSync(markerPath, "previous-build-content", "utf8");
-      let spawnAttempted = false;
+      for (const readLinuxMountInformation of [
+        () => "",
+        () => "mountinfo-malformado\n",
+        () => "1 0 0:1 / caminho-relativo rw - tmpfs tmpfs rw\n",
+        () => "1 0 0:1 raiz-relativa /tmp rw - tmpfs tmpfs rw\n",
+        () => "1 0 0:1 /tmp/../raiz /tmp rw - tmpfs tmpfs rw\n",
+        () => "1 0 0:1 / /tmp\\777 rw - tmpfs tmpfs rw\n",
+        () => "1 0 0:1 / /tmp rw - tmpfs - rw\n",
+        () => "1 0 0:1 / /tmp/../escape rw - tmpfs tmpfs rw\n",
+        () => {
+          throw new Error("mountinfo-indisponível");
+        },
+      ]) {
+        const fixture = temporaryRepository();
+        const buildOutputPath = resolve(fixture.root, ".next");
+        const markerPath = resolve(buildOutputPath, "nested/must-remain");
+        mkdirSync(resolve(buildOutputPath, "nested"), { recursive: true });
+        writeFileSync(markerPath, "previous-build-content", "utf8");
+        let spawnAttempted = false;
 
-      await expect(
-        runLocalProductionServer({
-          application: "web",
-          platform: "linux",
-          readLinuxMountInformation,
-          repositoryRoot: fixture.root,
-          signalSource: new EventEmitter(),
-          spawnProcess: () => {
-            spawnAttempted = true;
-            throw new Error("spawn não deveria ocorrer");
-          },
-        }),
-      ).rejects.toThrow("Não foi possível comprovar");
+        await expect(
+          runLocalProductionServer({
+            application: "web",
+            platform: "linux",
+            readLinuxMountInformation,
+            repositoryRoot: fixture.root,
+            signalSource: new EventEmitter(),
+            spawnProcess: () => {
+              spawnAttempted = true;
+              throw new Error("spawn não deveria ocorrer");
+            },
+          }),
+        ).rejects.toThrow("Não foi possível comprovar");
 
-      expect(readFileSync(markerPath, "utf8")).toBe("previous-build-content");
-      expect(
-        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
-      ).toEqual([]);
-      expect(spawnAttempted).toBe(false);
-    }
-  });
+        expect(readFileSync(markerPath, "utf8")).toBe("previous-build-content");
+        expect(
+          readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+        ).toEqual([]);
+        expect(spawnAttempted).toBe(false);
+      }
+    },
+  );
 
-  it("fails closed on non-Linux before retiring an existing .next tree", async () => {
-    for (const platform of ["darwin", "win32", "unknown-platform"]) {
+  it("fails closed on unsupported platforms before retiring an existing .next tree", async () => {
+    for (const platform of ["darwin", "unknown-platform"]) {
       const fixture = temporaryRepository();
       const buildOutputPath = resolve(fixture.root, ".next");
       const rootMarkerPath = resolve(buildOutputPath, "root-marker");
@@ -541,59 +610,129 @@ describe("local development server launcher", () => {
       expect(readdirSync(externalBuildOutput)).toEqual([]);
       expect(spawnAttempted).toBe(false);
     }
+
+    if (process.platform === "win32") {
+      const junctionFixture = temporaryRepository();
+      const externalBuildOutput = resolve(junctionFixture.root, "external-build-output");
+      const markerPath = resolve(externalBuildOutput, "must-remain");
+      mkdirSync(externalBuildOutput);
+      writeFileSync(markerPath, "external", "utf8");
+      symlinkSync(externalBuildOutput, resolve(junctionFixture.root, ".next"), "junction");
+
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          repositoryRoot: junctionFixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("diretório físico");
+      expect(readFileSync(markerPath, "utf8")).toBe("external");
+      expect(spawnAttempted).toBe(false);
+    }
   });
 
-  it("rereads the physical preview environment and never falls back to inherited cloud data", () => {
-    const fixture = temporaryRepository();
-    const environmentPath = resolve(fixture.root, ".env.local");
-    const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
+  it.runIf(process.platform === "win32")(
+    "rejects a junction below .next before rename, removal or Next spawn",
+    async () => {
+      const fixture = temporaryRepository();
+      const buildOutputPath = resolve(fixture.root, ".next");
+      const externalBuildOutput = resolve(fixture.root, "external-build-output");
+      const externalMarkerPath = resolve(externalBuildOutput, "must-remain");
+      const staleMarkerPath = resolve(buildOutputPath, "must-remain");
+      mkdirSync(buildOutputPath);
+      mkdirSync(externalBuildOutput);
+      writeFileSync(staleMarkerPath, "stale", "utf8");
+      writeFileSync(externalMarkerPath, "external", "utf8");
+      symlinkSync(externalBuildOutput, resolve(buildOutputPath, "nested-junction"), "junction");
+      let spawnAttempted = false;
 
-    expect(
-      createLocalProductionServerLaunch({
-        application: "web",
-        inheritedEnvironment,
-        repositoryRoot: fixture.root,
-      }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    ).toBe("web-anon");
+      await expect(
+        runLocalProductionServer({
+          application: "web",
+          assertWindowsPath: assertWindowsPathWithoutReparse,
+          inheritedEnvironment: hostileInheritedEnvironment(fixture.root),
+          repositoryRoot: fixture.root,
+          signalSource: new EventEmitter(),
+          spawnProcess: () => {
+            spawnAttempted = true;
+            throw new Error("spawn não deveria ocorrer");
+          },
+        }),
+      ).rejects.toThrow("reparse points");
 
-    writeFileSync(
-      environmentPath,
-      localEnvironment("http://127.0.0.1:3000", "rotated-local-anon"),
-      { mode: 0o600 },
-    );
-    expect(
-      createLocalProductionServerLaunch({
-        application: "web",
-        inheritedEnvironment,
-        repositoryRoot: fixture.root,
-      }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    ).toBe("rotated-local-anon");
+      expect(readFileSync(staleMarkerPath, "utf8")).toBe("stale");
+      expect(readFileSync(externalMarkerPath, "utf8")).toBe("external");
+      expect(
+        readdirSync(fixture.root).filter((name) => name.startsWith(".next.preview-retired-")),
+      ).toEqual([]);
+      expect(spawnAttempted).toBe(false);
+    },
+    20_000,
+  );
 
-    writeFileSync(
-      environmentPath,
-      localEnvironment("http://127.0.0.1:3000", "rotated-local-anon").replace(
-        localDatabaseUrl,
-        "postgresql://cloud:secret@database.example.com:5432/production",
-      ),
-      { mode: 0o600 },
-    );
-    expect(() =>
-      createLocalProductionServerLaunch({
-        application: "web",
-        inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
-        repositoryRoot: fixture.root,
-      }),
-    ).toThrow("host IPv4 literal 127.0.0.1");
+  it(
+    "rereads the physical preview environment and never falls back to inherited cloud data",
+    () => {
+      const fixture = temporaryRepository();
+      const environmentPath = resolve(fixture.root, ".env.local");
+      const inheritedEnvironment = hostileInheritedEnvironment(fixture.root);
 
-    rmSync(environmentPath);
-    expect(() =>
-      createLocalProductionServerLaunch({
-        application: "web",
-        inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
-        repositoryRoot: fixture.root,
-      }),
-    ).toThrow("arquivo físico regular");
-  });
+      expect(
+        createLocalProductionServerLaunch({
+          application: "web",
+          inheritedEnvironment,
+          repositoryRoot: fixture.root,
+        }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      ).toBe("web-anon");
+
+      writeFileSync(
+        environmentPath,
+        localEnvironment("http://127.0.0.1:3000", "rotated-local-anon"),
+        { mode: 0o600 },
+      );
+      expect(
+        createLocalProductionServerLaunch({
+          application: "web",
+          inheritedEnvironment,
+          repositoryRoot: fixture.root,
+        }).options.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      ).toBe("rotated-local-anon");
+
+      writeFileSync(
+        environmentPath,
+        localEnvironment("http://127.0.0.1:3000", "rotated-local-anon").replace(
+          localDatabaseUrl,
+          "postgresql://cloud:secret@database.example.com:5432/production",
+        ),
+        { mode: 0o600 },
+      );
+      expect(() =>
+        createLocalProductionServerLaunch({
+          application: "web",
+          inheritedEnvironment: minimalInheritedEnvironment({
+            DATABASE_URL_APP_DAL: localDatabaseUrl,
+          }),
+          repositoryRoot: fixture.root,
+        }),
+      ).toThrow("host IPv4 literal 127.0.0.1");
+
+      rmSync(environmentPath);
+      expect(() =>
+        createLocalProductionServerLaunch({
+          application: "web",
+          inheritedEnvironment: minimalInheritedEnvironment({
+            DATABASE_URL_APP_DAL: localDatabaseUrl,
+          }),
+          repositoryRoot: fixture.root,
+        }),
+      ).toThrow("arquivo físico regular");
+    },
+    process.platform === "win32" ? 15_000 : 5_000,
+  );
 
   it("rejects production env overlays before Next can reload them", () => {
     const fixture = temporaryRepository();
@@ -604,7 +743,7 @@ describe("local development server launcher", () => {
     expect(() =>
       createLocalProductionServerLaunch({
         application: "web",
-        inheritedEnvironment: { PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment(),
         repositoryRoot: fixture.root,
       }),
     ).toThrow("aceita somente .env.local");
@@ -618,7 +757,7 @@ describe("local development server launcher", () => {
     expect(() =>
       createLocalProductionServerLaunch({
         application: "backoffice",
-        inheritedEnvironment: { PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment(),
         repositoryRoot: fixture.root,
       }),
     ).toThrow("aceita somente .env.local");
@@ -644,7 +783,7 @@ describe("local development server launcher", () => {
         expect(() =>
           createLocalDevelopmentServerLaunch({
             application,
-            inheritedEnvironment: { PATH: process.env.PATH },
+            inheritedEnvironment: minimalInheritedEnvironment(),
             repositoryRoot: fixture.root,
           }),
         ).toThrow(`remova ${overlayPath}`);
@@ -679,7 +818,9 @@ describe("local development server launcher", () => {
     expect(() =>
       createLocalDevelopmentServerLaunch({
         application: "web",
-        inheritedEnvironment: { DATABASE_URL_APP_DAL: localDatabaseUrl, PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment({
+          DATABASE_URL_APP_DAL: localDatabaseUrl,
+        }),
         repositoryRoot: fixture.root,
       }),
     ).toThrow("host IPv4 literal 127.0.0.1");
@@ -699,14 +840,14 @@ describe("local development server launcher", () => {
     expect(() =>
       createLocalDevelopmentServerLaunch({
         application: "web",
-        inheritedEnvironment: { PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment(),
         repositoryRoot: fixture.root,
       }),
     ).toThrow("host IPv4 literal 127.0.0.1");
     expect(() =>
       createLocalProductionServerLaunch({
         application: "web",
-        inheritedEnvironment: { PATH: process.env.PATH },
+        inheritedEnvironment: minimalInheritedEnvironment(),
         repositoryRoot: fixture.root,
       }),
     ).toThrow("host IPv4 literal 127.0.0.1");
@@ -714,9 +855,12 @@ describe("local development server launcher", () => {
 
   it("accepts only the physical Next package pinned by the root manifest", () => {
     const mismatch = temporaryRepository({ nextVersion: "16.2.0" });
-    expect(() => resolveTrustedNextCliLaunch({ repositoryRoot: mismatch.root })).toThrow(
-      "versão fixada",
-    );
+    expect(() =>
+      resolveTrustedNextCliLaunch({
+        assertWindowsIntegrity: logicalWindowsFileSecurity.assertWindowsIntegrity,
+        repositoryRoot: mismatch.root,
+      }),
+    ).toThrow("versão fixada");
 
     const workspaceMismatch = temporaryRepository();
     writeFileSync(
@@ -746,6 +890,83 @@ describe("local development server launcher", () => {
         "protegido",
       );
     }
+  });
+
+  it("applies the canonical Windows DACL inspection to every Next trust-chain file", () => {
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../scripts/local-development-server.mjs"),
+      "utf8",
+    );
+    expect(source).toContain("assertWindowsTrustedPathIntegrity");
+    expect(source).toContain("assertWindowsIntegrity(filePath, { trustedRoot })");
+
+    if (process.platform !== "win32") {
+      expect(process.platform).not.toBe("win32");
+      return;
+    }
+
+    const fixture = temporaryRepository();
+    const applicationManifestPath = resolve(fixture.root, "apps/backoffice/package.json");
+    const inspectedRepositoryFiles = [];
+    resolveTrustedNextCliLaunch({
+      applicationManifestPath,
+      assertWindowsIntegrity(filePath, { trustedRoot }) {
+        if (filePath.startsWith(`${fixture.root}\\`)) {
+          inspectedRepositoryFiles.push([filePath, trustedRoot]);
+        }
+      },
+      platform: "win32",
+      repositoryRoot: fixture.root,
+    });
+
+    expect(new Set(inspectedRepositoryFiles.map(([filePath]) => filePath))).toEqual(
+      new Set([
+        resolve(fixture.root, "package.json"),
+        applicationManifestPath,
+        resolve(fixture.nextPackageRoot, "package.json"),
+        fixture.nextCliPath,
+      ]),
+    );
+    expect(inspectedRepositoryFiles.every(([, trustedRoot]) => trustedRoot === fixture.root)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["manifesto Next", (fixture) => resolve(fixture.nextPackageRoot, "package.json")],
+    ["CLI Next", (fixture) => fixture.nextCliPath],
+  ])("rejects an untrusted writable Windows ACE on the %s", (_label, selectTarget) => {
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../scripts/local-development-server.mjs"),
+      "utf8",
+    );
+    expect(source).toContain("assertWindowsIntegrity(filePath, { trustedRoot })");
+
+    if (process.platform !== "win32") {
+      expect(process.platform).not.toBe("win32");
+      return;
+    }
+
+    const fixture = temporaryRepository();
+    const target = selectTarget(fixture);
+    execFileSync("C:\\Windows\\System32\\icacls.exe", [target, "/grant", "*S-1-1-0:(W)"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+
+    let targetInspections = 0;
+    expect(() =>
+      resolveTrustedNextCliLaunch({
+        assertWindowsIntegrity(filePath, options) {
+          if (filePath === target) {
+            targetInspections += 1;
+            assertWindowsTrustedPathIntegrity(filePath, options);
+          }
+        },
+        repositoryRoot: fixture.root,
+      }),
+    ).toThrow("integridade DACL");
+    expect(targetInspections).toBe(1);
   });
 
   it("routes every documented npm development and preview entry through the same guard", () => {

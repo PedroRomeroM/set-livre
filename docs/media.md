@@ -67,7 +67,7 @@ Não passar binário pela VM.
 - transformação paga do Supabase não é dependência obrigatória;
 - medir egress e cache hit.
 
-Caso Next Image em ARM64 exija `sharp`, o artefato deve incluir binário compatível ou usar estratégia documentada no pipeline.
+No alvo Linux x86_64, o artefato standalone deve incluir o binário `sharp` compatível produzido pela instalação bloqueada e comprová-lo no build e no smoke. Ausência ou incompatibilidade bloqueia a release; não há fallback de processamento de imagem em produção.
 
 ## 6. Ordenação e capa
 

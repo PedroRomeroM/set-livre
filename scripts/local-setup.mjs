@@ -1,25 +1,21 @@
-import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 
 import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
 
 import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
-import {
-  redactLocalPsqlDiagnostics,
-  resolveTrustedLocalPsql,
-  spawnLocalPsql,
-} from "./local-psql-command.mjs";
 import { localIpv4Host, parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
+import { executeLocalPostgresSql } from "./local-postgres-command.mjs";
 import {
   assertSafeEnvironmentFileDestination,
   writeEnvironmentFileAtomic,
 } from "./safe-environment-file.mjs";
+import { executeSupabaseLocalCommand } from "./supabase-command-executor.mjs";
+import { acquireSupabaseOperationLock } from "./supabase-operation-lock.mjs";
 import {
   assertSupabaseLoopbackBindings,
   assertSupabaseProjectStopped,
   ensureSupabaseLoopbackNetwork,
-  supabaseLocalNetworkName,
   supabaseLocalProjectId,
   supabaseProjectContainersAreRunning,
 } from "./supabase-local-network.mjs";
@@ -31,66 +27,28 @@ const applicationEnvironmentDestinations = [
 ];
 const e2eEnvironmentPath = resolve(root, ".env.e2e.local");
 
+await using supabaseOperationLock = await acquireSupabaseOperationLock();
+
 for (const [path] of applicationEnvironmentDestinations) {
   assertSafeEnvironmentFileDestination(path);
 }
 assertSafeEnvironmentFileDestination(e2eEnvironmentPath);
 
 const localDockerEnvironment = assertLocalDockerDaemon();
-const trustedPsqlLaunch = resolveTrustedLocalPsql({
-  inheritedEnvironment: localDockerEnvironment,
-});
 
-function successfulCommandOutput(command, argumentsList, result, options = {}) {
-  if (result.status !== 0) {
-    const diagnostics = options.safeStderr
-      ? redactLocalPsqlDiagnostics(result.stderr, options.redactions)
-      : "";
-    throw new Error(
-      `${command} ${argumentsList.join(" ")} falhou.${diagnostics === "" ? "" : `\n${diagnostics}`}`,
-    );
-  }
-
-  return result.stdout ?? "";
-}
-
-function run(command, argumentsList, options = {}) {
-  const commandEnvironment = {
-    ...localDockerEnvironment,
-    ...options.environment,
-    DOCKER_HOST: localDockerEnvironment.DOCKER_HOST,
-  };
-  delete commandEnvironment.DOCKER_CONTEXT;
-
-  const result = spawnSync(command, argumentsList, {
-    cwd: root,
-    encoding: "utf8",
-    env: commandEnvironment,
-    input: options.input,
-    stdio: options.capture
-      ? "pipe"
-      : options.input === undefined
-        ? "inherit"
-        : ["pipe", "inherit", "inherit"],
+function supabase(argumentsList, { capture = true, includeNetwork = true } = {}) {
+  return executeSupabaseLocalCommand(argumentsList, {
+    capture,
+    environment: localDockerEnvironment,
+    includeNetwork,
   });
-  return successfulCommandOutput(command, argumentsList, result, options);
-}
-
-function runPsql(databaseUrl, options = {}) {
-  const { argumentsList, result } = spawnLocalPsql(trustedPsqlLaunch, databaseUrl, {
-    assumeDalRole: options.assumeDalRole,
-    command: options.command,
-    input: options.input,
-  });
-  return successfulCommandOutput(trustedPsqlLaunch.command, argumentsList, result, options);
 }
 
 function stopScopedSupabaseStack() {
-  run("supabase", ["stop", "--project-id", supabaseLocalProjectId], { capture: true });
+  supabase(["stop", "--project-id", supabaseLocalProjectId], { includeNetwork: false });
   assertSupabaseProjectStopped(localDockerEnvironment);
 }
 
-run("docker", ["info"], { capture: true });
 if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
   try {
     assertSupabaseLoopbackBindings(localDockerEnvironment);
@@ -100,7 +58,7 @@ if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
 }
 ensureSupabaseLoopbackNetwork(localDockerEnvironment);
 try {
-  run("supabase", ["start", "--network-id", supabaseLocalNetworkName], { capture: true });
+  supabase(["start"]);
   assertSupabaseLoopbackBindings(localDockerEnvironment);
 } catch (error) {
   if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
@@ -108,16 +66,10 @@ try {
   }
   throw error;
 }
-run("supabase", ["db", "reset", "--local", "--network-id", supabaseLocalNetworkName], {
-  capture: true,
-});
+supabase(["db", "reset", "--local"]);
 assertSupabaseLoopbackBindings(localDockerEnvironment);
 
-const status = run(
-  "supabase",
-  ["status", "--output", "env", "--network-id", supabaseLocalNetworkName],
-  { capture: true },
-);
+const status = supabase(["status", "--output", "env"]);
 const values = Object.fromEntries(
   status
     .split("\n")
@@ -393,10 +345,9 @@ grant app_dal to postgres with admin true, inherit false, set false;
 
 commit;
 `;
-runPsql(supabaseAdminDatabaseUrl.toString(), {
-  input: managedSchemaSql,
+await executeLocalPostgresSql(supabaseAdminDatabaseUrl.toString(), {
   redactions: [decodeURIComponent(supabaseAdminDatabaseUrl.password)],
-  safeStderr: true,
+  sql: managedSchemaSql,
 });
 const runtimeSql = `
 begin;
@@ -681,24 +632,23 @@ $block$;
 
 commit;
 `;
-runPsql(values.DB_URL, {
-  input: runtimeSql,
+await executeLocalPostgresSql(values.DB_URL, {
   redactions: [runtimePassword, e2eDatabaseMarker, decodeURIComponent(adminDatabaseUrl.password)],
-  safeStderr: true,
+  sql: runtimeSql,
 });
 
 const dalDatabaseUrl = new URL(values.DB_URL);
 dalDatabaseUrl.username = runtimeRole;
 dalDatabaseUrl.password = runtimePassword;
 dalDatabaseUrl.searchParams.set("options", "-c role=app_dal");
-const identity = runPsql(dalDatabaseUrl.toString(), {
+const identityResult = await executeLocalPostgresSql(dalDatabaseUrl.toString(), {
   assumeDalRole: true,
-  command: `select current_user || ':' || session_user || ':'
+  redactions: [runtimePassword],
+  sql: `select current_user || ':' || session_user || ':'
     || private.check_readiness('${databaseMigrationHead}') || ':'
     || private.check_runtime_readiness('${runtimeRole}')`,
-  redactions: [runtimePassword],
-  safeStderr: true,
-}).trim();
+});
+const identity = identityResult?.rows?.[0]?.[0];
 if (identity !== "app_dal:app_runtime_local:true:true") {
   throw new Error("A conexão DAL local não satisfez o manifesto restrito esperado.");
 }
@@ -733,3 +683,4 @@ writeEnvironmentFileAtomic(e2eEnvironmentPath, e2eEnvironment);
 process.stdout.write(
   `Supabase local pronto em http://${localIpv4Host}:54321. Runtime e E2E foram gravados separadamente em arquivos ignorados.\n`,
 );
+await supabaseOperationLock.release();

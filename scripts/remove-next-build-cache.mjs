@@ -25,6 +25,7 @@ export function resolveAuthorizedNextApplicationRoot({
 
 export function removeNextBuildCache({
   applicationRoot = process.cwd(),
+  filesystemSecurityOptions,
   removeTree = removePhysicalTree,
   repositoryRoot = defaultRepositoryRoot,
 } = {}) {
@@ -32,8 +33,11 @@ export function removeNextBuildCache({
     applicationRoot,
     repositoryRoot,
   });
+  const cachePath = resolve(resolvedApplicationRoot, ".next/cache");
 
-  removeTree(resolve(resolvedApplicationRoot, ".next/cache"), {
+  removeTree(cachePath, {
+    ...filesystemSecurityOptions,
+    authorizedWindowsPaths: [cachePath],
     description: "O cache transitório do build Next",
     messages: {
       directoryRequiredMessage: "O cache do build Next precisa ser uma árvore física.",
@@ -41,6 +45,8 @@ export function removeNextBuildCache({
       mountUnverifiedMessage: "Não foi possível comprovar a ausência de mounts no cache Next.",
       unsupportedPlatformMessage:
         "O cache do build Next precisa ser removido em um host Linux antes do empacotamento.",
+      windowsUnauthorizedPathMessage:
+        "A limpeza de cache Next foi recusada fora do alvo Windows autorizado.",
     },
     retiredNamePrefix: `.cache.build-retired-${process.pid}-`,
   });

@@ -21,8 +21,6 @@ export async function runLocalProductionPreviewProcessFlow({
   signalSource = process,
   startBuild,
   startServer,
-  systemRoot = process.env.SystemRoot,
-  terminateWindowsTree,
   validateBuild,
 } = {}) {
   for (const [label, operation] of [
@@ -95,12 +93,9 @@ export async function runLocalProductionPreviewProcessFlow({
       exitTarget,
       forceShutdownMilliseconds,
       platform,
-      retainExitedWindowsProcessTrees: true,
       scheduleShutdownTimeout,
       signalProcessGroup,
       signalSource,
-      systemRoot,
-      terminateWindowsTree,
       writeError: () => {},
     });
 

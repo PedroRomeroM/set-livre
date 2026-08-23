@@ -639,20 +639,24 @@
           construído na plataforma de aluguel de estúdios audiovisuais.
         </p>
         <ul class="meta" aria-label="Fotografia atual do projeto">
-          <li>Atualizado em 16 de agosto de 2026</li>
-          <li>Fundação local</li>
+          <li>Atualizado em 19 de agosto de 2026</li>
+          <li>Windows nativo e entrega cloud em validação</li>
           <li>FEAT-002 · concluída e incorporada a main</li>
           <li>FEAT-003 · concluída e incorporada a main</li>
-          <li>FEAT-004 · em implementação local</li>
-          <li>Sem integração cloud nesta etapa</li>
+          <li>FEAT-004 · concluída e incorporada a main</li>
+          <li>Cloud autorizada pelo ADR-019, ainda não publicada</li>
         </ul>
         <div class="stats" aria-label="Indicadores atuais e históricos identificados">
-          <div class="stat"><strong>2/34</strong><span>features de produto concluídas</span></div>
+          <div class="stat"><strong>3/34</strong><span>features de produto concluídas</span></div>
           <div class="stat"><strong>2/2 + 22/22</strong><span>hardening SSR do cadastro</span></div>
-          <div class="stat"><strong>358/358</strong><span>pgTAP pós-hardening P5</span></div>
-          <div class="stat"><strong>114/114</strong><span>browser integral do quarto P2</span></div>
-          <div class="stat"><strong>764/764</strong><span>unitários finais P5</span></div>
-          <div class="stat"><strong>15</strong><span>migrations append-only na árvore</span></div>
+          <div class="stat"><strong>361/361</strong><span>pgTAP no Windows nativo</span></div>
+          <div class="stat">
+            <strong>114/114</strong><span>browser integral Windows atual</span>
+          </div>
+          <div class="stat">
+            <strong>969 + 33</strong><span>unitários passados + skips de plataforma</span>
+          </div>
+          <div class="stat"><strong>16</strong><span>migrations append-only na árvore</span></div>
           <div class="stat"><strong>2</strong><span>aplicações Next.js separadas</span></div>
         </div>
       </div>
@@ -687,8 +691,9 @@
               visual no merge <code>465d195</code>, realizado em <code>2026-08-12T06:57:15Z</code>.
               Seu HEAD final <code>1530f62589</code> recebeu a revisão Codex limpa
               <code>5262964258</code> às <code>06:00:43Z</code>, e as cinco threads ficaram
-              resolvidas. Assim, duas das 34 features estão concluídas no repositório, sem atribuir
-              prontidão de produção às pendências externas.
+              resolvidas. O PR #6 incorporou a FEAT-004 no merge <code>b4f4003</code>. Assim, três
+              das 34 features estão concluídas no repositório, sem atribuir prontidão de produção às
+              pendências externas.
             </p>
           </div>
 
@@ -719,7 +724,7 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag review">Quinto review · gates pendentes</span>
+              <span class="tag done">Concluída · histórico de review</span>
               <h3>FEAT-004 · Dono e recebedor</h3>
               <p>
                 A rota canônica é <code>/dono</code>, acompanhada de
@@ -849,9 +854,24 @@
                 sidecar/manifesto/log têm 124/681.762/2.097 bytes. Duas auditorias
                 <code>NO-BLOCKER</code> validaram 2.871 artefatos, tar de 3.455 membros, paridade,
                 privacidade e cleanup sem resíduo. A release permanece local, ignorada e não
-                publicada; ARM64/Oracle/PEND-003 e remoto seguem pendentes. A feature continua
-                <strong>Em implementação</strong>; PEND-003, smoke ARM64, PEND-004 e PEND-006
-                continuam bloqueando produção.
+                publicada; Oracle/PEND-003 e remoto seguiam pendentes naquela fotografia. O PR #6
+                incorporou a feature a <code>main</code>; este bloco permanece como trilha histórica
+                do review, não como status atual de produção.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag review">Infraestrutura em validação</span>
+              <h3>Windows nativo e cloud fail-closed</h3>
+              <p>
+                O ambiente local usa Node 24.18.0, npm 11.19.0 e Docker Desktop, com supervisão por
+                Windows Job Object. O banco passou pela cadeia canônica em 361/361 asserts, 16
+                migrations e head <code>20260819000100</code>. CI/CD, Supabase São Paulo e Oracle
+                <code>VM.Standard.E2.1.Micro</code> estão autorizados, mas permanecem bloqueados até
+                provisionamento, gates, PR, review, deploy e smoke reais.
+              </p>
+              <p>
+                O ADR-022 proíbe workaround e fallback silencioso: incompatibilidades são corrigidas
+                na fonte canônica ou a entrega permanece explicitamente pendente.
               </p>
             </article>
             <article class="card">
@@ -1096,7 +1116,10 @@
             <div><span>Apps</span><strong>web e backoffice independentes</strong></div>
             <div><span>Contratos</span><strong>read models e comandos server-side</strong></div>
             <div><span>Dados</span><strong>Supabase Auth · Postgres · Storage</strong></div>
-            <div><span>Operação futura</span><strong>workers · providers · Oracle</strong></div>
+            <div>
+              <span>Operação autorizada</span
+              ><strong>CI/CD · Supabase São Paulo · Oracle E2.1.Micro</strong>
+            </div>
           </div>
 
           <div class="pipeline" aria-label="Pipeline normativo de escrita crítica" tabindex="0">
@@ -1430,8 +1453,8 @@
               capability nova. A captura remota histórica de
               <code>2026-08-15T19:38:32Z</code> verificou publicação até <code>dda95b3...</code>,
               resposta/resolução e zero threads não resolvidas naquele instante. Não há claim de
-              aprovação, checks remotos, ready ou merge do quarto P2; PEND-003 e o smoke ARM64
-              nativo continuam obrigatórios para produção.
+              aprovação, checks remotos, ready ou merge do quarto P2; naquele snapshot pré-ADR-021,
+              PEND-003 ainda exigia smoke ARM64. O gate atual é o smoke Linux x86_64 na E2 Micro.
             </p>
             <p>
               Os blocos seguintes registram fotografias históricas anteriores; seus hashes não
@@ -1502,8 +1525,9 @@
               manifesto 1. Os <code>BUILD_ID</code> equivalem ao commit e o head é
               <code>20260812000200</code>, em Linux x64 com Node 24.18/npm 11.19. Tar, sidecar,
               smoke embutido, segurança, buscas de secrets/PII e cleanup ficaram verdes. A release
-              contém o patch, mas isso não comprova ARM64 ou produção; PEND-003 e o smoke ARM64
-              nativo permanecem pendentes. A release <code>79376b62...</code> permanece histórica.
+              contém o patch, mas não comprovava o runtime Oracle daquela fotografia. O requisito
+              ARM64 então pendente foi substituído pelo ADR-021 pelo smoke Linux x86_64 na E2 Micro.
+              A release <code>79376b62...</code> permanece histórica.
             </p>
             <p>
               O snapshot histórico anterior foi congelado no commit
@@ -1800,7 +1824,7 @@
             <li>grants explícitos; RLS entra por tabela</li>
             <li>erros públicos seguros</li>
             <li>artefatos E2E só em falha quando PII permite; FEAT-004 usa off</li>
-            <li>sem API externa</li>
+            <li>APIs externas fail-closed até validação</li>
           </ul>
         </section>
 
@@ -1808,22 +1832,23 @@
           <div class="section-head">
             <h2>Release e deploy</h2>
             <p>
-              Já existe um caminho local reproduzível para o artefato. Infraestrutura real e go-live
-              permanecem deliberadamente bloqueados pelo ADR-018. O quinto P2 executou uma única
-              build que compilou com exit 0, mas o artefato standalone foi recusado por copiar
-              strings de conexão locais do manifesto raiz; nenhum smoke ou geração de release foi
-              iniciado. Depois da correção do manifesto, uma segunda build única terminou com exit
-              0, mas foi recusada por uma ocorrência DAL em cada cache Turbopack; standalone, static
-              e log ficaram limpos e o smoke permaneceu em zero. O wrapper único agora limpa
-              fisicamente apenas o cache autorizado mesmo em falha da validação/build; o preview
-              limpa no supervisor antes de validação/servidor. A build final via wrapper rodou uma
-              única vez após remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit
-              independente <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. O
-              gerador canônico processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0
-              em 21,26 s, e aprovou o primeiro smoke P5 embutido. A release local possui 2.871
-              artefatos/3.455 membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e
-              não publicado. ARM64/remoto continuam pendentes. O patch ainda não foi publicado no
-              Git, respondido ou resolvido no PR.
+              Já existe um caminho local reproduzível para o artefato. O ADR-019 autoriza a entrega
+              cloud controlada, mas produção permanece bloqueada até VM, Supabase São Paulo, TLS,
+              deploy e smoke serem comprovados. O quinto P2 executou uma única build que compilou
+              com exit 0, mas o artefato standalone foi recusado por copiar strings de conexão
+              locais do manifesto raiz; nenhum smoke ou geração de release foi iniciado. Depois da
+              correção do manifesto, uma segunda build única terminou com exit 0, mas foi recusada
+              por uma ocorrência DAL em cada cache Turbopack; standalone, static e log ficaram
+              limpos e o smoke permaneceu em zero. O wrapper único agora limpa fisicamente apenas o
+              cache autorizado mesmo em falha da validação/build; o preview limpa no supervisor
+              antes de validação/servidor. A build final via wrapper rodou uma única vez após
+              remover os dois <code>.next</code>, passou em 14,733 s e recebeu audit independente
+              <code>NO-BLOCKER</code>; caches/retired/resíduos ficaram em zero. O gerador canônico
+              processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0 em 21,26 s, e
+              aprovou o primeiro smoke P5 embutido. A release local possui 2.871 artefatos/3.455
+              membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e não publicado. O
+              deploy atual na VM E2.1.Micro e no Supabase São Paulo continua pendente; a evidência
+              histórica não o substitui.
             </p>
           </div>
 
@@ -1851,12 +1876,13 @@
                 independentes terminaram <code>NO-BLOCKER</code>.
               </p>
               <p>
-                Esta é uma prova local Linux x64, não ARM64 ou produção. A release P3
+                Esta é uma prova local Linux x64, não a VM Oracle x86_64 ou produção. A release P3
                 <code>2a86acc4...</code> e as anteriores permanecem fotografias históricas.
                 Publicação, body, resposta e resolução do quarto P2 foram verificados no head
                 <code>e51ab6f...</code>. Essa evidência não valida o quinto P2, para o qual release,
                 publicação, resposta, resolução, novo review, espera, captura final, ready e merge
-                permanecem pendentes. PEND-003 e o smoke ARM64 nativo continuam obrigatórios.
+                permaneciam pendentes. Naquele snapshot pré-ADR-021, PEND-003 ainda exigia smoke
+                ARM64; o gate atual é Linux x86_64 na E2 Micro.
               </p>
             </article>
             <article class="card">
@@ -1908,12 +1934,12 @@
               </p>
             </article>
             <article class="card">
-              <span class="tag external">Fase 5 / externo</span>
-              <h3>Produção ainda não realizada</h3>
+              <span class="tag external">Entrega externa em validação</span>
+              <h3>Produção ainda não publicada</h3>
               <p>
-                Faltam build/smoke ARM64 real, Oracle, Nginx, systemd, TLS, Supabase Cloud, CI/CD,
-                backup/restore e rollback ensaiados. O artefato local não é apresentado como release
-                de produção.
+                Faltam build/smoke x86_64 real, Oracle E2.1.Micro, Nginx, systemd, TLS, Supabase
+                Cloud São Paulo, CI/CD, backup/restore e rollback ensaiados. O artefato local não é
+                apresentado como release de produção.
               </p>
             </article>
           </div>
@@ -1994,7 +2020,10 @@
             <p>
               Uma feature só muda para concluída quando banco, contratos, UI desktop/mobile,
               acessibilidade, Playwright, documentação, observabilidade e rollback aplicáveis estão
-              verdes. Interface isolada ou mock não conta como feature implementada.
+              verdes. O SHA final também precisa passar pelo ciclo completo: PR não draft,
+              <code>@codex review</code>, espera mínima real de 60 minutos em cada rodada, inspeção
+              de todas as superfícies e repetição até resposta explicitamente limpa. Interface
+              isolada, mock, timeout ou review ausente não contam como conclusão.
             </p>
           </div>
         </section>
@@ -2003,8 +2032,9 @@
           <div class="section-head">
             <h2>Próximos passos e pendências</h2>
             <p>
-              A fundação terminou; agora as features avançam uma por vez, em branches e PRs
-              independentes, sem antecipar tela, schema ou integração de outra feature.
+              Antes de retomar a próxima feature, o delta Windows/CI/CD será validado, revisado e
+              publicado com a infraestrutura real. Depois disso, as features voltam a avançar uma
+              por vez, em branches e PRs independentes.
             </p>
           </div>
 
@@ -2012,16 +2042,15 @@
             <article class="card">
               <h3>Próxima execução</h3>
               <ol class="step-list">
-                <li>Criar o commit desta documentação e fazer push do fechamento pós-release.</li>
+                <li>Concluir autenticação, provisionamento e hardening de Supabase/Oracle.</li>
                 <li>
-                  Atualizar o body, responder e resolver a thread P5
-                  <code>PRRT_kwDOTyzZrs6Zj15h</code> após verificar a resposta.
+                  Rodar os gates integrais, commitar e executar a auditoria leve pós-commit,
+                  corrigindo qualquer achado antes do PR.
                 </li>
                 <li>
-                  Só então solicitar novo <code>@codex review</code>, aguardar no mínimo 60 minutos
-                  e fazer uma captura final única antes de ready ou merge. PEND-003, trusted proxy e
-                  smoke ARM64 continuam bloqueando produção; gateway externo, checkout, fallback e
-                  dados bancários permanecem fora.
+                  Abrir o PR, solicitar <code>@codex review</code>, aguardar no mínimo 60 minutos e
+                  repetir correção/review até resultado limpo. Após o merge, acompanhar os deploys,
+                  validar a URL e só então configurar DNS/TLS.
                 </li>
               </ol>
             </article>
@@ -2033,7 +2062,13 @@
                 <li>Atualizar este HTML, docs da feature, banco e QA no mesmo PR.</li>
                 <li>Rodar todos os gates e a suíte Playwright completa.</li>
                 <li>
-                  Fazer review, corrigir, publicar e resolver threads atendidas antes do merge.
+                  Solicitar <code>@codex review</code>, aguardar 60 minutos, inspecionar reviews,
+                  comentários, threads e checks, corrigir/testar e repetir até parecer limpo do SHA
+                  final.
+                </li>
+                <li>
+                  Após o merge, acompanhar Supabase, Oracle e health público; regressão usa nova
+                  branch e novo PR com o mesmo ciclo.
                 </li>
               </ol>
             </article>
@@ -2043,7 +2078,10 @@
             <article class="card">
               <span class="tag external">Pendência externa</span>
               <h3>Cloud e entrega</h3>
-              <p>CI/CD, proteção de branch, Supabase Cloud, Oracle ARM64, domínio, DNS e TLS.</p>
+              <p>
+                CI/CD, Supabase São Paulo, Oracle E2.1.Micro, domínio, DNS e TLS estão autorizados,
+                mas ainda dependem de evidência real de deploy e smoke.
+              </p>
             </article>
             <article class="card">
               <span class="tag external">Pendência externa</span>

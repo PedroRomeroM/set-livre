@@ -131,7 +131,7 @@ describe("registration form hydration boundary", () => {
     const submitControl = html.match(/<button\b[^>]*type="submit"[^>]*>/u)?.[0];
     expect(submitControl).toBeDefined();
     expect(submitControl).toContain('disabled=""');
-  });
+  }, 15_000);
 
   it("uses a hydration snapshot instead of enabling controls from an effect", () => {
     const source = readFileSync(

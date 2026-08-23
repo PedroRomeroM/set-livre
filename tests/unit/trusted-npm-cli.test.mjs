@@ -10,18 +10,26 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { fileSymbolicLinksSupported } from "../fixtures/filesystem-capabilities.mjs";
+
 import {
+  assertWindowsTrustedPathIntegrity,
   assertTrustedNpmPathShape,
   bundledNpmCliPath,
+  createTrustedCliEnvironment,
   resolveTrustedNpmCliLaunch,
+  resolveTrustedRepositoryCliLaunch,
 } from "../../scripts/trusted-npm-cli.mjs";
 
 const temporaryRoots = [];
+const linkIt = fileSymbolicLinksSupported ? it : it.skip;
+const posixPermissionIt = process.platform === "win32" ? it.skip : it;
+const bypassWindowsIntegrity = () => {};
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
@@ -34,11 +42,17 @@ function fakeInstallation({ npmVersion = "11.19.0", repositoryVersion = "11.19.0
   temporaryRoots.push(root);
   const repositoryRoot = resolve(root, "repository");
   const installationRoot = resolve(root, "runtime");
-  const nodeExecutable = resolve(installationRoot, "bin/node");
-  const npmPackageRoot = resolve(installationRoot, "lib/node_modules/npm");
+  const nodeExecutable =
+    process.platform === "win32"
+      ? resolve(installationRoot, "node.exe")
+      : resolve(installationRoot, "bin/node");
+  const npmPackageRoot =
+    process.platform === "win32"
+      ? resolve(installationRoot, "node_modules/npm")
+      : resolve(installationRoot, "lib/node_modules/npm");
   const npmCliPath = resolve(npmPackageRoot, "bin/npm-cli.js");
   mkdirSync(repositoryRoot);
-  mkdirSync(resolve(installationRoot, "bin"), { recursive: true });
+  mkdirSync(dirname(nodeExecutable), { recursive: true });
   mkdirSync(resolve(npmPackageRoot, "bin"), { recursive: true });
   writeFileSync(
     resolve(repositoryRoot, "package.json"),
@@ -50,12 +64,14 @@ function fakeInstallation({ npmVersion = "11.19.0", repositoryVersion = "11.19.0
     resolve(npmPackageRoot, "package.json"),
     `${JSON.stringify({ bin: { npm: "bin/npm-cli.js" }, name: "npm", version: npmVersion })}\n`,
   );
-  return { nodeExecutable, npmCliPath, repositoryRoot, root };
+  return { nodeExecutable, npmCliPath, npmPackageRoot, repositoryRoot, root };
 }
 
 describe("trusted npm CLI launch", () => {
   it("resolves the physical pinned npm installation used by the current Node", () => {
-    const launch = resolveTrustedNpmCliLaunch();
+    const launch = resolveTrustedNpmCliLaunch({
+      assertWindowsIntegrity: bypassWindowsIntegrity,
+    });
     const expectedCliPath = bundledNpmCliPath();
 
     expect(launch).toMatchObject({
@@ -105,7 +121,7 @@ describe("trusted npm CLI launch", () => {
         [
           "--input-type=module",
           "--eval",
-          `import { resolveTrustedNpmCliLaunch } from ${JSON.stringify(moduleUrl)}; const launch = resolveTrustedNpmCliLaunch(); process.stdout.write(JSON.stringify({ npmCliPath: launch.npmCliPath, npmVersion: launch.npmVersion }));`,
+          `import { resolveTrustedNpmCliLaunch } from ${JSON.stringify(moduleUrl)}; const launch = resolveTrustedNpmCliLaunch({ assertWindowsIntegrity: () => {} }); process.stdout.write(JSON.stringify({ npmCliPath: launch.npmCliPath, npmVersion: launch.npmVersion }));`,
         ],
         {
           encoding: "utf8",
@@ -151,6 +167,7 @@ describe("trusted npm CLI launch", () => {
     const fixture = fakeInstallation();
     expect(
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: fixture.nodeExecutable,
         repositoryRoot: fixture.repositoryRoot,
       }),
@@ -162,6 +179,7 @@ describe("trusted npm CLI launch", () => {
     const mismatchedVersion = fakeInstallation({ npmVersion: "11.18.0" });
     expect(() =>
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: mismatchedVersion.nodeExecutable,
         repositoryRoot: mismatchedVersion.repositoryRoot,
       }),
@@ -169,6 +187,7 @@ describe("trusted npm CLI launch", () => {
 
     expect(() =>
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: fixture.nodeExecutable,
         nodeVersion: "24.17.0",
         repositoryRoot: fixture.repositoryRoot,
@@ -177,18 +196,19 @@ describe("trusted npm CLI launch", () => {
 
     const outsidePackage = fakeInstallation();
     writeFileSync(
-      resolve(outsidePackage.root, "runtime/lib/node_modules/npm/package.json"),
+      resolve(outsidePackage.npmPackageRoot, "package.json"),
       `${JSON.stringify({ bin: { npm: "../outside/npm-cli.js" }, name: "npm", version: "11.19.0" })}\n`,
     );
     expect(() =>
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: outsidePackage.nodeExecutable,
         repositoryRoot: outsidePackage.repositoryRoot,
       }),
     ).toThrow("versão npm fixada");
   });
 
-  it("rejects symbolic or world-writable npm CLI paths before execution", () => {
+  linkIt("rejects a symbolic npm CLI path before execution", () => {
     const symbolicFixture = fakeInstallation();
     const physicalCli = resolve(symbolicFixture.root, "physical-cli.js");
     writeFileSync(physicalCli, "outside");
@@ -196,18 +216,108 @@ describe("trusted npm CLI launch", () => {
     symlinkSync(physicalCli, symbolicFixture.npmCliPath);
     expect(() =>
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: symbolicFixture.nodeExecutable,
         repositoryRoot: symbolicFixture.repositoryRoot,
       }),
     ).toThrow("arquivo físico regular");
+  });
 
+  posixPermissionIt("rejects a world-writable npm CLI path before execution", () => {
     const writableFixture = fakeInstallation();
     chmodSync(writableFixture.npmCliPath, 0o666);
     expect(() =>
       resolveTrustedNpmCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
         nodeExecutable: writableFixture.nodeExecutable,
         repositoryRoot: writableFixture.repositoryRoot,
       }),
     ).toThrow("protegido");
+  });
+
+  it("rebuilds a Windows CLI environment from a case-insensitive allowlist", () => {
+    const inherited = {
+      ComSpec: "C:\\attacker\\cmd.exe",
+      DOCKER_HOST: "npipe:////./pipe/dockerDesktopLinuxEngine",
+      nOdE_oPtIoNs: "--require=C:\\attacker\\loader.cjs",
+      Path: "C:\\Program Files\\nodejs;;C:\\Windows\\System32",
+      supabase_cli_binary_override: "C:\\attacker\\supabase.exe",
+      UNKNOWN_SECRET: "must-not-cross",
+    };
+
+    expect(
+      createTrustedCliEnvironment(inherited, {
+        additionalWindowsNames: ["DOCKER_HOST"],
+        platform: "win32",
+      }),
+    ).toEqual({
+      DOCKER_HOST: "npipe:////./pipe/dockerDesktopLinuxEngine",
+      PATH: "C:\\Program Files\\nodejs;C:\\Windows\\System32",
+    });
+    expect(inherited.nOdE_oPtIoNs).toContain("loader.cjs");
+    expect(() =>
+      createTrustedCliEnvironment(
+        { PATH: "C:\\trusted", Path: "C:\\hostile" },
+        { platform: "win32" },
+      ),
+    ).toThrow("variantes conflitantes de PATH");
+  });
+
+  it("uses only the physical absolute Windows PowerShell for read-only DACL inspection", () => {
+    let invocation;
+    const physicalFile = {
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+
+    expect(() =>
+      assertWindowsTrustedPathIntegrity("C:\\repository\\node_modules\\tool\\cli.js", {
+        execute: (command, argumentsList, options) => {
+          invocation = { argumentsList, command, options };
+          return { signal: null, status: 0, stdout: "ok" };
+        },
+        inspectPath: () => physicalFile,
+        systemRoot: "C:\\Windows",
+        trustedRoot: "C:\\repository",
+      }),
+    ).not.toThrow();
+
+    expect(invocation.command).toBe(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+    expect(invocation.argumentsList).toContain("-EncodedCommand");
+    expect(invocation.argumentsList).not.toContain("-ExecutionPolicy");
+    expect(invocation.argumentsList).not.toContain("Bypass");
+    expect(invocation.options).toMatchObject({
+      env: { SystemRoot: "C:\\Windows", WINDIR: "C:\\Windows" },
+      shell: false,
+      windowsHide: true,
+    });
+    expect(JSON.parse(invocation.options.input)).toEqual({
+      path: "C:\\repository\\node_modules\\tool\\cli.js",
+      trustedRoot: "C:\\repository",
+    });
+    expect(String(invocation.options.input)).not.toContain("attacker");
+    expect(() =>
+      assertWindowsTrustedPathIntegrity("C:\\repository\\node_modules\\tool\\cli.js", {
+        execute: () => ({ signal: null, status: 1, stdout: "" }),
+        inspectPath: () => physicalFile,
+        systemRoot: "C:\\Windows",
+        trustedRoot: "C:\\repository",
+      }),
+    ).toThrow("integridade DACL");
+  });
+
+  it("validates repository-local CLIs against their exact pinned package", () => {
+    expect(
+      resolveTrustedRepositoryCliLaunch({
+        assertWindowsIntegrity: bypassWindowsIntegrity,
+        cliRelativePath: "dist/supabase.js",
+        dependencyName: "supabase",
+      }),
+    ).toMatchObject({
+      command: process.execPath,
+      version: "2.113.0",
+    });
   });
 });

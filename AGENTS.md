@@ -43,7 +43,7 @@ A baseline inclui calendário próprio avançado, reservas, pagamento, split, re
 - Playwright com axe;
 - ESLint, `tsc --noEmit`, Knip e `npm audit`;
 - build Next.js standalone;
-- Oracle Cloud ARM64, systemd e Nginx;
+- Oracle Cloud `VM.Standard.E2.1.Micro` Always Free x86_64, Ubuntu 24.04, systemd e Nginx;
 - releases imutáveis por SHA com symlink atômico.
 
 Não introduza ORM, Tailwind, shadcn/ui, CSS-in-JS, Redux, Zustand para estado remoto, Redis, fila externa, Kubernetes, Docker em produção, Caddy, GHCR, CMS ou serviço adicional sem ADR aprovado.
@@ -176,6 +176,15 @@ Não usar:
 - Google Calendar na baseline;
 - feature fora de escopo “preparada” no schema.
 
+Correções devem ser canônicas. É proibido aceitar como solução final qualquer gambiarra,
+workaround, bypass de segurança, supressão de erro, downgrade oportunista, edição manual de
+artefato gerado ou enfraquecimento de teste para acomodar comportamento incorreto. Quando uma
+versão, ferramenta ou abordagem for incompatível, remova-a por completo da fronteira afetada e
+implemente a alternativa suportada na fonte, com testes, documentação e rollback. Se a correção
+correta não puder ser comprovada, mantenha o fluxo fail-closed e registre o bloqueio; não declare a
+etapa concluída. Compatibilidade deliberada só existe quando for requisito real do produto ou de
+migração, estiver definida em ADR e preservar integralmente segurança e invariantes.
+
 ## 13. Gates mínimos
 
 ```bash
@@ -193,9 +202,26 @@ npm run audit
 npm run knip
 ```
 
-`main` e release exigem suíte Playwright completa, build das duas aplicações e smoke do artefato standalone ARM64.
+`main` e release exigem suíte Playwright completa, build das duas aplicações e smoke do artefato standalone Linux x86_64 na VM Oracle E2 Micro.
 
-## 14. Definition of Done
+## 14. Ciclo completo obrigatório de review e deploy
+
+Toda mudança destinada a `main` segue integralmente
+[`docs/review-deploy-cycle.md`](docs/review-deploy-cycle.md): branch criada de `main` atualizada,
+gates relevantes antes de cada commit candidato, PR não draft, comentário `@codex review`, espera
+real mínima de 60 minutos e inspeção de reviews, comentários de topo, comentários inline, threads e
+checks. Finding aplicável é corrigido na causa, procurado nas superfícies equivalentes e coberto por
+teste; finding rejeitado exige justificativa técnica no PR. Depois de qualquer push, um novo review e
+uma nova espera integral são obrigatórios.
+
+Merge só ocorre quando o Codex declarar explicitamente não ter encontrado problema relevante no SHA
+atual, todos os checks estiverem verdes e todas as conversas estiverem resolvidas. Depois do merge, o
+agente acompanha Supabase, Oracle e health público até estado terminal. Falha pós-merge é corrigida em
+nova branch e novo PR, repetindo todo o ciclo. Timeout, ausência de resposta, interrupção ou serviço
+externo indisponível são inconclusivos e nunca contam como aprovação, gate verde ou deploy concluído.
+Push direto, merge administrativo, autoaprovação ou bypass desse contrato são proibidos.
+
+## 15. Definition of Done
 
 Uma feature somente é concluída quando:
 

@@ -15,7 +15,15 @@ A implementação deve produzir uma aplicação comercializável e operável, e 
 - Cada feature posterior deve usar branch e PR próprios, sem implementação paralela de outra feature.
 - Nenhum arquivo do Spenses foi alterado.
 
-Não reescreva a baseline. Push, PR e merge seguem a autorização operacional do usuário: execute os gates completos, publique o PR, solicite `@codex review` e aguarde 60 minutos completos antes de consultar o resultado. Se houver correção pertinente, implemente-a, rode novamente todos os gates e a suíte Playwright completa, faça commit e push, resolva no PR cada thread do Codex efetivamente atendida, solicite um novo `@codex review` e aguarde outros 60 minutos completos. Comentário não atendido ou deliberadamente rejeitado permanece aberto com justificativa. Repita esse ciclo até o review não apontar problema corrigível; somente então faça o merge.
+Não reescreva a baseline. Push, PR, merge e correções pós-merge seguem integralmente
+[`docs/review-deploy-cycle.md`](docs/review-deploy-cycle.md). Execute os gates do SHA atual, abra PR
+não draft, solicite `@codex review`, aguarde 60 minutos completos e então inspecione reviews,
+comentários de topo, comentários inline, threads e checks. Finding aplicável é corrigido na causa,
+procurado em superfícies equivalentes e coberto por teste; finding rejeitado recebe justificativa
+técnica no PR. Cada novo push exige novo pedido e nova espera integral. Merge só ocorre após resposta
+explicitamente limpa do Codex sobre o head final, checks verdes e conversas resolvidas. Depois do
+merge, acompanhe Supabase, Oracle e health até estado terminal; regressão usa nova branch e novo PR.
+Timeout, resposta ausente, interrupção ou provedor indisponível são inconclusivos.
 
 ## Ações de fundação
 
@@ -123,7 +131,7 @@ Executar somente após a liberação das pendências externas e conforme ADR-014
 - CI e política de branches;
 - Supabase Cloud e providers reais;
 - conteúdo jurídico final;
-- build ARM64 standalone;
+- build standalone Linux x86_64 para `VM.Standard.E2.1.Micro`;
 - systemd/Nginx/TLS;
 - release por SHA e rollback;
 - jobs, backup e restore ensaiado;
@@ -163,7 +171,7 @@ Antes de release:
 
 - suíte Playwright completa;
 - build das duas aplicações;
-- smoke do artefato standalone ARM64;
+- smoke do artefato standalone Linux x86_64 no alvo E2 Micro;
 - migrations em banco vazio;
 - rollback ensaiado;
 - restore ensaiado;

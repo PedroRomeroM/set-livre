@@ -12,10 +12,43 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { removeNextBuildCache } from "../../scripts/remove-next-build-cache.mjs";
-import { runNextBuildWithCacheCleanup } from "../../scripts/next-build.mjs";
+import { resolveTrustedNextCliLaunch } from "../../scripts/local-development-server.mjs";
+import { removeNextBuildCache as removeNextBuildCacheNative } from "../../scripts/remove-next-build-cache.mjs";
+import { runNextBuildWithCacheCleanup as runNextBuildWithCacheCleanupNative } from "../../scripts/next-build.mjs";
 
 const temporaryRoots = [];
+const assertLogicalWindowsPath = () => undefined;
+
+function removeNextBuildCache(options = {}) {
+  return removeNextBuildCacheNative({
+    ...options,
+    filesystemSecurityOptions: { assertWindowsPath: assertLogicalWindowsPath },
+  });
+}
+
+function runNextBuildWithCacheCleanup(options = {}) {
+  return runNextBuildWithCacheCleanupNative({
+    ...options,
+    removeCache: options.removeCache ?? removeNextBuildCache,
+  });
+}
+
+function resolveFixtureNextLaunch({ repositoryRoot }) {
+  const nextCliPath = resolve(repositoryRoot, "node_modules/next/dist/bin/next");
+  return {
+    argumentPrefix: [nextCliPath],
+    command: process.execPath,
+    nextCliPath,
+    nextVersion: "16.3.0",
+  };
+}
+
+function resolveFixtureTrustedNextLaunch(options) {
+  return resolveTrustedNextCliLaunch({
+    ...options,
+    assertWindowsIntegrity: assertLogicalWindowsPath,
+  });
+}
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
@@ -101,6 +134,63 @@ describe("Next build cache cleanup", () => {
     ).not.toThrow();
   });
 
+  it.runIf(process.platform === "win32")(
+    "removes one authorized Windows cache through the native reparse guard",
+    () => {
+      const fixture = createRepositoryFixture();
+      const applicationRoot = fixture.applicationRoots[0];
+
+      removeNextBuildCacheNative({
+        applicationRoot,
+        repositoryRoot: fixture.repositoryRoot,
+      });
+
+      expect(existsSync(resolve(applicationRoot, ".next/cache"))).toBe(false);
+      expect(existsSync(resolve(applicationRoot, ".next/standalone/server.js"))).toBe(true);
+    },
+    20_000,
+  );
+
+  it("passes only the exact authorized Windows cache target to the physical remover", () => {
+    const fixture = createRepositoryFixture();
+    const applicationRoot = fixture.applicationRoots[0];
+    const cachePath = resolve(applicationRoot, ".next/cache");
+    const calls = [];
+
+    removeNextBuildCache({
+      applicationRoot,
+      removeTree: (...arguments_) => calls.push(arguments_),
+      repositoryRoot: fixture.repositoryRoot,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(cachePath);
+    expect(calls[0][1].authorizedWindowsPaths).toEqual([cachePath]);
+  });
+
+  it.runIf(process.platform === "win32")(
+    "rejects a Windows junction inside cache without traversing or retiring the tree",
+    () => {
+      const fixture = createRepositoryFixture();
+      const applicationRoot = fixture.applicationRoots[0];
+      const externalRoot = resolve(fixture.repositoryRoot, "external-cache-target");
+      const externalMarker = resolve(externalRoot, "must-remain");
+      mkdirSync(externalRoot);
+      writeFileSync(externalMarker, "preserve", "utf8");
+      symlinkSync(externalRoot, resolve(applicationRoot, ".next/cache/junction"), "junction");
+
+      expect(() =>
+        removeNextBuildCacheNative({
+          applicationRoot,
+          repositoryRoot: fixture.repositoryRoot,
+        }),
+      ).toThrow("reparse points");
+      expect(readFileSync(externalMarker, "utf8")).toBe("preserve");
+      expect(existsSync(resolve(applicationRoot, ".next/cache"))).toBe(true);
+    },
+    15_000,
+  );
+
   it("keeps the canonical build scripts coupled to the cache guard", () => {
     const repositoryRoot = resolve(import.meta.dirname, "../..");
     const rootManifest = JSON.parse(readFileSync(resolve(repositoryRoot, "package.json"), "utf8"));
@@ -129,6 +219,7 @@ describe("Next build cache cleanup", () => {
       buildEnvironment: { APP_RELEASE_SHA: "local" },
       executeBuild: (...arguments_) => calls.push(arguments_),
       repositoryRoot: fixture.repositoryRoot,
+      resolveNextLaunch: resolveFixtureNextLaunch,
     });
 
     expect(calls).toEqual([
@@ -159,6 +250,7 @@ describe("Next build cache cleanup", () => {
           throw buildFailure;
         },
         repositoryRoot: fixture.repositoryRoot,
+        resolveNextLaunch: resolveFixtureNextLaunch,
       }),
     ).toThrow(buildFailure);
 
@@ -175,6 +267,7 @@ describe("Next build cache cleanup", () => {
       runNextBuildWithCacheCleanup({
         applicationRoot,
         repositoryRoot: fixture.repositoryRoot,
+        resolveNextLaunch: resolveFixtureTrustedNextLaunch,
       }),
     ).toThrow("CLI Next precisa ser um arquivo físico regular protegido");
 
@@ -196,13 +289,18 @@ describe("Next build cache cleanup", () => {
     );
     writeFileSync(resolve(externalNextPackageRoot, "dist/bin/next"), "next");
     rmSync(nextPackageRoot, { recursive: true });
-    symlinkSync(externalNextPackageRoot, nextPackageRoot, "dir");
+    symlinkSync(
+      externalNextPackageRoot,
+      nextPackageRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
 
     expect(() =>
       runNextBuildWithCacheCleanup({
         applicationRoot,
         executeBuild: (...arguments_) => calls.push(arguments_),
         repositoryRoot: fixture.repositoryRoot,
+        resolveNextLaunch: resolveFixtureTrustedNextLaunch,
       }),
     ).toThrow("caminho da CLI Next atravessa um diretório não físico");
 
@@ -223,7 +321,11 @@ describe("Next build cache cleanup", () => {
       JSON.stringify({ dependencies: { next: "16.3.0" } }),
     );
     writeFileSync(resolve(externalApplicationRoot, ".next/cache/private.bin"), "credential");
-    symlinkSync(externalApplicationRoot, applicationRoot, "dir");
+    symlinkSync(
+      externalApplicationRoot,
+      applicationRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
 
     let failure;
     try {
@@ -253,6 +355,7 @@ describe("Next build cache cleanup", () => {
           throw cleanupFailure;
         },
         repositoryRoot: fixture.repositoryRoot,
+        resolveNextLaunch: resolveFixtureNextLaunch,
       }),
     ).toThrow(cleanupFailure);
   });
@@ -273,6 +376,7 @@ describe("Next build cache cleanup", () => {
           throw cleanupFailure;
         },
         repositoryRoot: fixture.repositoryRoot,
+        resolveNextLaunch: resolveFixtureNextLaunch,
       });
     } catch (error) {
       combinedFailure = error;

@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 
 import * as prettier from "prettier";
 
-import { readGitChanges } from "./docs-check-core.mjs";
+import {
+  containsEncodedPrivateKey,
+  readGitChanges,
+  readPhysicalRepositoryFile,
+  writePhysicalRepositoryFile,
+} from "./docs-check-core.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const mode = process.argv[2];
@@ -89,6 +94,18 @@ for (const file of [...candidates].sort()) {
     continue;
   }
 
+  try {
+    const bytes = readPhysicalRepositoryFile(root, file, {
+      readBuffer: true,
+      requireExclusive: true,
+    });
+    if (containsEncodedPrivateKey(bytes.toString("utf8"))) {
+      throw new Error("O arquivo contém uma chave privada codificada.");
+    }
+  } catch {
+    unsafeCandidates.push(file);
+    continue;
+  }
   if (!information.isFile() || information.isSymbolicLink()) {
     unsafeCandidates.push(file);
   } else {
@@ -113,7 +130,7 @@ if (unsafeCandidates.length > 0) {
       continue;
     }
 
-    const source = await fs.readFile(absolutePath, "utf8");
+    const source = readPhysicalRepositoryFile(root, file, { requireExclusive: true });
     const configuration = (await prettier.resolveConfig(absolutePath)) ?? {};
     const formatted = await prettier.format(source, {
       ...configuration,
@@ -125,7 +142,10 @@ if (unsafeCandidates.length > 0) {
     }
 
     if (mode === "--write") {
-      await fs.writeFile(absolutePath, formatted, "utf8");
+      writePhysicalRepositoryFile(root, file, formatted, {
+        expectedSource: source,
+        requireExclusive: true,
+      });
       process.stdout.write(`formatado ${relative(root, absolutePath)}\n`);
     } else {
       mismatches.push(relative(root, absolutePath));

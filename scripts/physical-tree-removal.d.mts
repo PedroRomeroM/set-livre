@@ -1,5 +1,12 @@
+import type {
+  WindowsPathWithoutReparseAsserter,
+  WindowsPrivateFileAsserter,
+} from "./windows-filesystem-security.d.mts";
+
 export type PrivatePhysicalFileReadOptions = {
   allowMissing?: boolean;
+  assertWindowsPath?: WindowsPathWithoutReparseAsserter;
+  assertWindowsPrivate?: WindowsPrivateFileAsserter;
   description?: string;
   expectedPosixUserId?: number;
   platform?: NodeJS.Platform;

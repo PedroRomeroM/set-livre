@@ -3,12 +3,18 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } fr
 import { dirname, parse, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { superviseDevelopmentProcesses } from "./development-process-tree.mjs";
+import {
+  spawnSupervisedProcess,
+  superviseDevelopmentProcesses,
+} from "./development-process-tree.mjs";
 import { readLocalDevelopmentEnvironmentFile } from "./local-development-environment.mjs";
 import { runLocalProductionPreviewProcessFlow } from "./local-production-process-tree.mjs";
 import { removeNextBuildCache } from "./remove-next-build-cache.mjs";
 import { readCurrentLinuxMountInformation, removePhysicalTree } from "./physical-tree-removal.mjs";
-import { resolveTrustedNpmCliLaunch } from "./trusted-npm-cli.mjs";
+import {
+  assertWindowsTrustedPathIntegrity,
+  resolveTrustedNpmCliLaunch,
+} from "./trusted-npm-cli.mjs";
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
 const applicationContracts = {
@@ -37,11 +43,13 @@ function samePhysicalFile(left, right) {
 function removePreviousBuildOutput(
   buildOutputPath,
   {
+    assertWindowsPath,
     platform = process.platform,
     readLinuxMountInformation = readCurrentLinuxMountInformation,
   } = {},
 ) {
   removePhysicalTree(buildOutputPath, {
+    authorizedWindowsPaths: [resolve(buildOutputPath)],
     description: "A saída .next anterior",
     messages: {
       ancestryMessage: "O caminho da CLI Next atravessa um diretório não físico.",
@@ -55,6 +63,7 @@ function removePreviousBuildOutput(
     platform,
     readLinuxMountInformation,
     retiredNamePrefix: `.next.preview-retired-${process.pid}-`,
+    ...(assertWindowsPath === undefined ? {} : { assertWindowsPath }),
   });
 }
 
@@ -79,7 +88,15 @@ function assertPhysicalAncestry(filePath) {
   }
 }
 
-function readProtectedFile(filePath, label) {
+function readProtectedFile(
+  filePath,
+  label,
+  {
+    assertWindowsIntegrity = assertWindowsTrustedPathIntegrity,
+    platform = process.platform,
+    trustedRoot = dirname(filePath),
+  } = {},
+) {
   assertPhysicalAncestry(filePath);
   let descriptor;
 
@@ -89,7 +106,7 @@ function readProtectedFile(filePath, label) {
       pathInformation === undefined ||
       !pathInformation.isFile() ||
       pathInformation.isSymbolicLink() ||
-      (process.platform !== "win32" && (pathInformation.mode & 0o002) !== 0)
+      (platform !== "win32" && (pathInformation.mode & 0o002) !== 0)
     ) {
       throw new Error(`${label} precisa ser um arquivo físico regular protegido.`);
     }
@@ -99,7 +116,7 @@ function readProtectedFile(filePath, label) {
     if (
       !openedInformation.isFile() ||
       !samePhysicalFile(pathInformation, openedInformation) ||
-      (process.platform !== "win32" && (openedInformation.mode & 0o002) !== 0)
+      (platform !== "win32" && (openedInformation.mode & 0o002) !== 0)
     ) {
       throw new Error(`${label} mudou durante a abertura.`);
     }
@@ -111,9 +128,13 @@ function readProtectedFile(filePath, label) {
       !finalInformation.isFile() ||
       finalInformation.isSymbolicLink() ||
       !samePhysicalFile(openedInformation, finalInformation) ||
-      (process.platform !== "win32" && (finalInformation.mode & 0o002) !== 0)
+      (platform !== "win32" && (finalInformation.mode & 0o002) !== 0)
     ) {
       throw new Error(`${label} mudou durante a leitura.`);
+    }
+
+    if (platform === "win32") {
+      assertWindowsIntegrity(filePath, { trustedRoot });
     }
 
     return contents;
@@ -168,19 +189,24 @@ function assertNoUnexpectedNextEnvironmentFiles(workingDirectory, nextCommand) {
 
 export function resolveTrustedNextCliLaunch({
   applicationManifestPath,
+  assertWindowsIntegrity = assertWindowsTrustedPathIntegrity,
   nodeExecutable = process.execPath,
   nodeVersion = process.versions.node,
+  platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
 } = {}) {
   const resolvedApplicationManifestPath =
     applicationManifestPath ?? resolve(repositoryRoot, "package.json");
   const trustedRuntime = resolveTrustedNpmCliLaunch({
+    assertWindowsIntegrity,
     nodeExecutable,
     nodeVersion,
+    platform,
     repositoryRoot,
   });
+  const nextFileSecurity = { assertWindowsIntegrity, platform, trustedRoot: repositoryRoot };
   const rootManifest = parsePackageJson(
-    readProtectedFile(resolve(repositoryRoot, "package.json"), "Manifesto raiz"),
+    readProtectedFile(resolve(repositoryRoot, "package.json"), "Manifesto raiz", nextFileSecurity),
     "Manifesto raiz",
   );
   const expectedNextVersion = rootManifest.dependencies?.next;
@@ -191,7 +217,11 @@ export function resolveTrustedNextCliLaunch({
     resolvedApplicationManifestPath === resolve(repositoryRoot, "package.json")
       ? rootManifest
       : parsePackageJson(
-          readProtectedFile(resolvedApplicationManifestPath, "Manifesto da aplicação"),
+          readProtectedFile(
+            resolvedApplicationManifestPath,
+            "Manifesto da aplicação",
+            nextFileSecurity,
+          ),
           "Manifesto da aplicação",
         );
   if (applicationManifest.dependencies?.next !== expectedNextVersion) {
@@ -200,7 +230,7 @@ export function resolveTrustedNextCliLaunch({
 
   const nextPackageRoot = resolve(repositoryRoot, "node_modules/next");
   const nextManifest = parsePackageJson(
-    readProtectedFile(resolve(nextPackageRoot, "package.json"), "Manifesto Next"),
+    readProtectedFile(resolve(nextPackageRoot, "package.json"), "Manifesto Next", nextFileSecurity),
     "Manifesto Next",
   );
   const declaredCli = nextManifest.bin?.next;
@@ -213,7 +243,7 @@ export function resolveTrustedNextCliLaunch({
   ) {
     throw new Error("A CLI Next não corresponde à versão fixada pelo repositório.");
   }
-  readProtectedFile(nextCliPath, "CLI Next");
+  readProtectedFile(nextCliPath, "CLI Next", nextFileSecurity);
 
   return {
     argumentPrefix: [nextCliPath],
@@ -226,8 +256,11 @@ export function resolveTrustedNextCliLaunch({
 function createLocalApplicationServerLaunch({
   application,
   detached = process.platform !== "win32",
+  environmentOptions,
+  fileSecurityOptions,
   inheritedEnvironment = process.env,
   nextCommand,
+  platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
   runtimeMode = "local",
 } = {}) {
@@ -245,11 +278,15 @@ function createLocalApplicationServerLaunch({
       contract.environmentPath,
       inheritedEnvironment,
       contract.expectedApplicationUrl,
+      { ...fileSecurityOptions, trustedRoot: repositoryRoot },
+      { ...environmentOptions, platform },
     ),
     APP_ENV: runtimeMode,
   };
   const trustedNext = resolveTrustedNextCliLaunch({
     applicationManifestPath: contract.manifestPath,
+    assertWindowsIntegrity: fileSecurityOptions?.assertWindowsIntegrity,
+    platform: fileSecurityOptions?.platform ?? process.platform,
     repositoryRoot,
   });
 
@@ -309,16 +346,24 @@ export function createLocalProductionPreviewLaunches(options = {}) {
 async function runLocalServer({
   application,
   createLaunch,
+  fileSecurityOptions,
   inheritedEnvironment = process.env,
+  platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
+  spawnManagedProcess = spawnSupervisedProcess,
   spawnProcess = spawn,
 }) {
   const launch = createLaunch({
     application,
+    fileSecurityOptions,
     inheritedEnvironment,
+    platform,
     repositoryRoot,
   });
-  const child = spawnProcess(launch.command, launch.argumentsList, launch.options);
+  const child = spawnManagedProcess(launch.command, launch.argumentsList, launch.options, {
+    platform,
+    spawnProcess,
+  });
   const exitTarget = {};
   const supervisor = superviseDevelopmentProcesses({
     children: [{ child, name: launch.name }],
@@ -329,23 +374,31 @@ async function runLocalServer({
 
 export async function runLocalDevelopmentServer({
   application,
+  fileSecurityOptions,
   inheritedEnvironment = process.env,
+  platform = process.platform,
   repositoryRoot = defaultRepositoryRoot,
+  spawnManagedProcess = spawnSupervisedProcess,
   spawnProcess = spawn,
 } = {}) {
   return runLocalServer({
     application,
     createLaunch: createLocalDevelopmentServerLaunch,
+    fileSecurityOptions,
     inheritedEnvironment,
+    platform,
     repositoryRoot,
+    spawnManagedProcess,
     spawnProcess,
   });
 }
 
 export async function runLocalProductionServer({
   application,
+  assertWindowsPath,
   clearShutdownTimeout = clearTimeout,
   forceShutdownMilliseconds = 5_000,
+  fileSecurityOptions,
   inheritedEnvironment = process.env,
   platform = process.platform,
   readLinuxMountInformation = readCurrentLinuxMountInformation,
@@ -353,13 +406,14 @@ export async function runLocalProductionServer({
   scheduleShutdownTimeout = setTimeout,
   signalProcessGroup = process.kill,
   signalSource = process,
+  spawnManagedProcess = spawnSupervisedProcess,
   spawnProcess = spawn,
-  systemRoot = process.env.SystemRoot,
-  terminateWindowsTree,
 } = {}) {
   const preview = createLocalProductionPreviewLaunches({
     application,
+    fileSecurityOptions,
     inheritedEnvironment,
+    platform,
     repositoryRoot,
   });
 
@@ -367,6 +421,8 @@ export async function runLocalProductionServer({
     cleanupBuild: () =>
       removeNextBuildCache({
         applicationRoot: preview.start.options.cwd,
+        filesystemSecurityOptions:
+          assertWindowsPath === undefined ? undefined : { assertWindowsPath },
         repositoryRoot,
       }),
     clearShutdownTimeout,
@@ -374,6 +430,7 @@ export async function runLocalProductionServer({
     platform,
     prepareBuild: () => {
       removePreviousBuildOutput(preview.buildOutputPath, {
+        assertWindowsPath,
         platform,
         readLinuxMountInformation,
       });
@@ -383,24 +440,24 @@ export async function runLocalProductionServer({
     signalSource,
     startBuild: (registerProcess) => {
       registerProcess({
-        child: spawnProcess(
+        child: spawnManagedProcess(
           preview.build.command,
           preview.build.argumentsList,
           preview.build.options,
+          { platform, spawnProcess },
         ),
       });
     },
     startServer: (registerProcess) => {
       registerProcess({
-        child: spawnProcess(
+        child: spawnManagedProcess(
           preview.start.command,
           preview.start.argumentsList,
           preview.start.options,
+          { platform, spawnProcess },
         ),
       });
     },
-    systemRoot,
-    terminateWindowsTree,
     validateBuild: () => {
       const buildId = readProtectedFile(
         resolve(preview.buildOutputPath, "BUILD_ID"),

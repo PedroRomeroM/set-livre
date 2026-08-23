@@ -71,9 +71,13 @@ async function assertPortCanBeRebound(port) {
   });
 }
 
-function closingChild(pid, exitCode) {
+function closingChild(pid, exitCode, receivedSignals = []) {
   const child = new EventEmitter();
   child.exitCode = null;
+  child.kill = (signal) => {
+    receivedSignals.push(signal);
+    return true;
+  };
   child.pid = pid;
   child.signalCode = null;
   queueMicrotask(() => {
@@ -127,12 +131,9 @@ describe("local production preview process flow", () => {
     expect(serverStarted).toBe(true);
   });
 
-  it("attempts cleanup for both retained Windows trees after their roots exit with code 0", async () => {
-    const logicalDescendants = new Map([
-      [611_101, 711_101],
-      [611_102, 711_102],
-    ]);
-    const terminatedWindowsTrees = [];
+  it("does not signal Windows guardians whose Job Objects already closed", async () => {
+    const buildSignals = [];
+    const serverSignals = [];
 
     await expect(
       runLocalProductionPreviewProcessFlow({
@@ -140,23 +141,16 @@ describe("local production preview process flow", () => {
         platform: "win32",
         prepareBuild: () => {},
         signalSource: new EventEmitter(),
-        startBuild: (registerProcess) => registerProcess({ child: closingChild(611_101, 0) }),
-        startServer: (registerProcess) => registerProcess({ child: closingChild(611_102, 0) }),
-        systemRoot: "C:\\Windows",
-        terminateWindowsTree: (pid, options) => {
-          const descendantPid = logicalDescendants.get(pid);
-          logicalDescendants.delete(pid);
-          terminatedWindowsTrees.push({ descendantPid, options, pid });
-        },
+        startBuild: (registerProcess) =>
+          registerProcess({ child: closingChild(611_101, 0, buildSignals) }),
+        startServer: (registerProcess) =>
+          registerProcess({ child: closingChild(611_102, 0, serverSignals) }),
         validateBuild: () => {},
       }),
     ).rejects.toThrow("servidor do preview encerrou prematuramente com código 1");
 
-    expect(terminatedWindowsTrees).toEqual([
-      { descendantPid: 711_101, options: { systemRoot: "C:\\Windows" }, pid: 611_101 },
-      { descendantPid: 711_102, options: { systemRoot: "C:\\Windows" }, pid: 611_102 },
-    ]);
-    expect(logicalDescendants.size).toBe(0);
+    expect(buildSignals).toEqual([]);
+    expect(serverSignals).toEqual([]);
   });
 
   it("records SIGHUP inside the build factory before a process can escape supervision", async () => {

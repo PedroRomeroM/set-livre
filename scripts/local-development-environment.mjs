@@ -1,7 +1,10 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import { win32 } from "node:path";
 import { parseEnv } from "node:util";
 
 import { parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
+import { createTrustedCliEnvironment } from "./trusted-npm-cli.mjs";
+import { assertWindowsPrivateFile } from "./windows-filesystem-security.mjs";
 
 const localRuntimeEnvironmentNames = [
   "APP_ENV",
@@ -14,7 +17,6 @@ const localRuntimeEnvironmentNames = [
 const localRuntimeEnvironmentNameSet = new Set(localRuntimeEnvironmentNames);
 const inheritedOperationalEnvironmentNames = [
   "CI",
-  "COMSPEC",
   "HOME",
   "LANG",
   "LANGUAGE",
@@ -34,9 +36,7 @@ const inheritedOperationalEnvironmentNames = [
   "NEXT_TELEMETRY_DISABLED",
   "PATH",
   "PATHEXT",
-  "Path",
   "SYSTEMROOT",
-  "SystemRoot",
   "TEMP",
   "TERM",
   "TMP",
@@ -45,14 +45,13 @@ const inheritedOperationalEnvironmentNames = [
   "USERPROFILE",
   "WINDIR",
 ];
-const pathEnvironmentNames = new Set(["PATH", "Path"]);
 const localDatabaseProtocols = new Set(["postgres:", "postgresql:"]);
 
 function sanitizeOperationalValue(name, value) {
   if (typeof value !== "string" || value === "" || value.includes("\0")) {
     return undefined;
   }
-  if (!pathEnvironmentNames.has(name)) {
+  if (name !== "PATH") {
     return value;
   }
 
@@ -64,7 +63,7 @@ function sanitizeOperationalValue(name, value) {
   return searchPath === "" ? undefined : searchPath;
 }
 
-function inheritedOperationalEnvironment(environment) {
+function inheritedPosixOperationalEnvironment(environment) {
   const operationalEnvironment = {};
   for (const name of inheritedOperationalEnvironmentNames) {
     const value = sanitizeOperationalValue(name, environment[name]);
@@ -73,6 +72,98 @@ function inheritedOperationalEnvironment(environment) {
     }
   }
   return operationalEnvironment;
+}
+
+function windowsVariableEntries(environment, canonicalName) {
+  return Object.entries(environment).filter(
+    ([name]) => name.toUpperCase() === canonicalName.toUpperCase(),
+  );
+}
+
+function assertUniqueWindowsVariable(environment, canonicalName, { required = false } = {}) {
+  const entries = windowsVariableEntries(environment, canonicalName);
+  if (entries.length > 1) {
+    throw new Error(`O ambiente Windows contém variantes duplicadas de ${canonicalName}.`);
+  }
+  const value = entries[0]?.[1];
+  if (required && (typeof value !== "string" || value === "")) {
+    throw new Error(`${canonicalName} é obrigatório e precisa ser único no ambiente Windows.`);
+  }
+  return value;
+}
+
+function inspectLocalPath(path) {
+  return lstatSync(path, { throwIfNoEntry: false });
+}
+
+function resolvePhysicalWindowsCommandProcessor(systemRoot, inspectPhysicalPath) {
+  if (
+    typeof systemRoot !== "string" ||
+    systemRoot === "" ||
+    systemRoot.includes("\0") ||
+    !win32.isAbsolute(systemRoot) ||
+    win32.resolve(systemRoot) !== systemRoot ||
+    !/^[A-Za-z]:\\[^\\]/u.test(systemRoot)
+  ) {
+    throw new Error("SystemRoot não identifica um diretório Windows absoluto canônico.");
+  }
+
+  const system32 = win32.join(systemRoot, "System32");
+  const commandProcessor = win32.join(system32, "cmd.exe");
+  for (const directoryPath of [systemRoot, system32]) {
+    const information = inspectPhysicalPath(directoryPath);
+    if (information === undefined || !information.isDirectory() || information.isSymbolicLink()) {
+      throw new Error("O caminho físico do ComSpec do Windows não pôde ser comprovado.");
+    }
+  }
+  const executableInformation = inspectPhysicalPath(commandProcessor);
+  if (
+    executableInformation === undefined ||
+    !executableInformation.isFile() ||
+    executableInformation.isSymbolicLink()
+  ) {
+    throw new Error("O ComSpec do Windows precisa ser um executável físico regular.");
+  }
+  return commandProcessor;
+}
+
+function inheritedWindowsOperationalEnvironment(environment, inspectPhysicalPath) {
+  if (environment === null || typeof environment !== "object" || Array.isArray(environment)) {
+    throw new Error("O ambiente Windows local precisa ser um mapa de variáveis.");
+  }
+  assertUniqueWindowsVariable(environment, "PATH");
+  const systemRoot = assertUniqueWindowsVariable(environment, "SystemRoot", { required: true });
+  const commandProcessor = resolvePhysicalWindowsCommandProcessor(systemRoot, inspectPhysicalPath);
+  const sanitized = createTrustedCliEnvironment(environment, {
+    additionalWindowsNames: ["NEXT_TELEMETRY_DISABLED"],
+    platform: "win32",
+  });
+  const operationalEnvironment = {};
+  for (const name of inheritedOperationalEnvironmentNames) {
+    if (name === "SYSTEMROOT" || name === "WINDIR") {
+      continue;
+    }
+    const value = sanitized[name];
+    if (value !== undefined) {
+      operationalEnvironment[name] = value;
+    }
+  }
+  return {
+    ...operationalEnvironment,
+    ComSpec: commandProcessor,
+    SystemRoot: systemRoot,
+    WINDIR: systemRoot,
+  };
+}
+
+function inheritedOperationalEnvironment(
+  environment,
+  { inspectPhysicalPath = inspectLocalPath, platform = process.platform } = {},
+) {
+  if (platform === "win32") {
+    return inheritedWindowsOperationalEnvironment(environment, inspectPhysicalPath);
+  }
+  return inheritedPosixOperationalEnvironment(environment);
 }
 
 function assertExactLocalRuntimeEnvironment(environment) {
@@ -102,7 +193,14 @@ function samePhysicalFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function readPhysicalEnvironmentFile(environmentPath) {
+function readPhysicalEnvironmentFile(
+  environmentPath,
+  {
+    assertWindowsPrivate = assertWindowsPrivateFile,
+    platform = process.platform,
+    trustedRoot,
+  } = {},
+) {
   let descriptor;
 
   try {
@@ -110,22 +208,33 @@ function readPhysicalEnvironmentFile(environmentPath) {
     if (
       pathInformation === undefined ||
       !pathInformation.isFile() ||
-      pathInformation.isSymbolicLink()
+      pathInformation.isSymbolicLink() ||
+      pathInformation.nlink !== 1
     ) {
       throw new Error(
         `O ambiente local precisa ser um arquivo físico regular: ${environmentPath}.`,
       );
     }
-    if (process.platform !== "win32" && (pathInformation.mode & 0o7777) !== 0o600) {
+    if (platform !== "win32" && (pathInformation.mode & 0o7777) !== 0o600) {
       throw new Error(`O ambiente local precisa usar modo 0600: ${environmentPath}.`);
+    }
+    if (platform === "win32") {
+      if (typeof trustedRoot !== "string" || trustedRoot === "") {
+        throw new Error("O ambiente local exige uma raiz confiável do checkout no Windows.");
+      }
+      assertWindowsPrivate(environmentPath, {
+        description: "O ambiente local",
+        trustedRoot,
+      });
     }
 
     descriptor = openSync(environmentPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedInformation = fstatSync(descriptor);
     if (
       !openedInformation.isFile() ||
+      openedInformation.nlink !== 1 ||
       !samePhysicalFile(pathInformation, openedInformation) ||
-      (process.platform !== "win32" && (openedInformation.mode & 0o7777) !== 0o600)
+      (platform !== "win32" && (openedInformation.mode & 0o7777) !== 0o600)
     ) {
       throw new Error(`O ambiente local mudou durante a abertura: ${environmentPath}.`);
     }
@@ -136,10 +245,17 @@ function readPhysicalEnvironmentFile(environmentPath) {
       finalInformation === undefined ||
       finalInformation.isSymbolicLink() ||
       !finalInformation.isFile() ||
+      finalInformation.nlink !== 1 ||
       !samePhysicalFile(openedInformation, finalInformation) ||
-      (process.platform !== "win32" && (finalInformation.mode & 0o7777) !== 0o600)
+      (platform !== "win32" && (finalInformation.mode & 0o7777) !== 0o600)
     ) {
       throw new Error(`O ambiente local mudou durante a leitura: ${environmentPath}.`);
+    }
+    if (platform === "win32") {
+      assertWindowsPrivate(environmentPath, {
+        description: "O ambiente local",
+        trustedRoot,
+      });
     }
 
     return source;
@@ -247,6 +363,7 @@ export function createLocalDevelopmentEnvironment(
   inheritedEnvironment,
   localEnvironment,
   expectedApplicationUrl,
+  environmentOptions,
 ) {
   const validatedLocalEnvironment = validateLocalRuntimeEnvironment(
     localEnvironment,
@@ -254,7 +371,10 @@ export function createLocalDevelopmentEnvironment(
   );
 
   return {
-    ...inheritedOperationalEnvironment(inheritedEnvironment),
+    ...inheritedOperationalEnvironment(
+      inheritedEnvironment,
+      environmentOptions ?? { platform: "linux" },
+    ),
     ...Object.fromEntries(
       localRuntimeEnvironmentNames.map((name) => [name, validatedLocalEnvironment[name]]),
     ),
@@ -265,8 +385,10 @@ export function readLocalDevelopmentEnvironmentFile(
   environmentPath,
   inheritedEnvironment,
   expectedApplicationUrl,
+  fileSecurityOptions,
+  environmentOptions,
 ) {
-  const source = readPhysicalEnvironmentFile(environmentPath);
+  const source = readPhysicalEnvironmentFile(environmentPath, fileSecurityOptions);
   let localEnvironment;
   try {
     localEnvironment = parseEnv(source);
@@ -278,5 +400,6 @@ export function readLocalDevelopmentEnvironmentFile(
     inheritedEnvironment,
     localEnvironment,
     expectedApplicationUrl,
+    environmentOptions,
   );
 }

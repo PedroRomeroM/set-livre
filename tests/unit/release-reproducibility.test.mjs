@@ -85,7 +85,7 @@ afterEach(() => {
   }
 });
 
-describe("release process serialization", () => {
+describe.runIf(process.platform === "linux")("release process serialization", () => {
   it("serializes two real processes before they publish the same immutable artifact", async () => {
     const root = temporaryRoot("set-livre-release-lock-");
     const artifactsRoot = resolve(root, ".artifacts");
@@ -161,7 +161,7 @@ describe("release process serialization", () => {
   });
 });
 
-describe("release archive modes", () => {
+describe.runIf(process.platform === "linux")("release archive modes", () => {
   it("clears special bits and produces identical archives under different umasks", () => {
     const workspaces = ["022", "077"].map((umaskValue) => {
       const workspace = temporaryRoot(`set-livre-release-umask-${umaskValue}-`);

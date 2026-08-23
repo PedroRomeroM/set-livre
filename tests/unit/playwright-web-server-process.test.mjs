@@ -12,6 +12,7 @@ import {
   createPlaywrightWebServerLaunch,
   runPlaywrightWebServer,
 } from "../../scripts/playwright-web-server.mjs";
+import { spawnSupervisedProcess } from "../../scripts/development-process-tree.mjs";
 
 const wrapperUrl = pathToFileURL(
   resolve(import.meta.dirname, "../../scripts/playwright-web-server.mjs"),
@@ -19,6 +20,11 @@ const wrapperUrl = pathToFileURL(
 const temporaryRoots = [];
 const localDatabaseUrl =
   "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+const fixtureFileSecurityOptions = {
+  assertWindowsIntegrity: () => {},
+  assertWindowsPrivate: () => {},
+  platform: process.platform,
+};
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
@@ -80,8 +86,67 @@ function hostileInheritedEnvironment(home) {
     PGPASSWORD: "host-postgres-secret",
     SSH_AUTH_SOCK: resolve(home, "agent.sock"),
     SUPABASE_SERVICE_ROLE_KEY: "host-service-role-secret",
+    ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
     npm_config__authToken: "host-registry-secret",
   };
+}
+
+function minimalInheritedEnvironment(home) {
+  return {
+    HOME: home,
+    PATH: process.env.PATH,
+    ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
+  };
+}
+
+function workerEnvironment(home) {
+  const environment = minimalInheritedEnvironment(home);
+  if (process.platform !== "win32") {
+    return environment;
+  }
+  for (const name of ["LOCALAPPDATA", "TEMP", "TMP"]) {
+    const value = process.env[name];
+    if (typeof value === "string" && value !== "") {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
+function spawnDirectly(command, argumentsList, options, { spawnProcess }) {
+  return spawnProcess(command, argumentsList, options);
+}
+
+function compileGuardianFixture(root) {
+  const systemRoot = process.env.SystemRoot;
+  if (typeof systemRoot !== "string" || systemRoot === "") {
+    throw new Error("SystemRoot é obrigatório para compilar a fixture do Job Object.");
+  }
+  const compilerPath = resolve(systemRoot, "Microsoft.NET/Framework64/v4.0.30319/csc.exe");
+  const guardianPath = resolve(root, "set-livre-job-object-guardian.exe");
+  const sourcePath = resolve(import.meta.dirname, "../../scripts/windows-job-object-guardian.cs");
+  const compilation = spawnSync(
+    compilerPath,
+    ["/nologo", "/target:exe", "/optimize+", "/warnaserror+", `/out:${guardianPath}`, sourcePath],
+    {
+      cwd: root,
+      env: { SystemRoot: systemRoot, WINDIR: systemRoot },
+      shell: false,
+      stdio: "pipe",
+      windowsHide: true,
+    },
+  );
+  if (
+    compilation.error !== undefined ||
+    compilation.signal !== null ||
+    compilation.status !== 0 ||
+    !existsSync(guardianPath)
+  ) {
+    throw new Error("A fixture do Job Object não pôde ser compilada.", {
+      cause: compilation.error,
+    });
+  }
+  return guardianPath;
 }
 
 function processExists(pid) {
@@ -144,8 +209,10 @@ describe("isolated Playwright webServer wrapper", () => {
 
     const exitCode = await runPlaywrightWebServer({
       application: "web",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment: hostileInheritedEnvironment(hostileHome),
       repositoryRoot: repository,
+      spawnManagedProcess: spawnDirectly,
     });
 
     expect(exitCode).toBe(1);
@@ -164,17 +231,22 @@ describe("isolated Playwright webServer wrapper", () => {
       sshAgent: null,
       userConfig: null,
     });
-  });
+  }, 15_000);
 
   it("returns process failure when the persistent Next child exits naturally with code 0", () => {
     const repository = temporaryRepository({ dev: "node probe.cjs" });
+    const childStartedPath = resolve(repository, "next-child-started");
+    writeFileSync(
+      resolve(repository, "node_modules/next/dist/bin/next"),
+      `require("node:fs").writeFileSync(${JSON.stringify(childStartedPath)}, "started");\n`,
+    );
     const workerSource = `import { runPlaywrightWebServer } from ${JSON.stringify(
       wrapperUrl,
-    )}; process.exitCode = await runPlaywrightWebServer({ application: "web", inheritedEnvironment: process.env, repositoryRoot: ${JSON.stringify(
+    )}; process.exitCode = await runPlaywrightWebServer({ application: "web", fileSecurityOptions: { assertWindowsIntegrity: () => {}, assertWindowsPrivate: () => {}, platform: process.platform }, inheritedEnvironment: process.env, repositoryRoot: ${JSON.stringify(
       repository,
-    )} });`;
+    )}, spawnManagedProcess: (command, argumentsList, options, { spawnProcess }) => spawnProcess(command, argumentsList, options) });`;
     const worker = spawnSync(process.execPath, ["--input-type=module", "--eval", workerSource], {
-      env: { HOME: repository, PATH: process.env.PATH },
+      env: workerEnvironment(repository),
       killSignal: "SIGKILL",
       stdio: "pipe",
       timeout: 5_000,
@@ -183,6 +255,7 @@ describe("isolated Playwright webServer wrapper", () => {
     expect(worker.error).toBeUndefined();
     expect(worker.signal).toBeNull();
     expect(worker.status).toBe(1);
+    expect(readFileSync(childStartedPath, "utf8")).toBe("started");
   });
 
   it.each([
@@ -202,7 +275,9 @@ describe("isolated Playwright webServer wrapper", () => {
 
     const completion = runPlaywrightWebServer({
       application: "web",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment: { HOME: repository, PATH: process.env.PATH },
+      platform: "linux",
       repositoryRoot: repository,
       signalSource: new EventEmitter(),
       spawnProcess: () => child,
@@ -214,17 +289,17 @@ describe("isolated Playwright webServer wrapper", () => {
     await expect(completion).resolves.toBe(exitCode);
   });
 
-  it("does not target a reused Windows PID after an unexpected natural close", async () => {
+  it("accepts a closed Windows guardian without targeting any released PID", async () => {
     const repository = temporaryRepository({ dev: "node probe.cjs" });
     const child = new EventEmitter();
     const signalSource = new EventEmitter();
-    const terminationCalls = [];
     child.exitCode = null;
     child.pid = 444_444;
     child.signalCode = null;
 
     const completion = runPlaywrightWebServer({
       application: "web",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment: {
         HOME: repository,
         PATH: process.env.PATH,
@@ -233,14 +308,14 @@ describe("isolated Playwright webServer wrapper", () => {
       platform: "win32",
       repositoryRoot: repository,
       signalSource,
+      spawnManagedProcess: (command, argumentsList, options, { spawnProcess }) =>
+        spawnProcess(command, argumentsList, options),
       spawnProcess: () => child,
-      terminateWindowsTree: (pid) => terminationCalls.push(pid),
     });
     child.exitCode = 0;
     child.emit("close", 0, null);
 
     await expect(completion).resolves.toBe(1);
-    expect(terminationCalls).toEqual([]);
     expect(signalSource.listenerCount("SIGHUP")).toBe(0);
     expect(signalSource.listenerCount("SIGINT")).toBe(0);
     expect(signalSource.listenerCount("SIGTERM")).toBe(0);
@@ -251,14 +326,16 @@ describe("isolated Playwright webServer wrapper", () => {
       dev: "node web.cjs",
       "dev:backoffice": "node admin.cjs",
     });
-    const inheritedEnvironment = { HOME: repository, PATH: process.env.PATH };
+    const inheritedEnvironment = minimalInheritedEnvironment(repository);
     const web = createPlaywrightWebServerLaunch({
       application: "web",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment,
       repositoryRoot: repository,
     });
     const backoffice = createPlaywrightWebServerLaunch({
       application: "backoffice",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment,
       repositoryRoot: repository,
     });
@@ -309,7 +386,9 @@ describe("isolated Playwright webServer wrapper", () => {
 
       const completion = runPlaywrightWebServer({
         application: "web",
+        fileSecurityOptions: fixtureFileSecurityOptions,
         inheritedEnvironment: { HOME: repository, PATH: process.env.PATH },
+        platform: "linux",
         repositoryRoot: repository,
         signalProcessGroup: () => {
           const error = new Error("group unavailable");
@@ -326,43 +405,88 @@ describe("isolated Playwright webServer wrapper", () => {
     },
   );
 
-  it("terminates the Windows tree without forwarding the app environment to taskkill", async () => {
+  it("closes the Windows guardian without forwarding the app environment to another tool", async () => {
     const repository = temporaryRepository({ dev: "node probe.cjs" });
     const signalSource = new EventEmitter();
     const child = new EventEmitter();
-    const terminationCalls = [];
+    const receivedSignals = [];
     child.pid = 515_151;
     child.exitCode = null;
     child.signalCode = null;
+    child.kill = (signal) => {
+      receivedSignals.push(signal);
+      queueMicrotask(() => {
+        child.signalCode = signal;
+        child.emit("close", null, signal);
+      });
+      return true;
+    };
 
     const completion = runPlaywrightWebServer({
       application: "web",
+      fileSecurityOptions: fixtureFileSecurityOptions,
       inheritedEnvironment: {
         ...hostileInheritedEnvironment(repository),
-        SYSTEMROOT: "C:\\Windows",
       },
       platform: "win32",
       repositoryRoot: repository,
       signalSource,
+      spawnManagedProcess: (command, argumentsList, options, { spawnProcess }) =>
+        spawnProcess(command, argumentsList, options),
       spawnProcess: () => child,
-      terminateWindowsTree: (pid, options) => {
-        terminationCalls.push({ options, pid });
-        queueMicrotask(() => {
-          child.signalCode = "SIGKILL";
-          child.emit("close", null, "SIGKILL");
-        });
-      },
     });
     signalSource.emit("SIGTERM");
 
     await expect(completion).resolves.toBe(143);
-    expect(terminationCalls).toEqual([
-      {
-        options: { systemRoot: "C:\\Windows" },
-        pid: 515_151,
-      },
-    ]);
+    expect(receivedSignals).toEqual(["SIGKILL"]);
   });
+
+  it.runIf(process.platform === "win32")(
+    "closes the Job Object when the Next root exits before its descendant",
+    async () => {
+      const repository = temporaryRepository({ dev: "node tree-parent.cjs" });
+      const guardianPath = compileGuardianFixture(repository);
+      const leafPidPath = resolve(repository, "windows-tree-leaf.pid");
+      const leafPortPath = resolve(repository, "windows-tree-leaf.port");
+      writeFileSync(
+        resolve(repository, "windows-tree-leaf.cjs"),
+        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(leafPortPath)}, String(server.address().port)); if (process.send) process.send("ready"); });\n`,
+      );
+      writeFileSync(
+        resolve(repository, "node_modules/next/dist/bin/next"),
+        `const { spawn } = require("node:child_process"); const leaf = spawn(process.execPath, [${JSON.stringify(resolve(repository, "windows-tree-leaf.cjs"))}], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true }); leaf.once("message", () => process.exit(0));\n`,
+      );
+
+      let leafPid;
+      try {
+        const completion = runPlaywrightWebServer({
+          application: "web",
+          fileSecurityOptions: fixtureFileSecurityOptions,
+          inheritedEnvironment: process.env,
+          repositoryRoot: repository,
+          signalSource: new EventEmitter(),
+          spawnManagedProcess: (command, argumentsList, options, { platform, spawnProcess }) =>
+            spawnSupervisedProcess(command, argumentsList, options, {
+              platform,
+              resolveWindowsGuardian: () => guardianPath,
+              spawnProcess,
+            }),
+        });
+        await waitFor(() => existsSync(leafPidPath) && existsSync(leafPortPath));
+        leafPid = Number(readFileSync(leafPidPath, "utf8"));
+        const leafPort = Number(readFileSync(leafPortPath, "utf8"));
+
+        await expect(completion).resolves.toBe(1);
+        await waitFor(() => !processExists(leafPid));
+        await assertPortCanBeRebound(leafPort);
+      } finally {
+        if (leafPid !== undefined && processExists(leafPid)) {
+          process.kill(leafPid, "SIGKILL");
+        }
+      }
+    },
+    15_000,
+  );
 
   it.runIf(process.platform !== "win32")(
     "forwards termination to the isolated Next process group without leaving descendants",
@@ -384,7 +508,7 @@ describe("isolated Playwright webServer wrapper", () => {
 
       const workerSource = `import { runPlaywrightWebServer } from ${JSON.stringify(
         wrapperUrl,
-      )}; process.exitCode = await runPlaywrightWebServer({ application: "web", inheritedEnvironment: process.env, repositoryRoot: ${JSON.stringify(
+      )}; process.exitCode = await runPlaywrightWebServer({ application: "web", fileSecurityOptions: { assertWindowsPrivate: () => {}, platform: process.platform }, inheritedEnvironment: process.env, repositoryRoot: ${JSON.stringify(
         repository,
       )} });`;
       const worker = spawn(process.execPath, ["--input-type=module", "--eval", workerSource], {

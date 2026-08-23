@@ -15,12 +15,15 @@ import { basename, dirname, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { fileSymbolicLinksSupported } from "../fixtures/filesystem-capabilities.mjs";
+
 import {
   generateSchemaSnapshot,
   normalizeSchemaSnapshot,
 } from "../../scripts/generate-schema-snapshot.mjs";
 
 const temporaryRoots = [];
+const linkIt = fileSymbolicLinksSupported ? it : it.skip;
 const validSchemaDump = `CREATE SCHEMA IF NOT EXISTS "audit";
 CREATE SCHEMA IF NOT EXISTS "private";
 CREATE SCHEMA IF NOT EXISTS "public";`;
@@ -54,14 +57,18 @@ describe("atomic schema snapshot generation", () => {
         expect(dirname(temporaryPath)).toBe(root);
         expect(basename(temporaryPath)).toMatch(/^\.schema\.generated\.sql\..+\.tmp$/u);
         expect(lstatSync(temporaryPath).isFile()).toBe(true);
-        expect(statSync(temporaryPath).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32") {
+          expect(statSync(temporaryPath).mode & 0o777).toBe(0o600);
+        }
         writeFileSync(temporaryPath, `${validSchemaDump}\n\n\t`, "utf8");
       },
     });
 
     expect(generatedPath).not.toBe(destination);
     expect(readFileSync(destination, "utf8")).toBe(`${validSchemaDump}\n`);
-    expect(statSync(destination).mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32") {
+      expect(statSync(destination).mode & 0o777).toBe(0o640);
+    }
     expect(readdirSync(root)).toEqual(["schema.generated.sql"]);
   });
 
@@ -141,7 +148,7 @@ describe("atomic schema snapshot generation", () => {
     expect(readdirSync(root)).toEqual(["schema.generated.sql"]);
   });
 
-  it("rejects a dump that replaces its temporary with a symlink", () => {
+  linkIt("rejects a dump that replaces its temporary with a symlink", () => {
     const { destination, root } = temporaryDestination();
     const external = resolve(root, "external.sql");
     writeFileSync(external, "external remains unchanged\n", "utf8");
@@ -191,7 +198,7 @@ describe("atomic schema snapshot generation", () => {
     expect(readdirSync(root)).toEqual(["schema.generated.sql"]);
   });
 
-  it("rejects a symbolic destination before invoking the dump", () => {
+  linkIt("rejects a symbolic destination before invoking the dump", () => {
     const { destination, root } = temporaryDestination({ createDestination: false });
     const external = resolve(root, "external.sql");
     const runDump = vi.fn();
@@ -218,7 +225,9 @@ describe("atomic schema snapshot generation", () => {
     });
 
     expect(readFileSync(destination, "utf8")).toBe(`${validSchemaDump}\n`);
-    expect(statSync(destination).mode & 0o777).toBe(0o644);
+    if (process.platform !== "win32") {
+      expect(statSync(destination).mode & 0o777).toBe(0o644);
+    }
     expect(readdirSync(root)).toEqual(["schema.generated.sql"]);
   });
 });

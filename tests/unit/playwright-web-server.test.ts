@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -18,14 +20,14 @@ describe("Playwright webServer process boundary", () => {
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "host-anon-that-must-not-win",
       NODE_OPTIONS: "--require=/tmp/hostile-loader.cjs",
       NPM_CONFIG_USERCONFIG: "/tmp/hostile.npmrc",
-      PATH: ":/opt/node/bin::/usr/bin:",
+      PATH: ["", "/opt/node/bin", "", "/usr/bin", ""].join(posix.delimiter),
       PGPASSWORD: "database-secret",
       SSH_AUTH_SOCK: "/tmp/agent.sock",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
       npm_config__authToken: "registry-secret",
     };
 
-    const overlay = createPlaywrightWebServerEnvironmentOverlay(inherited);
+    const overlay = createPlaywrightWebServerEnvironmentOverlay(inherited, { platform: "linux" });
 
     expect(Object.keys(inherited).every((name) => Object.hasOwn(overlay, name))).toBe(true);
     expect(overlay).toMatchObject({
@@ -39,7 +41,7 @@ describe("Playwright webServer process boundary", () => {
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "",
       NODE_OPTIONS: "",
       NPM_CONFIG_USERCONFIG: "",
-      PATH: "/opt/node/bin:/usr/bin",
+      PATH: ["/opt/node/bin", "/usr/bin"].join(posix.delimiter),
       PGPASSWORD: "",
       SSH_AUTH_SOCK: "",
       SUPABASE_SERVICE_ROLE_KEY: "",
@@ -48,6 +50,64 @@ describe("Playwright webServer process boundary", () => {
     expect(JSON.stringify(overlay)).not.toMatch(
       /admin-secret|database-secret|host-anon|hostile|registry-secret|service-role-secret/u,
     );
+  });
+
+  it("replaces every Windows ComSpec spelling with the physical system command processor", () => {
+    const inspectedPaths: string[] = [];
+    const directoryInformation = {
+      isDirectory: () => true,
+      isFile: () => false,
+      isSymbolicLink: () => false,
+    };
+    const fileInformation = {
+      isDirectory: () => false,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const inherited = {
+      cOmSpEc: "C:\\attacker\\cmd.exe",
+      lOcAlApPdAtA: "C:\\Users\\tester\\AppData\\Local",
+      nOdE_oPtIoNs: "--require=C:\\attacker\\loader.cjs",
+      PaTh: "C:\\Program Files\\nodejs;;C:\\Windows\\System32",
+      sYsTeMrOoT: "C:\\Windows",
+      wInDiR: "C:\\attacker",
+    };
+
+    const overlay = createPlaywrightWebServerEnvironmentOverlay(inherited, {
+      inspectPhysicalPath: (path) => {
+        inspectedPaths.push(path);
+        return path.endsWith("cmd.exe") ? fileInformation : directoryInformation;
+      },
+      platform: "win32",
+    });
+
+    expect(overlay).toMatchObject({
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+      LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      PATH: "C:\\Program Files\\nodejs;C:\\Windows\\System32",
+      PaTh: "C:\\Program Files\\nodejs;C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      cOmSpEc: "C:\\Windows\\System32\\cmd.exe",
+      lOcAlApPdAtA: "C:\\Users\\tester\\AppData\\Local",
+      nOdE_oPtIoNs: "",
+      sYsTeMrOoT: "C:\\Windows",
+      wInDiR: "C:\\Windows",
+    });
+    expect(inspectedPaths).toEqual([
+      "C:\\Windows",
+      "C:\\Windows\\System32",
+      "C:\\Windows\\System32\\cmd.exe",
+    ]);
+    expect(JSON.stringify(overlay)).not.toContain("attacker");
+  });
+
+  it("rejects ambiguous SystemRoot variants before accepting a Windows shell", () => {
+    expect(() =>
+      createPlaywrightWebServerEnvironmentOverlay(
+        { SYSTEMROOT: "C:\\Windows", SystemRoot: "D:\\Windows" },
+        { inspectPhysicalPath: () => undefined, platform: "win32" },
+      ),
+    ).toThrow("SystemRoot precisa ser único");
   });
 
   it("builds a fixed absolute Node command without accepting shell-sensitive paths", () => {

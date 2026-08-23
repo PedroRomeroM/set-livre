@@ -15,9 +15,17 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  directorySymbolicLinkType,
+  fileSymbolicLinksSupported,
+} from "../fixtures/filesystem-capabilities.mjs";
+
 import { assertDatabaseGeneratedArtifactsCurrent } from "../../scripts/check-database-generated-artifacts.mjs";
 
 const temporaryRoots = [];
+const linkIt = fileSymbolicLinksSupported ? it : it.skip;
+const generatedSymbolicLinkTestTitle =
+  "does not follow a generated symbolic link and only removes the sibling link";
 const trackedSchema = "normalized schema snapshot\n";
 const trackedTypes = "export type Database = 'formatted';\n";
 
@@ -143,7 +151,7 @@ describe("generated database artifacts gate", () => {
     expectNoCheckTemporaries(schemaDirectory, typesDirectory);
   });
 
-  it("rejects a symbolic tracked artifact before invoking either generator", async () => {
+  linkIt("rejects a symbolic tracked artifact before invoking either generator", async () => {
     const { root, schemaDirectory, schemaPath, typesDirectory, typesPath } = databaseArtifacts();
     const externalPath = resolve(root, "external.sql");
     const generateSchema = vi.fn();
@@ -245,7 +253,7 @@ describe("generated database artifacts gate", () => {
     rmSync(schemaDirectory, { recursive: true });
     mkdirSync(externalDirectory);
     writeFileSync(resolve(externalDirectory, "schema.generated.sql"), trackedSchema, "utf8");
-    symlinkSync(externalDirectory, schemaDirectory, "dir");
+    symlinkSync(externalDirectory, schemaDirectory, directorySymbolicLinkType);
 
     await expect(
       assertDatabaseGeneratedArtifactsCurrent({
@@ -292,7 +300,7 @@ describe("generated database artifacts gate", () => {
     expect(readdirSync(schemaDirectory)).toContain("schema.generated.sql");
   });
 
-  it("does not follow a generated symbolic link and only removes the sibling link", async () => {
+  linkIt(generatedSymbolicLinkTestTitle, async () => {
     const { root, schemaDirectory, schemaPath, typesDirectory, typesPath } = databaseArtifacts();
     const externalPath = resolve(root, "external-generated.sql");
     writeFileSync(externalPath, "external remains unchanged\n", "utf8");

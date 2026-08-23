@@ -18,6 +18,11 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  directorySymbolicLinkType,
+  fileSymbolicLinksSupported,
+} from "../fixtures/filesystem-capabilities.mjs";
+
+import {
   collectCleanupFailures,
   ensurePhysicalArtifactsRoot,
   environmentWithoutSecrets,
@@ -34,6 +39,8 @@ import {
 import { removePhysicalTree } from "../../scripts/physical-tree-removal.mjs";
 
 const temporaryRoots = [];
+const linkIt = fileSymbolicLinksSupported ? it : it.skip;
+const linuxIt = process.platform === "linux" ? it : it.skip;
 
 function temporaryRoot() {
   const root = mkdtempSync(resolve(tmpdir(), "set-livre-release-"));
@@ -73,19 +80,20 @@ describe("release artifact root guard", () => {
     const artifacts = resolve(repository, ".artifacts");
 
     expect(ensurePhysicalArtifactsRoot(repository, artifacts)).toBe(artifacts);
-    expect(() =>
-      ensurePhysicalArtifactsRoot(repository, artifacts, {
-        platform: "linux",
-        readLinuxMountInformation: () =>
-          "1 0 0:1 / / rw - tmpfs tmpfs rw\n2 0 0:5 net:[4026531833] /run/docker/netns/default rw - nsfs nsfs rw\n",
-      }),
-    ).not.toThrow();
+    if (process.platform === "linux") {
+      expect(() =>
+        ensurePhysicalArtifactsRoot(repository, artifacts, {
+          platform: "linux",
+          readLinuxMountInformation: () =>
+            "1 0 0:1 / / rw - tmpfs tmpfs rw\n2 0 0:5 net:[4026531833] /run/docker/netns/default rw - nsfs nsfs rw\n",
+        }),
+      ).not.toThrow();
+    }
     const information = lstatSync(artifacts);
     expect(information.isDirectory()).toBe(true);
     expect(information.isSymbolicLink()).toBe(false);
-    expect(information.mode & 0o777).toBe(0o700);
-
     if (process.platform !== "win32") {
+      expect(information.mode & 0o777).toBe(0o700);
       chmodSync(artifacts, 0o777);
       ensurePhysicalArtifactsRoot(repository, artifacts);
       expect(lstatSync(artifacts).mode & 0o777).toBe(0o700);
@@ -100,11 +108,11 @@ describe("release artifact root guard", () => {
     mkdirSync(external);
     const sentinel = resolve(external, "sentinel.txt");
     writeFileSync(sentinel, "preserve", "utf8");
-    symlinkSync(external, resolve(repository, ".artifacts"), "dir");
+    symlinkSync(external, resolve(repository, ".artifacts"), directorySymbolicLinkType);
 
     expect(() =>
       ensurePhysicalArtifactsRoot(repository, resolve(repository, ".artifacts")),
-    ).toThrow("diretório físico regular");
+    ).toThrow(process.platform === "win32" ? "reparse points" : "diretório físico regular");
     expect(readFileSync(sentinel, "utf8")).toBe("preserve");
   });
 
@@ -115,7 +123,7 @@ describe("release artifact root guard", () => {
     ).toThrow("filha direta");
   });
 
-  it("rejects root and descendant mounts before changing artifact permissions", () => {
+  linuxIt("rejects root and descendant mounts before changing artifact permissions", () => {
     for (const mountedRelativePath of ["", "nested/mounted", "nested with space/mounted\\path"]) {
       const repository = temporaryRoot();
       const artifacts = resolve(repository, ".artifacts");
@@ -137,7 +145,7 @@ describe("release artifact root guard", () => {
     }
   });
 
-  it("fails closed on malformed mountinfo and a symbolic repository ancestor", () => {
+  linuxIt("fails closed on malformed mountinfo and a symbolic repository ancestor", () => {
     const repository = temporaryRoot();
     const artifacts = resolve(repository, ".artifacts");
     mkdirSync(artifacts);
@@ -161,20 +169,18 @@ describe("release artifact root guard", () => {
       expect(lstatSync(artifacts).mode & 0o777).toBe(0o777);
     }
 
-    if (process.platform !== "win32") {
-      const base = temporaryRoot();
-      const physicalRepository = resolve(base, "physical-repository");
-      const symbolicRepository = resolve(base, "symbolic-repository");
-      mkdirSync(physicalRepository);
-      symlinkSync(physicalRepository, symbolicRepository, "dir");
-      expect(() =>
-        ensurePhysicalArtifactsRoot(symbolicRepository, resolve(symbolicRepository, ".artifacts")),
-      ).toThrow("ancestralidade física válida");
-      expect(existsSync(resolve(physicalRepository, ".artifacts"))).toBe(false);
-    }
+    const base = temporaryRoot();
+    const physicalRepository = resolve(base, "physical-repository");
+    const symbolicRepository = resolve(base, "symbolic-repository");
+    mkdirSync(physicalRepository);
+    symlinkSync(physicalRepository, symbolicRepository, "dir");
+    expect(() =>
+      ensurePhysicalArtifactsRoot(symbolicRepository, resolve(symbolicRepository, ".artifacts")),
+    ).toThrow("ancestralidade física válida");
+    expect(existsSync(resolve(physicalRepository, ".artifacts"))).toBe(false);
   });
 
-  it("rejects a symbolic release lock without touching its target", async () => {
+  linkIt("rejects a symbolic release lock without touching its target", async () => {
     const base = temporaryRoot();
     const repository = resolve(base, "repository");
     const externalLock = resolve(base, "external.lock");
@@ -185,12 +191,12 @@ describe("release artifact root guard", () => {
     symlinkSync(externalLock, resolve(artifacts, "release.lock"));
 
     await expect(withExclusiveReleaseLock(artifacts, async () => undefined)).rejects.toThrow(
-      "lock físico",
+      process.platform === "win32" ? "reparse points" : "lock físico",
     );
     expect(readFileSync(externalLock, "utf8")).toBe("preserve");
   });
 
-  it("rechecks the artifact mount boundary before opening the release lock", async () => {
+  linuxIt("rechecks the artifact mount boundary before opening the release lock", async () => {
     const repository = temporaryRoot();
     const artifacts = resolve(repository, ".artifacts");
     ensurePhysicalArtifactsRoot(repository, artifacts);
@@ -233,6 +239,75 @@ describe("physical tree removal", () => {
     ).not.toThrow();
   });
 
+  it("requires the exact Windows allowlist before unlinking a regular file", () => {
+    const root = temporaryRoot();
+    const generatedFile = resolve(root, "manifest.incoming");
+    writeFileSync(generatedFile, "generated", "utf8");
+    const windowsOptions = {
+      allowRegularFile: true,
+      assertWindowsPath: () => {},
+      description: "O arquivo gerado",
+      platform: "win32",
+    };
+
+    expect(() => removePhysicalTree(generatedFile, windowsOptions)).toThrow(
+      "não é um alvo autorizado",
+    );
+    expect(readFileSync(generatedFile, "utf8")).toBe("generated");
+
+    removePhysicalTree(generatedFile, {
+      ...windowsOptions,
+      authorizedWindowsPaths: [generatedFile],
+    });
+    expect(existsSync(generatedFile)).toBe(false);
+  });
+
+  it("applies the unconditional recursive Windows reparse-point inspection", () => {
+    const root = temporaryRoot();
+    const generatedTree = resolve(root, "generated-tree");
+    const retiredTree = resolve(root, ".generated-tree.retired-fixed-generated-tree");
+    mkdirSync(generatedTree);
+    writeFileSync(resolve(generatedTree, "marker"), "generated", "utf8");
+    const inspections = [];
+
+    removePhysicalTree(generatedTree, {
+      assertWindowsPath: (path, options) => inspections.push({ options, path }),
+      authorizedWindowsPaths: [generatedTree],
+      description: "A saída Next gerada",
+      platform: "win32",
+      uuid: () => "fixed-generated-tree",
+    });
+
+    expect(existsSync(generatedTree)).toBe(false);
+    expect(inspections).toEqual([
+      {
+        options: {
+          allowMissingLeaf: true,
+          description: "A saída Next gerada",
+          leafKind: "any",
+          recursive: true,
+        },
+        path: generatedTree,
+      },
+      {
+        options: {
+          description: "A saída Next gerada",
+          leafKind: "directory",
+          recursive: true,
+        },
+        path: retiredTree,
+      },
+      {
+        options: {
+          description: "A saída Next gerada",
+          leafKind: "directory",
+          recursive: true,
+        },
+        path: retiredTree,
+      },
+    ]);
+  });
+
   it("fails closed for an existing directory outside Linux", () => {
     const root = temporaryRoot();
     const generatedTree = resolve(root, "generated-tree");
@@ -250,7 +325,7 @@ describe("physical tree removal", () => {
     expect(readFileSync(marker, "utf8")).toBe("preserve");
   });
 
-  it("revalidates mountinfo and shape after the sibling UUID rename", () => {
+  linuxIt("revalidates mountinfo and shape after the sibling UUID rename", () => {
     const mountRoot = temporaryRoot();
     const mountedTree = resolve(mountRoot, "mounted-tree");
     const mountedRetired = resolve(mountRoot, ".mounted-tree.retired-fixed-mount");

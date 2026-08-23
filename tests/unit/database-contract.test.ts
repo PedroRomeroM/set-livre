@@ -4,7 +4,7 @@ import { isDatabaseReadinessSatisfied } from "../../packages/contracts/src/datab
 import { parseDalDatabaseUrl } from "../../packages/contracts/src";
 
 const validUrl =
-  "postgresql://app_runtime:secret@db.example.test:6543/set_livre?sslmode=verify-full&options=-c%20role%3Dapp_dal";
+  "postgresql://app_runtime:secret@db.example.test:6543/set_livre?options=-c%20role%3Dapp_dal";
 const restrictedReadinessRow = {
   currentRole: "app_dal",
   ready: true,
@@ -14,7 +14,7 @@ const restrictedReadinessRow = {
 const restrictedReadinessRows = [restrictedReadinessRow];
 
 describe("DAL database URL contract", () => {
-  it("accepts a restricted session role with required SET ROLE and TLS parameters", () => {
+  it("accepts a restricted session role with the required SET ROLE option", () => {
     expect(parseDalDatabaseUrl(validUrl)).toEqual({
       connectionString: validUrl,
       sessionRole: "app_runtime",
@@ -57,6 +57,14 @@ describe("DAL database URL contract", () => {
     for (const parameter of ["host=remote.example.test", "role=postgres", "user=postgres"]) {
       expect(() => parseDalDatabaseUrl(`${validUrl}&${parameter}`)).toThrow(
         "sobrescrever sua identidade",
+      );
+    }
+  });
+
+  it("rejects TLS parameters that would replace the explicit pg SSL object", () => {
+    for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) {
+      expect(() => parseDalDatabaseUrl(`${validUrl}&${parameter}=attacker-controlled`)).toThrow(
+        "não aceita parâmetros TLS",
       );
     }
   });

@@ -4,10 +4,15 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { PassThrough } from "node:stream";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { superviseDevelopmentProcesses } from "../../scripts/development-process-tree.mjs";
+import {
+  spawnSupervisedProcess,
+  superviseDevelopmentProcesses,
+} from "../../scripts/development-process-tree.mjs";
 
 const temporaryRoots = [];
 
@@ -20,8 +25,10 @@ afterEach(() => {
 function fakeChild(pid) {
   const child = new EventEmitter();
   child.exitCode = null;
-  child.kill = () => {
-    throw new Error("O supervisor não deve sinalizar somente o processo raiz.");
+  child.receivedSignals = [];
+  child.kill = (signal) => {
+    child.receivedSignals.push(signal);
+    return true;
   };
   child.pid = pid;
   child.signalCode = null;
@@ -124,11 +131,10 @@ describe("development process tree supervisor", () => {
     ]);
   });
 
-  it("terminates every Windows tree during a normal launcher shutdown", async () => {
+  it("closes every Windows Job Object guardian during a normal launcher shutdown", async () => {
     const children = [fakeChild(101), fakeChild(202)];
     const exitTarget = {};
     const signalSource = new EventEmitter();
-    const terminated = [];
     const timeouts = controlledTimeouts();
     const supervisor = superviseDevelopmentProcesses({
       children: [
@@ -138,17 +144,12 @@ describe("development process tree supervisor", () => {
       exitTarget,
       platform: "win32",
       signalSource,
-      systemRoot: "C:\\Windows",
-      terminateWindowsTree: (pid, options) => terminated.push({ options, pid }),
       ...timeouts,
     });
 
     signalSource.emit("SIGINT");
 
-    expect(terminated).toEqual([
-      { options: { systemRoot: "C:\\Windows" }, pid: 101 },
-      { options: { systemRoot: "C:\\Windows" }, pid: 202 },
-    ]);
+    expect(children.map((child) => child.receivedSignals)).toEqual([["SIGKILL"], ["SIGKILL"]]);
     expect(timeouts.callbacks[0].timer.milliseconds).toBe(5_000);
     closeChild(children[0], null, "SIGKILL");
     closeChild(children[1], null, "SIGKILL");
@@ -157,11 +158,10 @@ describe("development process tree supervisor", () => {
     expect(timeouts.cleared).toEqual([timeouts.callbacks[0].timer]);
   });
 
-  it("terminates the remaining Windows tree when either application fails", async () => {
+  it("closes the remaining Windows Job Object when either application fails", async () => {
     const failedApplication = fakeChild(303);
     const remainingApplication = fakeChild(404);
     const exitTarget = {};
-    const terminated = [];
     const timeouts = controlledTimeouts();
     const supervisor = superviseDevelopmentProcesses({
       children: [
@@ -171,25 +171,23 @@ describe("development process tree supervisor", () => {
       exitTarget,
       platform: "win32",
       signalSource: new EventEmitter(),
-      systemRoot: "C:\\Windows",
-      terminateWindowsTree: (pid) => terminated.push(pid),
       writeError: () => {},
       ...timeouts,
     });
 
     closeChild(failedApplication, 17, null);
 
-    expect(terminated).toEqual([404]);
+    expect(failedApplication.receivedSignals).toEqual([]);
+    expect(remainingApplication.receivedSignals).toEqual(["SIGKILL"]);
     closeChild(remainingApplication, null, "SIGKILL");
     await expect(supervisor.completion).resolves.toBe(17);
     expect(exitTarget.exitCode).toBe(17);
   });
 
-  it("maps an unexpected clean exit to failure and terminates the other Windows tree", async () => {
+  it("maps an unexpected clean exit to failure and closes the other Windows Job Object", async () => {
     const cleanExit = fakeChild(505);
     const remainingApplication = fakeChild(606);
     const exitTarget = {};
-    const terminated = [];
     const errors = [];
     const timeouts = controlledTimeouts();
     const supervisor = superviseDevelopmentProcesses({
@@ -200,15 +198,14 @@ describe("development process tree supervisor", () => {
       exitTarget,
       platform: "win32",
       signalSource: new EventEmitter(),
-      systemRoot: "C:\\Windows",
-      terminateWindowsTree: (pid) => terminated.push(pid),
       writeError: (message) => errors.push(message),
       ...timeouts,
     });
 
     closeChild(cleanExit, 0, null);
 
-    expect(terminated).toEqual([606]);
+    expect(cleanExit.receivedSignals).toEqual([]);
+    expect(remainingApplication.receivedSignals).toEqual(["SIGKILL"]);
     expect(exitTarget.exitCode).toBe(1);
     expect(errors).toEqual([
       "aplicação pública encerrou com código 0; encerrando os demais processos.\n",
@@ -216,6 +213,180 @@ describe("development process tree supervisor", () => {
     closeChild(remainingApplication, null, "SIGKILL");
     await expect(supervisor.completion).resolves.toBe(1);
   });
+
+  it("does not signal a Windows guardian after its Job Object was already closed", async () => {
+    const child = fakeChild(616);
+    child.exitCode = 0;
+    const timeouts = controlledTimeouts();
+    const supervisor = superviseDevelopmentProcesses({
+      children: [{ child, name: "build finito" }],
+      exitTarget: {},
+      platform: "win32",
+      signalSource: new EventEmitter(),
+      writeError: () => {},
+      ...timeouts,
+    });
+
+    supervisor.beginShutdown("SIGTERM", 0);
+    expect(child.receivedSignals).toEqual([]);
+    child.emit("close", 0, null);
+    await expect(supervisor.completion).resolves.toBe(0);
+  });
+
+  it("launches Windows targets only through the compiled Job Object guardian", () => {
+    const child = fakeChild(717);
+    const control = new PassThrough();
+    child.stdio = [null, null, null, control];
+    let receivedLaunch;
+
+    const result = spawnSupervisedProcess(
+      "C:\\Program Files\\nodejs\\node.exe",
+      ["C:\\Set Livre\\server.mjs", "argument with spaces"],
+      { cwd: "C:\\Set Livre", detached: true, env: {}, shell: false, stdio: "inherit" },
+      {
+        platform: "win32",
+        resolveWindowsGuardian: () => "C:\\guardian\\set-livre-job-object-guardian.exe",
+        spawnProcess: (command, argumentsList, options) => {
+          receivedLaunch = { argumentsList, command, options };
+          return child;
+        },
+      },
+    );
+
+    expect(result).toBe(child);
+    expect(receivedLaunch).toEqual({
+      argumentsList: [
+        "--control-fd=3",
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Set Livre\\server.mjs",
+        "argument with spaces",
+      ],
+      command: "C:\\guardian\\set-livre-job-object-guardian.exe",
+      options: {
+        cwd: "C:\\Set Livre",
+        detached: false,
+        env: {},
+        shell: false,
+        stdio: ["inherit", "inherit", "inherit", "pipe"],
+        windowsHide: true,
+      },
+    });
+    expect(control.read()).toEqual(Buffer.from([1]));
+  });
+
+  it.runIf(process.platform === "win32")(
+    "kills descendants and releases their port when the target root exits first",
+    async () => {
+      const root = mkdtempSync(resolve(tmpdir(), "set-livre-windows-job-root-exit-"));
+      temporaryRoots.push(root);
+      const leafPidPath = resolve(root, "leaf.pid");
+      const portPath = resolve(root, "leaf.port");
+      const leafScriptPath = resolve(root, "leaf.cjs");
+      const parentScriptPath = resolve(root, "parent.cjs");
+      writeFileSync(
+        leafScriptPath,
+        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => { fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port)); if (process.send) process.send("ready"); });\n`,
+      );
+      writeFileSync(
+        parentScriptPath,
+        `const { spawn } = require("node:child_process"); const leaf = spawn(process.execPath, [${JSON.stringify(leafScriptPath)}], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true }); leaf.once("message", () => process.exit(0));\n`,
+      );
+
+      let leafPid;
+      try {
+        const child = spawnSupervisedProcess(
+          process.execPath,
+          [parentScriptPath],
+          { cwd: root, env: process.env, shell: false, stdio: "inherit" },
+          { platform: "win32" },
+        );
+        const supervisor = superviseDevelopmentProcesses({
+          children: [{ child, name: "raiz Windows" }],
+          exitTarget: {},
+          platform: "win32",
+          signalSource: new EventEmitter(),
+          writeError: () => {},
+        });
+        await waitFor(() => existsSync(leafPidPath) && existsSync(portPath));
+        leafPid = Number(readFileSync(leafPidPath, "utf8"));
+        const port = Number(readFileSync(portPath, "utf8"));
+
+        await expect(supervisor.completion).resolves.toBe(1);
+        await waitFor(() => !processExists(leafPid));
+        await assertPortCanBeRebound(port);
+      } finally {
+        if (leafPid !== undefined && processExists(leafPid)) {
+          process.kill(leafPid, "SIGKILL");
+        }
+      }
+    },
+    15_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "closes the Job Object when the supervising Node process exits abruptly",
+    async () => {
+      const root = mkdtempSync(resolve(tmpdir(), "set-livre-windows-supervisor-exit-"));
+      temporaryRoots.push(root);
+      const guardianPidPath = resolve(root, "guardian.pid");
+      const rootPidPath = resolve(root, "root.pid");
+      const leafPidPath = resolve(root, "leaf.pid");
+      const portPath = resolve(root, "leaf.port");
+      const leafScriptPath = resolve(root, "leaf.cjs");
+      const parentScriptPath = resolve(root, "parent.cjs");
+      const workerScriptPath = resolve(root, "worker.mjs");
+      const processTreeUrl = pathToFileURL(
+        resolve(import.meta.dirname, "../../scripts/development-process-tree.mjs"),
+      ).href;
+      writeFileSync(
+        leafScriptPath,
+        `const fs = require("node:fs"); const { createServer } = require("node:net"); fs.writeFileSync(${JSON.stringify(leafPidPath)}, String(process.pid)); const server = createServer(); server.listen(0, "127.0.0.1", () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port)));\n`,
+      );
+      writeFileSync(
+        parentScriptPath,
+        `const fs = require("node:fs"); const { spawn } = require("node:child_process"); fs.writeFileSync(${JSON.stringify(rootPidPath)}, String(process.pid)); spawn(process.execPath, [${JSON.stringify(leafScriptPath)}], { detached: true, stdio: "ignore", windowsHide: true }); setInterval(() => {}, 1000);\n`,
+      );
+      writeFileSync(
+        workerScriptPath,
+        `import { existsSync, writeFileSync } from "node:fs"; import { spawnSupervisedProcess } from ${JSON.stringify(processTreeUrl)}; const child = spawnSupervisedProcess(process.execPath, [${JSON.stringify(parentScriptPath)}], { cwd: ${JSON.stringify(root)}, env: process.env, shell: false, stdio: "inherit" }, { platform: "win32" }); while (!existsSync(${JSON.stringify(rootPidPath)}) || !existsSync(${JSON.stringify(leafPidPath)}) || !existsSync(${JSON.stringify(portPath)})) await new Promise((resolveWait) => setTimeout(resolveWait, 20)); writeFileSync(${JSON.stringify(guardianPidPath)}, String(child.pid)); process.exit(0);\n`,
+      );
+
+      let guardianPid;
+      let rootPid;
+      let leafPid;
+      try {
+        const worker = spawn(process.execPath, [workerScriptPath], {
+          cwd: root,
+          env: process.env,
+          stdio: "ignore",
+        });
+        await new Promise((resolveClose, rejectClose) => {
+          worker.once("error", rejectClose);
+          worker.once("close", (code, signal) =>
+            code === 0 && signal === null
+              ? resolveClose()
+              : rejectClose(new Error("O worker do Job Object falhou.")),
+          );
+        });
+        guardianPid = Number(readFileSync(guardianPidPath, "utf8"));
+        rootPid = Number(readFileSync(rootPidPath, "utf8"));
+        leafPid = Number(readFileSync(leafPidPath, "utf8"));
+        const port = Number(readFileSync(portPath, "utf8"));
+
+        await waitFor(() =>
+          [guardianPid, rootPid, leafPid].every((processId) => !processExists(processId)),
+        );
+        await assertPortCanBeRebound(port);
+      } finally {
+        for (const processId of [guardianPid, rootPid, leafPid]) {
+          if (processId !== undefined && processExists(processId)) {
+            process.kill(processId, "SIGKILL");
+          }
+        }
+      }
+    },
+    15_000,
+  );
 
   it("maps an unexpected clean exit to failure and signals every POSIX group", async () => {
     const cleanExit = fakeChild(707);

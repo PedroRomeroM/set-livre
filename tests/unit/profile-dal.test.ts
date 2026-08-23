@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -34,9 +34,14 @@ const completeRow = {
 
 describe("profile DAL", () => {
   beforeAll(() => {
-    process.env.DATABASE_URL_APP_DAL =
-      "postgresql://app_runtime:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+    vi.stubEnv("APP_ENV", "test");
+    vi.stubEnv(
+      "DATABASE_URL_APP_DAL",
+      "postgresql://app_runtime:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
+    );
   });
+
+  afterAll(() => vi.unstubAllEnvs());
 
   beforeEach(() => {
     vi.clearAllMocks();

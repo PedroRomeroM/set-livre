@@ -129,13 +129,13 @@ Após a implementação local e a resolução das entradas de `pendencias.md`:
 1. configurar CI e política de branches;
 2. configurar Supabase Cloud;
 3. validar providers externos e conteúdo jurídico final;
-4. provisionar Oracle ARM64, Nginx e TLS;
+4. provisionar Oracle `VM.Standard.E2.1.Micro` Always Free x86_64, Nginx e TLS;
 5. configurar systemd e release imutável por SHA;
 6. automatizar migrations e jobs;
 7. ensaiar backup, restore e rollback;
 8. executar carga, smoke HTTPS e acceptance em ambiente real;
 9. validar logs, métricas, alertas e secrets;
-10. comprovar todos os P0 e o artefato standalone ARM64.
+10. comprovar todos os P0 e o artefato standalone Linux x86_64 no alvo E2 Micro.
 
 ## Regra de execução
 

@@ -13,6 +13,12 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 
+import {
+  assertWindowsPathWithoutReparse,
+  assertWindowsPrivateFile,
+  protectWindowsPrivateFile,
+} from "./windows-filesystem-security.mjs";
+
 const defaultRepositoryRoot = resolve(import.meta.dirname, "..");
 
 function samePhysicalNode(left, right) {
@@ -107,8 +113,20 @@ function closePhysicalAncestry(ancestry) {
   return closeError;
 }
 
-function capturePhysicalAncestry(destinationPath) {
+function capturePhysicalAncestry(destinationPath, security) {
   assertDestinationInsideRepository(destinationPath);
+  if (security.platform === "win32") {
+    security.assertWindowsPath(destinationPath, {
+      allowMissingLeaf: true,
+      description: "O destino do ambiente",
+      leafKind: "any",
+    });
+    security.assertWindowsPrivate(destinationPath, {
+      allowMissing: true,
+      description: "O destino do ambiente",
+      trustedRoot: security.trustedRoot,
+    });
+  }
 
   const fileSystemRoot = parse(defaultRepositoryRoot).root;
   const destinationParent = dirname(destinationPath);
@@ -187,7 +205,14 @@ function destinationIsUnchanged(before, after) {
   );
 }
 
-function assertTemporaryFile(descriptor, temporaryPath, parentDevice, expectedSize) {
+function assertTemporaryFile(
+  descriptor,
+  temporaryPath,
+  parentDevice,
+  expectedSize,
+  security,
+  verifyWindowsPrivacy = false,
+) {
   const descriptorInformation = fstatSync(descriptor, { bigint: true });
   const pathInformation = lstatSync(temporaryPath, { bigint: true, throwIfNoEntry: false });
   if (
@@ -201,17 +226,30 @@ function assertTemporaryFile(descriptor, temporaryPath, parentDevice, expectedSi
     !samePhysicalNode(descriptorInformation, pathInformation) ||
     (expectedSize !== undefined &&
       (descriptorInformation.size !== expectedSize || pathInformation.size !== expectedSize)) ||
-    (process.platform !== "win32" &&
+    (security.platform !== "win32" &&
       ((descriptorInformation.mode & 0o7777n) !== 0o600n ||
         (pathInformation.mode & 0o7777n) !== 0o600n))
   ) {
     throw new Error("O temporário do ambiente mudou durante a escrita segura.");
   }
 
+  if (verifyWindowsPrivacy && security.platform === "win32") {
+    security.assertWindowsPrivate(temporaryPath, {
+      description: "O temporário do ambiente",
+      trustedRoot: security.trustedRoot,
+    });
+  }
+
   return descriptorInformation;
 }
 
-function assertPublishedTemporary(descriptor, destinationPath, temporaryInformation, expectedSize) {
+function assertPublishedTemporary(
+  descriptor,
+  destinationPath,
+  temporaryInformation,
+  expectedSize,
+  security,
+) {
   const descriptorInformation = fstatSync(descriptor, { bigint: true });
   const publishedInformation = lstatSync(destinationPath, {
     bigint: true,
@@ -228,15 +266,21 @@ function assertPublishedTemporary(descriptor, destinationPath, temporaryInformat
     publishedInformation.nlink !== 1n ||
     publishedInformation.size !== expectedSize ||
     !samePhysicalNode(descriptorInformation, publishedInformation) ||
-    (process.platform !== "win32" &&
+    (security.platform !== "win32" &&
       ((descriptorInformation.mode & 0o7777n) !== 0o600n ||
         (publishedInformation.mode & 0o7777n) !== 0o600n))
   ) {
     throw new Error("O destino do ambiente mudou durante a publicação atômica.");
   }
+  if (security.platform === "win32") {
+    security.assertWindowsPrivate(destinationPath, {
+      description: "O destino publicado do ambiente",
+      trustedRoot: security.trustedRoot,
+    });
+  }
 }
 
-function removeOwnedTemporary(temporaryPath, temporaryInformation, ancestry) {
+function removeOwnedTemporary(temporaryPath, temporaryInformation, ancestry, security) {
   if (temporaryInformation === undefined) {
     return;
   }
@@ -253,12 +297,29 @@ function removeOwnedTemporary(temporaryPath, temporaryInformation, ancestry) {
   ) {
     throw new Error("O temporário do ambiente não pode ser removido com segurança.");
   }
+  if (security.platform === "win32") {
+    security.assertWindowsPrivate(temporaryPath, {
+      description: "O temporário do ambiente",
+      trustedRoot: security.trustedRoot,
+    });
+  }
   unlinkSync(temporaryPath);
   assertStablePhysicalAncestry(ancestry);
 }
 
-export function assertSafeEnvironmentFileDestination(destinationPath) {
-  const ancestry = capturePhysicalAncestry(destinationPath);
+function environmentFileSecurity(options = {}) {
+  return {
+    assertWindowsPath: options.assertWindowsPath ?? assertWindowsPathWithoutReparse,
+    assertWindowsPrivate: options.assertWindowsPrivate ?? assertWindowsPrivateFile,
+    platform: options.platform ?? process.platform,
+    protectWindowsPrivate: options.protectWindowsPrivate ?? protectWindowsPrivateFile,
+    trustedRoot: defaultRepositoryRoot,
+  };
+}
+
+export function assertSafeEnvironmentFileDestination(destinationPath, options = {}) {
+  const security = environmentFileSecurity(options);
+  const ancestry = capturePhysicalAncestry(destinationPath, security);
   let failure;
   try {
     destinationState(destinationPath);
@@ -276,12 +337,13 @@ export function assertSafeEnvironmentFileDestination(destinationPath) {
   }
 }
 
-export function writeEnvironmentFileAtomic(destinationPath, contents) {
+export function writeEnvironmentFileAtomic(destinationPath, contents, options = {}) {
   if (typeof contents !== "string") {
     throw new TypeError("O conteúdo do ambiente precisa ser texto.");
   }
 
-  const ancestry = capturePhysicalAncestry(destinationPath);
+  const security = environmentFileSecurity(options);
+  const ancestry = capturePhysicalAncestry(destinationPath, security);
   let before;
   let descriptor;
   let failure;
@@ -302,19 +364,44 @@ export function writeEnvironmentFileAtomic(destinationPath, contents) {
     const expectedSize = BigInt(Buffer.byteLength(contents, "utf8"));
 
     assertStablePhysicalAncestry(ancestry);
+    if (security.platform === "win32") {
+      security.assertWindowsPrivate(destinationPath, {
+        allowMissing: before === undefined,
+        description: "O destino do ambiente",
+        trustedRoot: security.trustedRoot,
+      });
+    }
     descriptor = openSync(temporaryPath, openFlags, 0o600);
-    fchmodSync(descriptor, 0o600);
-    temporaryInformation = assertTemporaryFile(descriptor, temporaryPath, parentDevice);
+    if (security.platform !== "win32") {
+      fchmodSync(descriptor, 0o600);
+    }
+    temporaryInformation = assertTemporaryFile(
+      descriptor,
+      temporaryPath,
+      parentDevice,
+      undefined,
+      security,
+    );
+    if (security.platform === "win32") {
+      security.protectWindowsPrivate(temporaryPath, {
+        description: "O temporário do ambiente",
+        trustedRoot: security.trustedRoot,
+      });
+    }
     assertStablePhysicalAncestry(ancestry);
 
     writeFileSync(descriptor, contents, { encoding: "utf8" });
-    fchmodSync(descriptor, 0o600);
+    if (security.platform !== "win32") {
+      fchmodSync(descriptor, 0o600);
+    }
     fsyncSync(descriptor);
     temporaryInformation = assertTemporaryFile(
       descriptor,
       temporaryPath,
       parentDevice,
       expectedSize,
+      security,
+      true,
     );
     assertStablePhysicalAncestry(ancestry);
 
@@ -322,16 +409,30 @@ export function writeEnvironmentFileAtomic(destinationPath, contents) {
     if (!destinationIsUnchanged(before, after)) {
       throw new Error(`O destino do ambiente mudou durante a escrita: ${destinationPath}.`);
     }
+    if (security.platform === "win32") {
+      security.assertWindowsPrivate(destinationPath, {
+        allowMissing: after === undefined,
+        description: "O destino do ambiente",
+        trustedRoot: security.trustedRoot,
+      });
+    }
     assertStablePhysicalAncestry(ancestry);
     temporaryInformation = assertTemporaryFile(
       descriptor,
       temporaryPath,
       parentDevice,
       expectedSize,
+      security,
     );
 
     renameSync(temporaryPath, destinationPath);
-    assertPublishedTemporary(descriptor, destinationPath, temporaryInformation, expectedSize);
+    assertPublishedTemporary(
+      descriptor,
+      destinationPath,
+      temporaryInformation,
+      expectedSize,
+      security,
+    );
     assertStablePhysicalAncestry(ancestry);
     closeSync(descriptor);
     descriptor = undefined;
@@ -349,7 +450,7 @@ export function writeEnvironmentFileAtomic(destinationPath, contents) {
   }
   if (!published && temporaryPath !== undefined) {
     try {
-      removeOwnedTemporary(temporaryPath, temporaryInformation, ancestry);
+      removeOwnedTemporary(temporaryPath, temporaryInformation, ancestry, security);
     } catch (error) {
       failure ??= error;
     }

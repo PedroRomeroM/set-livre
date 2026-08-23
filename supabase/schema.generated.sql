@@ -1458,7 +1458,14 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   )
   select coalesce(
     (
-      select pg_catalog.max(schema_migrations.version)::text = expected_version
+      select
+        pg_catalog.max(schema_migrations.version)::text = '20260819000100'
+        and expected_version = any (
+          array['20260815000100'::text, '20260819000100'::text]
+        )
+        and pg_catalog.count(*) filter (
+          where schema_migrations.version::text = expected_version
+        ) = 1
       from supabase_migrations.schema_migrations
     )
     and (select restricted from jwt_expiry_pinned)
