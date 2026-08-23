@@ -28,10 +28,10 @@ O smoke registra `SIGHUP`, `SIGINT` e `SIGTERM` antes de iniciar qualquer servid
 
 ## Deploy
 
-Este fluxo ainda não foi executado nesta branch. O projeto Supabase produtivo em `sa-east-1` (São
-Paulo) não foi criado, o projeto canadense não é produção e não há VM Set Livre provisionada. PR,
-review, merge e deploy permanecem pendentes; mantenha o fluxo fail-closed e não substitua nenhum
-pré-requisito por workaround.
+Este fluxo ainda não foi executado nesta branch. O projeto Supabase produtivo
+`oirvvnojgkzdppkdvhej` está saudável em `sa-east-1`, vazio e sem branches; não há VM Set Livre
+provisionada. PR, review, merge, migrations Cloud e deploy permanecem pendentes; mantenha o fluxo
+fail-closed e não substitua nenhum pré-requisito por workaround.
 
 ### Preflight cloud obrigatório
 
@@ -40,7 +40,7 @@ pré-requisito por workaround.
    `@codex review`, espera mínima de 60 minutos a cada pedido, todas as superfícies inspecionadas,
    resposta explicitamente limpa sobre o SHA final, conversas resolvidas e merge protegido; o
    Environment build-only não simula aprovação por um segundo colaborador inexistente;
-3. projeto Supabase produtivo de São Paulo e valores públicos iguais no repositório/host; `PRD_SUPABASE_PROJECT_REF` obrigatório no formato `^[a-z0-9]{20}$` e `PRD_SUPABASE_URL` exatamente `https://<ref>.supabase.co`, sem ref literal copiada para esta documentação;
+3. projeto Supabase produtivo de São Paulo e valores públicos iguais no repositório/host; `PRD_SUPABASE_PROJECT_REF=oirvvnojgkzdppkdvhej` e `PRD_SUPABASE_URL=https://oirvvnojgkzdppkdvhej.supabase.co`, com outra ref recusada antes de migration;
 4. `supabase db push --dry-run --include-all` revisado;
 5. head remoto comprovado separadamente como `20260819000100` e readiness restrito aceitando somente `20260819000100` + predecessor `20260815000100`;
 6. build/package em GitHub-hosted Linux x86_64, artifact publicado por action fixada e `BUILD_ID` dos dois apps iguais ao SHA, sem secrets ou mutação;

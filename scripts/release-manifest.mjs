@@ -53,6 +53,8 @@ const expectedNodeVersion = "v24.18.0";
 const expectedNpmVersion = "11.19.0";
 const expectedPublicAppUrl = "https://setlivre.com";
 const expectedBackofficeAppUrl = "https://ops.setlivre.com";
+export const expectedProductionSupabaseProjectRef = "oirvvnojgkzdppkdvhej";
+const expectedProductionSupabaseUrl = `https://${expectedProductionSupabaseProjectRef}.supabase.co`;
 const publicBuildConfigKeys = [
   "backofficeAppUrl",
   "publicAppUrl",
@@ -1151,9 +1153,9 @@ function productionSupabaseIdentity(environment) {
   const projectRef = environment.PRD_SUPABASE_PROJECT_REF;
   const supabaseUrl = environment.PRD_SUPABASE_URL;
   if (
-    !/^[a-z0-9]{20}$/u.test(projectRef ?? "") ||
-    supabaseUrl !== `https://${projectRef}.supabase.co` ||
-    canonicalSupabaseProjectRef(supabaseUrl) !== projectRef
+    projectRef !== expectedProductionSupabaseProjectRef ||
+    supabaseUrl !== expectedProductionSupabaseUrl ||
+    canonicalSupabaseProjectRef(supabaseUrl) !== expectedProductionSupabaseProjectRef
   ) {
     throw new Error("A identidade Supabase de produção é inválida ou ausente.");
   }
@@ -1176,6 +1178,9 @@ function canonicalPublicBuildConfig(configuration) {
     supabaseUrl: configuration.supabaseUrl,
   };
   canonicalSupabaseProjectRef(canonical.supabaseUrl);
+  if (canonical.supabaseUrl !== expectedProductionSupabaseUrl) {
+    throw new Error("A identidade Supabase de produção diverge do projeto canônico.");
+  }
   if (
     canonical.backofficeAppUrl !== expectedBackofficeAppUrl ||
     canonical.publicAppUrl !== expectedPublicAppUrl ||

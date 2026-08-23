@@ -113,7 +113,7 @@ O gerador canônico executou exatamente uma vez para `2045d1a00c15889007b3c5c04c
 
 O cache de conta é escopado por `userId` e mantém PII fora do DOM durante hidratação, refetch, pausa offline, erro ou troca de sessão. Reseeds autoritativos normais de login, perfil e segurança limpam `MutationCache`, `account/profile` e `identity/session`, preservando cache público. Logout e login ambíguo continuam limpando o `QueryClient` integralmente. A publicação autoritativa de uma mutation preserva o observer da Query de perfil corrente, remove scopes privados incompatíveis e exige que a key esperada ainda exista; assim, um callback tardio de A depois do reseed B não recria nem publica o perfil de A. `sl-color-scheme` é uma projeção HttpOnly allowlisted de `system | light | dark`, apagada antes de trocar identidade e reemitida apenas a partir do perfil autoritativo dentro do deadline da operação.
 
-O `pg_net` fornecido pela stack Supabase concede capacidades HTTP e de fila por ACLs gerenciados por `supabase_admin`, que a role de migration não pode revogar. Durante a fronteira local-first do ADR-018, o bootstrap usa exclusivamente o superuser local, em loopback, para revogar schema, tabelas, sequências, funções e defaults de `net` para `PUBLIC` e todas as roles runtime; somente o worker administrativo configurado como `postgres` mantém o acesso técnico necessário. A normalização equivalente na Supabase Cloud permanece bloqueada por PEND-002 e precisa garantir que o login DAL não leia material de assinatura nem por GUC/current_setting nem diretamente em `pg_roles`, `pg_user` ou `pg_db_role_setting` antes de liberar tráfego.
+Quando habilitado, o `pg_net` da stack Supabase concede capacidades HTTP e de fila por ACLs gerenciados por `supabase_admin`, que a role de migration não pode revogar. Durante a fronteira local-first do ADR-018, o estado preferido é a extensão ausente; se ela existir, o bootstrap usa exclusivamente o superuser local, em loopback, para revogar schema, tabelas, sequências, funções e defaults de `net` para `PUBLIC` e todas as roles runtime, preservando somente o worker administrativo configurado como `postgres`. A normalização equivalente na Supabase Cloud permanece bloqueada por PEND-002 e precisa manter `pg_net` desabilitado enquanto as APIs externas estiverem suspensas, além de garantir que o login DAL não leia material de assinatura nem por GUC/current_setting nem diretamente em `pg_roles`, `pg_user` ou `pg_db_role_setting` antes de liberar tráfego.
 
 ## 4. Dados pessoais
 
@@ -148,6 +148,13 @@ Minimização:
 - backups criptografados no Object Storage;
 - chaves de criptografia fora do repositório;
 - nenhum secret em GitHub artifact sem proteção.
+
+No projeto Supabase produtivo, o PostgreSQL exige SSL no servidor. Em `2026-08-23`, a prova negativa
+recusou plaintext e a prova positiva conectou ao pooler IPv4 em modo sessão com `verify-full`, CA e
+hostname validados. O certificado oficial `Supabase Root 2021 CA` e as credenciais administrativas e
+DAL permanecem somente no Gerenciador de Credenciais do Windows até serem instalados como cinco
+arquivos físicos `root:root`/`0600` entregues por `systemd LoadCredential`; nenhum deles entra no Git,
+GitHub Actions, artifact, argumento de processo ou log.
 
 ## 6. CSRF/origin
 

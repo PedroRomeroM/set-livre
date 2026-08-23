@@ -417,7 +417,7 @@ function migrationListPayload(versions, remoteVersions = versions) {
   };
 }
 
-const productionSupabaseProjectRef = "abcdefghijklmnopqrst";
+const productionSupabaseProjectRef = "oirvvnojgkzdppkdvhej";
 const productionPublicBuildConfig = {
   backofficeAppUrl: "https://ops.setlivre.com",
   publicAppUrl: "https://setlivre.com",
@@ -711,7 +711,7 @@ function callRunSupabaseMigrations({
   const work = resolve(directory, "work");
   const migrations = resolve(release, "supabase/migrations");
   const hostToolsRoot = resolve(directory, "host-tools");
-  const hostTools = resolve(hostToolsRoot, "2.113.0");
+  const hostTools = resolve(hostToolsRoot, "2.115.0");
   const cliSource = resolve(hostTools, "supabase");
   const cliCompanion = resolve(hostTools, "supabase-go");
   const cliLog = resolve(directory, "cli.log");
@@ -741,7 +741,7 @@ set -euo pipefail
 [[ "\${SUPABASE_ACCESS_TOKEN:-}" == access-secret ]]
 [[ "\${SUPABASE_DB_PASSWORD:-}" == database-secret ]]
 if [[ "$#" -eq 1 && "$1" == --version ]]; then
-  printf '%s\\n' 2.113.0
+  printf '%s\\n' 2.115.0
   exit 0
 fi
 {
@@ -916,10 +916,12 @@ describe("pull-based production deploy agent", () => {
     }
     expect(script).toContain('[[ "${PRD_DEPLOY_ENABLED:-}" != true ]]');
     expect(script).toContain('log "Deploy de produção desabilitado."');
-    expect(script).toContain('[[ "$supabase_project_ref" =~ ^[a-z0-9]{20}$ ]]');
+    expect(script).toContain("readonly expected_supabase_project_ref=oirvvnojgkzdppkdvhej");
     expect(script).toContain(
-      '[[ "$supabase_url" == "https://${supabase_project_ref}.supabase.co" ]]',
+      'readonly expected_supabase_url="https://${expected_supabase_project_ref}.supabase.co"',
     );
+    expect(script).toContain('[[ "$supabase_project_ref" == "$expected_supabase_project_ref" ]]');
+    expect(script).toContain('[[ "$supabase_url" == "$expected_supabase_url" ]]');
     expect(script).toContain(
       "unset GITHUB_DEPLOY_TOKEN GITHUB_REPOSITORY_ID CI_GITHUB_WORKFLOW_ID",
     );
@@ -1013,7 +1015,7 @@ describe("pull-based production deploy agent", () => {
   it("rejects a same-version host CLI with different bytes before reading deployment secrets", () => {
     const directory = temporaryDirectory();
     const hostToolsRoot = resolve(directory, "host-tools");
-    const hostTools = resolve(hostToolsRoot, "2.113.0");
+    const hostTools = resolve(hostToolsRoot, "2.115.0");
     const cli = resolve(hostTools, "supabase");
     const companion = resolve(hostTools, "supabase-go");
     const cliMarker = resolve(directory, "cli-invoked");
@@ -1023,7 +1025,7 @@ describe("pull-based production deploy agent", () => {
       cli,
       `#!/usr/bin/env bash
 : >${JSON.stringify(bashPath(cliMarker))}
-printf '%s\\n' 2.113.0
+printf '%s\\n' 2.115.0
 `,
     );
     writeFileSync(companion, "different companion bytes\n");

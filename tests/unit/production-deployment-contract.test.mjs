@@ -34,7 +34,12 @@ const deployAgent = readFileSync(
   resolve(repositoryRoot, "scripts/production-deploy-agent.sh"),
   "utf8",
 );
+const deployerConfigurator = readFileSync(
+  resolve(repositoryRoot, "scripts/configure-production-deployer.sh"),
+  "utf8",
+);
 const bootstrap = readFileSync(resolve(repositoryRoot, "scripts/bootstrap-oracle-host.sh"), "utf8");
+const expectedProductionSupabaseProjectRef = "oirvvnojgkzdppkdvhej";
 
 const workflowJob = (name, nextName) => {
   const start = workflow.indexOf(`\n  ${name}:`);
@@ -733,6 +738,30 @@ describe("production deployment contract", () => {
     expect(activateFunction).toContain('assert_positive_integer "$artifact_id"');
     expect(releaseManager).toContain('[[ "$#" -eq 10 ]] || fail');
     expect(releaseManager).toContain('"${10}"');
+  });
+
+  it("pins every production boundary to the same Supabase project", () => {
+    const releaseProjectRef = releaseGenerator.match(
+      /export const expectedProductionSupabaseProjectRef = "([a-z0-9]{20})";/u,
+    )?.[1];
+    const agentProjectRef = deployAgent.match(
+      /^readonly expected_supabase_project_ref=([a-z0-9]{20})$/mu,
+    )?.[1];
+    const configuratorProjectRef = deployerConfigurator.match(
+      /^readonly expected_supabase_project_ref=([a-z0-9]{20})$/mu,
+    )?.[1];
+
+    expect([releaseProjectRef, agentProjectRef, configuratorProjectRef]).toEqual([
+      expectedProductionSupabaseProjectRef,
+      expectedProductionSupabaseProjectRef,
+      expectedProductionSupabaseProjectRef,
+    ]);
+    expect(deployAgent).toContain(
+      'readonly expected_supabase_url="https://${expected_supabase_project_ref}.supabase.co"',
+    );
+    expect(deployerConfigurator).toContain(
+      'readonly expected_supabase_url="https://${expected_supabase_project_ref}.supabase.co"',
+    );
   });
 
   it("accepts one schema-4 release across producer, agent and root manager and rejects schema 3", () => {

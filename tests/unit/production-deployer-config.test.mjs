@@ -15,6 +15,8 @@ const releaseManager = readFileSync(
 );
 const bootstrap = readFileSync(resolve(repository, "scripts/bootstrap-oracle-host.sh"), "utf8");
 const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "bash";
+const productionSupabaseProjectRef = "oirvvnojgkzdppkdvhej";
+const productionSupabaseUrl = `https://${productionSupabaseProjectRef}.supabase.co`;
 const temporaryDirectories = [];
 
 function temporaryDirectory() {
@@ -52,7 +54,11 @@ function expectValidBash(source) {
 }
 
 function runNodeHeredoc(marker, args) {
-  return spawnSync(process.execPath, ["-", ...args], {
+  const effectiveArgs =
+    marker === "ENVIRONMENT_IDENTITY_NODE"
+      ? [args[0], args[1], productionSupabaseProjectRef, productionSupabaseUrl, ...args.slice(2)]
+      : args;
+  return spawnSync(process.execPath, ["-", ...effectiveArgs], {
     encoding: "utf8",
     input: extractHeredoc(marker),
   });
@@ -110,10 +116,10 @@ describe("pull-based production deployer configuration", () => {
 
   it("validates the immutable root-owned host CLI and companion before install or secrets", () => {
     expect(script).toContain(
-      "readonly supabase_cli_sha256=c8dcd16db0bab7c27a1cc984aa6abbc8f5b2e36b90f58a579eacfbe719dd345d",
+      "readonly supabase_cli_sha256=5986d84e4c7e251126f7579c686b302b3527bc4b2ac1517963930eb0780d3867",
     );
     expect(script).toContain(
-      "readonly supabase_go_sha256=08fcb0d4e1eddc9bbc8d74553cb1883aa3ac9985789dc8d39306c278844a29d4",
+      "readonly supabase_go_sha256=c507c71c331ee9b4dd87b6ec6cc8a6e4f312a642ff0f9e44931129053c534eef",
     );
     expect(script).toContain('[[ "$(stat -c \'%U:%G:%a:%h\' -- "$path")" == root:root:755:1 ]]');
     expect(script).toContain('assert_root_host_tool "$supabase_cli_path" "$supabase_cli_sha256"');
@@ -173,7 +179,10 @@ describe("pull-based production deployer configuration", () => {
       "GITHUB_REPOSITORY_ID=\nCI_GITHUB_WORKFLOW_ID=\nPRD_GITHUB_WORKFLOW_ID=",
     );
     expect(script).not.toContain("GITHUB_REPOSITORY_ID=1328339374");
-    expect(script).toContain("PRD_SUPABASE_PROJECT_REF=\nPRD_SUPABASE_URL=");
+    expect(script).toContain(
+      "PRD_SUPABASE_PROJECT_REF=$expected_supabase_project_ref\n" +
+        "PRD_SUPABASE_URL=$expected_supabase_url",
+    );
     expect(script).toContain('re.fullmatch(r"[a-z0-9]{20}", supabase_project_ref)');
     expect(script).toContain('supabase_url != f"https://{supabase_project_ref}.supabase.co"');
     expect(script).toContain('enabled == "true" and not supabase_configured');
@@ -206,15 +215,15 @@ describe("pull-based production deployer configuration", () => {
     const partial = resolve(directory, "partial.env");
     const rejected = resolve(directory, "rejected.env");
     const supabaseConfigured = resolve(directory, "supabase-configured.env");
-    const syntheticProjectRef = "abcdefghijklmnopqrst";
+    const syntheticProjectRef = productionSupabaseProjectRef;
     const template = [
       "GITHUB_REPOSITORY_ID=",
       "CI_GITHUB_WORKFLOW_ID=",
       "PRD_GITHUB_WORKFLOW_ID=",
       "PRD_PUBLIC_APP_URL=https://setlivre.com",
       "PRD_BACKOFFICE_APP_URL=https://ops.setlivre.com",
-      "PRD_SUPABASE_PROJECT_REF=",
-      "PRD_SUPABASE_URL=",
+      `PRD_SUPABASE_PROJECT_REF=${productionSupabaseProjectRef}`,
+      `PRD_SUPABASE_URL=${productionSupabaseUrl}`,
       "PRD_SUPABASE_ANON_KEY=",
       "SUPABASE_SERVER_CA_SHA256=",
       "PRD_DEPLOY_ENABLED=false",
@@ -272,6 +281,14 @@ describe("pull-based production deployer configuration", () => {
         rejected,
         "supabase",
         "short",
+      ]).status,
+    ).not.toBe(0);
+    expect(
+      runNodeHeredoc("ENVIRONMENT_IDENTITY_NODE", [
+        supabaseConfigured,
+        rejected,
+        "supabase",
+        "abcdefghijklmnopqrst",
       ]).status,
     ).not.toBe(0);
     expect(existsSync(rejected)).toBe(false);

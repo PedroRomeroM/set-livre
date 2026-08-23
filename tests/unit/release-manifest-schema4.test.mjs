@@ -22,6 +22,7 @@ import {
   canonicalReleaseMigrationTransition,
   canonicalReleaseManifest,
   canonicalSupabaseProjectRef,
+  expectedProductionSupabaseProjectRef,
   publicBuildConfigSha256,
 } from "../../scripts/release-manifest.mjs";
 
@@ -43,7 +44,7 @@ const packageManifest = JSON.parse(readFileSync(resolve(repository, "package.jso
 const packageLock = JSON.parse(readFileSync(resolve(repository, "package-lock.json"), "utf8"));
 const commit = "a".repeat(40);
 const lockSha256 = "b".repeat(64);
-const supabaseProjectRef = "abcdefghijklmnopqrst";
+const supabaseProjectRef = expectedProductionSupabaseProjectRef;
 const supabaseUrl = `https://${supabaseProjectRef}.supabase.co`;
 const supabaseAnonKey = `sb_publishable_${"a".repeat(22)}_${"b".repeat(8)}`;
 const publicBuildConfig = {
@@ -157,6 +158,7 @@ describe("release manifest schema 4 migration", () => {
       `https://${supabaseProjectRef}.supabase.co/`,
       "https://short.supabase.co",
       `https://${supabaseProjectRef}.example.com`,
+      "https://abcdefghijklmnopqrst.supabase.co",
     ]) {
       expect(() =>
         publicBuildConfigSha256({ ...publicBuildConfig, supabaseUrl: invalidUrl }),
@@ -496,9 +498,9 @@ describe("release manifest schema 4 migration", () => {
     expect(source).toContain("environment.PRD_SUPABASE_PROJECT_REF");
     expect(source).toContain("environment.PRD_SUPABASE_URL");
     expect(source).toContain("process.env.PRD_SUPABASE_ANON_KEY");
-    expect(source).not.toContain("expectedProjectRef");
-    expect(source).not.toContain("expectedSupabaseUrl");
-    expect(source).toContain("supabaseUrl !== `https://${projectRef}.supabase.co`");
+    expect(source).toContain('expectedProductionSupabaseProjectRef = "oirvvnojgkzdppkdvhej"');
+    expect(source).toContain("projectRef !== expectedProductionSupabaseProjectRef");
+    expect(source).toContain("supabaseUrl !== expectedProductionSupabaseUrl");
     expect(source).toContain("productionBuildEnvironment(application");
     expect(source).toContain("buildEnvironments[application.application]");
     expect(source).toContain("publicBuildConfigurationFromBuildEnvironments(buildEnvironments)");

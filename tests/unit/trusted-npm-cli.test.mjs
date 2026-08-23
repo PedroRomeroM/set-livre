@@ -317,7 +317,7 @@ describe("trusted npm CLI launch", () => {
       }),
     ).toMatchObject({
       command: process.execPath,
-      version: "2.113.0",
+      version: "2.115.0",
     });
   });
 });

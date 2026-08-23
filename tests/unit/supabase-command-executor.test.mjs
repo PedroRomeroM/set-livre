@@ -22,7 +22,7 @@ function pathInformation({ directory = false, file = false, ino = 1 } = {}) {
   };
 }
 
-function virtualWindowsInstallation({ nativeVersion = "2.113.0" } = {}) {
+function virtualWindowsInstallation({ nativeVersion = "2.115.0" } = {}) {
   const root = String.raw`C:\repository`;
   const executable = canonicalSupabaseNativeCliPath({
     architecture: "x64",
@@ -32,14 +32,14 @@ function virtualWindowsInstallation({ nativeVersion = "2.113.0" } = {}) {
   const files = new Map([
     [
       String.raw`C:\repository\package.json`,
-      JSON.stringify({ devDependencies: { supabase: "2.113.0" } }),
+      JSON.stringify({ devDependencies: { supabase: "2.115.0" } }),
     ],
     [
       String.raw`C:\repository\node_modules\supabase\package.json`,
       JSON.stringify({
         name: "supabase",
-        optionalDependencies: { "@supabase/cli-windows-x64": "2.113.0" },
-        version: "2.113.0",
+        optionalDependencies: { "@supabase/cli-windows-x64": "2.115.0" },
+        version: "2.115.0",
       }),
     ],
     [

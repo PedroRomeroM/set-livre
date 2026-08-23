@@ -530,6 +530,15 @@ function Initialize-IsolatedProcessEnvironment {
   $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
   $roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
   $programData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+  $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $currentAccount = [string]$currentIdentity.Name
+  $accountSeparator = $currentAccount.IndexOf("\", [StringComparison]::Ordinal)
+  Assert-True -Condition (
+    $accountSeparator -gt 0 -and
+    $accountSeparator -lt ($currentAccount.Length - 1)
+  ) -SafeMessage "A conta Windows atual não pôde ser decomposta em domínio e usuário."
+  $userDomain = $currentAccount.Substring(0, $accountSeparator)
+  $userName = $currentAccount.Substring($accountSeparator + 1)
   $temporaryDirectory = [IO.Path]::GetFullPath((Join-Path $localAppData "Temp"))
   $homeDrive = [IO.Path]::GetPathRoot($userProfile).TrimEnd([IO.Path]::DirectorySeparatorChar)
   $homePath = $userProfile.Substring([IO.Path]::GetPathRoot($userProfile).Length - 1)
@@ -546,6 +555,8 @@ function Initialize-IsolatedProcessEnvironment {
   $StartInfo.Environment["WINDIR"] = $windowsDirectory
   $StartInfo.Environment["COMSPEC"] = Join-Path $systemDirectory "cmd.exe"
   $StartInfo.Environment["USERPROFILE"] = $userProfile
+  $StartInfo.Environment["USERDOMAIN"] = $userDomain
+  $StartInfo.Environment["USERNAME"] = $userName
   $StartInfo.Environment["HOMEDRIVE"] = $homeDrive
   $StartInfo.Environment["HOMEPATH"] = $homePath
   $StartInfo.Environment["LOCALAPPDATA"] = $localAppData

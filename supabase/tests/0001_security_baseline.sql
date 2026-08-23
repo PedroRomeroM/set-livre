@@ -543,13 +543,16 @@ select ok(
 );
 
 select ok(
-  to_regnamespace('net') is not null
-    and not has_schema_privilege('public', 'net', 'usage')
-    and not has_schema_privilege('anon', 'net', 'usage')
-    and not has_schema_privilege('authenticated', 'net', 'usage')
-    and not has_schema_privilege('service_role', 'net', 'usage')
-    and not has_schema_privilege('app_dal', 'net', 'usage'),
-  'schema net fica indisponível às roles runtime durante a suspensão de APIs externas'
+  case
+    when to_regnamespace('net') is null then true
+    else
+      not has_schema_privilege('public', 'net', 'usage')
+      and not has_schema_privilege('anon', 'net', 'usage')
+      and not has_schema_privilege('authenticated', 'net', 'usage')
+      and not has_schema_privilege('service_role', 'net', 'usage')
+      and not has_schema_privilege('app_dal', 'net', 'usage')
+  end,
+  'schema net fica ausente ou indisponível às roles runtime durante a suspensão de APIs externas'
 );
 
 select ok(

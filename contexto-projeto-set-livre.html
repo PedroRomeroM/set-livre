@@ -865,9 +865,12 @@
               <p>
                 O ambiente local usa Node 24.18.0, npm 11.19.0 e Docker Desktop, com supervisão por
                 Windows Job Object. O banco passou pela cadeia canônica em 361/361 asserts, 16
-                migrations e head <code>20260819000100</code>. CI/CD, Supabase São Paulo e Oracle
-                <code>VM.Standard.E2.1.Micro</code> estão autorizados, mas permanecem bloqueados até
-                provisionamento, gates, PR, review, deploy e smoke reais.
+                migrations e head <code>20260819000100</code>. O Supabase de São Paulo está
+                saudável, vazio e sem branches. As cinco fontes privadas do futuro agente já estão
+                protegidas localmente, incluindo o PAT GitHub exclusivo do repositório, mas nenhuma
+                foi instalada em host. CI/CD, migrations Cloud e Oracle
+                <code>VM.Standard.E2.1.Micro</code> permanecem bloqueados até provisionamento,
+                gates, PR, review, deploy e smoke reais.
               </p>
               <p>
                 O ADR-022 proíbe workaround e fallback silencioso: incompatibilidades são corrigidas
@@ -1833,7 +1836,7 @@
             <h2>Release e deploy</h2>
             <p>
               Já existe um caminho local reproduzível para o artefato. O ADR-019 autoriza a entrega
-              cloud controlada, mas produção permanece bloqueada até VM, Supabase São Paulo, TLS,
+              cloud controlada, mas produção permanece bloqueada até VM, migrations Supabase, TLS,
               deploy e smoke serem comprovados. O quinto P2 executou uma única build que compilou
               com exit 0, mas o artefato standalone foi recusado por copiar strings de conexão
               locais do manifesto raiz; nenhum smoke ou geração de release foi iniciado. Depois da
@@ -1847,8 +1850,8 @@
               processou exatamente uma vez o commit <code>2045d1a...</code>, exit 0 em 21,26 s, e
               aprovou o primeiro smoke P5 embutido. A release local possui 2.871 artefatos/3.455
               membros e duas auditorias <code>NO-BLOCKER</code>; archive ignorado e não publicado. O
-              deploy atual na VM E2.1.Micro e no Supabase São Paulo continua pendente; a evidência
-              histórica não o substitui.
+              deploy atual na VM E2.1.Micro e das migrations no Supabase continua pendente; a
+              evidência histórica não o substitui.
             </p>
           </div>
 
@@ -2079,8 +2082,8 @@
               <span class="tag external">Pendência externa</span>
               <h3>Cloud e entrega</h3>
               <p>
-                CI/CD, Supabase São Paulo, Oracle E2.1.Micro, domínio, DNS e TLS estão autorizados,
-                mas ainda dependem de evidência real de deploy e smoke.
+                O Supabase São Paulo foi criado; CI/CD, migrations, Oracle E2.1.Micro, domínio, DNS
+                e TLS ainda dependem de evidência real de deploy e smoke.
               </p>
             </article>
             <article class="card">

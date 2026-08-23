@@ -419,7 +419,7 @@ foreach ($name in @(
   'OCI_CLI_SECURITY_TOKEN_FILE', 'OCI_CLI_ENDPOINT', 'OCI_CLI_CERT_BUNDLE',
   'OCI_CLI_RC_FILE', 'OCI_CLI_USER', 'OCI_CLI_TENANCY', 'OCI_CLI_PROFILE',
   'OCI_CLI_CONFIG_FILE', 'OCI_REGION', 'OCI_CLI_AUTH', 'REQUESTS_CA_BUNDLE',
-  'SSL_CERT_FILE', 'HTTPS_PROXY', 'PSModulePath'
+  'SSL_CERT_FILE', 'HTTPS_PROXY', 'PSModulePath', 'USERDOMAIN', 'USERNAME'
 )) { $startInfo.Environment[$name] = 'poison' }
 Initialize-OciProcessEnvironment -StartInfo $startInfo
 $ociKeys = @($startInfo.Environment.Keys | Where-Object { $_ -match '^(?i:OCI)' } | Sort-Object)
@@ -429,6 +429,8 @@ $expectedModulePath = @(
   (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)) 'System32\\WindowsPowerShell\\v1.0\\Modules')
 ) | ForEach-Object { [IO.Path]::GetFullPath($_) } | Join-String -Separator ([IO.Path]::PathSeparator)
 $childModulePath = [string]$startInfo.Environment['PSModulePath']
+$currentAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$childAccount = [string]$startInfo.Environment['USERDOMAIN'] + '\\' + [string]$startInfo.Environment['USERNAME']
 $oldProcessOverride = [Environment]::GetEnvironmentVariable('OCI_CLI_CONFIG_FILE', 'Process')
 $profilePathEnvironmentRejected = $false
 try {
@@ -449,6 +451,7 @@ try {
     -not $childModulePath.Contains('codex-runtimes', [StringComparison]::OrdinalIgnoreCase) -and
     -not $childModulePath.Contains('\\Documents\\PowerShell\\Modules', [StringComparison]::OrdinalIgnoreCase) -and
     -not $childModulePath.Contains('\\PowerShell\\7\\Modules', [StringComparison]::OrdinalIgnoreCase)
+  childAccountMatchesCurrent = $childAccount -ceq $currentAccount
   profilePathEnvironmentRejected = $profilePathEnvironmentRejected
 } | ConvertTo-Json -Compress
 `);
@@ -459,6 +462,7 @@ try {
         hasSafePath: true,
         psModulePathMatchesNative: true,
         codexPs7ModulesRemoved: true,
+        childAccountMatchesCurrent: true,
         profilePathEnvironmentRejected: true,
       });
     },

@@ -14,13 +14,15 @@ readonly ci_workflow=ci.yaml
 readonly prd_workflow=prd-deploy.yaml
 readonly branch=main
 readonly expected_repository_id=1328339374
-readonly expected_supabase_version=2.113.0
+readonly expected_supabase_project_ref=oirvvnojgkzdppkdvhej
+readonly expected_supabase_url="https://${expected_supabase_project_ref}.supabase.co"
+readonly expected_supabase_version=2.115.0
 readonly expected_authorization_catalog_sha256=8b395cb93111f5b626e39bbefd1dfc02d20d9de5e030832cb84168585c1777d6
 readonly authorization_contract_relative_path=supabase/authorization-contract.json
 readonly baseline_authorization_contract_relative_path=supabase/baseline-authorization-contract.json
 readonly authorization_head_relative_path=supabase/authorization-head.json
-readonly supabase_cli_sha256=c8dcd16db0bab7c27a1cc984aa6abbc8f5b2e36b90f58a579eacfbe719dd345d
-readonly supabase_go_sha256=08fcb0d4e1eddc9bbc8d74553cb1883aa3ac9985789dc8d39306c278844a29d4
+readonly supabase_cli_sha256=5986d84e4c7e251126f7579c686b302b3527bc4b2ac1517963930eb0780d3867
+readonly supabase_go_sha256=c507c71c331ee9b4dd87b6ec6cc8a6e4f312a642ff0f9e44931129053c534eef
 readonly host_tools_root=/usr/local/libexec/setlivre-host-tools
 readonly supabase_tools_directory="$host_tools_root/$expected_supabase_version"
 readonly supabase_cli_path="$supabase_tools_directory/supabase"
@@ -336,8 +338,8 @@ capture_environment() {
   assert_publishable_key "$supabase_anon_key"
   assert_checksum "$supabase_server_ca_sha256"
   assert_supabase_server_ca
-  [[ "$supabase_project_ref" =~ ^[a-z0-9]{20}$ ]] || fail
-  [[ "$supabase_url" == "https://${supabase_project_ref}.supabase.co" ]] || fail
+  [[ "$supabase_project_ref" == "$expected_supabase_project_ref" ]] || fail
+  [[ "$supabase_url" == "$expected_supabase_url" ]] || fail
   assert_https_origin "$public_app_url" https://setlivre.com
   assert_https_origin "$backoffice_app_url" https://ops.setlivre.com
   [[ "$public_app_url" != "$backoffice_app_url" ]] || fail

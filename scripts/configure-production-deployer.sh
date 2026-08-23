@@ -58,9 +58,11 @@ readonly web_working_directory=/opt/setlivre/current/web
 readonly backoffice_working_directory=/opt/setlivre/current/backoffice/apps/backoffice
 readonly installation_schema=5
 readonly release_manager_protocol=3
-readonly supabase_cli_version=2.113.0
-readonly supabase_cli_sha256=c8dcd16db0bab7c27a1cc984aa6abbc8f5b2e36b90f58a579eacfbe719dd345d
-readonly supabase_go_sha256=08fcb0d4e1eddc9bbc8d74553cb1883aa3ac9985789dc8d39306c278844a29d4
+readonly expected_supabase_project_ref=oirvvnojgkzdppkdvhej
+readonly expected_supabase_url="https://${expected_supabase_project_ref}.supabase.co"
+readonly supabase_cli_version=2.115.0
+readonly supabase_cli_sha256=5986d84e4c7e251126f7579c686b302b3527bc4b2ac1517963930eb0780d3867
+readonly supabase_go_sha256=c507c71c331ee9b4dd87b6ec6cc8a6e4f312a642ff0f9e44931129053c534eef
 readonly host_tools_root=/usr/local/libexec/setlivre-host-tools
 readonly supabase_tools_directory="$host_tools_root/$supabase_cli_version"
 readonly supabase_cli_path="$supabase_tools_directory/supabase"
@@ -1546,11 +1548,13 @@ SUDO_LISTING_NODE
 
 assert_environment_file_shape() {
   local path="$1"
-  python3 - "$path" <<'ENVIRONMENT_SHAPE_PY'
+  python3 - "$path" "$expected_supabase_project_ref" "$expected_supabase_url" <<'ENVIRONMENT_SHAPE_PY'
 import re
 import sys
 
 path = sys.argv[1]
+expected_supabase_project_ref = sys.argv[2]
+expected_supabase_url = sys.argv[3]
 expected = {
     "GITHUB_REPOSITORY_ID",
     "CI_GITHUB_WORKFLOW_ID",
@@ -1603,6 +1607,8 @@ if enabled == "true" and not supabase_configured:
 if supabase_configured and (
     re.fullmatch(r"[a-z0-9]{20}", supabase_project_ref) is None
     or supabase_url != f"https://{supabase_project_ref}.supabase.co"
+    or supabase_project_ref != expected_supabase_project_ref
+    or supabase_url != expected_supabase_url
 ):
     raise SystemExit(1)
 if enabled == "true" and re.fullmatch(r"[0-9a-f]{64}", supabase_server_ca_sha256) is None:
@@ -1834,15 +1840,15 @@ SUDOERS
 install_environment_template() {
   if [[ ! -e "$environment_path" && ! -L "$environment_path" ]]; then
     local candidate="$temporary_root/production.env"
-    cat >"$candidate" <<'ENVIRONMENT'
+    cat >"$candidate" <<ENVIRONMENT
 # Configure the three delivery IDs atomically before enabling deployment.
 GITHUB_REPOSITORY_ID=
 CI_GITHUB_WORKFLOW_ID=
 PRD_GITHUB_WORKFLOW_ID=
 PRD_PUBLIC_APP_URL=https://setlivre.com
 PRD_BACKOFFICE_APP_URL=https://ops.setlivre.com
-PRD_SUPABASE_PROJECT_REF=
-PRD_SUPABASE_URL=
+PRD_SUPABASE_PROJECT_REF=$expected_supabase_project_ref
+PRD_SUPABASE_URL=$expected_supabase_url
 PRD_SUPABASE_ANON_KEY=
 SUPABASE_SERVER_CA_SHA256=
 PRD_DEPLOY_ENABLED=false
@@ -1855,10 +1861,17 @@ write_environment_identity_candidate() {
   local source="$1"
   local destination="$2"
   shift 2
-  node - "$source" "$destination" "$@" <<'ENVIRONMENT_IDENTITY_NODE'
+  node - "$source" "$destination" "$expected_supabase_project_ref" "$expected_supabase_url" "$@" <<'ENVIRONMENT_IDENTITY_NODE'
 const fs = require("node:fs");
 
-const [sourcePath, destinationPath, mode, ...parameters] = process.argv.slice(2);
+const [
+  sourcePath,
+  destinationPath,
+  expectedProjectRef,
+  expectedSupabaseUrl,
+  mode,
+  ...parameters
+] = process.argv.slice(2);
 const expectedRepositoryId = "1328339374";
 const positiveInteger = /^[1-9][0-9]*$/;
 const projectRefPattern = /^[a-z0-9]{20}$/;
@@ -1898,7 +1911,9 @@ const currentSupabaseUrl = values.get("PRD_SUPABASE_URL");
 if (
   (currentProjectRef !== "" || currentSupabaseUrl !== "") &&
   (!projectRefPattern.test(currentProjectRef) ||
-    currentSupabaseUrl !== `https://${currentProjectRef}.supabase.co`)
+    currentSupabaseUrl !== `https://${currentProjectRef}.supabase.co` ||
+    currentProjectRef !== expectedProjectRef ||
+    currentSupabaseUrl !== expectedSupabaseUrl)
 ) {
   process.exit(1);
 }
@@ -1935,7 +1950,13 @@ if (mode === "delivery") {
   values.set("PRD_GITHUB_WORKFLOW_ID", productionWorkflowId);
 } else if (mode === "supabase") {
   const [projectRef] = parameters;
-  if (parameters.length !== 1 || !projectRefPattern.test(projectRef)) process.exit(1);
+  if (
+    parameters.length !== 1 ||
+    projectRef !== expectedProjectRef ||
+    expectedSupabaseUrl !== `https://${expectedProjectRef}.supabase.co`
+  ) {
+    process.exit(1);
+  }
   values.set("PRD_SUPABASE_PROJECT_REF", projectRef);
   values.set("PRD_SUPABASE_URL", `https://${projectRef}.supabase.co`);
 } else {
@@ -1977,7 +1998,7 @@ configure_delivery_identity() {
 
 configure_supabase_identity() {
   local project_ref="$1"
-  [[ "$project_ref" =~ ^[a-z0-9]{20}$ ]] || fail
+  [[ "$project_ref" == "$expected_supabase_project_ref" ]] || fail
   configure_environment_identity supabase "$project_ref"
 }
 

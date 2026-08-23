@@ -381,16 +381,16 @@ describe("Oracle host one-shot and runtime identity bootstrap", () => {
 
   it("installs the exact official Supabase CLI pair as an immutable root-owned host tool", () => {
     expect(bootstrap).toContain(
-      "readonly supabase_cli_archive_url=https://github.com/supabase/cli/releases/download/v2.113.0/supabase_2.113.0_linux_amd64.tar.gz",
+      "readonly supabase_cli_archive_url=https://github.com/supabase/cli/releases/download/v2.115.0/supabase_2.115.0_linux_amd64.tar.gz",
     );
     expect(bootstrap).toContain(
-      "readonly supabase_cli_archive_sha256=14659e7148ad17b77e69e5c36b27be572110519c76c796da1b53c07c3590f593",
+      "readonly supabase_cli_archive_sha256=ff099608ce758b625532ef03a61f4c9520b995e94ff6cd5480dc0428cad64cb3",
     );
     expect(bootstrap).toContain(
-      "readonly supabase_cli_sha256=c8dcd16db0bab7c27a1cc984aa6abbc8f5b2e36b90f58a579eacfbe719dd345d",
+      "readonly supabase_cli_sha256=5986d84e4c7e251126f7579c686b302b3527bc4b2ac1517963930eb0780d3867",
     );
     expect(bootstrap).toContain(
-      "readonly supabase_go_sha256=08fcb0d4e1eddc9bbc8d74553cb1883aa3ac9985789dc8d39306c278844a29d4",
+      "readonly supabase_go_sha256=c507c71c331ee9b4dd87b6ec6cc8a6e4f312a642ff0f9e44931129053c534eef",
     );
     expect(bootstrap).toContain('expected = {"supabase", "supabase-go"}');
     expect(bootstrap).toContain("if len(members) != len(expected)");

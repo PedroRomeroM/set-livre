@@ -37,4 +37,4 @@ Produção não usa Docker Compose, Caddy ou registry de imagem.
 - host precisa de hardening e patching;
 - a memória limitada exige budgets, monitoramento e smoke de carga;
 - uma VM é ponto único de falha e possui gatilhos de migração;
-- quando ativa, a VM Set Livre ocupa a segunda e última posição E2 Micro Always Free da tenancy. A instância diagnóstica foi terminada; na última evidência preservada (`2026-08-19T09:45:42Z`), a posição lógica estava liberada e o Plan E2 reportava falta de capacidade física, conforme o ADR-021.
+- quando ativa, a VM Set Livre ocupa a segunda e última posição E2 Micro Always Free da tenancy. A instância diagnóstica foi terminada; em `2026-08-23`, a posição lógica foi revalidada como liberada e sondas repetidas do Plan E2 continuaram reportando falta de capacidade física, conforme o ADR-021.
