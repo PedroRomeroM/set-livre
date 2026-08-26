@@ -77,6 +77,7 @@ export function RegistrationForm({ legalDocuments }: RegistrationFormProps) {
       }
       return registerIdentity(pendingRegistration.current);
     },
+    networkMode: "always",
     onSettled: () => {
       pendingRegistration.current = undefined;
     },

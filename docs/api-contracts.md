@@ -56,6 +56,7 @@ Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-0
 - sucesso e erro usam envelope JSON com `requestId`, `private, no-store` e sem payload de provider, SQL ou PII;
 - o pedido de recovery responde sempre `202` com o mesmo corpo, inclusive quando o provider rejeita ou está indisponível; somente o evento redigido marca a degradação, sem permitir inferir se o e-mail existe;
 - o cliente interrompe qualquer request de identidade após dez segundos e retorna estado recuperável sem preservar payload sensível;
+- cadastro, login e as duas mutations de recovery usam `networkMode: "always"`: uma submissão dispara uma única tentativa mesmo quando o monitor de conectividade está offline, termina como erro seguro e limpa a referência efêmera; ela nunca fica pausada para reenviar credenciais após reconexão;
 - login, logout, callback, recovery e sessão usam clientes Supabase server-side por request; senha, token, cookie e o `session_id` assinado nunca entram no cache TanStack;
 - o callback aceita apenas `signup` ou `recovery`; o `TokenHash` chega ao browser no fragmento, é apagado antes do `POST` e não aparece na request inicial nem no referrer;
 - somente um `SERVICE_UNAVAILABLE` recebido em resposta API válida antes de `verifyOtp` permite retry do callback. Depois que o `POST` de signup ou recovery foi despachado, falha de rede, timeout e resposta inválida são ambíguos e terminais no cliente, que apaga sua ref one-shot sem reenviar o token;

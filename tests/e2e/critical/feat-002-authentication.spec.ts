@@ -209,9 +209,11 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     await logoutFeat002Identity(page);
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
 
+    const rejectedLoginStarted = createDeferredSignal();
     await page.route(
       "**/api/auth/login",
       async (route) => {
+        rejectedLoginStarted.resolve();
         await route.abort("failed");
       },
       { times: 1 },
@@ -222,6 +224,9 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
       identity.password,
     );
     await armLoginFormRedactionObservation(page);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
     const absentSessionReload = page.waitForRequest((request) => {
       const address = new URL(request.url());
       return (
@@ -233,6 +238,7 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     });
     await page.getByRole("button", { name: "Entrar" }).click();
 
+    await rejectedLoginStarted.promise;
     await absentSessionReload;
     await expectCurrentPath(page, "/entrar?entrada=verificar");
     await expectLoginFormRedactedBeforeReload(page);

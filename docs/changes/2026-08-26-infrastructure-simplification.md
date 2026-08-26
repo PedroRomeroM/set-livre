@@ -74,6 +74,13 @@ o carregamento dinâmico e declara o arquivo de configuração e as specs como e
 o contrato oficial do plugin; um teste unitário impede a regressão. A execução que falhou é diagnóstico,
 não evidência de aprovação, e o novo SHA precisa repetir CI e review integralmente.
 
+O CI seguinte passou todos os gates Windows, estáticos e de banco, mas revelou uma corrida real no
+Firefox Linux: 113/114 cenários passaram e o login ficou pausado quando o monitor de conectividade mudou
+antes da mutation. Cadastro, login e recovery agora executam uma única tentativa com
+`networkMode: "always"`, limpam as refs efêmeras em qualquer desfecho e nunca reenviam credenciais após
+reconexão. O cenário P0 força explicitamente o estado offline, comprova que a request foi iniciada e
+repete a revalidação SSR; o novo SHA precisa repetir CI e review integralmente.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

@@ -43,6 +43,7 @@ function RecoveryRequestForm() {
       }
       return requestPasswordRecovery(email);
     },
+    networkMode: "always",
     onSettled: () => {
       pendingRecoveryEmail.current = undefined;
     },
@@ -165,6 +166,7 @@ function NewPasswordForm({
       }
       return updateRecoveredPassword(value.password, value.confirmPassword);
     },
+    networkMode: "always",
     onError: (error) => {
       onFeedbackChange(recoveryUpdateFeedbackFromError(error, recoverySessionScope));
     },

@@ -105,6 +105,11 @@ describe("identity mutation cache security", () => {
     expect(content).toContain("mutation.mutate();");
     expect(content).toContain(`${referenceName}.current = undefined;`);
     expect(content).not.toMatch(/mutation\.mutate\((?:parsed\.data|registrationPayload)/u);
+    const credentialMutation = content.slice(
+      content.indexOf("const mutation = useMutation"),
+      content.indexOf("function submit", content.indexOf("const mutation = useMutation")),
+    );
+    expect(credentialMutation).toContain('networkMode: "always"');
   });
 
   it("keeps recovery e-mail and passwords out of TanStack mutation variables", () => {
@@ -117,6 +122,7 @@ describe("identity mutation cache security", () => {
     expect(content.match(/mutation\.mutate\(\);/gu)).toHaveLength(2);
     expect(content).toContain("pendingRecoveryEmail.current = undefined;");
     expect(content).toContain("pendingRecoveryPassword.current = undefined;");
+    expect(content.match(/networkMode: "always"/gu)).toHaveLength(2);
     expect(content).not.toMatch(/mutation\.mutate\((?:parsed\.data|password|email)/u);
   });
 
