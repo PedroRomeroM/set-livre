@@ -119,8 +119,8 @@
             reutiliza diretórios existentes após validar o marcador operacional ou um marcador
             transitório de retry root-only, mantém a transição inicial fechada a resíduos legados e
             só remove o estado de retry depois de publicar o novo digest e provar o SHA também pelo
-            HTTPS público. O laboratório isola os cenários e prova um retry terminal antes de seguir
-            quando uma falha precisa preservar o marcador.
+            HTTPS público. Os serviços exigem o marcador operacional ativo; release incompatível
+            permanece parada, e o deploy segue bloqueado até a transição atingir health terminal.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum

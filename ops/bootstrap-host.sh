@@ -35,6 +35,7 @@ firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
 bootstrap_marker_source=""
+host_configuration_published=false
 active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
@@ -430,6 +431,7 @@ cleanup() {
   [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
   [[ -z ${bootstrap_marker_source} ]] || rm -f -- "$bootstrap_marker_source"
+  [[ ${host_configuration_published} == false ]] || rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
 trap cleanup EXIT
@@ -451,8 +453,55 @@ done
 
 deploy_key_file="$(realpath -e -- "$1")"
 [[ -f ${deploy_key_file} && ! -L ${deploy_key_file} ]] || fail "a chave de deploy não é um arquivo regular."
-IFS= read -r deploy_key < "$deploy_key_file"
-[[ ${deploy_key} =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || fail "a chave de deploy não é Ed25519 válida."
+if ! deploy_key="$(python3 - "$deploy_key_file" <<'PYTHON'
+import base64
+import binascii
+import pathlib
+import re
+import struct
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    text = path.read_text(encoding="ascii")
+except (OSError, UnicodeError) as error:
+    raise SystemExit("arquivo ilegível") from error
+
+lines = text.splitlines()
+if len(lines) != 1:
+    raise SystemExit("o arquivo deve conter exatamente uma chave")
+match = re.fullmatch(r"ssh-ed25519 ([A-Za-z0-9+/]+={0,2})(?: ([ -~]+))?", lines[0])
+if match is None:
+    raise SystemExit("linha Ed25519 inválida")
+
+try:
+    blob = base64.b64decode(match.group(1), validate=True)
+except (binascii.Error, ValueError) as error:
+    raise SystemExit("blob Base64 inválido") from error
+
+def read_ssh_string(value: bytes, offset: int) -> tuple[bytes, int]:
+    if offset + 4 > len(value):
+        raise ValueError("comprimento ausente")
+    length = struct.unpack(">I", value[offset : offset + 4])[0]
+    start = offset + 4
+    end = start + length
+    if end > len(value):
+        raise ValueError("comprimento excede o blob")
+    return value[start:end], end
+
+try:
+    algorithm, offset = read_ssh_string(blob, 0)
+    public_key, offset = read_ssh_string(blob, offset)
+except ValueError as error:
+    raise SystemExit("estrutura SSH inválida") from error
+if algorithm != b"ssh-ed25519" or len(public_key) != 32 or offset != len(blob):
+    raise SystemExit("material Ed25519 inválido")
+
+print(lines[0])
+PYTHON
+)"; then
+  fail "a chave de deploy não contém exatamente uma chave pública Ed25519 válida."
+fi
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
@@ -556,9 +605,18 @@ PYTHON
   fi
   if [[ ${active_host_digest} == "$host_configuration_digest" ]]; then
     active_release_compatible=true
-  else
-    systemctl stop set-livre-web.service set-livre-backoffice.service \
-      || fail "não foi possível interromper a release incompatível antes do bootstrap."
+  fi
+fi
+if [[ ${installed_host_contract} == true ]]; then
+  install -o root -g setlivre -m 0640 "$HOST_CONFIGURATION_DIGEST" \
+    "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
+  rm -f -- "$HOST_CONFIGURATION_DIGEST"
+fi
+if [[ -n ${active_release_sha} ]]; then
+  systemctl stop set-livre-web.service set-livre-backoffice.service \
+    || fail "não foi possível interromper a release antes de alterar o host."
+  if [[ ${active_release_compatible} == false ]]; then
+    rm -f -- /opt/set-livre/current
   fi
 fi
 
@@ -659,11 +717,6 @@ if ! getent passwd deploy-setlivre >/dev/null; then
 fi
 
 install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY" /opt/set-livre /opt/set-livre/releases
-if [[ ${installed_host_contract} == true ]]; then
-  install -o root -g setlivre -m 0640 "$HOST_CONFIGURATION_DIGEST" \
-    "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
-  rm -f -- "$HOST_CONFIGURATION_DIGEST"
-fi
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh
@@ -929,6 +982,16 @@ systemctl enable \
   set-livre-backoffice.service \
   set-livre-release-recovery.path
 systemctl start set-livre-release-recovery.path
+systemctl enable --now snap.certbot.renew.timer
+
+digest_source="$(mktemp "${HOST_STATE_DIRECTORY}/.host-config.XXXXXX")"
+printf '%s\n' "$host_configuration_digest" > "$digest_source"
+chown root:setlivre "$digest_source"
+chmod 0640 "$digest_source"
+mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
+digest_source=""
+host_configuration_published=true
+
 if [[ -e /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
     && -f /opt/set-livre/current/web/server.js \
@@ -960,15 +1023,9 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
-systemctl enable --now snap.certbot.renew.timer
 
-digest_source="$(mktemp "${HOST_STATE_DIRECTORY}/.host-config.XXXXXX")"
-printf '%s\n' "$host_configuration_digest" > "$digest_source"
-chown root:setlivre "$digest_source"
-chmod 0640 "$digest_source"
-mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
-digest_source=""
 rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
+host_configuration_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

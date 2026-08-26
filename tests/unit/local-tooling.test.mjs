@@ -86,12 +86,14 @@ describe("local tooling contracts", () => {
     expect(webUnit).toContain("User=setlivre-web");
     expect(webUnit).not.toContain("User=setlivre-backoffice");
     expect(webUnit).toContain("ConditionPathExists=/opt/set-livre/current/web/server.js");
+    expect(webUnit).toContain("ConditionPathExists=/etc/set-livre/host-config.sha256");
     expect(webUnit).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
     expect(backofficeUnit).toContain("User=setlivre-backoffice");
     expect(backofficeUnit).not.toContain("User=setlivre-web\n");
     expect(backofficeUnit).toContain(
       "ConditionPathExists=/opt/set-livre/current/backoffice/apps/backoffice/server.js",
     );
+    expect(backofficeUnit).toContain("ConditionPathExists=/etc/set-livre/host-config.sha256");
     expect(backofficeUnit).toContain(
       "EnvironmentFile=/opt/set-livre/current/.runtime/backoffice.env",
     );
@@ -118,6 +120,7 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
     expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
     expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i");
+    expect(recoveryUnit).toContain("TimeoutStartSec=12min");
     expect(recoveryUnit).not.toContain("ConditionPathExists=");
     expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
     expect(recoveryUnit).not.toContain("Before=set-livre-web.service");
@@ -176,6 +179,8 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("! getent group setlivre-deployer");
     expect(bootstrap).toContain('sysctl --values "net.ipv6.conf.${setting}.disable_ipv6"');
     expect(bootstrap).not.toContain('rm -rf -- "/opt/setlivre"');
+    expect(bootstrap).toContain("/etc/fail2ban/jail.d/setlivre-sshd.local");
+    expect(bootstrap).toContain("cat > /etc/fail2ban/jail.d/set-livre-sshd.local");
     expect(guardCall).toBeGreaterThan(-1);
     expect(digestCalculation).toBeGreaterThan(guardCall);
   });
@@ -354,6 +359,10 @@ describe("local tooling contracts", () => {
     );
 
     expect(bootstrap).toContain('restrict,command="/usr/local/sbin/set-livre-deploy-ssh"');
+    expect(bootstrap).toContain("base64.b64decode(match.group(1), validate=True)");
+    expect(bootstrap).toContain('algorithm != b"ssh-ed25519"');
+    expect(bootstrap).toContain("len(public_key) != 32");
+    expect(bootstrap).toContain("offset != len(blob)");
     expect(bootstrap).toContain(
       'readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"',
     );
@@ -388,6 +397,7 @@ describe("local tooling contracts", () => {
       'invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"',
     );
     expect(hostVerification).toContain("rollback-public-health-observed");
+    expect(hostVerification).toContain("archive com mais de 20.000 entradas foi aceito");
     expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     const publishableFixtures = [
@@ -408,6 +418,10 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("recover_link_from_marker");
     expect(deploy).toContain("--recover-link");
     expect(deploy).toContain("--recover-services");
+    expect(deploy).toContain(
+      'readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"',
+    );
+    expect(deploy).toContain("o bootstrap do host ainda não atingiu estado terminal");
     const recoveryFunctionStart = deploy.indexOf("recover_link_from_marker() {");
     const recoveryFunctionEnd = deploy.indexOf(
       "\nwrite_rollback_marker() {",
@@ -424,6 +438,9 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
     );
+    expect(serviceRecovery).toContain(
+      'flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9',
+    );
     expect(hostVerification).toContain(
       "recuperação do link consumiu o marcador antes de estabilizar os serviços",
     );
@@ -433,6 +450,9 @@ describe("local tooling contracts", () => {
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
+    expect(deploy).not.toContain("bundle.getmembers()");
+    expect(deploy).toContain("for entry_count, member in enumerate(bundle, start=1):");
+    expect(deploy).toContain("if entry_count > maximum_entries:");
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
     expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
     const rollbackStart = deploy.indexOf("rollback_activation() {");
@@ -448,8 +468,13 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
     expect(bootstrap).toContain('wait_for_active_public_health "$active_release_sha"');
-    expect(bootstrap.indexOf('wait_for_active_public_health "$active_release_sha"')).toBeLessThan(
+    expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
+    ).toBeLessThan(bootstrap.indexOf("systemctl restart set-livre-web.service"));
+    expect(bootstrap.indexOf('wait_for_active_public_health "$active_release_sha"')).toBeLessThan(
+      bootstrap.indexOf(
+        'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+      ),
     );
     expect(hostVerification).toContain("recovery-public-health-observed");
     expect(hostVerification.indexOf('retention_sha="$(printf')).toBeLessThan(
@@ -461,6 +486,12 @@ describe("local tooling contracts", () => {
     expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(
       bootstrap.indexOf("apt-get update"),
     );
+    expect(bootstrap.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"')).toBeLessThan(
+      bootstrap.indexOf("apt-get update"),
+    );
+    expect(bootstrap).toContain("if [[ ${active_release_compatible} == false ]]; then");
+    expect(bootstrap).toContain("rm -f -- /opt/set-livre/current");
+    expect(bootstrap).toContain("host_configuration_published=true");
   });
 
   it("builds the Linux release with production fixtures before packaging", () => {

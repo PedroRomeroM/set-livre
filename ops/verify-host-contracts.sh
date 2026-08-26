@@ -147,6 +147,44 @@ if sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND='not-authorized' \
   "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null; then
   fail "comando SSH não autorizado foi aceito."
 fi
+
+entry_limit_sha="$(printf 'e%.0s' {1..40})"
+entry_limit_archive="$temporary_directory/entry-limit.tar.gz"
+python3 - "$entry_limit_archive" <<'PYTHON'
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1], mode="w:gz") as bundle:
+    for index in range(20_001):
+        entry = tarfile.TarInfo(f"web/entry-{index:05d}")
+        entry.mode = 0o644
+        bundle.addfile(entry)
+PYTHON
+entry_limit_checksum="$(sha256sum "$entry_limit_archive" | cut -d ' ' -f 1)"
+# O runner confiável abre os fixtures; somente o processo de destino troca de UID.
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${entry_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$entry_limit_archive"
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${entry_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/web.env"
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- \
+  env SSH_ORIGINAL_COMMAND="upload-backoffice-environment ${entry_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
+if entry_limit_output="$(
+  sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
+    "$entry_limit_sha" "$entry_limit_checksum" --verify-only 2>&1
+)"; then
+  fail "archive com mais de 20.000 entradas foi aceito."
+fi
+grep --fixed-strings 'quantidade de entradas inválida' <<< "$entry_limit_output" >/dev/null \
+  || fail "archive excessivo falhou por motivo inesperado."
+[[ ! -e "/home/deploy-setlivre/incoming/set-livre-${entry_limit_sha}.tar.gz" \
+  && ! -e "/home/deploy-setlivre/incoming/web-${entry_limit_sha}.env" \
+  && ! -e "/home/deploy-setlivre/incoming/backoffice-${entry_limit_sha}.env" ]] \
+  || fail "archive excessivo deixou uploads residuais."
+
 # O runner confiável abre os fixtures; somente o processo de destino troca de UID.
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${release_sha}" \

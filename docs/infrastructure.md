@@ -104,15 +104,17 @@ No merge, o workflow:
    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
-ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita
-tamanho/quantidade e aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
+ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
+interrompe a leitura no primeiro header além das 20.000 entradas permitidas, sem materializar uma lista
+não limitada; aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
 SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. A troca de
 `/opt/set-livre/current` ativa essa unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
-o lock do deploy e estabiliza serviços e health após `SIGKILL`; essa instância depende de
-`network-online.target` e `nginx.service`. Recuperar o link nunca consome o marcador; todos os caminhos
+o lock do deploy por no máximo cinco minutos e estabiliza serviços e health após `SIGKILL`; essa
+instância depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze
+minutos, suficiente para o lock e para os dois health checks limitados. Recuperar o link nunca consome o marcador; todos os caminhos
 de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
 HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
 apenas encerra sem trabalho se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
@@ -178,7 +180,8 @@ AF_UNIX/IPv4/IPv6. O grupo compartilhado `setlivre` concede somente leitura do a
 ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (`APP_ENV`, URL DAL,
 origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
 projeto/role/host divergente, qualquer chave que não use `sb_publishable_` ou ambiente entre os apps
-inconsistente. A chave de deploy usa
+inconsistente. O bootstrap exige exatamente uma chave pública, decodifica o blob SSH e comprova o
+algoritmo Ed25519 e os 32 bytes de material antes de substituir `authorized_keys`. A chave instalada usa
 `authorized_keys command=` e aceita apenas uploads limitados e `deploy <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
@@ -196,14 +199,17 @@ exatamente a `.staging-<sha>.<sufixo-mktemp>`, são diretórios reais dentro de 
 owner ou tipo divergente bloqueia a ativação para inspeção.
 
 O manifesto contém o SHA-256 determinístico dos dez arquivos que definem o host. Antes de qualquer
-mutação, o bootstrap compara esse digest com o manifesto da release ativa. Se forem iguais, só reinicia
-a release depois de reaplicar o contrato e exige readiness dos dois apps. Se divergirem, interrompe os
-apps antes da primeira alteração e os mantém parados até o deploy do artifact que carrega o novo
-digest; uma release antiga nunca executa sob units/proxy novos. Depois disso, o bootstrap invalida
-o marcador ativo antes de alterar essas superfícies e só publica o novo
-`/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações. Antes da primeira
-mutação, publica atomicamente um marcador `bootstrap-in-progress` root-only; quando existe contrato
-ativo válido, também preserva sua cópia `host-config.previous`. Falha intermediária mantém esses
+mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa e publica
+atomicamente um marcador `bootstrap-in-progress` root-only. Quando existe contrato ativo válido,
+preserva sua cópia `host-config.previous`, invalida o marcador ativo e interrompe os apps antes de
+alterar pacotes ou qualquer superfície gerenciada. As units também exigem a presença do marcador ativo;
+um reboot antes da conclusão das mutações não reinicia a release. Depois de validar integralmente as
+superfícies estáticas, o bootstrap publica o novo `/etc/set-livre/host-config.sha256` por rename atômico
+enquanto ainda mantém `bootstrap-in-progress`; o instalador de release rejeita esse estado transitório.
+Se os digests forem iguais, a release só volta depois da publicação e precisa provar readiness dos dois
+apps antes de remover os marcadores de retry. Se divergirem, o symlink ativo é retirado sem apagar o
+diretório imutável, e os apps permanecem parados até o deploy do artifact que carrega o novo digest; uma
+release antiga nunca executa sob units/proxy novos. Falha intermediária mantém esses
 marcadores transitórios, permitindo que a próxima execução reconheça com segurança os paths já
 gerenciados, enquanto a ausência do marcador ativo mantém novos deploys bloqueados. Sucesso publica o
 digest novo e só então remove ambos os marcadores de retry. Se Nginx, systemd, CA, bootstrap, comando
@@ -213,10 +219,11 @@ Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
-Quando a release ativa já carrega o mesmo digest candidato, a reaplicação só publica novamente o
-marcador operacional depois de reiniciar os dois serviços e provar o mesmo SHA nos endpoints internos e
-no HTTPS público. Falha de certificado, Nginx, firewall ou roteamento mantém o digest novo não publicado
-e interrompe os serviços.
+Quando a release ativa já carrega o mesmo digest candidato, a reaplicação reinicia os dois serviços e
+prova o mesmo SHA nos endpoints internos e no HTTPS público antes de encerrar a transição. Falha de
+certificado, Nginx, firewall, roteamento ou health remove o digest candidato em uma saída controlada,
+mantém os marcadores de retry e interrompe os serviços. Uma interrupção não capturável depois da
+publicação mantém o deploy bloqueado por `bootstrap-in-progress` até a reexecução terminal.
 
 ### Rede e SSH
 

@@ -36,8 +36,8 @@ notificações e backoffice. Eles guardam regras duráveis; não repetem o hist�
 - [`review-deploy-cycle.md`](review-deploy-cycle.md): review obrigatório, merge e acompanhamento.
 - [`observability.md`](observability.md): health, logs, métricas e alertas.
 - [`runbooks/`](runbooks/): resposta a incidentes concretos.
-- [`../configuration-steps.md`](../configuration-steps.md): ações humanas ainda necessárias na entrega
-  atual.
+- [`../configuration-steps.md`](../configuration-steps.md): ações humanas pendentes na entrega atual ou
+  em marcos futuros explicitamente adiados.
 
 ## Documentos transitórios
 

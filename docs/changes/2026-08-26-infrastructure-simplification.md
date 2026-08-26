@@ -81,7 +81,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
   standalone sob as mesmas fronteiras instaladas na VM;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
-  essas dependências ainda não estiverem disponíveis, e só o consome depois de health interno e público;
+  essas dependências ainda não estiverem disponíveis, aguarda o lock por no máximo cinco minutos dentro
+  de uma unit com orçamento de doze minutos e só o consome depois de health interno e público;
 - o laboratório encerra cada falha que preserva o marcador com um retry bem-sucedido e prova sua remoção
   antes de iniciar outro cenário, sem compartilhar estado intermediário entre casos;
 - recuperação anterior a um novo deploy e reexecução do bootstrap com release compatível exigem o SHA
@@ -89,9 +90,11 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   novo digest operacional;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
   validar tipo, owner, modo e conteúdo do marcador operacional ou dos marcadores transitórios de retry;
-  o bootstrap publica o in-progress antes da primeira mutação, preserva o digest anterior e remove ambos
-  somente após publicar o novo digest; sem marcador válido, resíduos nesses caminhos continuam bloqueando
-  a transição;
+- o bootstrap publica o in-progress, preserva e invalida o digest ativo e interrompe os serviços antes da
+  primeira alteração; as units exigem o marcador ativo, o deploy recusa `bootstrap-in-progress`, e os
+  estados de retry só são removidos após a publicação e o health de uma release compatível;
+- a chave de deploy só substitui `authorized_keys` após validação estrutural integral de um único blob
+  Ed25519, e a extração interrompe a leitura no header 20.001 sem materializar entradas ilimitadas;
 - gates locais recusam tanto `databaseMigrationHead` divergente da migration mais recente quanto
   referência documental a ADR inexistente;
 - o empacotamento aceita somente conteúdo regular originado da release e das dependências instaladas

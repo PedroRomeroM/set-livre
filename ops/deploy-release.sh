@@ -5,12 +5,14 @@ readonly RELEASES_DIRECTORY="/opt/set-livre/releases"
 readonly CURRENT_LINK="/opt/set-livre/current"
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly HOST_CONFIGURATION_DIGEST="/etc/set-livre/host-config.sha256"
+readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly PRODUCTION_URL="https://${PRODUCTION_IP}"
 readonly MAX_ARCHIVE_BYTES=$((256 * 1024 * 1024))
 readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
+readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -112,7 +114,8 @@ fi
 
 if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
-  flock --exclusive 9
+  flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
+    || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
   if [[ -e ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
     if [[ -z ${recovered_release} ]]; then
@@ -129,6 +132,9 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   fi
   exit 0
 fi
+
+[[ ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]] \
+  || fail "o bootstrap do host ainda não atingiu estado terminal."
 
 verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
@@ -391,13 +397,13 @@ maximum_extracted_bytes = 512 * 1024 * 1024
 
 try:
     with tarfile.open(archive, mode="r:gz") as bundle:
-        members = bundle.getmembers()
-        if not members or len(members) > maximum_entries:
-            raise ValueError("quantidade de entradas inválida")
-
+        members = []
         extracted_bytes = 0
         seen = set()
-        for member in members:
+        for entry_count, member in enumerate(bundle, start=1):
+            if entry_count > maximum_entries:
+                raise ValueError("quantidade de entradas inválida")
+            members.append(member)
             if "\\" in member.name or any(ord(character) < 32 for character in member.name):
                 raise ValueError("nome de entrada inválido")
 
@@ -428,6 +434,8 @@ try:
             if extracted_bytes > maximum_extracted_bytes:
                 raise ValueError("conteúdo extraído excede o limite")
 
+        if not members:
+            raise ValueError("quantidade de entradas inválida")
         bundle.extractall(path=destination, members=members, filter="data")
 except (OSError, tarfile.TarError, ValueError) as error:
     raise SystemExit(f"archive inválido: {error}") from error

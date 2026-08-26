@@ -7,6 +7,7 @@ After=network-online.target nginx.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i
+TimeoutStartSec=12min
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
