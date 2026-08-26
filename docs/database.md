@@ -37,7 +37,8 @@ A baseline encerra com readiness objetivo: head atual, JWT expiry, atributos mí
 grants diretos restritos, ausência de acesso direto a dados, RLS em tabelas públicas e negação de
 `CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal`, zero GUC
 próprio em produção e ausência de ownership. No Supabase local, o bootstrap administrativo nega leitura
-efetiva de `pg_roles`, `pg_user` e `pg_db_role_setting`; no Cloud, esses objetos continuam gerenciados
+efetiva de `pg_roles`, `pg_user` e `pg_db_role_setting` às roles da aplicação, preservando em `pg_roles`
+somente o acesso exigido pelo `supabase_storage_admin`; no Cloud, esses objetos continuam gerenciados
 por `supabase_admin`, então a alternativa suportada exige ausência global de settings com nome de
 segredo enquanto houver leitura herdada. Drift retorna apenas `false`.
 

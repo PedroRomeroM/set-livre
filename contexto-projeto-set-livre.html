@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 25/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 26/08/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -140,6 +140,16 @@
           Mutations que carregam e-mail ou senha executam uma única tentativa mesmo sob sinal
           offline e terminam limpando a referência efêmera; credenciais nunca ficam em uma fila
           TanStack para reenvio tardio após reconexão.
+        </p>
+        <p>
+          O E2E da transição ambígua usa uma resposta inválida determinística entre engines; timeout
+          e rejeição real de transporte ficam cobertos por unitários, sem retry ou aumento
+          artificial de timeout.
+        </p>
+        <p>
+          O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
+          para <code>supabase_storage_admin</code> somente a leitura de
+          <code>pg_roles</code> exigida pelas migrations oficiais do Storage.
         </p>
         <p>
           Merge em <code>main</code> aplica migrations forward-only e publica na VM. Timeout ou

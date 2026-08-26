@@ -217,6 +217,7 @@ grant select on table
   pg_catalog.pg_roles,
   pg_catalog.pg_user
 to postgres, supabase_admin;
+grant select on table pg_catalog.pg_roles to supabase_storage_admin;
 
 do $block$
 declare

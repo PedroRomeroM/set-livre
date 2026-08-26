@@ -225,7 +225,9 @@ Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada 
 fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` ou `CREATE/TEMP` direto no database
 por `app_dal`/login de produção bloqueia deploy e readiness antes de habilitar a senha. Os catálogos
 `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
-serviço, identidade que o `postgres` do projeto não pode assumir. Quando a ACL gerenciada conserva
+serviço, identidade que o `postgres` do projeto não pode assumir. O bootstrap local preserva para
+`supabase_storage_admin` somente a leitura de `pg_roles` necessária às migrations oficiais do Storage,
+sem reabrir esses catálogos às roles da aplicação. Quando a ACL gerenciada conserva
 leitura herdada, o banco precisa ter zero setting de role/database cujo nome denote secret, password,
 token, credential ou key. A role de produção não grava o antigo GUC vazio. No local, onde o bootstrap
 usa o superuser próprio da stack, os três catálogos continuam integralmente negados à DAL.

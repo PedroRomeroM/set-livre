@@ -110,6 +110,25 @@ invoca exatamente esse artefato, preservando a restrição de leitura do workspa
 fronteira de execução da VM. A execução que revelou a divergência continua sendo evidência diagnóstica;
 o próximo SHA deve repetir todos os gates e reiniciar o ciclo de review.
 
+Na repetição, 113/114 cenários Playwright passaram e o Firefox não liquidou de forma consistente o
+`fetch` quando o interceptador usou um aborto genérico. O cenário continua colocando o TanStack em estado
+offline, exige que a mutation realmente comece e comprova redaction mais reload SSR, mas agora injeta uma
+resposta 200 sintaticamente inválida, que representa resultado ambíguo de forma determinística entre os
+três engines. Timeout e rejeição real de transporte permanecem cobertos diretamente em unitários, sem
+retry, aumento de timeout ou enfraquecimento da asserção E2E.
+
+Ao recuperar o laboratório local depois de uma degradação do Docker Desktop, o Storage oficial
+`v1.71.0` revelou que seu upgrade consulta `pg_roles`. O hardening local negava corretamente os três
+catálogos às roles da aplicação, mas também havia removido o acesso herdado da identidade interna do
+Storage. O bootstrap agora devolve somente `SELECT` em `pg_roles` a `supabase_storage_admin`; o teste
+SQL prova simultaneamente essa compatibilidade e a negação efetiva para `app_dal`. Nenhuma role pública
+ou da aplicação recebeu acesso adicional.
+
+No candidato atual, o reset integral do Supabase local, lint do schema, 217 asserts pgTAP, 576 testes
+unitários e 114 cenários Playwright passaram. Format, ESLint, TypeScript, docs, audit sem vulnerabilidades,
+Knip e os builds nativos de web/backoffice também ficaram verdes. O CI ainda precisa repetir esse conjunto
+no SHA publicado e o review obrigatório recomeça do zero depois do push.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

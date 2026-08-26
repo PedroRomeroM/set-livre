@@ -194,7 +194,12 @@ select ok(
 revoke create on database postgres from app_runtime_production;
 
 select ok(
-  not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_db_role_setting', 'SELECT')
+  pg_catalog.has_table_privilege(
+    'supabase_storage_admin',
+    'pg_catalog.pg_roles',
+    'SELECT'
+  )
+    and not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_db_role_setting', 'SELECT')
     and not pg_catalog.has_any_column_privilege(
       'app_dal',
       'pg_catalog.pg_db_role_setting',
@@ -212,7 +217,7 @@ select ok(
       'pg_catalog.pg_user',
       'SELECT'
     ),
-  'stack local nega à DAL leitura efetiva dos catálogos sensíveis'
+  'stack local preserva o Storage e nega à DAL leitura efetiva dos catálogos sensíveis'
 );
 
 select ok(
