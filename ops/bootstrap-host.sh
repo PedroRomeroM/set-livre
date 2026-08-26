@@ -352,6 +352,20 @@ wait_for_active_health() {
   return 1
 }
 
+wait_for_active_public_health() {
+  local expected_release="$1"
+  for _ in $(seq 1 12); do
+    if curl --fail --silent --show-error --max-time 5 \
+      "https://${PRODUCTION_IP}/api/health/ready" \
+      | jq --exit-status --arg release "$expected_release" \
+        '.application == "web" and .release == $release and .status == "ready"' >/dev/null; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
 cleanup() {
   if [[ ${firewall_transition_active} == true ]]; then
     [[ -z ${previous_ipv4_rules} ]] || iptables-restore < "$previous_ipv4_rules" || true
@@ -896,10 +910,11 @@ if [[ -e /opt/set-livre/current ]]; then
     || fail "release ativa mudou durante o bootstrap."
   if [[ ${active_release_compatible} == true ]]; then
     systemctl restart set-livre-web.service set-livre-backoffice.service
-    wait_for_active_health "$active_release_sha" || {
+    if ! wait_for_active_health "$active_release_sha" \
+      || ! wait_for_active_public_health "$active_release_sha"; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
-      fail "release compatível não recuperou readiness após o bootstrap."
-    }
+      fail "release compatível não recuperou readiness interno e público após o bootstrap."
+    fi
   else
     if systemctl is-active --quiet set-livre-web.service \
       || systemctl is-active --quiet set-livre-backoffice.service; then

@@ -252,9 +252,10 @@ if [[ -e ${ROLLBACK_MARKER} ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service \
       || fail "não foi possível estabilizar o host sem release anterior."
   elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
-    || ! wait_for_health "$recovered_release"; then
+    || ! wait_for_health "$recovered_release" \
+    || ! wait_for_public_health "$recovered_release"; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
-    fail "a release recuperada não atingiu readiness."
+    fail "a release recuperada não atingiu readiness interno e público."
   fi
 fi
 

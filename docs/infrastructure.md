@@ -202,6 +202,10 @@ deploy falha antes da ativação até que o agente reaplique o bootstrap pela co
 Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
 o marcador existente é arquivo regular `root:setlivre 0640` com um único SHA-256 válido. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
+Quando a release ativa já carrega o mesmo digest candidato, a reaplicação só publica novamente o
+marcador operacional depois de reiniciar os dois serviços e provar o mesmo SHA nos endpoints internos e
+no HTTPS público. Falha de certificado, Nginx, firewall ou roteamento mantém o digest novo não publicado
+e interrompe os serviços.
 
 ### Rede e SSH
 

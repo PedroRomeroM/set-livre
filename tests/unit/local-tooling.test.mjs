@@ -387,8 +387,14 @@ describe("local tooling contracts", () => {
     const rollback = deploy.slice(rollbackStart, rollbackEnd);
     expect(rollback).toContain('wait_for_health "$recovered_release"');
     expect(rollback).toContain('wait_for_public_health "$recovered_release"');
+    expect(deploy.match(/wait_for_public_health "\$recovered_release"/gu)).toHaveLength(3);
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
+    expect(bootstrap).toContain('wait_for_active_public_health "$active_release_sha"');
+    expect(bootstrap.indexOf('wait_for_active_public_health "$active_release_sha"')).toBeLessThan(
+      bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
+    );
+    expect(hostVerification).toContain("recovery-public-health-observed");
     expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(
       bootstrap.indexOf("apt-get update"),
     );

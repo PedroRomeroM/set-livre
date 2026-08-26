@@ -116,7 +116,8 @@
             atômica, readiness e recuperação automática preservam a versão anterior em caso de falha
             ou reboot. A recuperação de serviços aguarda rede online e Nginx antes de consumir o
             marcador de rollback. O bootstrap só reutiliza diretórios existentes após validar o
-            marcador operacional root-only, mantendo a transição inicial fechada a resíduos legados.
+            marcador operacional root-only, mantém a transição inicial fechada a resíduos legados e
+            só conclui uma reaplicação compatível depois de provar o SHA também pelo HTTPS público.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum

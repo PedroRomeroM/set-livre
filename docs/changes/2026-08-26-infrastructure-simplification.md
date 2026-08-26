@@ -79,6 +79,9 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   standalone sob as mesmas fronteiras instaladas na VM;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
   essas dependências ainda não estiverem disponíveis;
+- recuperação anterior a um novo deploy e reexecução do bootstrap com release compatível exigem o SHA
+  esperado tanto nos health checks internos quanto no HTTPS público antes de continuar ou publicar o
+  novo digest operacional;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
   validar tipo, owner, modo e conteúdo do marcador operacional root-only; sem marcador válido, resíduos
   nesses caminhos continuam bloqueando a transição;
