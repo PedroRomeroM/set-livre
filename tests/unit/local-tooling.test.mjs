@@ -395,6 +395,12 @@ describe("local tooling contracts", () => {
       bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
     );
     expect(hostVerification).toContain("recovery-public-health-observed");
+    expect(hostVerification.indexOf('retention_sha="$(printf')).toBeLessThan(
+      hostVerification.indexOf('recovery_public_sha="$(printf'),
+    );
+    expect(hostVerification.indexOf('rollback_source="$temporary_directory')).toBeLessThan(
+      hostVerification.indexOf('recovery_public_sha="$(printf'),
+    );
     expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(
       bootstrap.indexOf("apt-get update"),
     );

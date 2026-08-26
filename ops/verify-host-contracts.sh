@@ -418,18 +418,6 @@ grep --fixed-strings --line-regexp \
   'stop set-livre-web.service set-livre-backoffice.service' \
   "$test_state/systemctl.log" >/dev/null \
   || fail "rollback sem readiness público não interrompeu os serviços."
-recovery_public_sha="$(printf 'f%.0s' {1..40})"
-printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
-sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
-sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
-sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
-run_expected_failure "$recovery_public_sha" recovery-public-health "$release_sha"
-[[ -e "$test_state/recovery-public-health-observed" ]] \
-  || fail "recuperação anterior ao deploy não consultou o readiness HTTPS público."
-grep --fixed-strings --line-regexp \
-  'stop set-livre-web.service set-livre-backoffice.service' \
-  "$test_state/systemctl.log" >/dev/null \
-  || fail "recuperação anterior ao deploy sem readiness público não interrompeu os serviços."
 interrupted_sha="$(printf '6%.0s' {1..40})"
 run_expected_failure "$interrupted_sha" signal "$release_sha"
 
@@ -445,6 +433,19 @@ for prefix in 7 8 9 a b; do
 done
 
 rollback_source="$temporary_directory/activation-rollback"
+recovery_public_sha="$(printf 'f%.0s' {1..40})"
+printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
+sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+run_expected_failure "$recovery_public_sha" recovery-public-health "$release_sha"
+[[ -e "$test_state/recovery-public-health-observed" ]] \
+  || fail "recuperação anterior ao deploy não consultou o readiness HTTPS público."
+grep --fixed-strings --line-regexp \
+  'stop set-livre-web.service set-livre-backoffice.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "recuperação anterior ao deploy sem readiness público não interrompeu os serviços."
+
 printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
