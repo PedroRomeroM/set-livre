@@ -214,11 +214,12 @@ rollback_activation() {
     return 0
   fi
   if systemctl restart set-livre-web.service set-livre-backoffice.service \
-    && wait_for_health "$recovered_release"; then
+    && wait_for_health "$recovered_release" \
+    && wait_for_public_health "$recovered_release"; then
     return 0
   fi
   systemctl stop set-livre-web.service set-livre-backoffice.service || true
-  printf 'deploy: release anterior não recuperou readiness; serviços interrompidos.\n' >&2
+  printf 'deploy: release anterior não recuperou readiness interno e público; serviços interrompidos.\n' >&2
   return 1
 }
 

@@ -81,13 +81,14 @@ No merge, o workflow:
 
 1. aplica migrations pendentes com `supabase db push --linked`, sem seed;
 2. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
-3. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; nos
+3. aplica migrations e exige que o maior head remoto seja exatamente o head compilado pelo candidato;
+4. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; nos
    deploys seguintes apenas valida a credencial existente, sem rotacioná-la ou imprimi-la;
-4. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
-5. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
-6. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
-7. executa o instalador root allowlisted;
-8. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
+5. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
+6. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
+7. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
+8. executa o instalador root allowlisted;
+9. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
@@ -99,7 +100,7 @@ HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do 
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
 o lock do deploy e estabiliza serviços e health após `SIGKILL`; ela apenas encerra se o deploy normal já
-removeu o marcador. Rollback incapaz de voltar ao readiness interrompe os serviços. Um SHA existente
+removeu o marcador. Rollback incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente
 com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ativação e mantém no máximo
 quatro releases, incluindo candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
@@ -113,20 +114,24 @@ regular ou diretório.
 Antes da compactação, o empacotador também recusa `.env` e ocorrências exatas das credenciais de banco
 disponíveis ao processo; o artifact parcial é removido em caso de falha.
 
-Migrations não sofrem rollback automático. Mudanças incompatíveis usam expand/contract em PRs
-separados; alterações destrutivas exigem backup e recuperação comprovada.
+Migrations não sofrem rollback automático. Mudanças usam expand/contract em PRs separados: o health
+aceita o head compilado de uma release enquanto ele existir no histórico aplicado, preservando a
+release anterior durante a ativação, mas o deploy exige que o maior head remoto corresponda exatamente
+ao candidato antes de publicar. Alterações destrutivas exigem backup e recuperação comprovada.
 
 ## Host Oracle
 
 `ops/bootstrap-host.sh` é idempotente para a VM dedicada e instala apenas:
 
-- Node 24.18 x86_64 verificado pelos `SHASUMS256` oficiais;
+- Node 24.18 x86_64 verificado pelos `SHASUMS256` oficiais, extraído em staging, validado como árvore
+  root-only funcional e publicado por rename somente depois da prova integral;
 - Nginx, systemd, OpenSSH, `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
 - units systemd habilitadas, porém inativas antes da primeira release; cada unit exige seu entrypoint
   imutável e limita tentativas de restart para não criar loop em host vazio ou artefato inválido;
-- pelo menos 1 GiB de swap para reduzir risco de OOM no shape de 1 GB; um arquivo existente maior e
-  válido é preservado em vez de ser reescrito durante um bootstrap idempotente;
+- pelo menos 1 GiB de swap para reduzir risco de OOM no shape de 1 GB; somente arquivo regular,
+  root-owned, `0600`, sem hard link e já formatado como swap é preservado, e qualquer estado inválido é
+  removido sem seguir symlink nem apagar diretório recursivamente antes da substituição atômica;
 - usuários sem login separados `setlivre-web` e `setlivre-backoffice`, além de
   `deploy-setlivre` para entrega;
 - units, sites Nginx, comando SSH forçado e instalador de release revisados no repositório.
@@ -204,7 +209,8 @@ mesmos bytes.
 
 Nginx substitui `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` e `X-Forwarded-For`; o último recebe
 somente `$remote_addr`, nunca uma cadeia fornecida pelo cliente. Respostas autenticadas não são
-cacheadas pelo proxy. `/api/auth/*` e `/api/commands` também recebem um limiter de borda por IP, com
+cacheadas pelo proxy. O `X-Request-Id` recebido é encaminhado sem reformatar para que a validação UUID
+da aplicação o preserve ou substitua. `/api/auth/*` e `/api/commands` também recebem um limiter de borda por IP, com
 média de uma request por segundo, burst de 30 sem atraso e resposta `429`. Demais rotas usam chave
 vazia e não consomem essa zona; os limiters específicos do app continuam sendo a segunda camada.
 Hosts desconhecidos são recusados. Nesta fase, somente o Host literal `147.15.97.227` chega ao web; o
@@ -218,7 +224,8 @@ A VM IPv4 usa Supavisor em **session mode**, porta 5432. O usuário de conexão 
 `app_runtime_production` e assumir `app_dal` por `options=-c role=app_dal`.
 
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
-inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. A migration cria a role
+inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é
+`CONNECT` sem grant option; qualquer outro grant direto bloqueia readiness. A migration cria a role
 como `NOLOGIN`; `scripts/provision-production-role.mjs` define a senha e habilita `LOGIN` uma única vez,
 somente nesse estado inicial, e então prova uma conexão real que assume `app_dal`. Quando a role já tem
 `LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM sem alterar a

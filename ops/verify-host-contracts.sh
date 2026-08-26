@@ -7,11 +7,16 @@ readonly PRODUCTION_SUPABASE_URL="https://oirvvnojgkzdppkdvhej.supabase.co"
 readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
 readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
+readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"
 nginx_test_active=false
+forced_command_sudoers_installed=false
 
 cleanup() {
   if [[ ${nginx_test_active} == true ]]; then
     sudo nginx -s stop >/dev/null 2>&1 || true
+  fi
+  if [[ ${forced_command_sudoers_installed} == true ]]; then
+    sudo rm -f -- "$FORCED_COMMAND_SUDOERS"
   fi
 }
 trap cleanup EXIT
@@ -193,11 +198,21 @@ set -Eeuo pipefail
 url="${!#}"
 phase="${SET_LIVRE_TEST_PHASE:-success}"
 candidate="${SET_LIVRE_TEST_CANDIDATE:-}"
+state="${SET_LIVRE_TEST_STATE:?}"
 release="$(sed -n 's/^APP_RELEASE_SHA=//p' /opt/set-livre/current/.runtime/release.env)"
 if [[ ${release} == "${candidate}" \
   && (( ${phase} == "internal-health" && ${url} == http://127.0.0.1:* ) \
     || ( ${phase} == "public-health" && ${url} == https://* )) ]]; then
   exit 22
+fi
+if [[ ${phase} == "rollback-public-health" ]]; then
+  if [[ ${release} == "${candidate}" && ${url} == http://127.0.0.1:* ]]; then
+    exit 22
+  fi
+  if [[ ${release} != "${candidate}" && ${url} == https://* ]]; then
+    touch "$state/rollback-public-health-observed"
+    exit 22
+  fi
 fi
 application=web
 [[ ${url} != *":3001/"* ]] || application=backoffice
@@ -255,6 +270,21 @@ exit 0
 JOURNAL
 chmod 0755 "$fake_bin"/*
 
+[[ ! -e ${FORCED_COMMAND_SUDOERS} ]] \
+  || fail "sudoers temporário do contrato já existe."
+[[ ${fake_bin} =~ ^/[A-Za-z0-9_./-]+$ ]] \
+  || fail "diretório de comandos controlados inválido."
+sudoers_source="$temporary_directory/set-livre-host-contracts.sudoers"
+{
+  printf 'Defaults:deploy-setlivre secure_path="%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n' \
+    "$fake_bin"
+  printf 'Defaults:deploy-setlivre env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"\n'
+  printf 'deploy-setlivre ALL=(root) NOPASSWD: /usr/local/sbin/set-livre-deploy\n'
+} > "$sudoers_source"
+sudo visudo --check --file "$sudoers_source"
+sudo install -o root -g root -m 0440 "$sudoers_source" "$FORCED_COMMAND_SUDOERS"
+forced_command_sudoers_installed=true
+
 package_candidate() {
   local candidate_sha="$1"
   candidate_directory="$temporary_directory/release-${candidate_sha}"
@@ -307,6 +337,18 @@ invoke_candidate() {
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$candidate_sha" "$candidate_checksum"
 }
 
+invoke_candidate_through_forced_command() {
+  local candidate_sha="$1"
+  local candidate_checksum="$2"
+  sudo --user deploy-setlivre -- \
+    env \
+    SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
+    SET_LIVRE_TEST_PHASE=success \
+    SET_LIVRE_TEST_STATE="$test_state" \
+    SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}" \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
+}
+
 assert_current_release() {
   local expected="$1"
   local current
@@ -346,7 +388,7 @@ sudo install -o root -g setlivre -m 0640 /dev/null "$stale_staging_directory/int
 rm -f -- "$test_state"/*
 package_candidate "$release_sha"
 upload_candidate "$release_sha"
-invoke_candidate "$release_sha" success
+invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"
 assert_current_release "$release_sha"
 [[ ! -e ${stale_staging_directory} ]] \
   || fail "staging residual validado não foi removido antes da ativação."
@@ -363,6 +405,14 @@ run_expected_failure "$(printf '2%.0s' {1..40})" symlink "$release_sha"
 run_expected_failure "$(printf '3%.0s' {1..40})" services "$release_sha"
 run_expected_failure "$(printf '4%.0s' {1..40})" internal-health "$release_sha"
 run_expected_failure "$(printf '5%.0s' {1..40})" public-health "$release_sha"
+rollback_public_sha="$(printf 'e%.0s' {1..40})"
+run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha"
+[[ -e "$test_state/rollback-public-health-observed" ]] \
+  || fail "rollback não consultou o readiness HTTPS público da release anterior."
+grep --fixed-strings --line-regexp \
+  'stop set-livre-web.service set-livre-backoffice.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "rollback sem readiness público não interrompeu os serviços."
 interrupted_sha="$(printf '6%.0s' {1..40})"
 run_expected_failure "$interrupted_sha" signal "$release_sha"
 

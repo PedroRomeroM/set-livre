@@ -149,6 +149,53 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("publishes only a fully validated Node runtime through an atomic rename", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const stagedValidation = bootstrap.indexOf(
+      'node_installation_is_valid "$node_staging_directory"',
+    );
+    const atomicPublish = bootstrap.indexOf(
+      'mv --no-target-directory -- "$node_staging_directory" "$NODE_INSTALLATION_DIRECTORY"',
+    );
+
+    expect(bootstrap).toContain(
+      'if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY"; then',
+    );
+    expect(bootstrap).not.toContain('if [[ ! -x "/opt/${NODE_DIRECTORY}/bin/node" ]]');
+    expect(bootstrap).toContain('mktemp --directory "/opt/.${NODE_DIRECTORY}.staging.XXXXXX"');
+    expect(bootstrap).toContain("--strip-components=1");
+    expect(bootstrap).toContain("path.resolve(strict=True)");
+    expect(bootstrap).toContain("target.relative_to(resolved_root)");
+    expect(bootstrap).toContain("stat.S_IMODE(root_stat.st_mode) != 0o755");
+    expect(bootstrap).toContain("metadata.st_uid != 0 or metadata.st_gid != 0");
+    expect(bootstrap).toContain("stat.S_IMODE(metadata.st_mode) & 0o022");
+    expect(bootstrap).toContain('chmod 0755 "$node_staging_directory"');
+    expect(bootstrap).toContain('"${directory}/bin/node" --version');
+    expect(stagedValidation).toBeGreaterThan(-1);
+    expect(atomicPublish).toBeGreaterThan(stagedValidation);
+  });
+
+  it("recreates an unsafe swapfile without following or recursively deleting its path", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const stagedValidation = bootstrap.indexOf('swapfile_is_valid "$swap_staging_file"');
+    const atomicPublish = bootstrap.indexOf(
+      'mv --no-target-directory -- "$swap_staging_file" "$SWAPFILE_PATH"',
+    );
+
+    expect(bootstrap).toContain("[[ -f ${path} && ! -L ${path} ]]");
+    expect(bootstrap).toContain("stat --format '%u %g %a %h %s' -- \"$path\"");
+    expect(bootstrap).toContain("(( bytes >= MINIMUM_SWAPFILE_BYTES ))");
+    expect(bootstrap).toContain("blkid --probe --match-tag TYPE --output value");
+    expect(bootstrap).toContain('[[ ${path} == "$SWAPFILE_PATH" ]]');
+    expect(bootstrap).toContain('rmdir -- "$path"');
+    expect(bootstrap).toContain('mktemp "${SWAPFILE_PATH}.staging.XXXXXX"');
+    expect(bootstrap).toContain('mkswap "$swap_staging_file"');
+    expect(bootstrap).not.toContain("if [[ ! -f /swapfile ]]");
+    expect(bootstrap).not.toContain('rm -rf -- "$SWAPFILE_PATH"');
+    expect(stagedValidation).toBeGreaterThan(-1);
+    expect(atomicPublish).toBeGreaterThan(stagedValidation);
+  });
+
   it("fails HTTP closed before TLS and rate-limits sensitive endpoints at the trusted edge", () => {
     for (const configuration of ["set-livre-http.conf", "set-livre-tls.conf"]) {
       const nginx = readFileSync(
@@ -186,6 +233,8 @@ describe("local tooling contracts", () => {
     expect(tls).toContain("return 308 https://147.15.97.227$request_uri;");
     expect(tls).toContain("listen 443 ssl default_server;");
     expect(tls).not.toContain("ssl_reject_handshake");
+    expect(tls).toContain("proxy_set_header X-Request-Id $http_x_request_id;");
+    expect(tls).not.toContain("proxy_set_header X-Request-Id $request_id;");
     expect(
       tls.match(/ssl_certificate \/etc\/letsencrypt\/live\/147\.15\.97\.227\/fullchain\.pem;/gu),
     ).toHaveLength(2);
@@ -227,6 +276,27 @@ describe("local tooling contracts", () => {
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
+    const deployBranchStart = command.indexOf(
+      "elif [[ ${original_command} =~ ^deploy\\ ([0-9a-f]{40})\\ ([0-9a-f]{64})$ ]]; then",
+    );
+    expect(deployBranchStart).toBeGreaterThan(-1);
+    const deployBranch = command.slice(deployBranchStart);
+    expect(deployBranch.indexOf('expected_checksum="${BASH_REMATCH[2]}"')).toBeLessThan(
+      deployBranch.indexOf('cleanup_abandoned_uploads "$release_sha"'),
+    );
+    expect(deployBranch).toContain(
+      'exec sudo /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"',
+    );
+    expect(hostVerification).toContain(
+      'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
+    );
+    expect(hostVerification).toContain(
+      'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
+    );
+    expect(hostVerification).toContain(
+      'invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"',
+    );
+    expect(hostVerification).toContain("rollback-public-health-observed");
     expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     expect(deploy).toContain("readiness HTTPS público");
@@ -241,6 +311,11 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("remove_stale_trusted_files");
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
     expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
+    const rollbackStart = deploy.indexOf("rollback_activation() {");
+    const rollbackEnd = deploy.indexOf("\non_exit() {", rollbackStart);
+    const rollback = deploy.slice(rollbackStart, rollbackEnd);
+    expect(rollback).toContain('wait_for_health "$recovered_release"');
+    expect(rollback).toContain('wait_for_public_health "$recovered_release"');
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
     expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(

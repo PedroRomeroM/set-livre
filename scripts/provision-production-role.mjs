@@ -3,7 +3,10 @@ import { pathToFileURL } from "node:url";
 
 import { Client } from "pg";
 
-import { parseDalDatabaseUrl } from "../packages/contracts/src/database-contract.ts";
+import {
+  databaseMigrationHead,
+  parseDalDatabaseUrl,
+} from "../packages/contracts/src/database-contract.ts";
 
 const productionRole = "app_runtime_production";
 export const productionCoordinates = Object.freeze({
@@ -195,6 +198,25 @@ export async function provisionProductionRole(environment = process.env) {
     );
     if (managedBoundaries.rowCount !== 1 || managedBoundaries.rows[0]?.ready !== true) {
       throw new Error("As fronteiras gerenciadas do Supabase não estão restritas para o runtime.");
+    }
+
+    const databaseReadiness = await admin.query(
+      `
+        select
+          private.check_readiness($1::text) as ready,
+          (
+            select pg_catalog.max(migration.version)::text = $1::text
+            from supabase_migrations.schema_migrations as migration
+          ) as "migrationHeadIsCurrent"
+      `,
+      [databaseMigrationHead],
+    );
+    if (
+      databaseReadiness.rowCount !== 1 ||
+      databaseReadiness.rows[0]?.ready !== true ||
+      databaseReadiness.rows[0]?.migrationHeadIsCurrent !== true
+    ) {
+      throw new Error("A migration head de produção ou a fronteira DAL diverge do candidato.");
     }
 
     const activationMode = productionRoleActivationMode(runtimeRole);

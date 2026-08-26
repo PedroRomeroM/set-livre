@@ -642,12 +642,41 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         from pg_catalog.pg_auth_members as membership
         where membership.member = role.oid
       )
+      and not exists (
+        select 1
+        from pg_catalog.pg_shdepend as dependency
+        where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+          and dependency.refobjid = role.oid
+          and dependency.deptype = 'o'
+      )
   ),
-  migration_is_current as (
+  migration_is_applied as (
     select
       expected_version ~ '^[0-9]{14}$'
-      and pg_catalog.max(migration.version) = expected_version as ready
-    from supabase_migrations.schema_migrations as migration
+      and exists (
+        select 1
+        from supabase_migrations.schema_migrations as migration
+        where migration.version = expected_version
+      ) as ready
+  ),
+  authorized_dal_routines(oid) as (
+    values
+      (pg_catalog.to_regprocedure('private.activate_owner(uuid,uuid,uuid,uuid,text)')),
+      (pg_catalog.to_regprocedure('private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])')),
+      (pg_catalog.to_regprocedure('private.check_readiness(text)')),
+      (pg_catalog.to_regprocedure('private.check_runtime_readiness(text)')),
+      (pg_catalog.to_regprocedure('private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.close_identity_recovery_session(uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.complete_profile(uuid,bigint,text,text,text,text,text)')),
+      (pg_catalog.to_regprocedure('private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)')),
+      (pg_catalog.to_regprocedure('private.get_owner_recipient_status_for_user(uuid)')),
+      (pg_catalog.to_regprocedure('private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.issue_identity_recovery_context(uuid,uuid,timestamptz)')),
+      (pg_catalog.to_regprocedure('private.prepare_owner_recipient_operation(uuid,text,uuid)')),
+      (pg_catalog.to_regprocedure('private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.update_profile_appearance(uuid,bigint,text)')),
+      (pg_catalog.to_regprocedure('private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'))
   ),
   direct_schema_grants_are_restricted as (
     select
@@ -663,17 +692,42 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     where privilege.grantee = dal_role.oid
   ),
   direct_routine_grants_are_restricted as (
+    select
+      pg_catalog.count(*) = (select pg_catalog.count(*) from authorized_dal_routines)
+      and coalesce(
+        pg_catalog.bool_and(
+          namespace.nspname = 'private'
+          and routine.oid in (select authorized.oid from authorized_dal_routines as authorized)
+          and privilege.privilege_type = 'EXECUTE'
+          and not privilege.is_grantable
+        ),
+        false
+      )
+      and not exists (
+        select 1
+        from authorized_dal_routines as authorized
+        where authorized.oid is null
+      ) as ready
+    from pg_catalog.pg_proc as routine
+    join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
+    cross join dal_role
+    where privilege.grantee = dal_role.oid
+  ),
+  effective_private_routine_grants_are_restricted as (
     select not exists (
       select 1
       from pg_catalog.pg_proc as routine
       join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
-      cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
-      cross join dal_role
-      where privilege.grantee = dal_role.oid
+      where namespace.nspname = 'private'
         and (
-          namespace.nspname <> 'private'
-          or privilege.privilege_type <> 'EXECUTE'
-          or privilege.is_grantable
+          pg_catalog.has_function_privilege('app_dal', routine.oid, 'EXECUTE')
+            <> (routine.oid in (select authorized.oid from authorized_dal_routines as authorized))
+          or pg_catalog.has_function_privilege(
+            'app_dal',
+            routine.oid,
+            'EXECUTE WITH GRANT OPTION'
+          )
         )
     ) as ready
   ),
@@ -681,34 +735,93 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     select not exists (
       select 1
       from pg_catalog.pg_class as relation
+      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
       cross join lateral pg_catalog.aclexplode(relation.relacl) as privilege
       cross join dal_role
-      where privilege.grantee = dal_role.oid
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
 
       union all
 
       select 1
       from pg_catalog.pg_attribute as attribute
+      join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
       cross join lateral pg_catalog.aclexplode(attribute.attacl) as privilege
       cross join dal_role
-      where privilege.grantee = dal_role.oid
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
 
       union all
 
       select 1
       from pg_catalog.pg_type as type_object
+      join pg_catalog.pg_namespace as namespace on namespace.oid = type_object.typnamespace
       cross join lateral pg_catalog.aclexplode(type_object.typacl) as privilege
       cross join dal_role
-      where privilege.grantee = dal_role.oid
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
 
       union all
 
       select 1
       from pg_catalog.pg_default_acl as defaults
+      left join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
       cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as privilege
       cross join dal_role
-      where privilege.grantee = dal_role.oid
+      where defaults.defaclrole = (
+          select role.oid from pg_catalog.pg_roles as role where role.rolname = 'postgres'
+        )
+        and (defaults.defaclnamespace = 0 or namespace.nspname in ('audit', 'private', 'public'))
+        and privilege.grantee in (0, dal_role.oid)
     ) as ready
+  ),
+  dal_memberships_are_restricted as (
+    select
+      exists (
+        select 1
+        from pg_catalog.pg_auth_members as membership
+        join pg_catalog.pg_roles as member on member.oid = membership.member
+        where membership.roleid = dal_role.oid
+          and member.rolname = 'app_runtime_production'
+          and not membership.admin_option
+          and not membership.inherit_option
+          and membership.set_option
+      )
+      and not exists (
+        select 1
+        from pg_catalog.pg_auth_members as membership
+        join pg_catalog.pg_roles as member on member.oid = membership.member
+        where membership.roleid = dal_role.oid
+          and not (
+            (
+              member.rolname = 'app_runtime_production'
+              and not membership.admin_option
+              and not membership.inherit_option
+              and membership.set_option
+            )
+            or (
+              member.rolname = 'app_runtime_local'
+              and not membership.admin_option
+              and not membership.inherit_option
+              and membership.set_option
+              and exists (
+                select 1
+                from pg_catalog.pg_database as database
+                where database.datname = pg_catalog.current_database()
+                  and pg_catalog.shobj_description(database.oid, 'pg_database')
+                    like 'set-livre-e2e:%'
+              )
+            )
+            or (
+              member.rolname = 'postgres'
+              and membership.admin_option
+              and not membership.inherit_option
+              and not membership.set_option
+            )
+          )
+      ) as ready
+    from dal_role
   ),
   public_tables_use_rls as (
     select coalesce(pg_catalog.bool_and(relation.relrowsecurity), true) as ready
@@ -718,11 +831,13 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
       and relation.relkind in ('p', 'r')
   )
   select coalesce(
-    (select ready from migration_is_current)
+    (select ready from migration_is_applied)
     and pg_catalog.current_setting('app.settings.jwt_exp', true) = '3600'
     and (select ready from direct_schema_grants_are_restricted)
     and (select ready from direct_routine_grants_are_restricted)
+    and (select ready from effective_private_routine_grants_are_restricted)
     and (select ready from direct_data_grants_are_absent)
+    and (select ready from dal_memberships_are_restricted)
     and (select ready from public_tables_use_rls)
     and private.managed_runtime_boundaries_are_ready()
     and not pg_catalog.has_schema_privilege('public', 'public', 'CREATE')
@@ -743,7 +858,7 @@ $_$;
 ALTER FUNCTION "private"."check_readiness"("expected_version" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health check objetivo: migration atual, role DAL mínima, RLS e ausência de grants diretos de dados.';
+COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health do app: migration aplicada e compatível com rollback, role DAL mínima, RLS e allowlists exatas.';
 
 
 
@@ -805,11 +920,44 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
     join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
     cross join session_role
     where membership.member = session_role.oid
+  ),
+  direct_database_privilege_is_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        privilege.grantee = session_role.oid
+        and privilege.privilege_type = 'CONNECT'
+        and not privilege.is_grantable
+      ) as ready
+    from pg_catalog.pg_database as database
+    cross join lateral pg_catalog.aclexplode(database.datacl) as privilege
+    cross join session_role
+    where database.datname = pg_catalog.current_database()
+      and privilege.grantee = session_role.oid
+  ),
+  direct_acl_dependencies_are_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        dependency.dbid = 0
+        and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
+        and dependency.objid = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and dependency.objsubid = 0
+      ) as ready
+    from pg_catalog.pg_shdepend as dependency
+    cross join session_role
+    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      and dependency.refobjid = session_role.oid
+      and dependency.deptype = 'a'
   )
   select coalesce(
     pg_catalog.current_setting('role', true) = 'app_dal'
     and pg_catalog.pg_has_role(session_user, 'app_dal', 'MEMBER')
     and (select ready from memberships_are_restricted)
+    and (select ready from direct_database_privilege_is_restricted)
+    and (select ready from direct_acl_dependencies_are_restricted)
     and private.managed_runtime_boundaries_are_ready()
     and not pg_catalog.has_database_privilege(
       session_user,
@@ -837,7 +985,7 @@ $$;
 ALTER FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Health check do login restrito que assume app_dal sem atributos ou privilégios elevados.';
+COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Health do login restrito: assume app_dal e possui somente CONNECT direto, sem ownership ou ACL adicional.';
 
 
 

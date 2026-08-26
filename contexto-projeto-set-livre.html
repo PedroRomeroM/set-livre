@@ -112,18 +112,15 @@
             deploy.
           </li>
           <li>
-            Release standalone Linux x86_64 reúne código e ambientes do mesmo SHA; symlink atômico,
-            readiness e marcador de recuperação protegem rollback e reboot durante a ativação.
-          </li>
-          <li>
-            O produtor materializa links restritos ao standalone ou às dependências do lockfile e
-            inodes compartilhados como entradas independentes; referências externas, ciclos e
-            objetos especiais são recusados, e o host continua rejeitando links fora do contrato.
+            Releases standalone Linux x86_64 mantêm código e ambientes do mesmo SHA; ativação
+            atômica, readiness e recuperação automática preservam a versão anterior em caso de falha
+            ou reboot.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
-            catálogo gerenciado legível contém configuração nomeada como segredo; grants diretos de
-            <code>CREATE/TEMP</code> também bloqueiam o provisionamento e o health.
+            catálogo gerenciado legível contém configuração nomeada como segredo. Readiness também
+            bloqueia comando, grant, membro ou ownership fora das allowlists e preserva a release
+            anterior somente quando seu schema permanece aplicado e compatível.
           </li>
         </ul>
       </section>
@@ -137,42 +134,10 @@
           correção até uma declaração explícita de review limpo no SHA atual.
         </p>
         <p>
-          A análise Knip descobre as specs Playwright por entradas explícitas e não carrega a
-          configuração runtime que exige o ambiente E2E destrutivo; assim, o gate produz o mesmo
-          resultado em um checkout Linux limpo e no Windows de desenvolvimento.
-        </p>
-        <p>
-          Mutations que carregam e-mail ou senha executam uma única tentativa mesmo sob sinal
-          offline e terminam limpando a referência efêmera; credenciais nunca ficam em uma fila
-          TanStack para reenvio tardio após reconexão.
-        </p>
-        <p>
-          O E2E da transição ambígua usa uma resposta inválida determinística entre engines; timeout
-          e rejeição real de transporte ficam cobertos por unitários, sem retry ou aumento
-          artificial de timeout.
-        </p>
-        <p>
-          As barreiras assíncronas do cenário composto de perfil possuem timeout diagnóstico
-          próprio, e a revalidação de privacidade sincroniza o evento real de visibilidade com o
-          início da request interceptada. Assim, uma corrida do harness falha cedo e nominalmente,
-          sem mascarar defeito com retry.
-        </p>
-        <p>
-          A recuperação online desse cenário comprova a confirmação visível, a contagem exata de
-          comandos e uma releitura autoritativa, todas com limite próprio. Os testes de reflow não
-          aguardam <code>networkidle</code> do HMR: prontidão significa heading renderizado,
-          documento completo, viewport correto e ausência de overflow.
-        </p>
-        <p>
-          A prova de alcance vertical no reflow repete a rolagem até o fim atual do documento junto
-          de cada medição limitada. Isso cobre estabilizações tardias de layout entre os dois apps
-          sem retry de cenário, aumento de timeout ou enfraquecimento da checagem de overflow.
-        </p>
-        <p>
-          A simulação E2E de timeout de leitura usa um transporte pendente no navegador e termina
-          pelo AbortSignal real da aplicação. Assim, não mantém callbacks de interceptação do
-          Playwright presos depois do cancelamento e continua provando mensagem de recuperação e
-          remoção de PII sem retry ou relaxamento do timeout global.
+          O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
+          multiengine, acessibilidade, builds standalone e contratos de host. Testes não usam retry,
+          timeout ampliado ou relaxamento de asserção para mascarar falhas; resultados de cada
+          execução permanecem no PR e nos checks.
         </p>
         <p>
           O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
@@ -180,19 +145,9 @@
           <code>pg_roles</code> exigida pelas migrations oficiais do Storage.
         </p>
         <p>
-          Merge em <code>main</code> aplica migrations forward-only e publica na VM. Timeout ou
-          serviço indisponível é inconclusivo. Falha pós-merge abre nova branch e repete o ciclo
-          completo.
-        </p>
-        <p>
-          O CI compila o artifact Linux com fixtures das coordenadas de produção antes do smoke. O
-          instalador também remove staging residual validado depois de reboot ou
-          <code>SIGKILL</code>, sem aceitar nome, owner ou tipo genérico.
-        </p>
-        <p>
-          Uploads são limitados a um SHA. Um watcher aguarda o lock e recupera serviços após
-          <code>SIGKILL</code>; bootstrap incompatível mantém a release antiga parada até o artifact
-          do novo contrato.
+          Merge em <code>main</code> aplica migrations forward-only e publica uma release imutável
+          na VM, com health interno e público, rollback e recuperação após interrupção. Timeout ou
+          serviço indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
         </p>
       </section>
 

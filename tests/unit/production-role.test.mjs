@@ -99,7 +99,7 @@ describe("production role provisioning", () => {
     );
   });
 
-  it("validates managed boundaries before enabling the production login", () => {
+  it("validates managed boundaries and the exact deployment head before enabling login", () => {
     const source = readFileSync(
       new URL("../../scripts/provision-production-role.mjs", import.meta.url),
       "utf8",
@@ -107,10 +107,14 @@ describe("production role provisioning", () => {
     const boundaryCheck = source.indexOf(
       "select private.managed_runtime_boundaries_are_ready() as ready",
     );
+    const databaseReadiness = source.indexOf("private.check_readiness($1::text) as ready");
+    const exactMigrationHead = source.indexOf("pg_catalog.max(migration.version)::text = $1::text");
     const passwordActivation = source.indexOf("alter role app_runtime_production login password");
 
     expect(boundaryCheck).toBeGreaterThan(-1);
-    expect(passwordActivation).toBeGreaterThan(boundaryCheck);
+    expect(databaseReadiness).toBeGreaterThan(boundaryCheck);
+    expect(exactMigrationHead).toBeGreaterThan(databaseReadiness);
+    expect(passwordActivation).toBeGreaterThan(exactMigrationHead);
     expect(source).not.toContain("app.settings.jwt_secret");
   });
 });

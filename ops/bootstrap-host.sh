@@ -3,9 +3,12 @@ set -Eeuo pipefail
 
 readonly NODE_VERSION="24.18.0"
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
+readonly NODE_INSTALLATION_DIRECTORY="/opt/${NODE_DIRECTORY}"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly CERTBOT_MINIMUM_VERSION="5.4.0"
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
+readonly MINIMUM_SWAPFILE_BYTES=$((1024 * 1024 * 1024))
+readonly SWAPFILE_PATH="/swapfile"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -27,10 +30,163 @@ fail2ban_stopped=false
 digest_source=""
 active_release_sha=""
 active_release_compatible=false
+node_staging_directory=""
+node_previous_directory=""
+swap_staging_file=""
 
 fail() {
   printf 'bootstrap: %s\n' "$1" >&2
   exit 1
+}
+
+node_transient_path_is_managed() {
+  local path="$1"
+  local prefix="/opt/.${NODE_DIRECTORY}."
+  local remainder
+  [[ ${path} == "$prefix"* ]] || return 1
+  remainder="${path:${#prefix}}"
+  [[ ${remainder} =~ ^(staging|previous)\.[A-Za-z0-9]{6}$ ]]
+}
+
+remove_node_transient_path() {
+  local path="$1"
+  node_transient_path_is_managed "$path" || return 1
+  [[ -e ${path} || -L ${path} ]] || return 0
+  if [[ -d ${path} && ! -L ${path} ]] && mountpoint --quiet -- "$path"; then
+    return 1
+  fi
+  rm -rf --one-file-system -- "${path:?}"
+}
+
+cleanup_stale_node_transients() {
+  local path
+  while IFS= read -r -d '' path; do
+    remove_node_transient_path "$path" || return 1
+  done < <(
+    find /opt -mindepth 1 -maxdepth 1 \
+      \( -name ".${NODE_DIRECTORY}.staging.*" -o -name ".${NODE_DIRECTORY}.previous.*" \) \
+      -print0
+  )
+}
+
+node_installation_is_valid() {
+  local directory="$1"
+  if [[ ${directory} != "$NODE_INSTALLATION_DIRECTORY" ]]; then
+    node_transient_path_is_managed "$directory" || return 1
+  fi
+  python3 - "$directory" <<'PYTHON'
+import os
+import pathlib
+import stat
+import sys
+
+root = pathlib.Path(sys.argv[1])
+try:
+    root_stat = root.lstat()
+    resolved_root = root.resolve(strict=True)
+except OSError:
+    raise SystemExit(1)
+if not stat.S_ISDIR(root_stat.st_mode) or root.is_symlink():
+    raise SystemExit(1)
+if root_stat.st_uid != 0 or root_stat.st_gid != 0 or stat.S_IMODE(root_stat.st_mode) != 0o755:
+    raise SystemExit(1)
+
+required_regular_files = (
+    root / "bin/node",
+    root / "lib/node_modules/npm/bin/npm-cli.js",
+)
+required_commands = (root / "bin/npm", root / "bin/npx")
+
+for current_root, directory_names, file_names in os.walk(root, followlinks=False):
+    for name in (*directory_names, *file_names):
+        path = pathlib.Path(current_root) / name
+        try:
+            metadata = path.lstat()
+        except OSError:
+            raise SystemExit(1)
+        if metadata.st_uid != 0 or metadata.st_gid != 0:
+            raise SystemExit(1)
+        if stat.S_ISLNK(metadata.st_mode):
+            try:
+                target = path.resolve(strict=True)
+                target.relative_to(resolved_root)
+            except (OSError, ValueError):
+                raise SystemExit(1)
+            if not target.is_file():
+                raise SystemExit(1)
+        elif stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
+            if stat.S_IMODE(metadata.st_mode) & 0o022:
+                raise SystemExit(1)
+        else:
+            raise SystemExit(1)
+
+for path in required_regular_files:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        raise SystemExit(1)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit(1)
+for path in required_commands:
+    try:
+        target = path.resolve(strict=True)
+        target.relative_to(resolved_root)
+    except (OSError, ValueError):
+        raise SystemExit(1)
+    if not target.is_file():
+        raise SystemExit(1)
+if not os.access(root / "bin/node", os.X_OK):
+    raise SystemExit(1)
+PYTHON
+  [[ "$("${directory}/bin/node" --version)" == "v${NODE_VERSION}" ]] || return 1
+  local npm_version
+  npm_version="$(
+    "${directory}/bin/node" "${directory}/lib/node_modules/npm/bin/npm-cli.js" --version
+  )" || return 1
+  [[ ${npm_version} =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+}
+
+swapfile_is_active() {
+  local path="$1"
+  swapon --show=NAME --noheadings --raw 2>/dev/null \
+    | grep --fixed-strings --line-regexp -- "$path" >/dev/null
+}
+
+swapfile_is_valid() {
+  local path="$1"
+  local owner group mode links bytes filesystem_type
+  [[ -f ${path} && ! -L ${path} ]] || return 1
+  IFS=' ' read -r owner group mode links bytes < <(
+    stat --format '%u %g %a %h %s' -- "$path"
+  )
+  [[ ${owner} == 0 && ${group} == 0 && ${mode} == 600 && ${links} == 1 ]] || return 1
+  (( bytes >= MINIMUM_SWAPFILE_BYTES )) || return 1
+  filesystem_type="$(
+    blkid --probe --match-tag TYPE --output value -- "$path" 2>/dev/null || true
+  )"
+  [[ ${filesystem_type} == swap ]]
+}
+
+remove_invalid_swapfile() {
+  local path="$1"
+  local resolved=""
+  [[ ${path} == "$SWAPFILE_PATH" ]] || fail "caminho de swap fora do contrato."
+  if swapfile_is_active "$path"; then
+    swapoff -- "$path"
+  elif [[ -L ${path} ]]; then
+    resolved="$(readlink --canonicalize-existing -- "$path" 2>/dev/null || true)"
+    if [[ -n ${resolved} ]] && swapfile_is_active "$resolved"; then
+      swapoff -- "$resolved"
+    fi
+  fi
+
+  if [[ -L ${path} || -f ${path} ]]; then
+    rm -f -- "$path"
+  elif [[ -d ${path} ]]; then
+    rmdir -- "$path" || fail "diretório /swapfile não vazio; remoção automática recusada."
+  elif [[ -e ${path} ]]; then
+    fail "/swapfile possui tipo especial; remoção automática recusada."
+  fi
 }
 
 wait_for_active_health() {
@@ -65,6 +221,23 @@ cleanup() {
     else
       rm -f -- /etc/iptables/rules.v6
     fi
+  fi
+  if [[ -n ${node_previous_directory} \
+    && ( -e ${node_previous_directory} || -L ${node_previous_directory} ) ]]; then
+    if [[ ! -e ${NODE_INSTALLATION_DIRECTORY} && ! -L ${NODE_INSTALLATION_DIRECTORY} ]]; then
+      mv --no-target-directory -- "$node_previous_directory" "$NODE_INSTALLATION_DIRECTORY" \
+        || true
+    else
+      remove_node_transient_path "$node_previous_directory" || true
+    fi
+  fi
+  if [[ -n ${node_staging_directory} ]]; then
+    remove_node_transient_path "$node_staging_directory" || true
+  fi
+  if [[ -n ${swap_staging_file} \
+    && ${swap_staging_file} =~ ^/swapfile[.]staging[.][A-Za-z0-9]{6}$ \
+    && -f ${swap_staging_file} && ! -L ${swap_staging_file} ]]; then
+    rm -f -- "$swap_staging_file"
   fi
   [[ -z ${temporary_directory} ]] || rm -rf -- "$temporary_directory"
   [[ -z ${ipv4_rules} ]] || rm -f -- "$ipv4_rules"
@@ -209,7 +382,7 @@ certbot_version="$(/snap/bin/certbot --version | awk '{ print $2 }')"
 dpkg --compare-versions "$certbot_version" ge "$CERTBOT_MINIMUM_VERSION" \
   || fail "Certbot ${CERTBOT_MINIMUM_VERSION} ou superior é obrigatório para certificado de IP via webroot."
 
-if [[ ! -x "/opt/${NODE_DIRECTORY}/bin/node" ]]; then
+if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY"; then
   temporary_directory="$(mktemp -d)"
   archive="${NODE_DIRECTORY}.tar.xz"
   curl --fail --location --proto '=https' --tlsv1.2 \
@@ -222,11 +395,39 @@ if [[ ! -x "/opt/${NODE_DIRECTORY}/bin/node" ]]; then
     cd -- "$temporary_directory"
     grep --fixed-strings " ${archive}" SHASUMS256.txt | sha256sum --check --strict
   )
-  tar --extract --xz --file "${temporary_directory}/${archive}" --directory /opt
+  node_staging_directory="$(mktemp --directory "/opt/.${NODE_DIRECTORY}.staging.XXXXXX")"
+  chmod 0755 "$node_staging_directory"
+  tar --extract --xz --file "${temporary_directory}/${archive}" \
+    --directory "$node_staging_directory" \
+    --strip-components=1 \
+    --no-same-owner \
+    --no-same-permissions
+  node_installation_is_valid "$node_staging_directory" \
+    || fail "runtime Node preparado não atende ao contrato integral."
+
+  if [[ -e ${NODE_INSTALLATION_DIRECTORY} || -L ${NODE_INSTALLATION_DIRECTORY} ]]; then
+    node_previous_directory="$(
+      mktemp --directory "/opt/.${NODE_DIRECTORY}.previous.XXXXXX"
+    )"
+    rmdir -- "$node_previous_directory"
+    mv --no-target-directory -- "$NODE_INSTALLATION_DIRECTORY" "$node_previous_directory" \
+      || fail "runtime Node inválido não pôde ser isolado."
+  fi
+  mv --no-target-directory -- "$node_staging_directory" "$NODE_INSTALLATION_DIRECTORY" \
+    || fail "runtime Node validado não pôde ser publicado atomicamente."
+  node_staging_directory=""
+  cleanup_stale_node_transients \
+    || fail "runtime Node transitório não pôde ser removido com segurança."
+  node_previous_directory=""
   rm -rf -- "$temporary_directory"
   temporary_directory=""
+else
+  cleanup_stale_node_transients \
+    || fail "runtime Node transitório não pôde ser removido com segurança."
 fi
-ln --symbolic --force --no-dereference "/opt/${NODE_DIRECTORY}" /opt/node
+node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY" \
+  || fail "runtime Node instalado não atende ao contrato integral."
+ln --symbolic --force --no-dereference "$NODE_INSTALLATION_DIRECTORY" /opt/node
 
 for service_group in setlivre setlivre-web setlivre-backoffice; do
   if ! getent group "$service_group" >/dev/null; then
@@ -491,14 +692,24 @@ fail2ban-client status sshd >/dev/null
 fail2ban_stopped=false
 firewall_transition_active=false
 
-if [[ ! -f /swapfile ]]; then
-  fallocate --length 1G /swapfile
-  chmod 0600 /swapfile
-  mkswap /swapfile
+if ! swapfile_is_valid "$SWAPFILE_PATH"; then
+  remove_invalid_swapfile "$SWAPFILE_PATH"
+  swap_staging_file="$(mktemp "${SWAPFILE_PATH}.staging.XXXXXX")"
+  fallocate --length "$MINIMUM_SWAPFILE_BYTES" "$swap_staging_file"
+  chown root:root "$swap_staging_file"
+  chmod 0600 "$swap_staging_file"
+  mkswap "$swap_staging_file"
+  swapfile_is_valid "$swap_staging_file" \
+    || fail "swapfile preparado não atende ao contrato de segurança."
+  mv --no-target-directory -- "$swap_staging_file" "$SWAPFILE_PATH"
+  swap_staging_file=""
 fi
-if ! swapon --show=NAME --noheadings | grep --fixed-strings --line-regexp /swapfile >/dev/null; then
-  swapon /swapfile
+swapfile_is_valid "$SWAPFILE_PATH" \
+  || fail "swapfile instalado não atende ao contrato de segurança."
+if ! swapfile_is_active "$SWAPFILE_PATH"; then
+  swapon -- "$SWAPFILE_PATH"
 fi
+swapfile_is_active "$SWAPFILE_PATH" || fail "swapfile não foi ativado."
 if ! grep --fixed-strings --line-regexp '/swapfile none swap sw 0 0' /etc/fstab >/dev/null; then
   printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
 fi

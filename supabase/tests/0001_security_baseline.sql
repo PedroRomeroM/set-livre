@@ -1,6 +1,6 @@
 begin;
 
-select plan(25);
+select plan(32);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -224,10 +224,117 @@ select ok(
   private.check_readiness('20260824000100'),
   'readiness aceita a migration head atual'
 );
+
+insert into supabase_migrations.schema_migrations(version, statements, name)
+values ('20260815000100', array[]::text[], 'rollback-readiness-probe');
+select ok(
+  private.check_readiness('20260815000100'),
+  'readiness mantém uma migration aplicada apta ao rollback expand/contract'
+);
+delete from supabase_migrations.schema_migrations where version = '20260815000100';
+
 select ok(
   not private.check_readiness('20260815000100'),
-  'readiness rejeita uma migration head anterior'
+  'readiness rejeita uma migration que não foi aplicada'
 );
+
+grant execute on function private.profile_command_result(uuid) to app_dal;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita rotina privada fora da allowlist DAL'
+);
+revoke execute on function private.profile_command_result(uuid) from app_dal;
+
+grant select on table private.identity_recovery_grants to public;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita acesso a dados herdado por PUBLIC'
+);
+revoke select on table private.identity_recovery_grants from public;
+
+create role readiness_intruder nologin noinherit;
+grant app_dal to readiness_intruder with admin false, inherit false, set true;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita membro inesperado de app_dal'
+);
+revoke app_dal from readiness_intruder;
+drop role readiness_intruder;
+
+create extension if not exists dblink with schema extensions;
+
+select extensions.dblink_connect(
+  'readiness_owner_probe',
+  pg_catalog.format(
+    'host=%s port=%s dbname=%I user=%I password=%s',
+    pg_catalog.inet_server_addr(),
+    pg_catalog.inet_server_port(),
+    pg_catalog.current_database(),
+    'supabase_admin',
+    'postgres'
+  )
+);
+select extensions.dblink_exec(
+  'readiness_owner_probe',
+  'drop table if exists private.readiness_owner_probe; '
+    || 'create table private.readiness_owner_probe(id integer primary key); '
+    || 'alter table private.readiness_owner_probe owner to app_dal'
+);
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita qualquer objeto pertencente a app_dal'
+);
+select extensions.dblink_exec(
+  'readiness_owner_probe',
+  'drop table private.readiness_owner_probe'
+);
+select extensions.dblink_disconnect('readiness_owner_probe');
+
+select ok(
+  (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        dependency.dbid = 0
+        and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
+        and dependency.objid = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and dependency.objsubid = 0
+      )
+    from pg_catalog.pg_shdepend as dependency
+    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
+    where role.rolname = 'app_runtime_local'
+      and dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      and dependency.deptype = 'a'
+  ),
+  'manifesto de ACL do runtime contém somente o CONNECT direto esperado'
+);
+
+grant usage on schema audit to app_runtime_local;
+select ok(
+  not (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        dependency.dbid = 0
+        and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
+        and dependency.objid = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and dependency.objsubid = 0
+      )
+    from pg_catalog.pg_shdepend as dependency
+    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
+    where role.rolname = 'app_runtime_local'
+      and dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      and dependency.deptype = 'a'
+  ),
+  'manifesto de ACL rejeita grant direto adicional no login'
+);
+revoke usage on schema audit from app_runtime_local;
 
 alter role app_dal login;
 select ok(
