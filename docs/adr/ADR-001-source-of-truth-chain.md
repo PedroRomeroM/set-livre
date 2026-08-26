@@ -16,6 +16,11 @@ Adotar a cadeia:
 
 O Blueprint anexado é a referência arquitetural confiável. ADRs aplicam seus princípios ao domínio. A especificação fecha produto. Documentos vivos descrevem o estado atual.
 
+A árvore da seção 5 do Blueprint é ilustrativa, não um manifesto literal de arquivos. A organização
+vigente está no índice `docs/README.md`; documentos podem ser consolidados ou renomeados por ADR sem
+editar a cópia íntegra do Blueprint. Por isso o antigo `docs/context.md` foi absorvido pelas fontes
+especializadas e pelo resumo executivo `contexto-projeto-set-livre.html`.
+
 ## Alternativas
 
 - Documento único: rejeitado por acoplamento e dificuldade de manutenção.

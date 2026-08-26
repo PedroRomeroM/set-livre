@@ -13,8 +13,8 @@ Implementado:
 - banco local com migrations, grants, RLS e testes destrutivos;
 - health checks de liveness/readiness.
 
-A ordem das próximas features está em [`docs/roadmap.md`](docs/roadmap.md). A infraestrutura de
-produção é tratada nesta branch e só será declarada pronta após deploy e health públicos verdes.
+A ordem das próximas features está em [`docs/roadmap.md`](docs/roadmap.md). O estado de produção só é
+considerado saudável quando o deployment do SHA atual e o health público terminam verdes.
 
 ## Stack
 
@@ -81,7 +81,7 @@ ops/               configuração versionada da VM e release
 docs/              contratos vivos, ADRs, roadmap e runbooks
 ```
 
-`ops/` e os workflows são adicionados pela etapa de infraestrutura atual.
+`ops/` e os workflows são as superfícies canônicas da infraestrutura e da entrega automatizada.
 
 ## Documentação
 

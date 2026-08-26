@@ -9,6 +9,7 @@ import {
   validateSchemaSnapshot,
 } from "../../scripts/database-artifacts.mjs";
 import { parseSupabaseCliError, parseSupabaseStatus } from "../../scripts/local-setup.mjs";
+import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
   it("keeps the Supabase CA valid and wired into CI and both production services", () => {
@@ -61,13 +62,24 @@ describe("local tooling contracts", () => {
       new URL("../../ops/systemd/set-livre-backoffice.service", import.meta.url),
       "utf8",
     );
+    const recoveryUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-release-recovery.service", import.meta.url),
+      "utf8",
+    );
 
     expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(3);
-    expect(bootstrap).toContain("web.env:setlivre-web backoffice.env:setlivre-backoffice");
     expect(webUnit).toContain("User=setlivre-web");
     expect(webUnit).not.toContain("User=setlivre-backoffice");
+    expect(webUnit).toContain("ConditionPathExists=/opt/set-livre/current/web/server.js");
+    expect(webUnit).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
     expect(backofficeUnit).toContain("User=setlivre-backoffice");
     expect(backofficeUnit).not.toContain("User=setlivre-web\n");
+    expect(backofficeUnit).toContain(
+      "ConditionPathExists=/opt/set-livre/current/backoffice/apps/backoffice/server.js",
+    );
+    expect(backofficeUnit).toContain(
+      "EnvironmentFile=/opt/set-livre/current/.runtime/backoffice.env",
+    );
     for (const unit of [webUnit, backofficeUnit]) {
       for (const hardening of [
         "AmbientCapabilities=",
@@ -79,11 +91,22 @@ describe("local tooling contracts", () => {
         "RemoveIPC=true",
         "RestrictNamespaces=true",
         "RestrictRealtime=true",
+        "StartLimitBurst=5",
+        "StartLimitIntervalSec=60s",
         "UMask=0077",
       ]) {
         expect(unit).toContain(hardening);
       }
     }
+    expect(bootstrap).toContain("systemctl stop set-livre-web.service");
+    expect(bootstrap).toContain("systemctl reset-failed set-livre-web.service || true");
+    expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
+    expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
+    expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover");
+    expect(recoveryUnit).toContain("ConditionPathExists=/opt/set-livre/.activation-rollback");
+    expect(recoveryUnit).toContain("RemainAfterExit=yes");
+    expect(webUnit).toContain("Requires=set-livre-release-recovery.service");
+    expect(backofficeUnit).toContain("Requires=set-livre-release-recovery.service");
   });
 
   it("preserves Oracle networking while exposing only the production entrypoints", () => {
@@ -96,13 +119,16 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('[[ ${oracle_rules_after} == "${oracle_rules_before}" ]]');
     expect(bootstrap).toContain("iptables-restore --test");
     expect(bootstrap).toContain("ip6tables-restore --test");
-    expect(bootstrap).toContain("'/^# (Generated|Completed) /d'");
+    expect(bootstrap).toContain('re.fullmatch(r"# (Generated|Completed) .*", line)');
+    expect(bootstrap).toContain("firewall_transition_active=true");
+    expect(bootstrap).toContain('iptables-restore < "$previous_ipv4_rules"');
     expect(bootstrap).not.toContain("netfilter-persistent reload");
     expect(bootstrap).toContain("rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
     expect(bootstrap).toContain("/etc/nginx/sites-enabled/setlivre");
-    for (const port of [22, 80, 443]) {
-      expect(bootstrap).toContain(`-p tcp --dport ${port} -m conntrack --ctstate NEW -j ACCEPT`);
-    }
+    expect(bootstrap).toContain("for port in (22, 80, 443)");
+    expect(bootstrap).toContain(
+      'f"-A {chain} -p tcp --dport {port} -m conntrack --ctstate NEW -j ACCEPT"',
+    );
   });
 
   it("fails HTTP closed before TLS and rate-limits sensitive endpoints at the trusted edge", () => {
@@ -165,12 +191,21 @@ describe("local tooling contracts", () => {
 
     expect(bootstrap).toContain('restrict,command="/usr/local/sbin/set-livre-deploy-ssh"');
     expect(bootstrap).toContain("/etc/set-livre/host-config.sha256");
+    for (const path of hostConfigurationFiles) {
+      expect(bootstrap).toContain(path.slice("ops/".length));
+    }
+    expect(bootstrap.indexOf("systemctl enable --now snap.certbot.renew.timer")).toBeLessThan(
+      bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
+    );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
     expect(command).not.toMatch(/\beval\b/u);
     expect(deploy).toContain("readiness HTTPS público");
     expect(deploy).toContain("RETAINED_RELEASES=4");
     expect(deploy).toContain("hostConfiguration.sha256");
-    expect(deploy).toContain("install_environment");
+    expect(deploy).toContain(".runtime/web.env");
+    expect(deploy).toContain("write_rollback_marker");
+    expect(deploy).toContain("recover_link_from_marker");
+    expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
   });
 
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
@@ -189,6 +224,7 @@ describe("local tooling contracts", () => {
     expect(bootstrap).not.toContain("python3-certbot-nginx");
     expect(workflow).toContain("Verify public web health");
     expect(workflow).not.toContain("BACKOFFICE_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}");
+    expect(workflow).toContain("github.com/rhysd/actionlint/cmd/actionlint@v1.7.12");
   });
 
   it("accepts the expected local Supabase endpoints", () => {

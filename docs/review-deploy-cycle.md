@@ -58,9 +58,9 @@ no SHA atual, todos os checks estiverem verdes e não houver conversa pendente.
 Depois dessas três condições, o agente publica pela credencial confiável do mantenedor o commit status
 `Codex review contract` no SHA atual, com `target_url` apontando para a resposta limpa. Workflows têm
 permissões somente de leitura e não publicam esse status. A proteção de `main` exige o contexto; um novo
-push cria outro SHA sem status e reinicia todo o ciclo. Neste primeiro PR de infraestrutura, o contexto
-é adicionado à branch protection depois de sua primeira publicação e antes do merge. Não se publica
-status pendente, verde ou substituto quando a evidência é inconclusiva.
+push cria outro SHA sem status e reinicia todo o ciclo. Até existir evidência limpa, o contexto
+permanece sem sucesso e bloqueia o merge. Não se publica status pendente, verde ou substituto quando a
+evidência é inconclusiva.
 
 ## 5. Merge e produção
 

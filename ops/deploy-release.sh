@@ -3,9 +3,7 @@ set -Eeuo pipefail
 
 readonly RELEASES_DIRECTORY="/opt/set-livre/releases"
 readonly CURRENT_LINK="/opt/set-livre/current"
-readonly RELEASE_ENVIRONMENT="/etc/set-livre/release.env"
-readonly WEB_ENVIRONMENT="/etc/set-livre/web.env"
-readonly BACKOFFICE_ENVIRONMENT="/etc/set-livre/backoffice.env"
+readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly HOST_CONFIGURATION_DIGEST="/etc/set-livre/host-config.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
 readonly PRODUCTION_IP="147.15.97.227"
@@ -19,12 +17,105 @@ fail() {
   exit 1
 }
 
+activate_link() {
+  local target="$1"
+  local candidate="${CURRENT_LINK}.next"
+  rm -f -- "$candidate" || return 1
+  ln --symbolic "$target" "$candidate" || return 1
+  mv --no-target-directory --force "$candidate" "$CURRENT_LINK" || return 1
+}
+
+health_is_ready() {
+  local port="$1"
+  local application="$2"
+  local expected_release="$3"
+  curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${port}/api/health/ready" \
+    | jq --exit-status --arg application "$application" --arg release "$expected_release" \
+      '.application == $application and .release == $release and .status == "ready"' >/dev/null
+}
+
+public_health_is_ready() {
+  local expected_release="$1"
+  curl --fail --silent --show-error --max-time 5 "${PRODUCTION_URL}/api/health/ready" \
+    | jq --exit-status --arg release "$expected_release" \
+      '.application == "web" and .release == $release and .status == "ready"' >/dev/null
+}
+
+wait_for_health() {
+  local expected_release="$1"
+  for _ in $(seq 1 30); do
+    if health_is_ready 3000 web "$expected_release" \
+      && health_is_ready 3001 backoffice "$expected_release"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_public_health() {
+  local expected_release="$1"
+  for _ in $(seq 1 12); do
+    if public_health_is_ready "$expected_release"; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+recover_link_from_marker() {
+  recovered_release=""
+  [[ -f ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]] || return 1
+  [[ $(stat --format '%U:%G:%a' -- "$ROLLBACK_MARKER") == "root:root:600" ]] \
+    || return 1
+
+  local target
+  target="$(< "$ROLLBACK_MARKER")"
+  if [[ ${target} == "NONE" ]]; then
+    rm -f -- "$CURRENT_LINK" "${CURRENT_LINK}.next" || return 1
+  else
+    [[ ${target} =~ ^${RELEASES_DIRECTORY}/[0-9a-f]{40}$ ]] || return 1
+    [[ -d ${target} && ! -L ${target} ]] || return 1
+    activate_link "$target" || return 1
+    recovered_release="$(basename -- "$target")"
+  fi
+  rm -f -- "$ROLLBACK_MARKER"
+}
+
+write_rollback_marker() {
+  local previous="$1"
+  local temporary
+  temporary="$(mktemp /opt/set-livre/.activation-rollback.XXXXXX)" || return 1
+  if ! printf '%s\n' "${previous:-NONE}" > "$temporary" \
+    || ! chown root:root "$temporary" \
+    || ! chmod 0600 "$temporary" \
+    || ! mv --force -- "$temporary" "$ROLLBACK_MARKER"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
+
+if [[ $# -eq 1 && ${1:-} == "--recover" ]]; then
+  exec 9>/run/lock/set-livre-deploy.lock
+  if ! flock --nonblock 9; then
+    printf 'Deploy ativo; recuperação de boot não é necessária.\n'
+    exit 0
+  fi
+  if [[ -e ${ROLLBACK_MARKER} ]]; then
+    recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
+    printf 'Ativação interrompida recuperada antes do início dos serviços.\n'
+  fi
+  exit 0
+fi
+
 verify_only=false
-if [[ $# -eq 3 && $3 == "--verify-only" ]]; then
+if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only]."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only] ou --recover."
 fi
 
 release_sha="$1"
@@ -42,13 +133,13 @@ flock --nonblock 9 || fail "já existe outro deploy em execução."
 trusted_archive=""
 trusted_web_environment=""
 trusted_backoffice_environment=""
-web_environment_backup=""
-backoffice_environment_backup=""
 staging_directory=""
+activation_started=false
+activation_complete=false
+activation_failure=""
+previous_release=""
 
-# Invocada indiretamente pelo trap EXIT instalado logo abaixo.
-# shellcheck disable=SC2329
-cleanup() {
+cleanup_files() {
   rm -f -- \
     "$incoming_archive" \
     "$incoming_web_environment" \
@@ -56,14 +147,67 @@ cleanup() {
     "${trusted_archive:-}" \
     "${trusted_web_environment:-}" \
     "${trusted_backoffice_environment:-}" \
-    "${web_environment_backup:-}" \
-    "${backoffice_environment_backup:-}" \
     "${CURRENT_LINK}.next"
   if [[ -n ${staging_directory:-} ]]; then
     rm -rf -- "$staging_directory"
   fi
 }
-trap cleanup EXIT
+
+rollback_activation() {
+  printf 'A nova release falhou em %s; iniciando rollback.\n' \
+    "${activation_failure:-interrupção inesperada}" >&2
+  journalctl --unit set-livre-web.service --unit set-livre-backoffice.service \
+    --lines 40 --no-pager >&2 || true
+
+  if ! recover_link_from_marker; then
+    systemctl stop set-livre-web.service set-livre-backoffice.service || true
+    printf 'deploy: rollback falhou; serviços interrompidos para evitar estado divergente.\n' >&2
+    return 1
+  fi
+  if [[ -z ${recovered_release} ]]; then
+    systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
+    return 0
+  fi
+  if systemctl restart set-livre-web.service set-livre-backoffice.service \
+    && wait_for_health "$recovered_release"; then
+    return 0
+  fi
+  systemctl stop set-livre-web.service set-livre-backoffice.service || true
+  printf 'deploy: release anterior não recuperou readiness; serviços interrompidos.\n' >&2
+  return 1
+}
+
+on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [[ ${activation_started} == true && ${activation_complete} == false ]]; then
+    rollback_activation || status=1
+  fi
+  cleanup_files
+  exit "$status"
+}
+
+on_signal() {
+  activation_failure="sinal $1"
+  exit "$2"
+}
+
+trap on_exit EXIT
+trap 'on_signal HUP 129' HUP
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+
+if [[ -e ${ROLLBACK_MARKER} ]]; then
+  recover_link_from_marker || fail "não foi possível recuperar o deploy anterior."
+  if [[ -z ${recovered_release} ]]; then
+    systemctl stop set-livre-web.service set-livre-backoffice.service \
+      || fail "não foi possível estabilizar o host sem release anterior."
+  elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
+    || ! wait_for_health "$recovered_release"; then
+    systemctl stop set-livre-web.service set-livre-backoffice.service || true
+    fail "a release recuperada não atingiu readiness."
+  fi
+fi
 
 trust_incoming_file() {
   local source="$1"
@@ -71,20 +215,26 @@ trust_incoming_file() {
   local suffix="$3"
   local destination
   [[ -f ${source} && ! -L ${source} ]] || fail "arquivo de entrada ausente ou inválido."
-  [[ $(stat --format '%U' -- "$source") == "deploy-setlivre" ]] || fail "arquivo de entrada tem owner inesperado."
-  [[ $(stat --format '%a' -- "$source") == "600" ]] || fail "arquivo de entrada tem modo inesperado."
+  [[ $(stat --format '%U' -- "$source") == "deploy-setlivre" ]] \
+    || fail "arquivo de entrada tem owner inesperado."
+  [[ $(stat --format '%a' -- "$source") == "600" ]] \
+    || fail "arquivo de entrada tem modo inesperado."
   local bytes
   bytes="$(stat --format '%s' -- "$source")"
-  [[ ${bytes} -gt 0 && ${bytes} -le ${maximum_bytes} ]] || fail "arquivo de entrada excede o contrato de tamanho."
+  [[ ${bytes} -gt 0 && ${bytes} -le ${maximum_bytes} ]] \
+    || fail "arquivo de entrada excede o contrato de tamanho."
   destination="$(mktemp "/var/tmp/set-livre-trusted.XXXXXX${suffix}")"
   install -o root -g root -m 0600 -- "$source" "$destination"
   rm -f -- "$source"
-  [[ $(stat --format '%s' -- "$destination") -eq ${bytes} ]] || fail "cópia confiável diverge da entrada."
+  [[ $(stat --format '%s' -- "$destination") -eq ${bytes} ]] \
+    || fail "cópia confiável diverge da entrada."
   printf '%s\n' "$destination"
 }
 
 trusted_archive="$(trust_incoming_file "$incoming_archive" "$MAX_ARCHIVE_BYTES" ".tar.gz")"
-trusted_web_environment="$(trust_incoming_file "$incoming_web_environment" "$MAX_ENVIRONMENT_BYTES" ".env")"
+trusted_web_environment="$(
+  trust_incoming_file "$incoming_web_environment" "$MAX_ENVIRONMENT_BYTES" ".env"
+)"
 trusted_backoffice_environment="$(
   trust_incoming_file "$incoming_backoffice_environment" "$MAX_ENVIRONMENT_BYTES" ".env"
 )"
@@ -234,10 +384,11 @@ fi
 
 mapfile -t top_level < <(find "$staging_directory" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
 [[ ${#top_level[@]} -eq 3 ]] || fail "release possui conteúdo de topo inesperado."
-[[ ${top_level[0]} == "backoffice" && ${top_level[1]} == "release-manifest.json" && ${top_level[2]} == "web" ]] \
-  || fail "estrutura da release inválida."
+[[ ${top_level[0]} == "backoffice" && ${top_level[1]} == "release-manifest.json" \
+  && ${top_level[2]} == "web" ]] || fail "estrutura da release inválida."
 [[ -f "${staging_directory}/web/server.js" ]] || fail "entrypoint web ausente."
-[[ -f "${staging_directory}/backoffice/apps/backoffice/server.js" ]] || fail "entrypoint backoffice ausente."
+[[ -f "${staging_directory}/backoffice/apps/backoffice/server.js" ]] \
+  || fail "entrypoint backoffice ausente."
 jq --exit-status --arg sha "$release_sha" '
   .version == 2 and
   .commit == $sha and
@@ -264,15 +415,32 @@ if [[ ${verify_only} == true ]]; then
 fi
 
 printf '%s\n' "$actual_checksum" > "${staging_directory}/.artifact.sha256"
+install -d -o root -g setlivre -m 0750 "${staging_directory}/.runtime"
+install -o root -g setlivre-web -m 0640 \
+  "$trusted_web_environment" "${staging_directory}/.runtime/web.env"
+install -o root -g setlivre-backoffice -m 0640 \
+  "$trusted_backoffice_environment" "${staging_directory}/.runtime/backoffice.env"
+printf 'APP_RELEASE_SHA=%s\n' "$release_sha" > "${staging_directory}/.runtime/release.env"
 chown -R root:setlivre "$staging_directory"
 find "$staging_directory" -type d -exec chmod 0750 {} +
 find "$staging_directory" -type f -exec chmod 0640 {} +
+chown root:setlivre-web "${staging_directory}/.runtime/web.env"
+chown root:setlivre-backoffice "${staging_directory}/.runtime/backoffice.env"
 
 release_directory="${RELEASES_DIRECTORY}/${release_sha}"
 if [[ -e ${release_directory} ]]; then
-  [[ -d ${release_directory} && ! -L ${release_directory} ]] || fail "destino da release não é diretório regular."
-  [[ -f "${release_directory}/.artifact.sha256" ]] || fail "release existente não tem checksum."
-  [[ $(< "${release_directory}/.artifact.sha256") == "${actual_checksum}" ]] || fail "SHA já existe com bytes diferentes."
+  [[ -d ${release_directory} && ! -L ${release_directory} ]] \
+    || fail "destino da release não é diretório regular."
+  [[ -f "${release_directory}/.artifact.sha256" ]] \
+    || fail "release existente não tem checksum."
+  [[ $(< "${release_directory}/.artifact.sha256") == "${actual_checksum}" ]] \
+    || fail "SHA já existe com bytes diferentes."
+  cmp --silent "$trusted_web_environment" "${release_directory}/.runtime/web.env" \
+    || fail "SHA já existe com ambiente web diferente."
+  cmp --silent "$trusted_backoffice_environment" "${release_directory}/.runtime/backoffice.env" \
+    || fail "SHA já existe com ambiente backoffice diferente."
+  [[ $(< "${release_directory}/.runtime/release.env") == "APP_RELEASE_SHA=${release_sha}" ]] \
+    || fail "SHA já existe com identidade de release diferente."
   rm -rf -- "$staging_directory"
   staging_directory=""
 else
@@ -280,7 +448,6 @@ else
   staging_directory=""
 fi
 
-previous_release=""
 if [[ -L ${CURRENT_LINK} ]]; then
   previous_release="$(readlink --canonicalize-existing -- "$CURRENT_LINK")"
   [[ ${previous_release} == "${RELEASES_DIRECTORY}/"* && -d ${previous_release} ]] \
@@ -289,93 +456,8 @@ elif [[ -e ${CURRENT_LINK} ]]; then
   fail "current existe e não é link simbólico."
 fi
 
-backup_environment() {
-  local source="$1"
-  local backup
-  [[ -f ${source} && ! -L ${source} ]] || return 1
-  backup="$(mktemp /var/tmp/set-livre-environment.XXXXXX)" || return 1
-  if ! install -o root -g root -m 0600 "$source" "$backup"; then
-    rm -f -- "$backup"
-    return 1
-  fi
-  printf '%s\n' "$backup"
-}
-
-install_environment() {
-  local source="$1"
-  local destination="$2"
-  local group="$3"
-  local temporary
-  temporary="$(mktemp "/etc/set-livre/.environment.XXXXXX")" || return 1
-  if ! install -o root -g "$group" -m 0640 "$source" "$temporary" \
-    || ! mv --force -- "$temporary" "$destination"; then
-    rm -f -- "$temporary"
-    return 1
-  fi
-}
-
-write_release_environment() {
-  local sha="$1"
-  local temporary
-  temporary="$(mktemp /etc/set-livre/.release.env.XXXXXX)" || return 1
-  if ! printf 'APP_RELEASE_SHA=%s\n' "$sha" > "$temporary" \
-    || ! chown root:setlivre "$temporary" \
-    || ! chmod 0640 "$temporary" \
-    || ! mv --force -- "$temporary" "$RELEASE_ENVIRONMENT"; then
-    rm -f -- "$temporary"
-    return 1
-  fi
-}
-
-activate_link() {
-  local target="$1"
-  local candidate="${CURRENT_LINK}.next"
-  rm -f -- "$candidate" || return 1
-  ln --symbolic "$target" "$candidate" || return 1
-  mv --no-target-directory --force "$candidate" "$CURRENT_LINK" || return 1
-}
-
-health_is_ready() {
-  local port="$1"
-  local application="$2"
-  local expected_release="$3"
-  curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${port}/api/health/ready" \
-    | jq --exit-status --arg application "$application" --arg release "$expected_release" \
-      '.application == $application and .release == $release and .status == "ready"' >/dev/null
-}
-
-public_health_is_ready() {
-  local expected_release="$1"
-  curl --fail --silent --show-error --max-time 5 "${PRODUCTION_URL}/api/health/ready" \
-    | jq --exit-status --arg release "$expected_release" \
-      '.application == "web" and .release == $release and .status == "ready"' >/dev/null
-}
-
-wait_for_health() {
-  local expected_release="$1"
-  for _ in $(seq 1 30); do
-    if health_is_ready 3000 web "$expected_release" \
-      && health_is_ready 3001 backoffice "$expected_release"; then
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
-}
-
-wait_for_public_health() {
-  local expected_release="$1"
-  for _ in $(seq 1 12); do
-    if public_health_is_ready "$expected_release"; then
-      return 0
-    fi
-    sleep 5
-  done
-  return 1
-}
-
 prune_releases() {
-  local current_release="$1"
+  local candidate="$1"
   local previous="$2"
   local name path
   mapfile -t release_names < <(
@@ -393,7 +475,7 @@ prune_releases() {
       | cut -d ' ' -f 2
   )
   declare -A keep=()
-  keep["$(basename -- "$current_release")"]=1
+  keep["$(basename -- "$candidate")"]=1
   if [[ -n ${previous} ]]; then
     keep["$(basename -- "$previous")"]=1
   fi
@@ -412,56 +494,25 @@ prune_releases() {
   done
 }
 
-web_environment_backup="$(backup_environment "$WEB_ENVIRONMENT")" \
-  || fail "não foi possível preservar o ambiente web anterior."
-backoffice_environment_backup="$(backup_environment "$BACKOFFICE_ENVIRONMENT")" \
-  || fail "não foi possível preservar o ambiente backoffice anterior."
+prune_releases "$release_directory" "$previous_release" \
+  || fail "não foi possível aplicar a retenção antes da ativação."
+write_rollback_marker "$previous_release" || fail "não foi possível preparar a recuperação atômica."
 
-activation_failure=""
-if ! install_environment "$trusted_web_environment" "$WEB_ENVIRONMENT" setlivre-web \
-  || ! install_environment "$trusted_backoffice_environment" "$BACKOFFICE_ENVIRONMENT" setlivre-backoffice; then
-  activation_failure="instalação dos ambientes"
-elif ! activate_link "$release_directory"; then
-  activation_failure="troca do symlink"
-elif ! write_release_environment "$release_sha"; then
-  activation_failure="escrita do ambiente de release"
-elif ! systemctl restart set-livre-web.service set-livre-backoffice.service; then
-  activation_failure="reinício dos serviços"
-elif ! wait_for_health "$release_sha"; then
-  activation_failure="readiness interno"
-elif ! wait_for_public_health "$release_sha"; then
-  activation_failure="readiness HTTPS público"
-elif ! prune_releases "$release_directory" "$previous_release"; then
-  activation_failure="retenção de releases"
-fi
+activation_started=true
+activation_failure="troca do symlink"
+activate_link "$release_directory" || fail "$activation_failure"
+activation_failure="reinício dos serviços"
+systemctl restart set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
+activation_failure="readiness interno"
+wait_for_health "$release_sha" || fail "$activation_failure"
+activation_failure="readiness HTTPS público"
+wait_for_public_health "$release_sha" || fail "$activation_failure"
 
-if [[ -z ${activation_failure} ]]; then
-  printf 'Release %s ativa, pública e pronta.\n' "$release_sha"
-  exit 0
-fi
+trap '' HUP INT TERM
+rm -f -- "$ROLLBACK_MARKER"
+activation_complete=true
+trap 'on_signal HUP 129' HUP
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
 
-printf 'A nova release falhou em %s; iniciando rollback.\n' "$activation_failure" >&2
-journalctl --unit set-livre-web.service --unit set-livre-backoffice.service --lines 40 --no-pager >&2 || true
-rollback_succeeded=false
-if install_environment "$web_environment_backup" "$WEB_ENVIRONMENT" setlivre-web \
-  && install_environment "$backoffice_environment_backup" "$BACKOFFICE_ENVIRONMENT" setlivre-backoffice; then
-  if [[ -n ${previous_release} ]]; then
-    previous_sha="$(basename -- "$previous_release")"
-    if [[ ${previous_sha} =~ ^[0-9a-f]{40}$ ]] \
-      && activate_link "$previous_release" \
-      && write_release_environment "$previous_sha" \
-      && systemctl restart set-livre-web.service set-livre-backoffice.service \
-      && wait_for_health "$previous_sha"; then
-      rollback_succeeded=true
-    fi
-  elif rm -f -- "$CURRENT_LINK" "$RELEASE_ENVIRONMENT" \
-    && systemctl stop set-livre-web.service set-livre-backoffice.service; then
-    rollback_succeeded=true
-  fi
-fi
-
-if [[ ${rollback_succeeded} == true ]]; then
-  fail "release e ambientes revertidos após falha na ativação."
-fi
-systemctl stop set-livre-web.service set-livre-backoffice.service || true
-fail "rollback falhou; serviços interrompidos para evitar estado divergente."
+printf 'Release %s ativa, pública e pronta.\n' "$release_sha"

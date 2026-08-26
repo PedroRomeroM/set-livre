@@ -55,6 +55,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends curl nginx shellcheck
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck shellcheck
           bash -n ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
             ops/verify-host-contracts.sh
           shellcheck ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
@@ -103,7 +105,7 @@ jobs:
           npm run build
           npm run release
 
-      - name: Exercise host contracts without activation
+      - name: Exercise host activation and rollback contracts
         run: bash ops/verify-host-contracts.sh "$GITHUB_SHA" "$RUNNER_TEMP"
 
       - name: Smoke standalone Linux release

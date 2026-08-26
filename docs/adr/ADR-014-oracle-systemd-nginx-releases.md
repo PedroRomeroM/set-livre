@@ -18,9 +18,10 @@ Usar uma VM Oracle Cloud elegível ao Free Tier, com:
 - processos Node sem root geridos por systemd;
 - app público e backoffice separados;
 - build standalone;
-- releases imutáveis em `/opt/set-livre/releases/<sha>`;
+- releases imutáveis em `/opt/set-livre/releases/<sha>`, contendo código e ambientes do mesmo SHA;
 - symlink `current`;
-- health check e rollback atômico.
+- health check e rollback atômico, inclusive recuperação de ativação interrompida antes do boot dos
+  apps.
 
 Produção não usa Docker Compose, Caddy ou registry de imagem.
 

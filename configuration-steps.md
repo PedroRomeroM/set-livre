@@ -10,6 +10,18 @@ Nenhuma ação humana permanece pendente para esta entrega.
 - [x] Cadastro ACME concluído em 2026-08-26 com o endereço administrativo já disponível na conta
       local do responsável, sem registrar seu valor no repositório.
 
+### Privacidade do repositório
+
+O repositório permanece público enquanto a conta pessoal usa GitHub Free, pois esse plano oferece
+[branch protection em repositórios públicos](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches),
+mas exige GitHub Pro para a mesma proteção em repositório privado. Torná-lo privado desativa os checks
+obrigatórios e demais proteções de `main`; por isso a proteção do fluxo tem precedência nesta etapa.
+Nenhum secret foi versionado, e a auditoria compara também os valores reais armazenados localmente.
+
+Para combinar repositório privado com os mesmos guardrails, o responsável precisa contratar GitHub Pro
+ou mover o projeto para um plano compatível e então avisar o agente. Essa escolha não bloqueia o deploy
+atual, mas é recomendada antes de compartilhar implementação proprietária adicional.
+
 `147.15.97.227` é o IPv4 público reservado da produção, não um endereço efêmero. VM, NSG, firewall,
 SSH de administração/deploy, variables e os demais secrets do GitHub já foram configurados e
 verificados. A senha administrativa armazenada autenticou o projeto de produção, passou pelo dry-run

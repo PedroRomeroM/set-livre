@@ -28,8 +28,11 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - GitHub Actions envia o artifact à conta SSH exclusiva de deploy, que só pode executar o instalador
   root allowlisted por um comando SSH forçado;
 - migrations de produção são forward-only e executadas antes da ativação do novo runtime;
-- a publicação usa release imutável, configuração de host cercada por digest, ambientes sincronizados,
-  symlink atômico, health interno/público, retenção limitada e rollback da aplicação + ambientes;
+- a publicação reúne artifact, ambientes e identidade do SHA em uma release imutável, cercada pelo
+  digest do host; um único symlink, health interno/público, retenção limitada e marcador recuperável
+  controlam ativação e rollback;
+- o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
+  valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
 - branch protection, checks do GitHub e o ciclo documentado de review são a autoridade de merge;
 - depois da revisão limpa, o agente publica o status `Codex review contract` no SHA exato, apontando
   para a evidência; a branch protection exige esse status e qualquer push o invalida;

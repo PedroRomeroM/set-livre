@@ -100,15 +100,39 @@ export function assertProductionDeploymentContract(environment = process.env) {
 }
 
 function assertSingleExpectedMembership(rows) {
-  if (rows.length !== 1 || rows[0]?.roleName !== "app_dal") {
+  if (
+    rows.length !== 1 ||
+    rows[0]?.roleName !== "app_dal" ||
+    rows[0]?.adminOption !== false ||
+    rows[0]?.inheritOption !== false ||
+    rows[0]?.setOption !== true
+  ) {
     throw new Error("A role de produção possui membership inesperado.");
   }
+}
+
+export function productionRoleActivationMode(role) {
+  if (
+    role === undefined ||
+    typeof role.canLogin !== "boolean" ||
+    role.inherit !== false ||
+    role.connectionLimit !== 10 ||
+    role.superuser ||
+    role.createDatabase ||
+    role.createRole ||
+    role.replication ||
+    role.bypassRls
+  ) {
+    throw new Error("A role de runtime diverge dos atributos restritos esperados.");
+  }
+  return role.canLogin === true ? "validate" : "initialize";
 }
 
 export async function provisionProductionRole(environment = process.env) {
   const connections = productionRoleConnections(environment);
   const admin = new Client(connections.admin);
   let runtime;
+  let initializedThisRun = false;
 
   await admin.connect();
   try {
@@ -119,6 +143,9 @@ export async function provisionProductionRole(environment = process.env) {
     const roles = await admin.query(`
       select
         role.rolname as "roleName",
+        role.rolcanlogin as "canLogin",
+        role.rolinherit as "inherit",
+        role.rolconnlimit as "connectionLimit",
         role.rolsuper as "superuser",
         role.rolcreatedb as "createDatabase",
         role.rolcreaterole as "createRole",
@@ -143,9 +170,19 @@ export async function provisionProductionRole(environment = process.env) {
     ) {
       throw new Error("Uma role de produção possui atributo privilegiado.");
     }
+    const appDalRole = roles.rows.find((role) => role.roleName === "app_dal");
+    if (appDalRole?.canLogin !== false || appDalRole.inherit !== false) {
+      throw new Error("A role DAL sem identidade própria diverge do contrato NOLOGIN/NOINHERIT.");
+    }
+    const runtimeRole = roles.rows.find((role) => role.roleName === productionRole);
+    const activationMode = productionRoleActivationMode(runtimeRole);
 
     const memberships = await admin.query(`
-      select granted.rolname as "roleName"
+      select
+        granted.rolname as "roleName",
+        membership.admin_option as "adminOption",
+        membership.inherit_option as "inheritOption",
+        membership.set_option as "setOption"
       from pg_catalog.pg_auth_members as membership
       join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
       join pg_catalog.pg_roles as member on member.oid = membership.member
@@ -154,26 +191,18 @@ export async function provisionProductionRole(environment = process.env) {
     `);
     assertSingleExpectedMembership(memberships.rows);
 
-    const passwordStatement = await admin.query(
-      "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as statement",
-      [connections.runtime.password],
-    );
-    await admin.query(passwordStatement.rows[0].statement);
-    await admin.query(`
-      alter role app_runtime_production
-        noinherit connection limit 10 valid until 'infinity'
-    `);
-    await admin.query("alter role app_runtime_production reset all");
-    await admin.query("alter role app_runtime_production in database postgres reset all");
-    await admin.query(
-      "alter role app_runtime_production in database postgres set \"app.settings.jwt_secret\" = ''",
-    );
-    await admin.query("revoke all privileges on database postgres from app_runtime_production");
-    await admin.query("grant connect on database postgres to app_runtime_production");
-    await admin.query(
-      "grant app_dal to app_runtime_production with admin false, inherit false, set true",
-    );
+    if (activationMode === "initialize") {
+      const passwordStatement = await admin.query(
+        "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as statement",
+        [connections.runtime.password],
+      );
+      await admin.query(passwordStatement.rows[0].statement);
+      await admin.query(
+        "alter role app_runtime_production in database postgres set \"app.settings.jwt_secret\" = ''",
+      );
+    }
     await admin.query("commit");
+    initializedThisRun = activationMode === "initialize";
 
     runtime = new Client(connections.runtime);
     await runtime.connect();
@@ -197,6 +226,18 @@ export async function provisionProductionRole(environment = process.env) {
     }
   } catch (error) {
     await admin.query("rollback").catch(() => undefined);
+    if (initializedThisRun) {
+      try {
+        await admin.query("begin");
+        await admin.query("alter role app_runtime_production nologin password null");
+        await admin.query("commit");
+      } catch {
+        await admin.query("rollback").catch(() => undefined);
+        throw new Error("A inicialização falhou e a role não pôde ser desativada com segurança.", {
+          cause: error,
+        });
+      }
+    }
     throw error;
   } finally {
     await runtime?.end().catch(() => undefined);
@@ -221,7 +262,9 @@ if (executedPath !== undefined && pathToFileURL(resolve(executedPath)).href === 
       process.stdout.write("Contrato fixo de produção validado.\n");
     } else {
       await provisionProductionRole();
-      process.stdout.write("Role restrita de produção ativada e validada.\n");
+      process.stdout.write(
+        "Role restrita de produção inicializada quando necessário e validada.\n",
+      );
     }
   } catch (error) {
     process.stderr.write(`production-role: ${redactedError(error, process.env)}\n`);

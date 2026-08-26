@@ -23,6 +23,7 @@ export const hostConfigurationFiles = Object.freeze([
   "ops/nginx/set-livre-http.conf",
   "ops/nginx/set-livre-tls.conf",
   "ops/systemd/set-livre-backoffice.service",
+  "ops/systemd/set-livre-release-recovery.service",
   "ops/systemd/set-livre-web.service",
 ]);
 

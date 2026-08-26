@@ -10,7 +10,8 @@
 - sem shadcn/ui;
 - sem CSS-in-JS runtime.
 
-`lucide-react` será instalado somente no primeiro PR que tiver ícone real; não faz parte da fundação sem consumidor.
+`lucide-react` só será instalado quando uma feature tiver ícone real; não faz parte da fundação sem
+consumidor.
 
 ## 1.1 Estado implementado
 

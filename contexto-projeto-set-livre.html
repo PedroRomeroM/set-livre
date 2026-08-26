@@ -111,7 +111,10 @@
             separado na 3001 e somente em loopback. A aplicação pública ainda depende do primeiro
             deploy.
           </li>
-          <li>Release standalone Linux x86_64 por SHA, symlink atômico, readiness e rollback.</li>
+          <li>
+            Release standalone Linux x86_64 reúne código e ambientes do mesmo SHA; symlink atômico,
+            readiness e marcador de recuperação protegem rollback e reboot durante a ativação.
+          </li>
         </ul>
       </section>
 

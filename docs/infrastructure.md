@@ -3,14 +3,14 @@
 Esta é a fonte canônica da operação técnica. Decisões ficam nos ADRs 014, 019, 020 e 021; resultados
 de uma execução pertencem ao check, deployment ou PR que os produziu.
 
-## Estado atual
+## Contrato vigente
 
 | Componente        | Contrato                                                                                       |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
 | desenvolvimento   | Windows nativo, Node 24.18, npm 11.19 e Supabase local em Docker Desktop                       |
 | produção de dados | Supabase Cloud `oirvvnojgkzdppkdvhej`, `sa-east-1`, sem branches remotas nesta fase            |
 | produção web      | Oracle E2 Micro Always Free-eligible x86_64, Ubuntu 24.04, 50 GB, IP reservado `147.15.97.227` |
-| aplicação pública | `https://147.15.97.227`, com indexação bloqueada até o go-live                                 |
+| origem web        | `https://147.15.97.227`, com indexação bloqueada até o go-live                                 |
 | backoffice        | somente `127.0.0.1:3001`; exposição pública adiada                                             |
 | entrega           | GitHub Actions, migrations forward-only e release imutável por SHA                             |
 
@@ -54,15 +54,17 @@ produção. Consulte [development.md](development.md).
 O workflow `.github/workflows/ci.yml` contém três jobs:
 
 1. **Quality, local Supabase and browser gates**: gates estáticos, Vitest, reset e pgTAP local, suíte
-   Playwright completa, build, pacote, prova dos contratos Nginx/systemd/SSH/instalador e smoke
-   standalone Linux x86_64;
+   Playwright completa, build, pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação,
+   falhas e recuperação do instalador, além do smoke standalone Linux x86_64;
 2. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
 3. **Deploy production**: somente em push de `main`, depois dos dois jobs verdes e quando
    `PRD_DEPLOY_ENABLED=true`.
 
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
-Os dois primeiros nomes são também os contexts obrigatórios da branch protection.
+Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
+`Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
+review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
 
 ## Release e deploy
 
@@ -79,22 +81,25 @@ No merge, o workflow:
 
 1. aplica migrations pendentes com `supabase db push --linked`, sem seed;
 2. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
-3. ativa e valida a identidade restrita de produção a partir dos secrets, sem imprimir credenciais;
+3. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; nos
+   deploys seguintes apenas valida a credencial existente, sem rotacioná-la ou imprimi-la;
 4. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
 5. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
 6. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
 7. executa o instalador root allowlisted;
-8. verifica readiness interno dos dois apps e HTTPS público dentro da transação, e repete o health
+8. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
 ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita
 tamanho/quantidade e aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
-SHA ocupa `/opt/set-livre/releases/<sha>`. A ativação instala os dois ambientes atomicamente, troca
-`/opt/set-livre/current`, reinicia os serviços e exige readiness interno e HTTPS público. Qualquer
-falha restaura release e ambientes anteriores; rollback incapaz de voltar ao readiness interno
-interrompe os serviços. Um SHA existente com bytes diferentes é recusado. Depois do sucesso, são
-mantidas no máximo quatro releases, sempre incluindo a atual e a anterior.
+SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. A troca de
+`/opt/set-livre/current` ativa essa unidade inteira, reinicia os serviços e exige readiness interno e
+HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
+esse alvo em erro, `HUP`, `INT` ou `TERM`, e uma unit oneshot faz a mesma recuperação antes do boot dos
+apps se o processo ou a VM forem interrompidos. Rollback incapaz de voltar ao readiness interno
+interrompe os serviços. Um SHA existente com artifact ou ambiente diferente é recusado. A retenção
+ocorre antes da ativação e mantém no máximo quatro releases, incluindo candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
 produza o mesmo checksum.
 Antes da compactação, o empacotador também recusa `.env` e ocorrências exatas das credenciais de banco
@@ -110,6 +115,8 @@ separados; alterações destrutivas exigem backup e recuperação comprovada.
 - Node 24.18 x86_64 verificado pelos `SHASUMS256` oficiais;
 - Nginx, systemd, OpenSSH, `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
+- units systemd habilitadas, porém inativas antes da primeira release; cada unit exige seu entrypoint
+  imutável e limita tentativas de restart para não criar loop em host vazio ou artefato inválido;
 - pelo menos 1 GiB de swap para reduzir risco de OOM no shape de 1 GB; um arquivo existente maior e
   válido é preservado em vez de ser reescrito durante um bootstrap idempotente;
 - usuários sem login separados `setlivre-web` e `setlivre-backoffice`, além de
@@ -120,10 +127,11 @@ Diretórios e identidades:
 
 ```text
 /opt/set-livre/releases/<sha>    root:setlivre 0750
-/opt/set-livre/current           symlink para uma release
-/etc/set-livre/web.env           root:setlivre-web 0640
-/etc/set-livre/backoffice.env    root:setlivre-backoffice 0640
-/etc/set-livre/release.env       root:setlivre 0640
+  .runtime/web.env               root:setlivre-web 0640
+  .runtime/backoffice.env        root:setlivre-backoffice 0640
+  .runtime/release.env           root:setlivre 0640
+/opt/set-livre/current           symlink para código + ambientes do mesmo SHA
+/opt/set-livre/.activation-rollback marcador transitório root:root 0600
 /etc/set-livre/host-config.sha256 root:setlivre 0640
 /etc/set-livre/supabase-root-2021-ca.crt root:root 0644
 ```
@@ -135,12 +143,15 @@ ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (
 origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
 projeto/role/host divergente ou ambiente entre os apps inconsistente. A chave de deploy usa
 `authorized_keys command=` e aceita apenas uploads limitados e `deploy <sha> <checksum>`; não abre
-shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root.
+shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
+antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
+retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
 
-O manifesto contém o SHA-256 determinístico dos oito arquivos que definem o host. O bootstrap grava o
-mesmo digest em `/etc/set-livre/host-config.sha256`; se Nginx, systemd, CA, bootstrap, comando SSH ou
-instalador mudarem, o deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta
-administrativa. Assim uma mudança operacional nunca fica merged e silenciosamente ausente da VM.
+O manifesto contém o SHA-256 determinístico dos nove arquivos que definem o host. O bootstrap invalida
+o marcador ativo antes de alterar essas superfícies e só publica o novo
+`/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações; falha intermediária
+mantém novos deploys bloqueados. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
+deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
 
 ### Rede e SSH
 
@@ -155,9 +166,11 @@ uma hora. OCI Bastion pode permanecer como acesso emergencial, mas não particip
 O IPv4 público é reservado e regional para que DNS, trust SSH e recuperação não dependam do ciclo de
 vida da VNIC. A distinção oficial entre endereços efêmeros e reservados está na
 [documentação de Public IP Addresses da Oracle](https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/managingpublicIPs.htm).
-O bootstrap altera somente suas cadeias de `INPUT`, valida e persiste o ruleset completo e falha se a
-cadeia `InstanceServices` fornecida pela imagem Oracle não permanecer byte a byte equivalente. UFW não
-é instalado porque sua ativação pode remover regras necessárias ao boot e aos volumes da instância,
+O bootstrap deriva o ruleset completo a partir do estado Oracle, valida-o antes da aplicação e troca
+cada família com uma única transação `iptables-restore`. Snapshot de memória e arquivos persistidos são
+restaurados automaticamente se qualquer etapa falhar. A cadeia `InstanceServices` fornecida pela imagem
+Oracle precisa permanecer byte a byte equivalente. UFW não é instalado porque sua ativação pode remover
+regras necessárias ao boot e aos volumes da instância,
 risco registrado pela Oracle em
 [Known Issues for Compute](https://docs.oracle.com/en-us/iaas/Content/Compute/known-issues.htm). A
 aplicação imediata usa `iptables-restore` após o teste; o comando `netfilter-persistent reload` não é
@@ -182,9 +195,12 @@ A VM IPv4 usa Supavisor em **session mode**, porta 5432. O usuário de conexão 
 
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. A migration cria a role
-como `NOLOGIN`; depois de cada migration, `scripts/provision-production-role.mjs` reconcilia `LOGIN`,
-senha e atributos pelo canal administrativo e prova uma conexão real que assume `app_dal`. O script não
-imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps, deixando
+como `NOLOGIN`; `scripts/provision-production-role.mjs` define a senha e habilita `LOGIN` uma única vez,
+somente nesse estado inicial, e então prova uma conexão real que assume `app_dal`. Quando a role já tem
+`LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM sem alterar a
+credencial que sustenta a release vigente. Rotação futura exige mudança operacional própria com duas
+credenciais/identidades durante a transição, comprovação e retirada da anterior; não faz parte do deploy
+normal. O script não imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps, deixando
 quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
 
 A CA pública oficial do Supabase fica versionada em
@@ -205,10 +221,10 @@ webroot ACME e habilita o timer de renovação. Referências oficiais:
 [disponibilidade geral de certificados de IP](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability.html)
 e [suporte no Certbot 5.4](https://letsencrypt.org/2026/03/11/shorter-certs-certbot).
 
-O certificado inicial do IP foi emitido em 2026-08-26. SAN, validade e confiança pública foram
-comprovados sem desabilitar a verificação TLS; `certbot renew --dry-run` também passou, e o timer de
-renovação está ativo. O Nginx apresenta o certificado no handshake padrão porque clientes que acessam
-uma URL por IP podem omitir SNI, mas somente o `Host` literal canônico alcança a aplicação.
+Emissão e renovação do certificado exigem comprovar SAN, validade e confiança pública sem desabilitar
+a verificação TLS; a VM mantém o timer de renovação ativo. O Nginx apresenta o certificado no handshake
+padrão porque clientes que acessam uma URL por IP podem omitir SNI, mas somente o `Host` literal
+canônico alcança a aplicação. A evidência de cada execução pertence ao deployment ou PR correspondente.
 
 Enquanto `/etc/letsencrypt/live/147.15.97.227` não existe, o template HTTP permite somente o desafio
 ACME e encerra qualquer outra conexão; a aplicação não é servida em texto claro. Depois da primeira

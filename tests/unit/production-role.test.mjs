@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertProductionDeploymentContract,
+  productionRoleActivationMode,
   productionRoleConnections,
 } from "../../scripts/provision-production-role.mjs";
 
@@ -75,5 +76,24 @@ describe("production role provisioning", () => {
         PRODUCTION_PUBLIC_APP_URL: "https://wrong.example",
       }),
     ).toThrow("diverge");
+  });
+
+  it("initializes credentials only for the migration-created NOLOGIN role", () => {
+    const restrictedRole = {
+      bypassRls: false,
+      canLogin: false,
+      connectionLimit: 10,
+      createDatabase: false,
+      createRole: false,
+      inherit: false,
+      replication: false,
+      superuser: false,
+    };
+
+    expect(productionRoleActivationMode(restrictedRole)).toBe("initialize");
+    expect(productionRoleActivationMode({ ...restrictedRole, canLogin: true })).toBe("validate");
+    expect(() => productionRoleActivationMode({ ...restrictedRole, connectionLimit: 20 })).toThrow(
+      "atributos restritos",
+    );
   });
 });

@@ -15,6 +15,13 @@ readonly NGINX_TLS_SOURCE="${SCRIPT_DIRECTORY}/nginx/set-livre-tls.conf"
 temporary_directory=""
 ipv4_rules=""
 ipv6_rules=""
+previous_ipv4_rules=""
+previous_ipv6_rules=""
+previous_persisted_ipv4=""
+previous_persisted_ipv6=""
+persisted_ipv4_existed=false
+persisted_ipv6_existed=false
+firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
 
@@ -24,9 +31,27 @@ fail() {
 }
 
 cleanup() {
+  if [[ ${firewall_transition_active} == true ]]; then
+    [[ -z ${previous_ipv4_rules} ]] || iptables-restore < "$previous_ipv4_rules" || true
+    [[ -z ${previous_ipv6_rules} ]] || ip6tables-restore < "$previous_ipv6_rules" || true
+    if [[ ${persisted_ipv4_existed} == true ]]; then
+      install -o root -g root -m 0600 "$previous_persisted_ipv4" /etc/iptables/rules.v4 || true
+    else
+      rm -f -- /etc/iptables/rules.v4
+    fi
+    if [[ ${persisted_ipv6_existed} == true ]]; then
+      install -o root -g root -m 0600 "$previous_persisted_ipv6" /etc/iptables/rules.v6 || true
+    else
+      rm -f -- /etc/iptables/rules.v6
+    fi
+  fi
   [[ -z ${temporary_directory} ]] || rm -rf -- "$temporary_directory"
   [[ -z ${ipv4_rules} ]] || rm -f -- "$ipv4_rules"
   [[ -z ${ipv6_rules} ]] || rm -f -- "$ipv6_rules"
+  [[ -z ${previous_ipv4_rules} ]] || rm -f -- "$previous_ipv4_rules"
+  [[ -z ${previous_ipv6_rules} ]] || rm -f -- "$previous_ipv6_rules"
+  [[ -z ${previous_persisted_ipv4} ]] || rm -f -- "$previous_persisted_ipv4"
+  [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
@@ -41,7 +66,8 @@ for required_source in \
   "$NGINX_HTTP_SOURCE" \
   "$NGINX_TLS_SOURCE" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" \
-  "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service"; do
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service"; do
   [[ -f ${required_source} && ! -L ${required_source} ]] || fail "fonte operacional ausente ou inválida."
 done
 
@@ -49,6 +75,9 @@ deploy_key_file="$(realpath -e -- "$1")"
 [[ -f ${deploy_key_file} && ! -L ${deploy_key_file} ]] || fail "a chave de deploy não é um arquivo regular."
 IFS= read -r deploy_key < "$deploy_key_file"
 [[ ${deploy_key} =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || fail "a chave de deploy não é Ed25519 válida."
+
+exec 9>/run/lock/set-livre-deploy.lock
+flock --exclusive 9
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -81,12 +110,6 @@ fi
 certbot_version="$(/snap/bin/certbot --version | awk '{ print $2 }')"
 dpkg --compare-versions "$certbot_version" ge "$CERTBOT_MINIMUM_VERSION" \
   || fail "Certbot ${CERTBOT_MINIMUM_VERSION} ou superior é obrigatório para certificado de IP via webroot."
-
-if dpkg-query --show --showformat='${db:Status-Status}\n' ufw 2>/dev/null \
-  | grep --quiet --line-regexp installed; then
-  ufw --force disable || true
-  apt-get purge --yes ufw
-fi
 
 if [[ ! -x "/opt/${NODE_DIRECTORY}/bin/node" ]]; then
   temporary_directory="$(mktemp -d)"
@@ -125,6 +148,13 @@ if ! getent passwd deploy-setlivre >/dev/null; then
 fi
 
 install -d -o root -g setlivre -m 0750 /etc/set-livre /opt/set-livre /opt/set-livre/releases
+if [[ -e /etc/set-livre/host-config.sha256 ]]; then
+  [[ -f /etc/set-livre/host-config.sha256 && ! -L /etc/set-livre/host-config.sha256 ]] \
+    || fail "marcador operacional instalado é inválido."
+  install -o root -g setlivre -m 0640 /etc/set-livre/host-config.sha256 \
+    /etc/set-livre/host-config.previous.sha256
+  rm -f -- /etc/set-livre/host-config.sha256
+fi
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh
@@ -134,20 +164,12 @@ printf 'restrict,command="/usr/local/sbin/set-livre-deploy-ssh" %s\n' "$deploy_k
 chown deploy-setlivre:deploy-setlivre /home/deploy-setlivre/.ssh/authorized_keys
 chmod 0600 /home/deploy-setlivre/.ssh/authorized_keys
 
-for environment_contract in web.env:setlivre-web backoffice.env:setlivre-backoffice release.env:setlivre; do
-  environment_file="${environment_contract%%:*}"
-  environment_group="${environment_contract#*:}"
-  if [[ ! -e "/etc/set-livre/${environment_file}" ]]; then
-    install -o root -g "$environment_group" -m 0640 /dev/null "/etc/set-livre/${environment_file}"
-  fi
-  chown root:"$environment_group" "/etc/set-livre/${environment_file}"
-  chmod 0640 "/etc/set-livre/${environment_file}"
-done
-
 install -o root -g root -m 0755 "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-livre-deploy
 install -o root -g root -m 0755 "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" /etc/systemd/system/set-livre-web.service
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" /etc/systemd/system/set-livre-backoffice.service
+install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
+  /etc/systemd/system/set-livre-release-recovery.service
 install -d -o root -g root -m 0755 /usr/local/share/set-livre
 install -o root -g root -m 0644 "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf
 install -o root -g root -m 0644 "$NGINX_TLS_SOURCE" /usr/local/share/set-livre/nginx-tls.conf
@@ -166,6 +188,7 @@ files = [
     "nginx/set-livre-http.conf",
     "nginx/set-livre-tls.conf",
     "systemd/set-livre-backoffice.service",
+    "systemd/set-livre-release-recovery.service",
     "systemd/set-livre-web.service",
 ]
 digest = hashlib.sha256()
@@ -181,11 +204,6 @@ print(digest.hexdigest())
 PYTHON
 )"
 [[ ${host_configuration_digest} =~ ^[0-9a-f]{64}$ ]] || fail "digest operacional inválido."
-digest_source="$(mktemp)"
-printf '%s\n' "$host_configuration_digest" > "$digest_source"
-install -o root -g setlivre -m 0640 "$digest_source" /etc/set-livre/host-config.sha256
-rm -f -- "$digest_source"
-digest_source=""
 active_nginx_source=/usr/local/share/set-livre/nginx-http.conf
 certificate_path="/etc/letsencrypt/live/${PRODUCTION_IP}/fullchain.pem"
 private_key_path="/etc/letsencrypt/live/${PRODUCTION_IP}/privkey.pem"
@@ -253,7 +271,11 @@ chown root:root /etc/fail2ban/jail.d/set-livre-sshd.local
 chmod 0644 /etc/fail2ban/jail.d/set-livre-sshd.local
 
 # Ubuntu images supplied by Oracle depend on the InstanceServices OUTPUT chain for boot-volume and
-# metadata traffic. Mutate only a dedicated INPUT chain and persist the complete resulting ruleset.
+# metadata traffic. Build and validate a complete replacement ruleset before one restore transaction.
+if dpkg-query --show --showformat='${db:Status-Status}\n' ufw 2>/dev/null \
+  | grep --quiet --line-regexp installed; then
+  fail "UFW instalado; a imagem Oracle dedicada deve usar somente o contrato iptables versionado."
+fi
 iptables -w -S InstanceServices >/dev/null 2>&1 || fail "chain InstanceServices da Oracle ausente."
 iptables-save -t filter | grep --extended-regexp '^-A OUTPUT .* -j InstanceServices$' >/dev/null \
   || fail "salto OUTPUT para InstanceServices ausente."
@@ -264,40 +286,106 @@ oracle_rules_before="$({
 
 systemctl stop fail2ban || true
 fail2ban_stopped=true
-while iptables -w -C INPUT -j SETLIVRE_INPUT 2>/dev/null; do
-  iptables -w -D INPUT -j SETLIVRE_INPUT
-done
-if iptables -w -S SETLIVRE_INPUT >/dev/null 2>&1; then
-  iptables -w -F SETLIVRE_INPUT
-else
-  iptables -w -N SETLIVRE_INPUT
-fi
-iptables -w -I INPUT 1 -j SETLIVRE_INPUT
-iptables -w -A SETLIVRE_INPUT -i lo -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -p udp --sport 67 --dport 68 -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -p icmp --icmp-type fragmentation-needed -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -p tcp --dport 443 -m conntrack --ctstate NEW -j ACCEPT
-iptables -w -A SETLIVRE_INPUT -j DROP
+previous_ipv4_rules="$(mktemp)"
+previous_ipv6_rules="$(mktemp)"
+iptables-save > "$previous_ipv4_rules"
+ip6tables-save > "$previous_ipv6_rules"
+iptables-restore --test < "$previous_ipv4_rules"
+ip6tables-restore --test < "$previous_ipv6_rules"
 
-while ip6tables -w -C INPUT -j SETLIVRE6_INPUT 2>/dev/null; do
-  ip6tables -w -D INPUT -j SETLIVRE6_INPUT
-done
-if ip6tables -w -S SETLIVRE6_INPUT >/dev/null 2>&1; then
-  ip6tables -w -F SETLIVRE6_INPUT
-else
-  ip6tables -w -N SETLIVRE6_INPUT
+if [[ -e /etc/iptables/rules.v4 ]]; then
+  [[ -f /etc/iptables/rules.v4 && ! -L /etc/iptables/rules.v4 ]] \
+    || fail "rules.v4 persistido é inválido."
+  previous_persisted_ipv4="$(mktemp)"
+  install -o root -g root -m 0600 /etc/iptables/rules.v4 "$previous_persisted_ipv4"
+  persisted_ipv4_existed=true
 fi
-ip6tables -w -I INPUT 1 -j SETLIVRE6_INPUT
-ip6tables -w -A SETLIVRE6_INPUT -i lo -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -p ipv6-icmp -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -p tcp --dport 80 -m conntrack --ctstate NEW -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -p tcp --dport 443 -m conntrack --ctstate NEW -j ACCEPT
-ip6tables -w -A SETLIVRE6_INPUT -j DROP
+if [[ -e /etc/iptables/rules.v6 ]]; then
+  [[ -f /etc/iptables/rules.v6 && ! -L /etc/iptables/rules.v6 ]] \
+    || fail "rules.v6 persistido é inválido."
+  previous_persisted_ipv6="$(mktemp)"
+  install -o root -g root -m 0600 /etc/iptables/rules.v6 "$previous_persisted_ipv6"
+  persisted_ipv6_existed=true
+fi
+
+ipv4_rules="$(mktemp)"
+ipv6_rules="$(mktemp)"
+python3 - \
+  "$previous_ipv4_rules" "$ipv4_rules" SETLIVRE_INPUT ipv4 \
+  "$previous_ipv6_rules" "$ipv6_rules" SETLIVRE6_INPUT ipv6 <<'PYTHON'
+import pathlib
+import re
+import sys
+
+def rewrite(source, destination, chain, family):
+    policy = [
+        f"-A {chain} -i lo -j ACCEPT",
+        f"-A {chain} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+    ]
+    if family == "ipv4":
+        policy.extend(
+            (
+                f"-A {chain} -p udp --sport 67 --dport 68 -j ACCEPT",
+                f"-A {chain} -p icmp --icmp-type fragmentation-needed -j ACCEPT",
+            )
+        )
+    else:
+        policy.append(f"-A {chain} -p ipv6-icmp -j ACCEPT")
+    policy.extend(
+        f"-A {chain} -p tcp --dport {port} -m conntrack --ctstate NEW -j ACCEPT"
+        for port in (22, 80, 443)
+    )
+    policy.append(f"-A {chain} -j DROP")
+
+    lines = pathlib.Path(source).read_text(encoding="utf-8").splitlines()
+    result = []
+    in_filter = False
+    found_filter = False
+    inserted = False
+    for line in lines:
+        if line == "*filter":
+            in_filter = True
+            found_filter = True
+            inserted = False
+            result.append(line)
+            continue
+        if in_filter and (
+            line.startswith(f":{chain} ")
+            or line == f"-A INPUT -j {chain}"
+            or line.startswith(f"-A {chain} ")
+        ):
+            continue
+        if in_filter and not inserted and (line.startswith("-A ") or line == "COMMIT"):
+            result.extend((f":{chain} - [0:0]", f"-A INPUT -j {chain}", *policy))
+            inserted = True
+        result.append(line)
+        if in_filter and line == "COMMIT":
+            in_filter = False
+
+    if not found_filter or in_filter:
+        raise SystemExit("tabela filter ausente ou incompleta")
+    normalized = [
+        re.sub(r" \[[0-9]+:[0-9]+\]$", " [0:0]", line)
+        for line in result
+        if not re.fullmatch(r"# (Generated|Completed) .*", line)
+    ]
+    pathlib.Path(destination).write_text("\n".join(normalized) + "\n", encoding="utf-8")
+
+
+arguments = sys.argv[1:]
+if len(arguments) != 8:
+    raise SystemExit("contrato interno inválido")
+rewrite(*arguments[:4])
+rewrite(*arguments[4:])
+PYTHON
+iptables-restore --test < "$ipv4_rules"
+ip6tables-restore --test < "$ipv6_rules"
+
+firewall_transition_active=true
+iptables-restore < "$ipv4_rules"
+ip6tables-restore < "$ipv6_rules"
+iptables -w -C INPUT -j SETLIVRE_INPUT
+ip6tables -w -C INPUT -j SETLIVRE6_INPUT
 
 oracle_rules_after="$({
   iptables-save -t filter \
@@ -306,26 +394,8 @@ oracle_rules_after="$({
 [[ ${oracle_rules_after} == "${oracle_rules_before}" ]] \
   || fail "as regras InstanceServices da Oracle foram alteradas."
 
-ipv4_rules="$(mktemp)"
-ipv6_rules="$(mktemp)"
-iptables-save \
-  | sed --regexp-extended \
-    --expression='/^# (Generated|Completed) /d' \
-    --expression='s/ \[[0-9]+:[0-9]+\]$/ [0:0]/' \
-  > "$ipv4_rules"
-ip6tables-save \
-  | sed --regexp-extended \
-    --expression='/^# (Generated|Completed) /d' \
-    --expression='s/ \[[0-9]+:[0-9]+\]$/ [0:0]/' \
-  > "$ipv6_rules"
-iptables-restore --test < "$ipv4_rules"
-ip6tables-restore --test < "$ipv6_rules"
 install -o root -g root -m 0600 "$ipv4_rules" /etc/iptables/rules.v4
 install -o root -g root -m 0600 "$ipv6_rules" /etc/iptables/rules.v6
-iptables-restore < "$ipv4_rules"
-ip6tables-restore < "$ipv6_rules"
-iptables -w -C INPUT -j SETLIVRE_INPUT
-ip6tables -w -C INPUT -j SETLIVRE6_INPUT
 systemctl enable netfilter-persistent fail2ban
 systemctl restart fail2ban
 fail2ban_ready=false
@@ -337,8 +407,9 @@ for _ in {1..15}; do
   sleep 1
 done
 [[ ${fail2ban_ready} == true ]] || fail "Fail2ban não ficou pronto."
-fail2ban_stopped=false
 fail2ban-client status sshd >/dev/null
+fail2ban_stopped=false
+firewall_transition_active=false
 
 if [[ ! -f /swapfile ]]; then
   fallocate --length 1G /swapfile
@@ -357,6 +428,30 @@ systemctl daemon-reload
 systemctl enable nginx unattended-upgrades
 systemctl restart nginx
 systemctl enable set-livre-web.service set-livre-backoffice.service
+if [[ -e /opt/set-livre/current ]]; then
+  [[ -L /opt/set-livre/current \
+    && -f /opt/set-livre/current/web/server.js \
+    && -f /opt/set-livre/current/backoffice/apps/backoffice/server.js \
+    && -f /opt/set-livre/current/.runtime/web.env \
+    && -f /opt/set-livre/current/.runtime/backoffice.env \
+    && -f /opt/set-livre/current/.runtime/release.env ]] \
+    || fail "release ativa não atende ao contrato atômico vigente."
+  systemctl restart set-livre-web.service set-livre-backoffice.service
+else
+  systemctl stop set-livre-web.service
+  systemctl reset-failed set-livre-web.service || true
+  systemctl stop set-livre-backoffice.service
+  systemctl reset-failed set-livre-backoffice.service || true
+fi
+rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
 systemctl enable --now snap.certbot.renew.timer
 
-printf 'Host preparado. Configure /etc/set-livre/*.env antes do primeiro deploy.\n'
+digest_source="$(mktemp /etc/set-livre/.host-config.XXXXXX)"
+printf '%s\n' "$host_configuration_digest" > "$digest_source"
+chown root:setlivre "$digest_source"
+chmod 0640 "$digest_source"
+mv --force -- "$digest_source" /etc/set-livre/host-config.sha256
+digest_source=""
+rm -f -- /etc/set-livre/host-config.previous.sha256
+
+printf 'Host preparado e contrato operacional publicado atomicamente.\n'
