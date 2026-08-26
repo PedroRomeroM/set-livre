@@ -6,6 +6,7 @@ readonly REPOSITORY_ROOT
 readonly PRODUCTION_SUPABASE_URL="https://oirvvnojgkzdppkdvhej.supabase.co"
 readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
 readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
+readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
 nginx_test_active=false
 
 cleanup() {
@@ -93,6 +94,8 @@ printf 'APP_RELEASE_SHA=%s\n' "$release_sha" > "$temporary_directory/release.env
 sudo install -o root -g setlivre -m 0640 "$temporary_directory/release.env" \
   /opt/set-livre/current/.runtime/release.env
 sudo install -m 0755 "$REPOSITORY_ROOT/ops/deploy-release.sh" /usr/local/sbin/set-livre-deploy
+sudo install -o root -g root -m 0755 \
+  "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" "$INSTALLED_DEPLOY_SSH_COMMAND"
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
@@ -135,13 +138,13 @@ for abandoned in \
 done
 
 if sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND='not-authorized' \
-  bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" </dev/null; then
+  "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null; then
   fail "comando SSH não autorizado foi aceito."
 fi
 # O runner confiável abre os fixtures; somente o processo de destino troca de UID.
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${release_sha}" \
-  bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$archive"
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$archive"
 for abandoned in \
   "/home/deploy-setlivre/incoming/set-livre-${abandoned_sha}.tar.gz" \
   "/home/deploy-setlivre/incoming/web-${abandoned_sha}.env" \
@@ -151,10 +154,10 @@ for abandoned in \
 done
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${release_sha}" \
-  bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$temporary_directory/web.env"
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/web.env"
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-backoffice-environment ${release_sha}" \
-  bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$temporary_directory/backoffice.env"
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 stale_trusted=/var/tmp/set-livre-trusted.Ab12Cd.env
 sudo install -o root -g root -m 0600 /dev/null "$stale_trusted"
 sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --verify-only
@@ -278,14 +281,14 @@ upload_candidate() {
   local candidate_sha="$1"
   # shellcheck disable=SC2024
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${candidate_sha}" \
-    bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$candidate_archive"
+    "$INSTALLED_DEPLOY_SSH_COMMAND" < "$candidate_archive"
   # shellcheck disable=SC2024
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${candidate_sha}" \
-    bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$candidate_web_environment"
+    "$INSTALLED_DEPLOY_SSH_COMMAND" < "$candidate_web_environment"
   # shellcheck disable=SC2024
   sudo --user deploy-setlivre -- \
     env SSH_ORIGINAL_COMMAND="upload-backoffice-environment ${candidate_sha}" \
-    bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$candidate_backoffice_environment"
+    "$INSTALLED_DEPLOY_SSH_COMMAND" < "$candidate_backoffice_environment"
 }
 
 invoke_candidate() {

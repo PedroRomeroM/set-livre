@@ -103,6 +103,13 @@ aguarda o fim do lock para recuperar symlink, serviços e health após `SIGKILL`
 upload abandonado, espera real pelo lock e os modos de recovery. Como houve novo código depois de
 `6f05b4f`, esse commit também é apenas histórico e um novo SHA reiniciará CI e review integralmente.
 
+O primeiro CI desse novo SHA passou Playwright, banco e builds, mas revelou que o teste de host executava
+o comando SSH como o usuário restrito diretamente a partir do checkout privado do runner. A produção não
+usa esse caminho: o bootstrap instala uma cópia `root:root` em `/usr/local/sbin`. O teste agora instala e
+invoca exatamente esse artefato, preservando a restrição de leitura do workspace e exercitando a mesma
+fronteira de execução da VM. A execução que revelou a divergência continua sendo evidência diagnóstica;
+o próximo SHA deve repetir todos os gates e reiniciar o ciclo de review.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks
