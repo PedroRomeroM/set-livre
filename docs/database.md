@@ -19,7 +19,7 @@ A árvore possui uma baseline inicial com head `20260824000100`. Antes do primei
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. As quatro suítes pgTAP somam 216 asserts orientados a resultados:
+dump de schema. As quatro suítes pgTAP somam 217 asserts orientados a resultados:
 baseline/isolamento, identidade e núcleo legal, perfil e dono/recebedor.
 
 A baseline implementada inclui:
@@ -30,8 +30,8 @@ A baseline implementada inclui:
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
-- readiness da fronteira gerenciada: `pg_net` inacessível e nenhum GUC sensível legível pelos
-  catálogos internos do Cloud.
+- readiness da fronteira gerenciada: `pg_net` inacessível, nenhum GUC sensível legível pelos
+  catálogos internos do Cloud e nenhum `CREATE/TEMP` direto para DAL/runtime no database.
 
 A baseline encerra com readiness objetivo: head atual, JWT expiry, atributos mínimos de `app_dal`,
 grants diretos restritos, ausência de acesso direto a dados, RLS em tabelas públicas e negação de

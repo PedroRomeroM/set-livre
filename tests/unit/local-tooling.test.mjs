@@ -74,7 +74,11 @@ describe("local tooling contracts", () => {
       "utf8",
     );
     const recoveryUnit = readFileSync(
-      new URL("../../ops/systemd/set-livre-release-recovery.service", import.meta.url),
+      new URL("../../ops/systemd/set-livre-release-recovery@.service", import.meta.url),
+      "utf8",
+    );
+    const recoveryPath = readFileSync(
+      new URL("../../ops/systemd/set-livre-release-recovery.path", import.meta.url),
       "utf8",
     );
 
@@ -113,11 +117,14 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("systemctl reset-failed set-livre-web.service || true");
     expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
     expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
-    expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover");
-    expect(recoveryUnit).toContain("ConditionPathExists=/opt/set-livre/.activation-rollback");
-    expect(recoveryUnit).toContain("RemainAfterExit=yes");
-    expect(webUnit).toContain("Requires=set-livre-release-recovery.service");
-    expect(backofficeUnit).toContain("Requires=set-livre-release-recovery.service");
+    expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i");
+    expect(recoveryUnit).not.toContain("ConditionPathExists=");
+    expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
+    expect(recoveryUnit).not.toContain("Before=set-livre-web.service");
+    expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
+    expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
+    expect(webUnit).toContain("Requires=set-livre-release-recovery@link.service");
+    expect(backofficeUnit).toContain("Requires=set-livre-release-recovery@link.service");
   });
 
   it("preserves Oracle networking while exposing only the production entrypoints", () => {
@@ -209,6 +216,8 @@ describe("local tooling contracts", () => {
       bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
     );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
+    expect(command).toContain("cleanup_abandoned_uploads");
+    expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
     expect(deploy).toContain("readiness HTTPS público");
     expect(deploy).toContain("RETAINED_RELEASES=4");
@@ -216,9 +225,17 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain(".runtime/web.env");
     expect(deploy).toContain("write_rollback_marker");
     expect(deploy).toContain("recover_link_from_marker");
+    expect(deploy).toContain("--recover-link");
+    expect(deploy).toContain("--recover-services");
     expect(deploy).toContain("remove_stale_staging_directories");
+    expect(deploy).toContain("remove_stale_trusted_files");
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
     expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
+    expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
+    expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
+    expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(
+      bootstrap.indexOf("apt-get update"),
+    );
   });
 
   it("builds the Linux release with production fixtures before packaging", () => {

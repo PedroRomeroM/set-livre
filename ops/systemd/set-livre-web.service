@@ -2,8 +2,8 @@
 Description=Set Livre public web
 After=network-online.target
 Wants=network-online.target
-Requires=set-livre-release-recovery.service
-After=set-livre-release-recovery.service
+Requires=set-livre-release-recovery@link.service
+After=set-livre-release-recovery@link.service
 ConditionPathExists=/opt/set-livre/current/web/server.js
 StartLimitIntervalSec=60s
 StartLimitBurst=5

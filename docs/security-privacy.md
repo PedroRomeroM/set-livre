@@ -43,6 +43,7 @@ comandos publicados. O login de produção `app_runtime_production`:
 - pode apenas conectar e assumir `app_dal`;
 - tem limite de dez conexões;
 - não possui superuser, inherit, criação, replicação, bypass RLS, TEMP ou objetos;
+- falha no provisionamento e no health se ele ou `app_dal` receber `CREATE`/`TEMP` no database;
 - não possui GUC próprio em produção; se catálogos gerenciados forem efetivamente legíveis, readiness
   exige que nenhum setting de role/database tenha nome de secret, password, token, credential ou key;
 - não alcança `pg_net`; habilitar acesso ao schema `net` derruba readiness e bloqueia novo deploy.

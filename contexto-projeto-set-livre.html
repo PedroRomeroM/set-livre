@@ -117,7 +117,8 @@
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
-            catálogo gerenciado legível contém configuração nomeada como segredo.
+            catálogo gerenciado legível contém configuração nomeada como segredo; grants diretos de
+            <code>CREATE/TEMP</code> também bloqueiam o provisionamento e o health.
           </li>
         </ul>
       </section>
@@ -149,6 +150,11 @@
           O CI compila o artifact Linux com fixtures das coordenadas de produção antes do smoke. O
           instalador também remove staging residual validado depois de reboot ou
           <code>SIGKILL</code>, sem aceitar nome, owner ou tipo genérico.
+        </p>
+        <p>
+          Uploads são limitados a um SHA. Um watcher aguarda o lock e recupera serviços após
+          <code>SIGKILL</code>; bootstrap incompatível mantém a release antiga parada até o artifact
+          do novo contrato.
         </p>
       </section>
 

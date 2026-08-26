@@ -1,6 +1,6 @@
 begin;
 
-select plan(24);
+select plan(25);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -183,8 +183,15 @@ select ok(
 
 select ok(
   private.managed_runtime_boundaries_are_ready(),
-  'fronteiras gerenciadas de catálogo e HTTP estão seguras'
+  'fronteiras gerenciadas de catálogo, HTTP e database estão seguras'
 );
+
+grant create on database postgres to app_runtime_production;
+select ok(
+  not private.managed_runtime_boundaries_are_ready(),
+  'fronteira gerenciada rejeita CREATE direto no login de produção'
+);
+revoke create on database postgres from app_runtime_production;
 
 select ok(
   not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_db_role_setting', 'SELECT')

@@ -5,6 +5,7 @@ readonly NODE_VERSION="24.18.0"
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly CERTBOT_MINIMUM_VERSION="5.4.0"
+readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -24,10 +25,30 @@ persisted_ipv6_existed=false
 firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
+active_release_sha=""
+active_release_compatible=false
 
 fail() {
   printf 'bootstrap: %s\n' "$1" >&2
   exit 1
+}
+
+wait_for_active_health() {
+  local expected_release="$1"
+  for _ in $(seq 1 30); do
+    if curl --fail --silent --show-error --max-time 2 \
+      http://127.0.0.1:3000/api/health/ready \
+      | jq --exit-status --arg release "$expected_release" \
+        '.application == "web" and .release == $release and .status == "ready"' >/dev/null \
+      && curl --fail --silent --show-error --max-time 2 \
+        http://127.0.0.1:3001/api/health/ready \
+        | jq --exit-status --arg release "$expected_release" \
+          '.application == "backoffice" and .release == $release and .status == "ready"' >/dev/null; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 cleanup() {
@@ -67,7 +88,8 @@ for required_source in \
   "$NGINX_TLS_SOURCE" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" \
-  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service"; do
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery@.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path"; do
   [[ -f ${required_source} && ! -L ${required_source} ]] || fail "fonte operacional ausente ou inválida."
 done
 
@@ -78,6 +100,82 @@ IFS= read -r deploy_key < "$deploy_key_file"
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
+
+host_configuration_digest="$(python3 - "$SCRIPT_DIRECTORY" <<'PYTHON'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+files = [
+    "bootstrap-host.sh",
+    "certificates/supabase-root-2021-ca.crt",
+    "deploy-release.sh",
+    "deploy-ssh-command.sh",
+    "nginx/set-livre-http.conf",
+    "nginx/set-livre-tls.conf",
+    "systemd/set-livre-backoffice.service",
+    "systemd/set-livre-release-recovery.path",
+    "systemd/set-livre-release-recovery@.service",
+    "systemd/set-livre-web.service",
+]
+digest = hashlib.sha256()
+for relative in files:
+    path = root / relative
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"fonte operacional inválida: {relative}")
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PYTHON
+)"
+[[ ${host_configuration_digest} =~ ^[0-9a-f]{64}$ ]] \
+  || fail "digest operacional inválido."
+
+[[ ! -e ${ROLLBACK_MARKER} ]] \
+  || fail "há uma ativação interrompida; recupere-a antes de alterar o host."
+if [[ -e /opt/set-livre/current ]]; then
+  [[ -L /opt/set-livre/current ]] || fail "release ativa não é link simbólico."
+  active_release="$(readlink --canonicalize-existing /opt/set-livre/current)"
+  [[ ${active_release} =~ ^/opt/set-livre/releases/([0-9a-f]{40})$ \
+    && -d ${active_release} && ! -L ${active_release} ]] \
+    || fail "release ativa aponta para destino inválido."
+  active_release_sha="${BASH_REMATCH[1]}"
+  [[ $(stat --format '%U' -- "$active_release") == "root" ]] \
+    || fail "release ativa tem owner inesperado."
+  active_manifest="${active_release}/release-manifest.json"
+  [[ -f ${active_manifest} && ! -L ${active_manifest} ]] \
+    || fail "release ativa não possui manifesto regular."
+  if ! active_host_digest="$(python3 - "$active_manifest" "$active_release_sha" <<'PYTHON'
+import json
+import pathlib
+import re
+import sys
+
+path, expected_sha = pathlib.Path(sys.argv[1]), sys.argv[2]
+try:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    digest = manifest["hostConfiguration"]["sha256"]
+except (KeyError, OSError, UnicodeError, json.JSONDecodeError, TypeError) as error:
+    raise SystemExit("manifesto ilegível") from error
+if manifest.get("version") != 2 or manifest.get("commit") != expected_sha:
+    raise SystemExit("identidade do manifesto inválida")
+if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+    raise SystemExit("digest do manifesto inválido")
+print(digest)
+PYTHON
+  )"; then
+    fail "manifesto da release ativa é inválido."
+  fi
+  if [[ ${active_host_digest} == "$host_configuration_digest" ]]; then
+    active_release_compatible=true
+  else
+    systemctl stop set-livre-web.service set-livre-backoffice.service \
+      || fail "não foi possível interromper a release incompatível antes do bootstrap."
+  fi
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -159,6 +257,14 @@ install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-chal
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
+incoming_lock=/home/deploy-setlivre/incoming/.incoming.lock
+if [[ ! -e ${incoming_lock} ]]; then
+  install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$incoming_lock"
+fi
+[[ -f ${incoming_lock} && ! -L ${incoming_lock} \
+  && $(stat --format '%U:%G' -- "$incoming_lock") == "deploy-setlivre:deploy-setlivre" ]] \
+  || fail "lock de upload instalado é inválido."
+chmod 0600 "$incoming_lock"
 printf 'restrict,command="/usr/local/sbin/set-livre-deploy-ssh" %s\n' "$deploy_key" \
   > /home/deploy-setlivre/.ssh/authorized_keys
 chown deploy-setlivre:deploy-setlivre /home/deploy-setlivre/.ssh/authorized_keys
@@ -168,42 +274,16 @@ install -o root -g root -m 0755 "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-l
 install -o root -g root -m 0755 "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" /etc/systemd/system/set-livre-web.service
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" /etc/systemd/system/set-livre-backoffice.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
-  /etc/systemd/system/set-livre-release-recovery.service
+install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery@.service" \
+  /etc/systemd/system/set-livre-release-recovery@.service
+install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path" \
+  /etc/systemd/system/set-livre-release-recovery.path
+systemctl stop set-livre-release-recovery.service 2>/dev/null || true
+rm -f -- /etc/systemd/system/set-livre-release-recovery.service
 install -d -o root -g root -m 0755 /usr/local/share/set-livre
 install -o root -g root -m 0644 "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf
 install -o root -g root -m 0644 "$NGINX_TLS_SOURCE" /usr/local/share/set-livre/nginx-tls.conf
 
-host_configuration_digest="$(python3 - "$SCRIPT_DIRECTORY" <<'PYTHON'
-import hashlib
-import pathlib
-import sys
-
-root = pathlib.Path(sys.argv[1])
-files = [
-    "bootstrap-host.sh",
-    "certificates/supabase-root-2021-ca.crt",
-    "deploy-release.sh",
-    "deploy-ssh-command.sh",
-    "nginx/set-livre-http.conf",
-    "nginx/set-livre-tls.conf",
-    "systemd/set-livre-backoffice.service",
-    "systemd/set-livre-release-recovery.service",
-    "systemd/set-livre-web.service",
-]
-digest = hashlib.sha256()
-for relative in files:
-    path = root / relative
-    if not path.is_file() or path.is_symlink():
-        raise SystemExit(f"fonte operacional inválida: {relative}")
-    digest.update(relative.encode("utf-8"))
-    digest.update(b"\0")
-    digest.update(path.read_bytes())
-    digest.update(b"\0")
-print(digest.hexdigest())
-PYTHON
-)"
-[[ ${host_configuration_digest} =~ ^[0-9a-f]{64}$ ]] || fail "digest operacional inválido."
 active_nginx_source=/usr/local/share/set-livre/nginx-http.conf
 certificate_path="/etc/letsencrypt/live/${PRODUCTION_IP}/fullchain.pem"
 private_key_path="/etc/letsencrypt/live/${PRODUCTION_IP}/privkey.pem"
@@ -427,7 +507,11 @@ nginx -t
 systemctl daemon-reload
 systemctl enable nginx unattended-upgrades
 systemctl restart nginx
-systemctl enable set-livre-web.service set-livre-backoffice.service
+systemctl enable \
+  set-livre-web.service \
+  set-livre-backoffice.service \
+  set-livre-release-recovery.path
+systemctl start set-livre-release-recovery.path
 if [[ -e /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
     && -f /opt/set-livre/current/web/server.js \
@@ -436,7 +520,21 @@ if [[ -e /opt/set-livre/current ]]; then
     && -f /opt/set-livre/current/.runtime/backoffice.env \
     && -f /opt/set-livre/current/.runtime/release.env ]] \
     || fail "release ativa não atende ao contrato atômico vigente."
-  systemctl restart set-livre-web.service set-livre-backoffice.service
+  [[ $(readlink --canonicalize-existing /opt/set-livre/current) \
+    == "/opt/set-livre/releases/${active_release_sha}" ]] \
+    || fail "release ativa mudou durante o bootstrap."
+  if [[ ${active_release_compatible} == true ]]; then
+    systemctl restart set-livre-web.service set-livre-backoffice.service
+    wait_for_active_health "$active_release_sha" || {
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      fail "release compatível não recuperou readiness após o bootstrap."
+    }
+  else
+    if systemctl is-active --quiet set-livre-web.service \
+      || systemctl is-active --quiet set-livre-backoffice.service; then
+      fail "release incompatível voltou a executar durante o bootstrap."
+    fi
+  fi
 else
   systemctl stop set-livre-web.service
   systemctl reset-failed set-livre-web.service || true
@@ -454,4 +552,7 @@ mv --force -- "$digest_source" /etc/set-livre/host-config.sha256
 digest_source=""
 rm -f -- /etc/set-livre/host-config.previous.sha256
 
+if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
+  printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'
+fi
 printf 'Host preparado e contrato operacional publicado atomicamente.\n'

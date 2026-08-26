@@ -790,6 +790,26 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
             namespace.oid,
             'CREATE'
           )
+      )
+    ) as ready
+  ),
+  application_database_access_is_restricted as (
+    select not exists (
+      select 1
+      from (
+        values
+          ('app_dal'::text),
+          ('app_runtime_production'::text)
+      ) as application_role(role_name)
+      where pg_catalog.has_database_privilege(
+          application_role.role_name,
+          pg_catalog.current_database(),
+          'CREATE'
+        )
+        or pg_catalog.has_database_privilege(
+          application_role.role_name,
+          pg_catalog.current_database(),
+          'TEMPORARY'
         )
     ) as ready
   )
@@ -798,7 +818,8 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
       (select ready from sensitive_catalog_access_is_restricted)
       or (select ready from sensitive_settings_are_absent)
     )
-    and (select ready from managed_http_access_is_restricted),
+    and (select ready from managed_http_access_is_restricted)
+    and (select ready from application_database_access_is_restricted),
     false
   );
 $$;
@@ -807,7 +828,7 @@ $$;
 ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos gerenciados expõem configuração sensível ou se roles runtime alcançam pg_net.';
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos expõem configuração sensível, roles runtime alcançam pg_net ou recebem CREATE/TEMP.';
 
 
 CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean

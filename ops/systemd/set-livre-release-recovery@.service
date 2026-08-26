@@ -1,12 +1,9 @@
 [Unit]
-Description=Recover an interrupted Set Livre release activation
-Before=set-livre-web.service set-livre-backoffice.service
-ConditionPathExists=/opt/set-livre/.activation-rollback
+Description=Recover an interrupted Set Livre release activation (%i)
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/sbin/set-livre-deploy --recover
+ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -26,5 +23,5 @@ RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native

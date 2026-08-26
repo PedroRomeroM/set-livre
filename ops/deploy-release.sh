@@ -98,10 +98,10 @@ write_rollback_marker() {
 
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
 
-if [[ $# -eq 1 && ${1:-} == "--recover" ]]; then
+if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
   if ! flock --nonblock 9; then
-    printf 'Deploy ativo; recuperação de boot não é necessária.\n'
+    printf 'Deploy ativo; a recuperação pós-lock permanece armada.\n'
     exit 0
   fi
   if [[ -e ${ROLLBACK_MARKER} ]]; then
@@ -111,11 +111,30 @@ if [[ $# -eq 1 && ${1:-} == "--recover" ]]; then
   exit 0
 fi
 
+if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
+  exec 9>/run/lock/set-livre-deploy.lock
+  flock --exclusive 9
+  if [[ -e ${ROLLBACK_MARKER} ]]; then
+    recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
+    if [[ -z ${recovered_release} ]]; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service \
+        || fail "não foi possível estabilizar o host sem release anterior."
+    elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
+      || ! wait_for_health "$recovered_release" \
+      || ! wait_for_public_health "$recovered_release"; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      fail "a release recuperada não atingiu readiness; serviços interrompidos."
+    fi
+    printf 'Ativação interrompida recuperada e serviços estabilizados.\n'
+  fi
+  exit 0
+fi
+
 verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only] ou --recover."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link ou --recover-services."
 fi
 
 release_sha="$1"
@@ -149,6 +168,19 @@ remove_stale_staging_directories() {
     rm -rf --one-file-system -- "$path" || return 1
   done < <(
     find "$RELEASES_DIRECTORY" -mindepth 1 -maxdepth 1 -name '.staging-*' -print0
+  )
+}
+
+remove_stale_trusted_files() {
+  local name path
+  while IFS= read -r -d '' path; do
+    name="${path##*/}"
+    [[ ${name} =~ ^set-livre-trusted\.[A-Za-z0-9]{6}\.(tar\.gz|env)$ ]] || return 1
+    [[ ${path} == /var/tmp/set-livre-trusted.* && -f ${path} && ! -L ${path} ]] || return 1
+    [[ $(stat --format '%U:%a' -- "$path") == "root:600" ]] || return 1
+    rm -f -- "$path" || return 1
+  done < <(
+    find /var/tmp -mindepth 1 -maxdepth 1 -name 'set-livre-trusted.*' -print0
   )
 }
 
@@ -209,6 +241,9 @@ trap on_exit EXIT
 trap 'on_signal HUP 129' HUP
 trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
+
+remove_stale_trusted_files \
+  || fail "arquivo confiável residual possui identidade ou permissões inválidas."
 
 if [[ -e ${ROLLBACK_MARKER} ]]; then
   recover_link_from_marker || fail "não foi possível recuperar o deploy anterior."

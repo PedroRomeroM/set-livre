@@ -43,6 +43,8 @@ if ! getent passwd deploy-setlivre >/dev/null; then
 fi
 
 sudo install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
+sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null \
+  /home/deploy-setlivre/incoming/.incoming.lock
 sudo install -d -o root -g setlivre -m 0750 /etc/set-livre /opt/set-livre/releases
 
 sudo rm --force /etc/nginx/sites-enabled/default
@@ -94,7 +96,8 @@ sudo install -m 0755 "$REPOSITORY_ROOT/ops/deploy-release.sh" /usr/local/sbin/se
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
-  "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.service"
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery@.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
 
 archive="$temporary_directory/host-contract-release.tar.gz"
 tar --create --gzip --file "$archive" --directory "$REPOSITORY_ROOT/.artifacts/release" .
@@ -122,6 +125,15 @@ write_fixture_environment() {
 write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL"
 write_fixture_environment "$temporary_directory/backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
 
+abandoned_sha="$(printf 'f%.0s' {1..40})"
+for abandoned in \
+  "/home/deploy-setlivre/incoming/set-livre-${abandoned_sha}.tar.gz" \
+  "/home/deploy-setlivre/incoming/web-${abandoned_sha}.env" \
+  "/home/deploy-setlivre/incoming/backoffice-${abandoned_sha}.env" \
+  "/home/deploy-setlivre/incoming/.upload.Ab12Cd"; do
+  sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$abandoned"
+done
+
 if sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND='not-authorized' \
   bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" </dev/null; then
   fail "comando SSH não autorizado foi aceito."
@@ -130,13 +142,23 @@ fi
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${release_sha}" \
   bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$archive"
+for abandoned in \
+  "/home/deploy-setlivre/incoming/set-livre-${abandoned_sha}.tar.gz" \
+  "/home/deploy-setlivre/incoming/web-${abandoned_sha}.env" \
+  "/home/deploy-setlivre/incoming/backoffice-${abandoned_sha}.env" \
+  "/home/deploy-setlivre/incoming/.upload.Ab12Cd"; do
+  [[ ! -e ${abandoned} ]] || fail "upload abandonado não foi removido."
+done
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${release_sha}" \
   bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$temporary_directory/web.env"
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-backoffice-environment ${release_sha}" \
   bash "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" < "$temporary_directory/backoffice.env"
+stale_trusted=/var/tmp/set-livre-trusted.Ab12Cd.env
+sudo install -o root -g root -m 0600 /dev/null "$stale_trusted"
 sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --verify-only
+[[ ! -e ${stale_trusted} ]] || fail "arquivo confiável residual não foi removido."
 
 # A ativação usa comandos controlados para exercitar o instalador real sem iniciar systemd no runner.
 sudo rm -rf -- /opt/set-livre/current
@@ -349,7 +371,40 @@ printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
-sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover
+sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-link
 assert_current_release "$release_sha"
 
-printf 'Ativação, rollback, interrupção, retenção e recuperação de boot verificados.\n'
+sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+recovery_lock_ready="$temporary_directory/recovery-lock-ready"
+recovery_lock_release="$temporary_directory/recovery-lock-release"
+# A expansão de $1/$2 pertence ao bash filho, não ao runner do teste.
+# shellcheck disable=SC2016
+flock --exclusive /run/lock/set-livre-deploy.lock bash -c '
+  touch "$1"
+  while [[ ! -e $2 ]]; do /usr/bin/sleep 0.05; done
+' _ "$recovery_lock_ready" "$recovery_lock_release" &
+lock_holder=$!
+for _ in {1..20}; do
+  [[ ! -e ${recovery_lock_ready} ]] || break
+  /usr/bin/sleep 0.05
+done
+[[ -e ${recovery_lock_ready} ]] || fail "lock de deploy do teste não foi adquirido."
+sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services &
+recovery_process=$!
+/usr/bin/sleep 0.1
+kill -0 "$recovery_process" 2>/dev/null \
+  || fail "watcher de recuperação não aguardou o lock do deploy."
+[[ -e /opt/set-livre/.activation-rollback ]] \
+  || fail "watcher alterou o marcador enquanto o deploy mantinha o lock."
+touch "$recovery_lock_release"
+wait "$lock_holder"
+wait "$recovery_process"
+assert_current_release "$release_sha"
+
+printf 'Uploads, ativação, rollback, interrupção, retenção e recuperação pós-lock verificados.\n'

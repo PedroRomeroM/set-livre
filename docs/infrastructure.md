@@ -96,10 +96,12 @@ tamanho/quantidade e aceita somente diretórios e arquivos regulares nas três r
 SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. A troca de
 `/opt/set-livre/current` ativa essa unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
-esse alvo em erro, `HUP`, `INT` ou `TERM`, e uma unit oneshot faz a mesma recuperação antes do boot dos
-apps se o processo ou a VM forem interrompidos. Rollback incapaz de voltar ao readiness interno
-interrompe os serviços. Um SHA existente com artifact ou ambiente diferente é recusado. A retenção
-ocorre antes da ativação e mantém no máximo quatro releases, incluindo candidata e anterior.
+esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
+dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
+o lock do deploy e estabiliza serviços e health após `SIGKILL`; ela apenas encerra se o deploy normal já
+removeu o marcador. Rollback incapaz de voltar ao readiness interrompe os serviços. Um SHA existente
+com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ativação e mantém no máximo
+quatro releases, incluindo candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
 produza o mesmo checksum.
 Antes da compactação, o empacotador também recusa `.env` e ocorrências exatas das credenciais de banco
@@ -132,6 +134,7 @@ Diretórios e identidades:
   .runtime/release.env           root:setlivre 0640
 /opt/set-livre/current           symlink para código + ambientes do mesmo SHA
 /opt/set-livre/.activation-rollback marcador transitório root:root 0600
+/home/deploy-setlivre/incoming/.incoming.lock deploy-setlivre 0600
 /etc/set-livre/host-config.sha256 root:setlivre 0640
 /etc/set-livre/supabase-root-2021-ca.crt root:root 0644
 ```
@@ -147,12 +150,22 @@ shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser execu
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
 
+Uploads usam lock próprio e o diretório `incoming` conserva no máximo o SHA em preparação. Antes de
+cada comando, nomes temporários interrompidos e artifacts de outro SHA são removidos somente após
+validar nome, arquivo regular, owner e modo; entrada divergente bloqueia o fluxo. Assim, cancelamento
+entre upload e deploy não acumula archives de até 256 MiB nem pode apagar caminho arbitrário. Sob o
+lock de deploy, a mesma regra remove cópias confiáveis residuais em `/var/tmp` antes de criar outra.
+
 Depois de adquirir o lock exclusivo, o instalador remove somente diretórios residuais que correspondem
 exatamente a `.staging-<sha>.<sufixo-mktemp>`, são diretórios reais dentro de `releases` e pertencem a
 `root`. Isso recupera `SIGKILL` ou reboot entre extração e rename sem aceitar path genérico; nome,
 owner ou tipo divergente bloqueia a ativação para inspeção.
 
-O manifesto contém o SHA-256 determinístico dos nove arquivos que definem o host. O bootstrap invalida
+O manifesto contém o SHA-256 determinístico dos dez arquivos que definem o host. Antes de qualquer
+mutação, o bootstrap compara esse digest com o manifesto da release ativa. Se forem iguais, só reinicia
+a release depois de reaplicar o contrato e exige readiness dos dois apps. Se divergirem, interrompe os
+apps antes da primeira alteração e os mantém parados até o deploy do artifact que carrega o novo
+digest; uma release antiga nunca executa sob units/proxy novos. Depois disso, o bootstrap invalida
 o marcador ativo antes de alterar essas superfícies e só publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações; falha intermediária
 mantém novos deploys bloqueados. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
@@ -209,8 +222,9 @@ normal. O script não imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre c
 quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
-fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` por role web/DAL bloqueia deploy e
-readiness. Os catálogos `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
+fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` ou `CREATE/TEMP` direto no database
+por `app_dal`/login de produção bloqueia deploy e readiness antes de habilitar a senha. Os catálogos
+`pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
 serviço, identidade que o `postgres` do projeto não pode assumir. Quando a ACL gerenciada conserva
 leitura herdada, o banco precisa ter zero setting de role/database cujo nome denote secret, password,
 token, credential ou key. A role de produção não grava o antigo GUC vazio. No local, onde o bootstrap

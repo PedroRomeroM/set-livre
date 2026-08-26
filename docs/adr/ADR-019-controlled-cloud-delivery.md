@@ -31,6 +31,10 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - a publicação reúne artifact, ambientes e identidade do SHA em uma release imutável, cercada pelo
   digest do host; um único symlink, health interno/público, retenção limitada e marcador recuperável
   controlam ativação e rollback;
+- uploads ficam serializados e limitados aos três arquivos de um SHA; cancelamento remove o candidato
+  anterior na próxima conexão, sem retenção indefinida no disco;
+- uma path unit aguarda o lock e recupera `SIGKILL`; bootstrap incompatível interrompe a release antiga
+  antes de mutar o host e só a release do novo digest volta a iniciar os apps;
 - o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
   valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
 - objetos internos do Supabase permanecem sob a identidade gerenciada `supabase_admin`, que não pode
@@ -39,6 +43,7 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - `pg_net` não pertence à baseline. Se o schema `net` existir e `anon`, `authenticated`,
   `service_role`, `app_dal` ou o login de produção tiver `USAGE/CREATE`, o provisionamento falha antes
   de habilitar o login e o health existente fica indisponível;
+- `CREATE/TEMP` direto no database para DAL ou login de produção também invalida essa fronteira;
 - branch protection, checks do GitHub e o ciclo documentado de review são a autoridade de merge;
 - depois da revisão limpa, o agente publica o status `Codex review contract` no SHA exato, apontando
   para a evidência; a branch protection exige esse status e qualquer push o invalida;

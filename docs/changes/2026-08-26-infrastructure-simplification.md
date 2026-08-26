@@ -91,10 +91,17 @@ no-op com warning; o contrato suportado preserva a ACL da plataforma e falha fec
 de segurança. Testes SQL, unitários e de host cobrem as quatro regressões. O próximo review precisa ser
 pedido somente depois do novo commit e de todos os gates.
 
-No candidato corrigido, 575 testes unitários e 216 asserts pgTAP passaram; format, lint, typecheck,
+No candidato corrigido, 575 testes unitários e 217 asserts pgTAP passaram; format, lint, typecheck,
 docs, migrations, audit sem vulnerabilidades, Knip, lint do banco, builds nativos dos dois apps e
 empacotamento da release também ficaram verdes. O cenário crítico de autenticação passou nos três
 engines (36/36) no SHA anterior; o novo SHA repete a suíte Playwright completa e o build Linux no CI.
+
+Enquanto o primeiro lote era corrigido, outra resposta Codex do SHA anterior publicou quatro findings
+adicionais. A fronteira de banco agora rejeita `CREATE/TEMP` antes e depois do login; uploads ficam sob
+lock e limitados a um SHA; bootstrap incompatível interrompe os apps antes de mutar o host; e uma path unit
+aguarda o fim do lock para recuperar symlink, serviços e health após `SIGKILL`. O teste Ubuntu exerce
+upload abandonado, espera real pelo lock e os modos de recovery. Como houve novo código depois de
+`6f05b4f`, esse commit também é apenas histórico e um novo SHA reiniciará CI e review integralmente.
 
 ## Observabilidade e operação
 
