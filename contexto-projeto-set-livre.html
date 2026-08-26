@@ -128,11 +128,13 @@
             catálogo gerenciado legível contém configuração nomeada como segredo. A membership
             reversa de <code>app_runtime_production</code> aceita somente a administração automática
             de <code>postgres</code>, sem permissão para assumir a role. Readiness também bloqueia
-            grants do schema ou de comandos privados para qualquer grantee além do owner/DAL,
-            membro, ownership ou acesso efetivo de <code>app_dal</code> a schema externo fora das
-            allowlists e preserva a release anterior somente quando seu schema permanece aplicado e
-            compatível. Chaves Supabase privilegiadas ou JWT são recusadas antes dos builds;
-            produção aceita somente o formato <code>sb_publishable_</code>.
+            grants do schema ou de comandos privados para qualquer grantee além do owner/DAL e exige
+            que o schema <code>private</code> e todas as suas rotinas pertençam ao owner canônico
+            <code>postgres</code>, membro, ownership ou acesso efetivo de <code>app_dal</code> a
+            schema externo fora das allowlists e preserva a release anterior somente quando seu
+            schema permanece aplicado e compatível. Chaves Supabase privilegiadas ou JWT são
+            recusadas antes dos builds; produção aceita somente o formato
+            <code>sb_publishable_</code>.
           </li>
         </ul>
       </section>

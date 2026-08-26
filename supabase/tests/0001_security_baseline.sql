@@ -1,6 +1,6 @@
 begin;
 
-select plan(36);
+select plan(38);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -235,6 +235,45 @@ select ok(
   private.check_readiness('20260824000100'),
   'readiness aceita a migration head atual'
 );
+
+savepoint private_schema_owner_drift;
+create role readiness_owner_intruder nologin noinherit;
+grant readiness_owner_intruder to postgres with admin false, inherit false, set true;
+do $$
+begin
+  execute pg_catalog.format(
+    'grant create on database %I to readiness_owner_intruder',
+    pg_catalog.current_database()
+  );
+end;
+$$;
+alter schema private owner to readiness_owner_intruder;
+do $$
+begin
+  execute pg_catalog.format(
+    'revoke create on database %I from readiness_owner_intruder',
+    pg_catalog.current_database()
+  );
+end;
+$$;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita owner não canônico no schema private'
+);
+rollback to savepoint private_schema_owner_drift;
+
+savepoint private_routine_owner_drift;
+create role readiness_owner_intruder nologin noinherit;
+grant readiness_owner_intruder to postgres with admin false, inherit false, set true;
+grant create on schema private to readiness_owner_intruder;
+alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
+  owner to readiness_owner_intruder;
+revoke create on schema private from readiness_owner_intruder;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita owner não canônico em comando private'
+);
+rollback to savepoint private_routine_owner_drift;
 
 insert into supabase_migrations.schema_migrations(version, statements, name)
 values ('20260815000100', array[]::text[], 'rollback-readiness-probe');

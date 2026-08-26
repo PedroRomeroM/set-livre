@@ -650,6 +650,11 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           and dependency.deptype = 'o'
       )
   ),
+  trusted_owner as (
+    select role.oid
+    from pg_catalog.pg_roles as role
+    where role.rolname = 'postgres'
+  ),
   migration_is_applied as (
     select
       expected_version ~ '^[0-9]{14}$'
@@ -678,12 +683,30 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
       (pg_catalog.to_regprocedure('private.update_profile_appearance(uuid,bigint,text)')),
       (pg_catalog.to_regprocedure('private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'))
   ),
+  private_ownership_is_trusted as (
+    select
+      exists (
+        select 1
+        from pg_catalog.pg_namespace as namespace
+        cross join trusted_owner
+        where namespace.nspname = 'private'
+          and namespace.nspowner = trusted_owner.oid
+      )
+      and not exists (
+        select 1
+        from pg_catalog.pg_proc as routine
+        join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+        cross join trusted_owner
+        where namespace.nspname = 'private'
+          and routine.proowner <> trusted_owner.oid
+      ) as ready
+  ),
   direct_schema_grants_are_restricted as (
     select
       pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid) = 1
       and coalesce(
         pg_catalog.bool_and(
-          privilege.grantee = namespace.nspowner
+          privilege.grantee = trusted_owner.oid
           or (
             privilege.grantee = dal_role.oid
             and privilege.privilege_type = 'USAGE'
@@ -695,6 +718,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     from pg_catalog.pg_namespace as namespace
     cross join lateral pg_catalog.aclexplode(namespace.nspacl) as privilege
     cross join dal_role
+    cross join trusted_owner
     where namespace.nspname = 'private'
   ),
   effective_external_schema_access_is_absent as (
@@ -716,7 +740,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
         = (select pg_catalog.count(*) from authorized_dal_routines)
       and coalesce(
         pg_catalog.bool_and(
-          privilege.grantee = routine.proowner
+          privilege.grantee = trusted_owner.oid
           or (
             privilege.grantee = dal_role.oid
             and routine.oid in (select authorized.oid from authorized_dal_routines as authorized)
@@ -735,6 +759,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
     cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
     cross join dal_role
+    cross join trusted_owner
     where namespace.nspname = 'private'
   ),
   effective_private_routine_grants_are_restricted as (
@@ -856,6 +881,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   select coalesce(
     (select ready from migration_is_applied)
     and pg_catalog.current_setting('app.settings.jwt_exp', true) = '3600'
+    and (select ready from private_ownership_is_trusted)
     and (select ready from direct_schema_grants_are_restricted)
     and (select ready from effective_external_schema_access_is_absent)
     and (select ready from direct_routine_grants_are_restricted)

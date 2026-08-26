@@ -40,6 +40,8 @@ deploys seguintes apenas validam a credencial existente, sem rotação implícit
 allowlist exata de comandos DAL, rejeita ACL herdada por `PUBLIC`, ownership ou membership inesperada e
 aceita somente `CONNECT` como grant direto do login. Também rejeita `USAGE/CREATE` efetivo de `app_dal`
 em qualquer schema não sistêmico fora de `private`, inclusive quando o acesso nasce de `PUBLIC`. A
+propriedade do schema `private` e de todas as rotinas privadas é fixada na role canônica `postgres`; o
+owner observado no catálogo nunca é aceito como autoridade por si só. A
 membership reversa aceita apenas o vínculo
 administrativo automático de `postgres`, sem `SET/INHERIT`; qualquer identidade assumível é rejeitada.
 O health preserva heads aplicados para rollback
@@ -97,7 +99,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   Ed25519; a extração pré-varre headers em streaming, limita metadata PAX/GNU e interrompe a leitura no
   header lógico 20.001 sem materializar entradas ilimitadas;
 - o wrapper local fixa somente o named pipe/socket Docker canônico antes de chamar a CLI Supabase, e o
-  readiness rejeita grants no schema ou em comandos privados para qualquer grantee além do owner/DAL;
+  readiness rejeita grants no schema ou em comandos privados para qualquer grantee além do owner/DAL
+  e rejeita qualquer drift do owner canônico `postgres` nessas superfícies;
 - gates locais recusam tanto `databaseMigrationHead` divergente da migration mais recente quanto
   referência documental a ADR inexistente;
 - o empacotamento aceita somente conteúdo regular originado da release e das dependências instaladas

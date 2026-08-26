@@ -284,7 +284,9 @@ quatro slots do limite dez para verificação de deploy, recuperação e variaç
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de
 `private` — inclusive herdado por `PUBLIC` — ou `CREATE/TEMP` direto no database por DAL/login de
-produção bloqueia deploy e readiness antes de habilitar a senha. A membership
+produção bloqueia deploy e readiness antes de habilitar a senha. O schema `private` e todas as suas
+rotinas devem permanecer sob o owner canônico `postgres`; qualquer reassignment também falha fechado.
+A membership
 reversa aceita somente a administração automática de `postgres`, com `SET/INHERIT` falsos; qualquer
 outro membro de `app_runtime_production` também bloqueia o fluxo. Os catálogos
 `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
