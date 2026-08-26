@@ -129,6 +129,16 @@ unitários e 114 cenários Playwright passaram. Format, ESLint, TypeScript, docs
 Knip e os builds nativos de web/backoffice também ficaram verdes. O CI ainda precisa repetir esse conjunto
 no SHA publicado e o review obrigatório recomeça do zero depois do push.
 
+O CI Linux desse candidato revelou uma corrida exclusiva do cenário composto de perfil em dois viewports
+Chromium: a escrita autoritativa terminava em `200`, mas o teste emitia um evento de foco enquanto o observer
+se estabilizava e depois aguardava uma barreira interna sem timeout próprio. A revalidação agora repete o evento
+real de visibilidade somente até a request interceptada comprovar que o observer iniciou o fetch; todas as
+barreiras do cenário também falham cedo com diagnóstico nominal. Não houve retry de teste, aumento do timeout
+global nem mudança de produção. Depois da correção, os dois viewports que falharam passaram dez repetições
+consecutivas e a suíte integral passou 114/114; os gates estáticos, 576 testes unitários, 217 asserts pgTAP,
+builds dos dois apps e empacotamento da release também permaneceram verdes. O próximo SHA deve repetir esse
+conjunto no CI e reiniciar o review.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

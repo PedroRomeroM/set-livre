@@ -147,6 +147,12 @@
           artificial de timeout.
         </p>
         <p>
+          As barreiras assíncronas do cenário composto de perfil possuem timeout diagnóstico
+          próprio, e a revalidação de privacidade sincroniza o evento real de visibilidade com o
+          início da request interceptada. Assim, uma corrida do harness falha cedo e nominalmente,
+          sem mascarar defeito com retry.
+        </p>
+        <p>
           O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
           para <code>supabase_storage_admin</code> somente a leitura de
           <code>pg_roles</code> exigida pelas migrations oficiais do Storage.

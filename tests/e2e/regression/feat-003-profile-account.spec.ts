@@ -20,13 +20,53 @@ import { gotoExpectedPage } from "../../helpers/expected-page";
 test.use({ screenshot: "off", trace: "off", video: "off" });
 
 function createDeferredSignal() {
+  let resolved = false;
   let resolve: () => void = () => {
     throw new Error("O sinal assíncrono do cenário de perfil não foi inicializado.");
   };
   const promise = new Promise<void>((resolvePromise) => {
-    resolve = resolvePromise;
+    resolve = () => {
+      resolved = true;
+      resolvePromise();
+    };
   });
-  return { promise, resolve };
+  return { isResolved: () => resolved, promise, resolve };
+}
+
+async function waitForDeferredSignal(
+  signal: ReturnType<typeof createDeferredSignal>,
+  description: string,
+) {
+  await expect
+    .poll(signal.isResolved, {
+      message: `A barreira assíncrona não iniciou: ${description}.`,
+      timeout: 15_000,
+    })
+    .toBe(true);
+}
+
+async function triggerVisibilityRefetch(
+  page: Page,
+  signal: ReturnType<typeof createDeferredSignal>,
+  description: string,
+) {
+  await expect
+    .poll(
+      async () => {
+        if (!signal.isResolved()) {
+          await page.evaluate(() => {
+            window.dispatchEvent(new Event("visibilitychange"));
+          });
+        }
+        return signal.isResolved();
+      },
+      {
+        intervals: [100, 250, 500],
+        message: `A revalidação por visibilidade não iniciou: ${description}.`,
+        timeout: 5_000,
+      },
+    )
+    .toBe(true);
 }
 
 function invalidateVerificationDigit(value: string) {
@@ -254,10 +294,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       },
       { times: 1 },
     );
-    await page.evaluate(() => {
-      window.dispatchEvent(new Event("visibilitychange"));
-    });
-    await fetchRequestStarted.promise;
+    await triggerVisibilityRefetch(page, fetchRequestStarted, "revalidação privada inicial");
     await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
     await assertFeat003PrivateValuesAbsentFromDom(page, privateValues);
     await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
@@ -402,7 +439,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       Object.defineProperty(window, "setTimeout", {
         configurable: true,
         value: (handler: TimerHandler, timeout?: number) =>
-          nativeSetTimeout(handler, timeout === 10_000 ? 25 : timeout),
+          nativeSetTimeout(handler, timeout === 10_000 ? 1_000 : timeout),
       });
     });
     await page.route(
@@ -418,10 +455,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       },
       { times: 1 },
     );
-    await page.evaluate(() => {
-      window.dispatchEvent(new Event("visibilitychange"));
-    });
-    await timeoutRequestStarted.promise;
+    await triggerVisibilityRefetch(page, timeoutRequestStarted, "revalidação privada com timeout");
     await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
     await assertFeat003PrivateValuesAbsentFromDom(page, recoveredPrivateValues);
     await assertFeat003SecretsAbsentFromDom(page, [
@@ -511,7 +545,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       window.dispatchEvent(new Event("offline"));
     });
     await page.getByRole("button", { name: "Sair desta conta" }).click();
-    await logoutRequestStarted.promise;
+    await waitForDeferredSignal(logoutRequestStarted, "logout com resultado ambíguo");
     expect(logoutRequests).toBe(1);
     await expect(
       page.getByText("Validando sua sessão antes de exibir dados privados…", { exact: true }),
