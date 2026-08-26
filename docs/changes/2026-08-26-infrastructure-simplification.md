@@ -82,6 +82,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   standalone sob as mesmas fronteiras instaladas na VM;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
   essas dependências ainda não estiverem disponíveis, e só o consome depois de health interno e público;
+- o laboratório encerra cada falha que preserva o marcador com um retry bem-sucedido e prova sua remoção
+  antes de iniciar outro cenário, sem compartilhar estado intermediário entre casos;
 - recuperação anterior a um novo deploy e reexecução do bootstrap com release compatível exigem o SHA
   esperado tanto nos health checks internos quanto no HTTPS público antes de continuar ou publicar o
   novo digest operacional;

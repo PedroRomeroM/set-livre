@@ -428,6 +428,9 @@ describe("local tooling contracts", () => {
       "recuperação do link consumiu o marcador antes de estabilizar os serviços",
     );
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
+    expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
+      3,
+    );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");

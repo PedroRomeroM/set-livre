@@ -369,6 +369,16 @@ assert_current_release() {
     || fail "marcador de rollback permaneceu depois de estado terminal."
 }
 
+recover_services_successfully() {
+  local expected="$1"
+  sudo env \
+    PATH="$fake_bin:$PATH" \
+    SET_LIVRE_TEST_PHASE=success \
+    SET_LIVRE_TEST_STATE="$test_state" \
+    bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
+  assert_current_release "$expected"
+}
+
 run_expected_failure() {
   local candidate_sha="$1"
   local phase="$2"
@@ -428,6 +438,7 @@ grep --fixed-strings --line-regexp \
   'stop set-livre-web.service set-livre-backoffice.service' \
   "$test_state/systemctl.log" >/dev/null \
   || fail "rollback sem readiness público não interrompeu os serviços."
+recover_services_successfully "$release_sha"
 interrupted_sha="$(printf '6%.0s' {1..40})"
 run_expected_failure "$interrupted_sha" signal "$release_sha"
 
@@ -455,6 +466,7 @@ grep --fixed-strings --line-regexp \
   'stop set-livre-web.service set-livre-backoffice.service' \
   "$test_state/systemctl.log" >/dev/null \
   || fail "recuperação anterior ao deploy sem readiness público não interrompeu os serviços."
+recover_services_successfully "$release_sha"
 
 printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
@@ -474,12 +486,7 @@ fi
 assert_current_link "$release_sha"
 [[ -e /opt/set-livre/.activation-rollback ]] \
   || fail "recuperação falha consumiu o marcador necessário ao retry."
-sudo env \
-  PATH="$fake_bin:$PATH" \
-  SET_LIVRE_TEST_PHASE=success \
-  SET_LIVRE_TEST_STATE="$test_state" \
-  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
-assert_current_release "$release_sha"
+recover_services_successfully "$release_sha"
 
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
