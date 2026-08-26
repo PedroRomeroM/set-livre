@@ -12,6 +12,17 @@ import { parseSupabaseCliError, parseSupabaseStatus } from "../../scripts/local-
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
+  it("keeps Knip independent from the destructive E2E runtime environment", () => {
+    const configuration = JSON.parse(
+      readFileSync(new URL("../../knip.json", import.meta.url), "utf8"),
+    );
+
+    expect(configuration.playwright).toEqual({
+      config: [],
+      entry: ["playwright.config.ts", "tests/e2e/**/*.spec.ts"],
+    });
+  });
+
   it("keeps the Supabase CA valid and wired into CI and both production services", () => {
     const certificatePath = new URL(
       "../../ops/certificates/supabase-root-2021-ca.crt",

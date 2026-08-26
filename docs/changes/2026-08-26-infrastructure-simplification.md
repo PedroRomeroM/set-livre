@@ -64,9 +64,15 @@ safe areas, zoom de 200% e Axe.
 
 ## Testes e IDs QA
 
-No candidato pré-PR: 572 testes unitários, 213 asserts pgTAP e 114 cenários Playwright passaram; format,
+No candidato pré-PR: 573 testes unitários, 213 asserts pgTAP e 114 cenários Playwright passaram; format,
 ESLint, TypeScript, docs, migration guard, Knip, npm audit, actionlint e ShellCheck também passaram. O CI
 repete os gates no SHA publicado e permanece a evidência autoritativa para merge.
+
+O primeiro check Linux do PR revelou que Knip carregava `playwright.config.ts` antes de existir o
+ambiente E2E local e, por isso, classificava todas as specs como não usadas. A configuração agora impede
+o carregamento dinâmico e declara o arquivo de configuração e as specs como entradas estáticas, conforme
+o contrato oficial do plugin; um teste unitário impede a regressão. A execução que falhou é diagnóstico,
+não evidência de aprovação, e o novo SHA precisa repetir CI e review integralmente.
 
 ## Observabilidade e operação
 

@@ -1,5 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "playwright": {
+    "config": [],
+    "entry": ["playwright.config.ts", "tests/e2e/**/*.spec.ts"]
+  },
   "workspaces": {
     ".": {},
     "apps/backoffice": {},

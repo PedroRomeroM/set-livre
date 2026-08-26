@@ -127,6 +127,11 @@
           correção até uma declaração explícita de review limpo no SHA atual.
         </p>
         <p>
+          A análise Knip descobre as specs Playwright por entradas explícitas e não carrega a
+          configuração runtime que exige o ambiente E2E destrutivo; assim, o gate produz o mesmo
+          resultado em um checkout Linux limpo e no Windows de desenvolvimento.
+        </p>
+        <p>
           Merge em <code>main</code> aplica migrations forward-only e publica na VM. Timeout ou
           serviço indisponível é inconclusivo. Falha pós-merge abre nova branch e repete o ciclo
           completo.
