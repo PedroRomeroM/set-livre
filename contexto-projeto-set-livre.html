@@ -159,6 +159,11 @@
           documento completo, viewport correto e ausência de overflow.
         </p>
         <p>
+          A prova de alcance vertical no reflow repete a rolagem até o fim atual do documento junto
+          de cada medição limitada. Isso cobre estabilizações tardias de layout entre os dois apps
+          sem retry de cenário, aumento de timeout ou enfraquecimento da checagem de overflow.
+        </p>
+        <p>
           A simulação E2E de timeout de leitura usa um transporte pendente no navegador e termina
           pelo AbortSignal real da aplicação. Assim, não mantém callbacks de interceptação do
           Playwright presos depois do cancelamento e continua provando mensagem de recuperação e

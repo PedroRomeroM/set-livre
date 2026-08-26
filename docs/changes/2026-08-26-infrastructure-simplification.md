@@ -156,6 +156,13 @@ no próprio documento um transporte pendente que rejeita exatamente quando receb
 aplicação. Ela mantém a asserção E2E da mensagem e da remoção de PII, termina deterministicamente e passou
 20/20 repetições nos dois perfis que falharam, sem retry, aumento do timeout ou mudança de produção.
 
+O CI Linux posterior passou 113/114 cenários e expôs uma corrida no último teste de reflow WebKit:
+`scrollIntoViewIfNeeded` rolava uma única vez, enquanto o matcher repetia apenas a medição; se o layout do
+segundo app estabilizasse depois dessa ação, a nota final permanecia fora da viewport em todas as tentativas.
+A prova agora, em cada amostra limitada pelo mesmo timeout, rola até o fim atual do documento e mede diretamente
+se a nota está alcançável. A ausência de overflow horizontal continua sendo verificada separadamente e não houve
+retry de cenário, aumento de timeout, alteração de produção ou relaxamento do critério de visibilidade.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

@@ -40,7 +40,15 @@ test("FOUNDATION-E2E-011 zoom 200% preserva reflow nos dois apps", async ({ page
     const finalNote = page.getByText(
       "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
     );
-    await finalNote.scrollIntoViewIfNeeded();
-    await expect(finalNote).toBeInViewport();
+    await expect
+      .poll(async () =>
+        finalNote.evaluate((element) => {
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          const bounds = element.getBoundingClientRect();
+
+          return bounds.bottom > 0 && bounds.top < window.innerHeight;
+        }),
+      )
+      .toBe(true);
   }
 });
