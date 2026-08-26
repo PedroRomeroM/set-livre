@@ -2,7 +2,9 @@
 
 ## Status
 
-Aceito em 2026-08-09 por instrução humana explícita.
+Parcialmente substituído pelo ADR-019 em 2026-08-24. A suspensão de CI, Supabase Cloud, Oracle e TLS
+terminou; DNS foi autorizado, porém sua ativação foi adiada até o go-live. A fronteira local de testes
+destrutivos e a suspensão de providers não aprovados continuam.
 
 ## Contexto
 
@@ -16,7 +18,7 @@ A restrição de APIs externas também suspende temporariamente três instruçõ
 
 - desenvolvimento, Auth, banco, Storage e testes destrutivos usam somente Supabase local via Docker;
 - todos os gates são executados localmente em cada branch e após cada correção de review;
-- nenhum workflow em `.github/workflows`, projeto Supabase remoto, recurso Oracle, DNS, TLS ou secret cloud será criado nesta etapa;
+- CI, Supabase Cloud, Oracle, DNS e TLS ficam suspensos somente até autorização explícita posterior;
 - providers externos usam interfaces server-only e adapters locais determinísticos apenas em desenvolvimento/teste;
 - o bootstrap Supabase local revoga das roles runtime schema, objetos e funções HTTP de `pg_net`; a capacidade somente volta após revisão deste ADR e normalização privilegiada equivalente no ambiente Cloud;
 - adapters locais nunca são habilitados ou apresentados como integração de produção;
@@ -33,7 +35,10 @@ A restrição de APIs externas também suspende temporariamente três instruçõ
 ## Consequências
 
 - toda a lógica e UX possíveis podem ser implementadas e verificadas localmente;
-- PRs não terão checks automáticos nesta fase, portanto a evidência local completa é obrigatória;
-- go-live, smoke HTTPS, backup cloud e validação de providers permanecem bloqueados;
+- enquanto a suspensão esteve vigente, PRs dependeram de evidência local; o ADR-019 agora exige checks
+  automáticos e deploy controlado;
+- providers, conteúdo jurídico e observabilidade externa continuam bloqueados por suas próprias
+  pendências;
 - cenários que citam sandbox comprovam apenas o contrato local determinístico até a integração externa ser liberada e nunca podem ser apresentados como aprovação real do provider;
-- ao liberar as ações externas, este ADR deve ser revisado, PEND-004 deve ser encerrada com evidência e a implementação de referência do ADR-009 pode ser retomada sem alterar a fronteira de domínio.
+- PEND-004 precisa ser encerrada com evidência antes de retomar a implementação externa do ADR-009,
+  sem alterar a fronteira de domínio.

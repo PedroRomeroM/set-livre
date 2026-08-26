@@ -356,47 +356,47 @@ Uma cotação só é válida quando:
 
 ### 8.1 Públicas
 
-| Rota | Intenção |
-|---|---|
-| `/` | entender o produto e iniciar busca |
-| `/estudios` | filtrar e comparar |
-| `/estudios/[studioId]` | avaliar um estúdio |
-| `/entrar` | autenticar |
-| `/cadastro` | criar conta |
-| `/recuperar-senha` | recuperar acesso |
-| `/auth/callback` | concluir Auth |
-| `/termos` | termos vigentes |
-| `/privacidade` | política de privacidade |
-| `/cancelamento` | política de cancelamento |
+| Rota                   | Intenção                           |
+| ---------------------- | ---------------------------------- |
+| `/`                    | entender o produto e iniciar busca |
+| `/estudios`            | filtrar e comparar                 |
+| `/estudios/[studioId]` | avaliar um estúdio                 |
+| `/entrar`              | autenticar                         |
+| `/cadastro`            | criar conta                        |
+| `/recuperar-senha`     | recuperar acesso                   |
+| `/auth/callback`       | concluir Auth                      |
+| `/termos`              | termos vigentes                    |
+| `/privacidade`         | política de privacidade            |
+| `/cancelamento`        | política de cancelamento           |
 
 ### 8.2 Locatário
 
-| Rota | Intenção |
-|---|---|
-| `/reservar/[studioId]` | configurar |
-| `/checkout/[attemptId]` | pagar |
-| `/conta` | perfil e segurança |
-| `/conta/reservas` | listar reservas |
-| `/conta/reservas/[reservationId]` | ver/cancelar |
-| `/conta/dados` | exportar/excluir |
+| Rota                              | Intenção           |
+| --------------------------------- | ------------------ |
+| `/reservar/[studioId]`            | configurar         |
+| `/checkout/[attemptId]`           | pagar              |
+| `/conta`                          | perfil e segurança |
+| `/conta/reservas`                 | listar reservas    |
+| `/conta/reservas/[reservationId]` | ver/cancelar       |
+| `/conta/dados`                    | exportar/excluir   |
 
 ### 8.3 Dono
 
-| Rota | Intenção |
-|---|---|
-| `/dono` | overview |
-| `/dono/estudios` | portfólio |
-| `/dono/estudios/novo` | criar |
-| `/dono/estudios/[studioId]/dados` | conteúdo |
-| `/dono/estudios/[studioId]/midia` | mídia |
-| `/dono/estudios/[studioId]/publicacao` | revisão/status |
-| `/dono/estudios/[studioId]/disponibilidade` | regras |
-| `/dono/estudios/[studioId]/precos` | precificação |
-| `/dono/estudios/[studioId]/adicionais` | adicionais |
-| `/dono/agenda` | agenda consolidada |
-| `/dono/reservas` | operação |
-| `/dono/pagamentos` | financeiro |
-| `/dono/recebimentos` | onboarding/repasse |
+| Rota                                        | Intenção           |
+| ------------------------------------------- | ------------------ |
+| `/dono`                                     | overview           |
+| `/dono/estudios`                            | portfólio          |
+| `/dono/estudios/novo`                       | criar              |
+| `/dono/estudios/[studioId]/dados`           | conteúdo           |
+| `/dono/estudios/[studioId]/midia`           | mídia              |
+| `/dono/estudios/[studioId]/publicacao`      | revisão/status     |
+| `/dono/estudios/[studioId]/disponibilidade` | regras             |
+| `/dono/estudios/[studioId]/precos`          | precificação       |
+| `/dono/estudios/[studioId]/adicionais`      | adicionais         |
+| `/dono/agenda`                              | agenda consolidada |
+| `/dono/reservas`                            | operação           |
+| `/dono/pagamentos`                          | financeiro         |
+| `/dono/recebimentos`                        | onboarding/repasse |
 
 ### 8.4 Backoffice
 
@@ -459,21 +459,21 @@ WCAG 2.2 AA, teclado, foco, leitores de tela, contraste, 200% zoom, touch 44 px 
 
 ## 10. Defaults normativos
 
-| Regra | Default |
-|---|---|
-| Fotos | 1–20, 15 MB cada |
-| Slot | 60 min |
-| Buffer | 0–4 horas inteiras |
-| Duração | mínimo 1h, máximo 24h |
-| Horizonte | 365 dias |
-| PIX | expiração 15 min, salvo provider |
-| Hold cartão | 15 min |
-| Lembrete | 24h antes |
-| Repasse | 24h após fim |
-| Página listagem | 24 itens |
-| Página backoffice | 50 itens |
-| iCal | 2 MB, -30/+365 dias |
-| Timezone | America/Sao_Paulo |
+| Regra             | Default                          |
+| ----------------- | -------------------------------- |
+| Fotos             | 1–20, 15 MB cada                 |
+| Slot              | 60 min                           |
+| Buffer            | 0–4 horas inteiras               |
+| Duração           | mínimo 1h, máximo 24h            |
+| Horizonte         | 365 dias                         |
+| PIX               | expiração 15 min, salvo provider |
+| Hold cartão       | 15 min                           |
+| Lembrete          | 24h antes                        |
+| Repasse           | 24h após fim                     |
+| Página listagem   | 24 itens                         |
+| Página backoffice | 50 itens                         |
+| iCal              | 2 MB, -30/+365 dias              |
+| Timezone          | America/Sao_Paulo                |
 
 ## 11. Critério de aceitação global
 

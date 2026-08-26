@@ -7,4 +7,3 @@ supabase/.branches
 supabase/.temp
 supabase/schema.generated.sql
 docs/reference/architecture-blueprint.md
-MANIFEST_SHA256.md

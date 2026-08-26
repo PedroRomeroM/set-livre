@@ -67,7 +67,8 @@ Não passar binário pela VM.
 - transformação paga do Supabase não é dependência obrigatória;
 - medir egress e cache hit.
 
-Caso Next Image em ARM64 exija `sharp`, o artefato deve incluir binário compatível ou usar estratégia documentada no pipeline.
+O artifact Linux x86_64 precisa incluir qualquer dependência nativa realmente usada por `next/image` e
+ser validado no build/smoke de produção.
 
 ## 6. Ordenação e capa
 

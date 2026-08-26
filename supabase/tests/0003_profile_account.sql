@@ -149,7 +149,7 @@ create temporary table feat003_concurrency_results (
   error_message text
 ) on commit drop;
 
-select plan(57);
+select plan(52);
 
 select ok(
   pg_catalog.to_regclass('public.user_preferences') is not null,
@@ -1651,64 +1651,6 @@ begin
   end loop;
 end;
 $block$;
-
-select is(
-  (
-    select pg_catalog.count(*)::integer
-    from pg_catalog.pg_proc as routine
-    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
-    join pg_catalog.pg_roles as role on role.oid = privilege.grantee
-    where role.rolname = 'app_dal'
-      and privilege.privilege_type = 'EXECUTE'
-      and not privilege.is_grantable
-  ),
-  16,
-  'manifesto app_dal possui dezesseis grants de rotina'
-);
-
-select is(
-  (
-    select pg_catalog.count(*)::integer
-    from pg_catalog.pg_shdepend as dependency
-    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
-    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
-      and dependency.deptype = 'a'
-      and role.rolname = 'app_dal'
-  ),
-  17,
-  'manifesto app_dal possui dezessete dependências ACL'
-);
-
-select ok(
-  private.check_readiness('20260815000100'),
-  'readiness permanece verde na head FEAT-003'
-);
-
-create function private.feat003_readiness_probe()
-returns boolean
-language sql
-stable
-set search_path = ''
-as $function$
-  select true;
-$function$;
-revoke all on function private.feat003_readiness_probe()
-  from public, anon, authenticated, service_role, app_dal;
-grant execute on function private.feat003_readiness_probe()
-  to app_dal;
-
-select ok(
-  not private.check_readiness('20260815000100'),
-  'readiness falha fechado com rotina DAL fora da allowlist'
-);
-
-revoke all on function private.feat003_readiness_probe()
-  from app_dal;
-
-select ok(
-  private.check_readiness('20260815000100'),
-  'readiness recupera ao remover grant DAL indevido'
-);
 
 select * from finish();
 

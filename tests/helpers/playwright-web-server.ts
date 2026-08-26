@@ -1,4 +1,4 @@
-import { delimiter, isAbsolute, win32 } from "node:path";
+import { delimiter } from "node:path";
 
 const operationalEnvironmentNames = [
   "CI",
@@ -35,7 +35,6 @@ const operationalEnvironmentNames = [
 ] as const;
 
 const pathEnvironmentNames = new Set(["PATH", "Path"]);
-const supportedApplications = new Set(["web", "backoffice"]);
 
 function sanitizedOperationalValue(name: string, value: string | undefined) {
   if (value === undefined || value === "" || value.includes("\0")) {
@@ -66,46 +65,6 @@ export function createPlaywrightWebServerEnvironmentOverlay(
     }
   }
 
+  overlay.APP_ENV = "test";
   return overlay;
-}
-
-function quoteShellArgument(value: string, platform: NodeJS.Platform) {
-  if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
-    throw new Error("O comando do webServer contém um caminho inválido.");
-  }
-
-  if (platform === "win32") {
-    if (/[%!"^&|<>]/u.test(value)) {
-      throw new Error("O caminho do webServer contém metacaractere inseguro no Windows.");
-    }
-    return `"${value}"`;
-  }
-
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-export function createPlaywrightWebServerCommand({
-  application,
-  nodeExecutable,
-  platform = process.platform,
-  wrapperPath,
-}: {
-  application: "backoffice" | "web";
-  nodeExecutable: string;
-  platform?: NodeJS.Platform;
-  wrapperPath: string;
-}) {
-  if (!supportedApplications.has(application)) {
-    throw new Error("A aplicação do webServer Playwright é inválida.");
-  }
-
-  const absolutePath = platform === "win32" ? win32.isAbsolute : isAbsolute;
-  if (!absolutePath(nodeExecutable) || !absolutePath(wrapperPath)) {
-    throw new Error("Node e wrapper do webServer precisam usar caminhos absolutos.");
-  }
-
-  const command = [nodeExecutable, wrapperPath, application]
-    .map((value) => quoteShellArgument(value, platform))
-    .join(" ");
-  return platform === "win32" ? command : `exec ${command}`;
 }

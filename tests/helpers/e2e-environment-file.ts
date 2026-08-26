@@ -1,38 +1,35 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseEnv } from "node:util";
 
-import type { PrivatePhysicalFileReadOptions } from "../../scripts/physical-tree-removal.d.mts";
-import { readPrivatePhysicalFile } from "../../scripts/physical-tree-removal.mjs";
-
-type E2EEnvironmentFileOptions = Pick<
-  PrivatePhysicalFileReadOptions,
-  "expectedPosixUserId" | "platform" | "readDescriptor"
->;
-
-export function readOptionalE2EEnvironmentFile(
-  repositoryRoot: string,
-  options: E2EEnvironmentFileOptions = {},
-) {
-  let source: string | undefined;
-  try {
-    source = readPrivatePhysicalFile(resolve(repositoryRoot, ".env.e2e.local"), {
-      allowMissing: true,
-      description: "O ambiente E2E local",
-      ...options,
-    });
-  } catch {
-    throw new Error(
-      "O ambiente E2E local precisa ser um arquivo regular exclusivo, permanecer sob ancestrais físicos e, em sistemas POSIX, pertencer ao usuário efetivo e usar modo 0600.",
-    );
+function parseStrictEnvironment(source: string) {
+  const environment: Record<string, string> = {};
+  for (const line of source.split(/\r?\n/u)) {
+    if (line === "") continue;
+    const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=([^\s'"]+)$/u.exec(line);
+    const name = assignment?.[1];
+    const value = assignment?.[2];
+    if (name === undefined || value === undefined || Object.hasOwn(environment, name)) {
+      throw new Error("Atribuição E2E inválida.");
+    }
+    environment[name] = value;
   }
+  return environment;
+}
 
-  if (source === undefined) {
-    return {};
+export function readOptionalE2EEnvironmentFile(repositoryRoot: string) {
+  let source: string;
+  try {
+    source = readFileSync(resolve(repositoryRoot, ".env.e2e.local"), "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
+    throw new Error("Não foi possível ler o ambiente E2E local.", { cause: error });
   }
 
   try {
-    return parseEnv(source);
-  } catch {
-    throw new Error("Não foi possível interpretar o ambiente E2E local com segurança.");
+    return parseStrictEnvironment(source);
+  } catch (error) {
+    throw new Error("Não foi possível interpretar o ambiente E2E local.", { cause: error });
   }
 }

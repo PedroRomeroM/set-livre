@@ -1,0 +1,397 @@
+name: CI and production delivery
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  PRODUCTION_BACKOFFICE_APP_URL: https://ops.setlivre.com
+  PRODUCTION_PUBLIC_APP_URL: https://147.15.97.227
+  PRODUCTION_SUPABASE_PROJECT_REF: oirvvnojgkzdppkdvhej
+  PRODUCTION_SUPABASE_URL: https://oirvvnojgkzdppkdvhej.supabase.co
+  PRODUCTION_VM_HOST: 147.15.97.227
+
+jobs:
+  quality:
+    name: Quality, local Supabase and browser gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Migration immutability gate
+        env:
+          MIGRATION_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run migrations:check
+
+      - name: Validate POSIX operations
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends curl nginx shellcheck
+          bash -n ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
+            ops/verify-host-contracts.sh
+          shellcheck ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
+            ops/verify-host-contracts.sh
+
+      - name: Formatting gate
+        run: npm run format:check
+
+      - name: Lint gate
+        run: npm run lint
+
+      - name: TypeScript gate
+        run: npm run typecheck
+
+      - name: Unit gate
+        run: npm run test:unit
+
+      - name: Documentation gate
+        run: npm run docs:check
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Unused code gate
+        run: npm run knip
+
+      - name: Reset local Supabase
+        run: npm run supabase:reset
+
+      - name: Database lint
+        run: npm run supabase:lint
+
+      - name: Database gates
+        run: npm run test:db
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Full browser suite
+        run: npm run test:e2e
+
+      - name: Build and package Linux release
+        env:
+          APP_RELEASE_SHA: ${{ github.sha }}
+        run: |
+          npm run build
+          npm run release
+
+      - name: Exercise host contracts without activation
+        run: bash ops/verify-host-contracts.sh "$GITHUB_SHA" "$RUNNER_TEMP"
+
+      - name: Smoke standalone Linux release
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://setlivre.example
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-public-key
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
+        run: |
+          processes=()
+          cleanup() {
+            if (( ${#processes[@]} > 0 )); then
+              kill "${processes[@]}" 2>/dev/null || true
+              wait "${processes[@]}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          smoke_release() {
+            local application="$1"
+            local directory="$2"
+            local entrypoint="$3"
+            local port="$4"
+            local response="$RUNNER_TEMP/${application}-live.json"
+            local log="$RUNNER_TEMP/${application}-standalone.log"
+            local live=false
+
+            (
+              cd "$directory"
+              exec env HOSTNAME=127.0.0.1 PORT="$port" node "$entrypoint"
+            ) >"$log" 2>&1 &
+            processes+=("$!")
+
+            for _ in {1..30}; do
+              if curl --fail --silent --max-time 2 \
+                "http://127.0.0.1:${port}/api/health/live" --output "$response"; then
+                live=true
+                break
+              fi
+              sleep 1
+            done
+
+            if [[ "$live" != true ]]; then
+              cat "$log"
+              return 1
+            fi
+
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const [path, application, release] = process.argv.slice(1);
+              const payload = JSON.parse(readFileSync(path, "utf8"));
+              if (payload.application !== application || payload.release !== release || payload.status !== "live") {
+                throw new Error("Liveness standalone inválido para " + application + ".");
+              }
+            ' "$response" "$application" "$GITHUB_SHA"
+          }
+
+          smoke_release web .artifacts/release/web server.js 3100
+          smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3101
+
+      - name: Stop local Supabase
+        if: always()
+        run: npm run supabase:stop
+
+  windows:
+    name: Windows native contracts
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck on Windows
+        run: npm run typecheck
+
+      - name: Unit tests on Windows
+        run: npm run test:unit
+
+      - name: Build and package on Windows
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://setlivre.example
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-public-key
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
+        run: |
+          npm run build
+          npm run release
+
+  deploy:
+    name: Deploy production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRD_DEPLOY_ENABLED == 'true'
+    needs:
+      - quality
+      - windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout the approved main SHA
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate fixed production contract
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+        run: npm run production:preflight
+
+      - name: Apply forward-only Supabase migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
+          npx supabase db push --linked --dry-run
+          npx supabase db push --linked
+
+      - name: Activate and verify the restricted production role
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: npm run production:role
+
+      - name: Build web release
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://build_runtime:build-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
+        run: npm run build:web
+
+      - name: Build backoffice release
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://build_runtime:build-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: ${{ env.PRODUCTION_BACKOFFICE_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
+        run: npm run build:backoffice
+
+      - name: Package immutable release
+        id: release
+        env:
+          DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npm run release
+          archive="$RUNNER_TEMP/set-livre-${GITHUB_SHA}.tar.gz"
+          comparison="$RUNNER_TEMP/set-livre-${GITHUB_SHA}-comparison.tar.gz"
+          source_date_epoch="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
+          create_archive() {
+            local destination="$1"
+            LC_ALL=C tar --sort=name --mtime="@${source_date_epoch}" \
+              --owner=0 --group=0 --numeric-owner --format=posix \
+              --pax-option=delete=atime,delete=ctime \
+              --create --file=- --directory .artifacts/release . \
+              | gzip --best --no-name > "$destination"
+          }
+          create_archive "$archive"
+          create_archive "$comparison"
+          cmp --silent "$archive" "$comparison"
+          rm --force "$comparison"
+          checksum="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH trust
+        env:
+          VM_SSH_HOST_KEY: ${{ vars.PRD_VM_SSH_HOST_KEY }}
+          VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 0700 "$HOME/.ssh"
+          install -m 0600 /dev/null "$HOME/.ssh/set-livre-deploy"
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > "$HOME/.ssh/set-livre-deploy"
+          printf '%s\n' "$VM_SSH_HOST_KEY" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -l -f "$HOME/.ssh/known_hosts"
+
+      - name: Prepare ephemeral runtime environments
+        env:
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          reject_line_breaks() {
+            local value="$1"
+            [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]]
+          }
+          reject_line_breaks "$PRD_DATABASE_URL_APP_DAL"
+          reject_line_breaks "$PRD_SUPABASE_PUBLISHABLE_KEY"
+          umask 077
+          write_environment() {
+            local destination="$1"
+            local app_url="$2"
+            {
+              printf 'APP_ENV=production\n'
+              printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
+              printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
+              printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_PUBLISHABLE_KEY"
+              printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
+            } > "$destination"
+            chmod 0600 "$destination"
+          }
+          write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
+          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+
+      - name: Activate release on Oracle VM
+        env:
+          ARCHIVE: ${{ steps.release.outputs.archive }}
+          CHECKSUM: ${{ steps.release.outputs.checksum }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          ssh_options=(-i "$HOME/.ssh/set-livre-deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          # SHA e comandos são validados antes da expansão intencional no cliente confiável.
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-release ${GITHUB_SHA}" < "$ARCHIVE"
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-web-environment ${GITHUB_SHA}" < "$RUNNER_TEMP/set-livre-web.env"
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-backoffice-environment ${GITHUB_SHA}" < "$RUNNER_TEMP/set-livre-backoffice.env"
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "deploy ${GITHUB_SHA} ${CHECKSUM}"
+
+      - name: Verify public web health
+        env:
+          PUBLIC_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
+        run: |
+          verify_health() {
+            local base_url="$1"
+            local application="$2"
+            local response="$RUNNER_TEMP/${application}-health.json"
+            curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
+              --max-time 10 "${base_url}/api/health/ready" --output "$response"
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const [path, application, release] = process.argv.slice(1);
+              const payload = JSON.parse(readFileSync(path, "utf8"));
+              if (payload.application !== application || payload.release !== release || payload.status !== "ready") {
+                throw new Error("Health inválido para " + application + ".");
+              }
+            ' "$response" "$application" "$GITHUB_SHA"
+          }
+          verify_health "$PUBLIC_URL" web

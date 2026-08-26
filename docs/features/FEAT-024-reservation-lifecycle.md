@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `reservations` |
+| Campo            | Valor                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                    |
+| Prioridade       | P0                                                                                                                           |
+| Domínio          | `reservations`                                                                                                               |
 | Specs Playwright | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts`<br>`tests/e2e/regression/feat-024-reservation-lifecycle.spec.ts` |
 
 ## Objetivo
@@ -79,7 +79,7 @@ Criar o fato reserva somente após pagamento e manter calendário, painéis, e-m
 - Timeline.
 - O dono visualiza a nova reserva.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -98,14 +98,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F024-E2E-001 | P0 | critical | desktop | evento de pagamento aprovado cria uma reserva confirmada | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts` |
-| SL-F024-E2E-002 | P0 | critical | desktop | processamento duplicado não duplica reserva, outbox ou repasse | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts` |
-| SL-F024-E2E-003 | P0 | critical | desktop | alocação permanece contínua do hold à reserva | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts` |
-| SL-F024-E2E-004 | P0 | critical | desktop | locatário e dono veem a reserva correta; terceiro não acessa | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts` |
-| SL-F024-E2E-005 | P1 | regression | desktop | completion job transitions after end | `tests/e2e/regression/feat-024-reservation-lifecycle.spec.ts` |
-| SL-F024-E2E-006 | P1 | regression | mobile | sucesso e linha do tempo do detalhe são acessíveis | `tests/e2e/regression/feat-024-reservation-lifecycle.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                        | Spec                                                          |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| SL-F024-E2E-001 | P0         | critical   | desktop  | evento de pagamento aprovado cria uma reserva confirmada       | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts`   |
+| SL-F024-E2E-002 | P0         | critical   | desktop  | processamento duplicado não duplica reserva, outbox ou repasse | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts`   |
+| SL-F024-E2E-003 | P0         | critical   | desktop  | alocação permanece contínua do hold à reserva                  | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts`   |
+| SL-F024-E2E-004 | P0         | critical   | desktop  | locatário e dono veem a reserva correta; terceiro não acessa   | `tests/e2e/critical/feat-024-reservation-lifecycle.spec.ts`   |
+| SL-F024-E2E-005 | P1         | regression | desktop  | completion job transitions after end                           | `tests/e2e/regression/feat-024-reservation-lifecycle.spec.ts` |
+| SL-F024-E2E-006 | P1         | regression | mobile   | sucesso e linha do tempo do detalhe são acessíveis             | `tests/e2e/regression/feat-024-reservation-lifecycle.spec.ts` |
 
 Regras:
 
@@ -130,7 +130,7 @@ Regras:
 - notifications.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

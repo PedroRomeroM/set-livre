@@ -1,0 +1,48 @@
+[Unit]
+Description=Set Livre public web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=setlivre-web
+Group=setlivre-web
+SupplementaryGroups=setlivre
+WorkingDirectory=/opt/set-livre/current/web
+Environment=NODE_ENV=production
+Environment=NODE_EXTRA_CA_CERTS=/etc/set-livre/supabase-root-2021-ca.crt
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+EnvironmentFile=/etc/set-livre/web.env
+EnvironmentFile=/etc/set-livre/release.env
+ExecStartPre=/usr/bin/test -f /opt/set-livre/current/web/server.js
+ExecStart=/opt/node/bin/node server.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RemoveIPC=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `payments` |
+| Campo            | Valor                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                |
+| Prioridade       | P0                                                                                                       |
+| Domínio          | `payments`                                                                                               |
 | Specs Playwright | `tests/e2e/critical/feat-022-pix-payment.spec.ts`<br>`tests/e2e/regression/feat-022-pix-payment.spec.ts` |
 
 ## Objetivo
@@ -73,7 +73,7 @@ Gerar QR/copia-e-cola com expiração, acompanhar estado e liberar o horário qu
 - O estado de expiração é claro.
 - Mobile responsive.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -92,14 +92,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F022-E2E-001 | P0 | critical | desktop | gerar PIX e confirmar por webhook | `tests/e2e/critical/feat-022-pix-payment.spec.ts` |
-| SL-F022-E2E-002 | P0 | critical | desktop | PIX expira e libera slot | `tests/e2e/critical/feat-022-pix-payment.spec.ts` |
-| SL-F022-E2E-003 | P0 | critical | desktop | retentativa gera nova tentativa e QR Code | `tests/e2e/critical/feat-022-pix-payment.spec.ts` |
-| SL-F022-E2E-004 | P0 | critical | desktop | usuário B não acessa QR de A | `tests/e2e/critical/feat-022-pix-payment.spec.ts` |
-| SL-F022-E2E-005 | P1 | regression | mobile | QR Code, cópia e contagem regressiva acessíveis | `tests/e2e/regression/feat-022-pix-payment.spec.ts` |
-| SL-F022-E2E-006 | P0 | critical | desktop | pagamento tardio sem hold abre incidente de reembolso | `tests/e2e/critical/feat-022-pix-payment.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                               | Spec                                                |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------------------- | --------------------------------------------------- |
+| SL-F022-E2E-001 | P0         | critical   | desktop  | gerar PIX e confirmar por webhook                     | `tests/e2e/critical/feat-022-pix-payment.spec.ts`   |
+| SL-F022-E2E-002 | P0         | critical   | desktop  | PIX expira e libera slot                              | `tests/e2e/critical/feat-022-pix-payment.spec.ts`   |
+| SL-F022-E2E-003 | P0         | critical   | desktop  | retentativa gera nova tentativa e QR Code             | `tests/e2e/critical/feat-022-pix-payment.spec.ts`   |
+| SL-F022-E2E-004 | P0         | critical   | desktop  | usuário B não acessa QR de A                          | `tests/e2e/critical/feat-022-pix-payment.spec.ts`   |
+| SL-F022-E2E-005 | P1         | regression | mobile   | QR Code, cópia e contagem regressiva acessíveis       | `tests/e2e/regression/feat-022-pix-payment.spec.ts` |
+| SL-F022-E2E-006 | P0         | critical   | desktop  | pagamento tardio sem hold abre incidente de reembolso | `tests/e2e/critical/feat-022-pix-payment.spec.ts`   |
 
 Regras:
 
@@ -124,7 +124,7 @@ Regras:
 - calendar-reservations.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

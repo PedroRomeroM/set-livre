@@ -15,22 +15,22 @@ Acesso:
 
 ## 2. Rotas
 
-| Rota | Função |
-|---|---|
-| `/` | overview operacional |
-| `/estudios` | fila e busca |
-| `/estudios/[id]` | revisão |
-| `/reservas` | operação |
-| `/reservas/[id]` | caso |
-| `/pagamentos` | transações |
-| `/reembolsos` | pendências |
-| `/repasses` | agenda/falhas |
-| `/usuarios` | usuários |
-| `/taxonomias` | tipos/tags/amenities |
-| `/fiscal` | exportações |
-| `/operacao` | jobs/saúde |
-| `/auditoria` | eventos permitidos |
-| `/acessos` | papéis, admin |
+| Rota             | Função               |
+| ---------------- | -------------------- |
+| `/`              | overview operacional |
+| `/estudios`      | fila e busca         |
+| `/estudios/[id]` | revisão              |
+| `/reservas`      | operação             |
+| `/reservas/[id]` | caso                 |
+| `/pagamentos`    | transações           |
+| `/reembolsos`    | pendências           |
+| `/repasses`      | agenda/falhas        |
+| `/usuarios`      | usuários             |
+| `/taxonomias`    | tipos/tags/amenities |
+| `/fiscal`        | exportações          |
+| `/operacao`      | jobs/saúde           |
+| `/auditoria`     | eventos permitidos   |
+| `/acessos`       | papéis, admin        |
 
 ## 3. Revisão de estúdio
 

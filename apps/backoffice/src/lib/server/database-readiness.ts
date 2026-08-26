@@ -27,7 +27,7 @@ function getDatabaseConnection() {
     connectionString: configuration.connectionString,
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 10_000,
-    max: 2,
+    max: 1,
     query_timeout: 1_000,
     statement_timeout: 1_000,
   });

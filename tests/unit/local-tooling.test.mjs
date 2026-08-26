@@ -1,0 +1,244 @@
+import { X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  normalizeSchemaSnapshot,
+  validateGeneratedDatabaseTypes,
+  validateSchemaSnapshot,
+} from "../../scripts/database-artifacts.mjs";
+import { parseSupabaseCliError, parseSupabaseStatus } from "../../scripts/local-setup.mjs";
+
+describe("local tooling contracts", () => {
+  it("keeps the Supabase CA valid and wired into CI and both production services", () => {
+    const certificatePath = new URL(
+      "../../ops/certificates/supabase-root-2021-ca.crt",
+      import.meta.url,
+    );
+    const certificate = new X509Certificate(readFileSync(certificatePath));
+    const expectedPath = "/etc/set-livre/supabase-root-2021-ca.crt";
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const webUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-web.service", import.meta.url),
+      "utf8",
+    );
+    const backofficeUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-backoffice.service", import.meta.url),
+      "utf8",
+    );
+
+    expect(certificate.ca).toBe(true);
+    expect(certificate.subject).toContain("CN=Supabase Root 2021 CA");
+    expect(certificate.issuer).toBe(certificate.subject);
+    expect(certificate.fingerprint256.replaceAll(":", "")).toBe(
+      "807025AD50D4ED219D2C9C7D299C004F824EB00CF7F65AFEF607D07B72E6CAFA",
+    );
+    expect(new Date(certificate.validTo).toISOString()).toBe("2031-04-26T10:56:53.000Z");
+    expect(workflow).toContain(
+      "NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt",
+    );
+    expect(bootstrap).toContain(expectedPath);
+    expect(webUnit).toContain(`Environment=NODE_EXTRA_CA_CERTS=${expectedPath}`);
+    expect(backofficeUnit).toContain(`Environment=NODE_EXTRA_CA_CERTS=${expectedPath}`);
+  });
+
+  it("removes checkout credentials and isolates the two service identities", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const webUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-web.service", import.meta.url),
+      "utf8",
+    );
+    const backofficeUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-backoffice.service", import.meta.url),
+      "utf8",
+    );
+
+    expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(3);
+    expect(bootstrap).toContain("web.env:setlivre-web backoffice.env:setlivre-backoffice");
+    expect(webUnit).toContain("User=setlivre-web");
+    expect(webUnit).not.toContain("User=setlivre-backoffice");
+    expect(backofficeUnit).toContain("User=setlivre-backoffice");
+    expect(backofficeUnit).not.toContain("User=setlivre-web\n");
+    for (const unit of [webUnit, backofficeUnit]) {
+      for (const hardening of [
+        "AmbientCapabilities=",
+        "CapabilityBoundingSet=",
+        "PrivateDevices=true",
+        "ProtectClock=true",
+        "ProtectHostname=true",
+        "ProtectKernelLogs=true",
+        "RemoveIPC=true",
+        "RestrictNamespaces=true",
+        "RestrictRealtime=true",
+        "UMask=0077",
+      ]) {
+        expect(unit).toContain(hardening);
+      }
+    }
+  });
+
+  it("preserves Oracle networking while exposing only the production entrypoints", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+
+    expect(bootstrap).not.toMatch(/apt-get install[\s\S]*\\\n\s+ufw\b/u);
+    expect(bootstrap).toContain("iptables-persistent");
+    expect(bootstrap).toContain("fail2ban");
+    expect(bootstrap).toContain("InstanceServices");
+    expect(bootstrap).toContain('[[ ${oracle_rules_after} == "${oracle_rules_before}" ]]');
+    expect(bootstrap).toContain("iptables-restore --test");
+    expect(bootstrap).toContain("ip6tables-restore --test");
+    expect(bootstrap).toContain("'/^# (Generated|Completed) /d'");
+    expect(bootstrap).not.toContain("netfilter-persistent reload");
+    expect(bootstrap).toContain("rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
+    expect(bootstrap).toContain("/etc/nginx/sites-enabled/setlivre");
+    for (const port of [22, 80, 443]) {
+      expect(bootstrap).toContain(`-p tcp --dport ${port} -m conntrack --ctstate NEW -j ACCEPT`);
+    }
+  });
+
+  it("fails HTTP closed before TLS and rate-limits sensitive endpoints at the trusted edge", () => {
+    for (const configuration of ["set-livre-http.conf", "set-livre-tls.conf"]) {
+      const nginx = readFileSync(
+        new URL(`../../ops/nginx/${configuration}`, import.meta.url),
+        "utf8",
+      );
+
+      expect(nginx).toContain("server_name _;");
+      expect(nginx).toContain("return 444;");
+      expect(nginx).toContain("server_name 147.15.97.227;");
+      expect(nginx).toContain('X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;');
+      expect(nginx).not.toContain("ops.setlivre.com");
+    }
+
+    const http = readFileSync(
+      new URL("../../ops/nginx/set-livre-http.conf", import.meta.url),
+      "utf8",
+    );
+    expect(http).toContain("/.well-known/acme-challenge/");
+    expect(http).not.toContain("proxy_pass");
+    expect(http).not.toContain("limit_req_zone");
+
+    const tls = readFileSync(
+      new URL("../../ops/nginx/set-livre-tls.conf", import.meta.url),
+      "utf8",
+    );
+    expect(tls).toContain("map $uri $set_livre_edge_limit_key");
+    expect(tls).toContain("~^/api/(?:auth/|commands$) $binary_remote_addr;");
+    expect(tls).toContain(
+      "limit_req_zone $set_livre_edge_limit_key zone=set_livre_edge:10m rate=1r/s;",
+    );
+    expect(tls).toContain("limit_req zone=set_livre_edge burst=30 nodelay;");
+    expect(tls).toContain("limit_req_status 429;");
+    expect(tls).toContain("Disallow: /");
+    expect(tls).toContain("return 308 https://147.15.97.227$request_uri;");
+    expect(tls).toContain("listen 443 ssl default_server;");
+    expect(tls).not.toContain("ssl_reject_handshake");
+    expect(
+      tls.match(/ssl_certificate \/etc\/letsencrypt\/live\/147\.15\.97\.227\/fullchain\.pem;/gu),
+    ).toHaveLength(2);
+
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    expect(hostVerification).toContain('--resolve "147.15.97.227:443:127.0.0.1"');
+    expect(hostVerification).toContain('--cacert "$temporary_directory/ip.crt"');
+    expect(hostVerification).toContain("https://147.15.97.227/robots.txt");
+  });
+
+  it("restricts deployment SSH and fences releases to the installed host contract", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const command = readFileSync(
+      new URL("../../ops/deploy-ssh-command.sh", import.meta.url),
+      "utf8",
+    );
+
+    expect(bootstrap).toContain('restrict,command="/usr/local/sbin/set-livre-deploy-ssh"');
+    expect(bootstrap).toContain("/etc/set-livre/host-config.sha256");
+    expect(command).toContain("SSH_ORIGINAL_COMMAND");
+    expect(command).not.toMatch(/\beval\b/u);
+    expect(deploy).toContain("readiness HTTPS público");
+    expect(deploy).toContain("RETAINED_RELEASES=4");
+    expect(deploy).toContain("hostConfiguration.sha256");
+    expect(deploy).toContain("install_environment");
+  });
+
+  it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+
+    expect(bootstrap).toContain('readonly CERTBOT_MINIMUM_VERSION="5.4.0"');
+    expect(bootstrap).toContain("snap install certbot --classic");
+    expect(bootstrap).toContain("snap refresh certbot");
+    expect(bootstrap).toContain("openssl x509 -checkip");
+    expect(bootstrap).toContain("snap.certbot.renew.timer");
+    expect(bootstrap).not.toMatch(/^\s+certbot \\\s*$/mu);
+    expect(bootstrap).not.toContain("python3-certbot-nginx");
+    expect(workflow).toContain("Verify public web health");
+    expect(workflow).not.toContain("BACKOFFICE_URL: ${{ vars.PRD_BACKOFFICE_APP_URL }}");
+  });
+
+  it("accepts the expected local Supabase endpoints", () => {
+    expect(
+      parseSupabaseStatus(
+        JSON.stringify({
+          ANON_KEY: "local-anon",
+          API_URL: "http://127.0.0.1:54321",
+          DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+        }),
+      ),
+    ).toMatchObject({ API_URL: "http://127.0.0.1:54321" });
+  });
+
+  it("rejects a non-local Supabase endpoint", () => {
+    expect(() =>
+      parseSupabaseStatus(
+        JSON.stringify({
+          ANON_KEY: "cloud-anon",
+          API_URL: "https://project.supabase.co",
+          DB_URL: "postgresql://postgres:secret@db.example.com:5432/postgres",
+        }),
+      ),
+    ).toThrow("endpoint local");
+  });
+
+  it("extracts structured CLI failures without exposing database credentials", () => {
+    expect(
+      parseSupabaseCliError(
+        'progress\n{"error":{"message":"failed at postgresql://postgres:secret@127.0.0.1/postgres"}}\n',
+      ),
+    ).toBe("failed at postgresql://[REDACTED]@127.0.0.1/postgres");
+    expect(parseSupabaseCliError("unstructured failure")).toBeUndefined();
+  });
+
+  it("normalizes and validates the tracked schema dump", () => {
+    const schema = normalizeSchemaSnapshot(
+      'CREATE SCHEMA "audit";\nCREATE SCHEMA "private";\nCREATE SCHEMA "public";\n\n',
+    );
+    expect(schema.endsWith("\n")).toBe(true);
+    expect(() => validateSchemaSnapshot(schema)).not.toThrow();
+    expect(() => validateSchemaSnapshot('CREATE SCHEMA "public";')).toThrow("audit");
+  });
+
+  it("validates the shape and syntax of generated database types", () => {
+    expect(() =>
+      validateGeneratedDatabaseTypes(
+        "export type Json = string; export type Database = { public: {} };\n",
+      ),
+    ).not.toThrow();
+    expect(() => validateGeneratedDatabaseTypes("export type Database = {")).toThrow();
+  });
+});

@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `calendar-ui` |
+| Campo            | Valor                                                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                            |
+| Prioridade       | P0                                                                                                                   |
+| Domínio          | `calendar-ui`                                                                                                        |
 | Specs Playwright | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts`<br>`tests/e2e/regression/feat-014-advanced-calendar.spec.ts` |
 
 ## Objetivo
@@ -75,7 +75,7 @@ Oferecer operação visual completa do calendário interno com alternativas aces
 - Focus e zoom.
 - Loading preserva navegação.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -94,14 +94,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F014-E2E-001 | P0 | critical | desktop | alternar visualizações e navegar mantendo eventos | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts` |
-| SL-F014-E2E-002 | P0 | critical | desktop | arrastar bloqueio manual confirma no servidor | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts` |
-| SL-F014-E2E-003 | P0 | critical | desktop | arraste conflitante reverte e anuncia o erro | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts` |
-| SL-F014-E2E-004 | P1 | regression | mobile | visualização diária e formulário alternativo | `tests/e2e/regression/feat-014-advanced-calendar.spec.ts` |
-| SL-F014-E2E-005 | P0 | critical | desktop | reserva não é arrastável | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts` |
-| SL-F014-E2E-006 | P1 | regression | desktop | axe, teclado e rótulos do calendário | `tests/e2e/regression/feat-014-advanced-calendar.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                           | Spec                                                      |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------- | --------------------------------------------------------- |
+| SL-F014-E2E-001 | P0         | critical   | desktop  | alternar visualizações e navegar mantendo eventos | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts`   |
+| SL-F014-E2E-002 | P0         | critical   | desktop  | arrastar bloqueio manual confirma no servidor     | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts`   |
+| SL-F014-E2E-003 | P0         | critical   | desktop  | arraste conflitante reverte e anuncia o erro      | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts`   |
+| SL-F014-E2E-004 | P1         | regression | mobile   | visualização diária e formulário alternativo      | `tests/e2e/regression/feat-014-advanced-calendar.spec.ts` |
+| SL-F014-E2E-005 | P0         | critical   | desktop  | reserva não é arrastável                          | `tests/e2e/critical/feat-014-advanced-calendar.spec.ts`   |
+| SL-F014-E2E-006 | P1         | regression | desktop  | axe, teclado e rótulos do calendário              | `tests/e2e/regression/feat-014-advanced-calendar.spec.ts` |
 
 Regras:
 
@@ -125,7 +125,7 @@ Regras:
 - calendar-reservations.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

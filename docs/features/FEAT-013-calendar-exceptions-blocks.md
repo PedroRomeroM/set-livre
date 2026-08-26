@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `calendar` |
+| Campo            | Valor                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                              |
+| Prioridade       | P0                                                                                                                                     |
+| Domínio          | `calendar`                                                                                                                             |
 | Specs Playwright | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts`<br>`tests/e2e/regression/feat-013-calendar-exceptions-blocks.spec.ts` |
 
 ## Objetivo
@@ -74,7 +74,7 @@ Permitir que o dono ajuste datas específicas, bloqueie períodos e configure li
 - Confirmação ao excluir.
 - Mobile usa sheet/fullscreen.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -93,14 +93,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F013-E2E-001 | P0 | critical | desktop | criar exceção fechada e horário especial | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts` |
-| SL-F013-E2E-002 | P0 | critical | desktop | criar, mover e remover bloqueio manual | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts` |
-| SL-F013-E2E-003 | P0 | critical | desktop | buffer bloqueia período adjacente | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts` |
-| SL-F013-E2E-004 | P0 | critical | desktop | não sobrepor reserva | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts` |
-| SL-F013-E2E-005 | P1 | regression | mobile | editar configurações com conflito acessível | `tests/e2e/regression/feat-013-calendar-exceptions-blocks.spec.ts` |
-| SL-F013-E2E-006 | P1 | regression | desktop | alterar buffer não modifica histórico | `tests/e2e/regression/feat-013-calendar-exceptions-blocks.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                     | Spec                                                               |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------- | ------------------------------------------------------------------ |
+| SL-F013-E2E-001 | P0         | critical   | desktop  | criar exceção fechada e horário especial    | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts`   |
+| SL-F013-E2E-002 | P0         | critical   | desktop  | criar, mover e remover bloqueio manual      | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts`   |
+| SL-F013-E2E-003 | P0         | critical   | desktop  | buffer bloqueia período adjacente           | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts`   |
+| SL-F013-E2E-004 | P0         | critical   | desktop  | não sobrepor reserva                        | `tests/e2e/critical/feat-013-calendar-exceptions-blocks.spec.ts`   |
+| SL-F013-E2E-005 | P1         | regression | mobile   | editar configurações com conflito acessível | `tests/e2e/regression/feat-013-calendar-exceptions-blocks.spec.ts` |
+| SL-F013-E2E-006 | P1         | regression | desktop  | alterar buffer não modifica histórico       | `tests/e2e/regression/feat-013-calendar-exceptions-blocks.spec.ts` |
 
 Regras:
 
@@ -124,7 +124,7 @@ Regras:
 - database.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

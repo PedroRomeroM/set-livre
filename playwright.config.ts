@@ -1,25 +1,13 @@
-import { resolve } from "node:path";
-
 import { defineConfig } from "@playwright/test";
 
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
 import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
-import {
-  createPlaywrightWebServerCommand,
-  createPlaywrightWebServerEnvironmentOverlay,
-} from "./tests/helpers/playwright-web-server";
+import { createPlaywrightWebServerEnvironmentOverlay } from "./tests/helpers/playwright-web-server";
 
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
 const webServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env);
-const webServerWrapper = resolve(import.meta.dirname, "scripts/playwright-web-server.mjs");
-const webServerCommand = (application: "backoffice" | "web") =>
-  createPlaywrightWebServerCommand({
-    application,
-    nodeExecutable: process.execPath,
-    wrapperPath: webServerWrapper,
-  });
 const posixGracefulWebServerShutdown = {
   gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 } satisfies {
@@ -170,7 +158,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: webServerCommand("web"),
+      command: "npm run dev",
       env: webServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
@@ -180,7 +168,7 @@ export default defineConfig({
       url: `${publicBaseUrl}/api/health/live`,
     },
     {
-      command: webServerCommand("backoffice"),
+      command: "npm run dev:backoffice",
       env: webServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,

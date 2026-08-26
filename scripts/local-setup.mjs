@@ -1,735 +1,315 @@
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+
+import { Client } from "pg";
 
 import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
 
-import { assertLocalDockerDaemon } from "./docker-local-context.mjs";
-import {
-  redactLocalPsqlDiagnostics,
-  resolveTrustedLocalPsql,
-  spawnLocalPsql,
-} from "./local-psql-command.mjs";
-import { localIpv4Host, parseLiteralLocalIpv4Url } from "./local-network-contract.ts";
-import {
-  assertSafeEnvironmentFileDestination,
-  writeEnvironmentFileAtomic,
-} from "./safe-environment-file.mjs";
-import {
-  assertSupabaseLoopbackBindings,
-  assertSupabaseProjectStopped,
-  ensureSupabaseLoopbackNetwork,
-  supabaseLocalNetworkName,
-  supabaseLocalProjectId,
-  supabaseProjectContainersAreRunning,
-} from "./supabase-local-network.mjs";
+import { generateDatabaseArtifacts, verifyDatabaseArtifacts } from "./database-artifacts.mjs";
 
-const root = resolve(import.meta.dirname, "..");
-const applicationEnvironmentDestinations = [
-  [resolve(root, ".env.local"), `http://${localIpv4Host}:3000`],
-  [resolve(root, "apps/backoffice/.env.local"), `http://${localIpv4Host}:3001`],
-];
-const e2eEnvironmentPath = resolve(root, ".env.e2e.local");
+const repositoryRoot = resolve(import.meta.dirname, "..");
+const require = createRequire(import.meta.url);
+const supabasePackagePath = require.resolve("supabase/package.json");
+const supabasePackage = JSON.parse(readFileSync(supabasePackagePath, "utf8"));
+const supabaseBin = supabasePackage.bin?.supabase;
 
-for (const [path] of applicationEnvironmentDestinations) {
-  assertSafeEnvironmentFileDestination(path);
+if (typeof supabaseBin !== "string" || supabaseBin === "") {
+  throw new Error("O pacote Supabase instalado não declara sua CLI.");
 }
-assertSafeEnvironmentFileDestination(e2eEnvironmentPath);
 
-const localDockerEnvironment = assertLocalDockerDaemon();
-const trustedPsqlLaunch = resolveTrustedLocalPsql({
-  inheritedEnvironment: localDockerEnvironment,
-});
+const supabaseCliPath = resolve(dirname(supabasePackagePath), supabaseBin);
 
-function successfulCommandOutput(command, argumentsList, result, options = {}) {
-  if (result.status !== 0) {
-    const diagnostics = options.safeStderr
-      ? redactLocalPsqlDiagnostics(result.stderr, options.redactions)
-      : "";
+export function runSupabase(argumentsList, { capture = false } = {}) {
+  const result = spawnSync(process.execPath, [supabaseCliPath, ...argumentsList], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    const status = result.status === null ? "sem código" : `código ${result.status}`;
+    const diagnostic = parseSupabaseCliError(`${result.stderr ?? ""}\n${result.stdout ?? ""}`);
+    const suffix = diagnostic === undefined ? "" : `: ${diagnostic}`;
     throw new Error(
-      `${command} ${argumentsList.join(" ")} falhou.${diagnostics === "" ? "" : `\n${diagnostics}`}`,
+      `Supabase CLI falhou em ${argumentsList.slice(0, 2).join(" ")} (${status})${suffix}.`,
     );
   }
-
   return result.stdout ?? "";
 }
 
-function run(command, argumentsList, options = {}) {
-  const commandEnvironment = {
-    ...localDockerEnvironment,
-    ...options.environment,
-    DOCKER_HOST: localDockerEnvironment.DOCKER_HOST,
-  };
-  delete commandEnvironment.DOCKER_CONTEXT;
-
-  const result = spawnSync(command, argumentsList, {
-    cwd: root,
-    encoding: "utf8",
-    env: commandEnvironment,
-    input: options.input,
-    stdio: options.capture
-      ? "pipe"
-      : options.input === undefined
-        ? "inherit"
-        : ["pipe", "inherit", "inherit"],
-  });
-  return successfulCommandOutput(command, argumentsList, result, options);
-}
-
-function runPsql(databaseUrl, options = {}) {
-  const { argumentsList, result } = spawnLocalPsql(trustedPsqlLaunch, databaseUrl, {
-    assumeDalRole: options.assumeDalRole,
-    command: options.command,
-    input: options.input,
-  });
-  return successfulCommandOutput(trustedPsqlLaunch.command, argumentsList, result, options);
-}
-
-function stopScopedSupabaseStack() {
-  run("supabase", ["stop", "--project-id", supabaseLocalProjectId], { capture: true });
-  assertSupabaseProjectStopped(localDockerEnvironment);
-}
-
-run("docker", ["info"], { capture: true });
-if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
-  try {
-    assertSupabaseLoopbackBindings(localDockerEnvironment);
-  } catch {
-    stopScopedSupabaseStack();
-  }
-}
-ensureSupabaseLoopbackNetwork(localDockerEnvironment);
-try {
-  run("supabase", ["start", "--network-id", supabaseLocalNetworkName], { capture: true });
-  assertSupabaseLoopbackBindings(localDockerEnvironment);
-} catch (error) {
-  if (supabaseProjectContainersAreRunning(localDockerEnvironment)) {
-    stopScopedSupabaseStack();
-  }
-  throw error;
-}
-run("supabase", ["db", "reset", "--local", "--network-id", supabaseLocalNetworkName], {
-  capture: true,
-});
-assertSupabaseLoopbackBindings(localDockerEnvironment);
-
-const status = run(
-  "supabase",
-  ["status", "--output", "env", "--network-id", supabaseLocalNetworkName],
-  { capture: true },
-);
-const values = Object.fromEntries(
-  status
-    .split("\n")
-    .map((line) => {
-      const separator = line.indexOf("=");
-      if (separator < 1) {
-        return undefined;
+export function parseSupabaseCliError(rawError) {
+  if (typeof rawError !== "string" || rawError.trim() === "") return undefined;
+  const lines = rawError.trim().split(/\r?\n/u).reverse();
+  for (const line of lines) {
+    try {
+      const payload = JSON.parse(line);
+      const message = payload?.error?.message ?? payload?.message;
+      if (typeof message === "string" && message !== "") {
+        return message.replaceAll(/postgres(?:ql)?:\/\/[^\s@]+@/giu, "postgresql://[REDACTED]@");
       }
-
-      const key = line.slice(0, separator);
-      const rawValue = line.slice(separator + 1);
-      if (!/^[A-Z_]+$/.test(key)) {
-        return undefined;
-      }
-
-      return [key, rawValue.startsWith('"') ? JSON.parse(rawValue) : rawValue];
-    })
-    .filter((entry) => entry !== undefined),
-);
-
-const required = ["API_URL", "ANON_KEY", "DB_URL"];
-for (const key of required) {
-  if (values[key] === undefined || values[key] === "") {
-    throw new Error(`Supabase local não retornou ${key}.`);
+    } catch {
+      // A CLI mistura progresso textual e um erro JSON final; somente o JSON é seguro para diagnóstico.
+    }
   }
+  return undefined;
 }
 
 function assertLocalEndpoint(value, label, protocol, port) {
-  const parsed = parseLiteralLocalIpv4Url(value, label);
-  if (parsed.protocol !== protocol || parsed.port !== port) {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== protocol ||
+    parsed.hostname !== "127.0.0.1" ||
+    parsed.port !== port ||
+    parsed.hash !== ""
+  ) {
     throw new Error(`${label} não corresponde ao endpoint local esperado.`);
+  }
+  return parsed;
+}
+
+export function parseSupabaseStatus(rawStatus) {
+  const values = JSON.parse(rawStatus);
+  for (const name of ["ANON_KEY", "API_URL", "DB_URL"]) {
+    if (typeof values[name] !== "string" || values[name] === "") {
+      throw new Error(`Supabase local não retornou ${name}.`);
+    }
+  }
+
+  const apiUrl = assertLocalEndpoint(values.API_URL, "API_URL", "http:", "54321");
+  if (
+    apiUrl.username !== "" ||
+    apiUrl.password !== "" ||
+    apiUrl.pathname !== "/" ||
+    apiUrl.search !== ""
+  ) {
+    throw new Error("API_URL local precisa ser uma origem sem credenciais ou path.");
+  }
+
+  const databaseUrl = assertLocalEndpoint(values.DB_URL, "DB_URL", "postgresql:", "54322");
+  if (
+    decodeURIComponent(databaseUrl.username) !== "postgres" ||
+    databaseUrl.password === "" ||
+    databaseUrl.pathname !== "/postgres" ||
+    databaseUrl.search !== ""
+  ) {
+    throw new Error("DB_URL local não usa a identidade administrativa esperada.");
+  }
+
+  return values;
+}
+
+function localStatus() {
+  return parseSupabaseStatus(runSupabase(["status", "--output", "json"], { capture: true }));
+}
+
+async function writePrivateEnvironment(destination, contents) {
+  await mkdir(dirname(destination), { recursive: true });
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, destination);
+  } finally {
+    await rm(temporary, { force: true });
   }
 }
 
-assertLocalEndpoint(values.API_URL, "API_URL", "http:", "54321");
-assertLocalEndpoint(values.DB_URL, "DB_URL", "postgresql:", "54322");
+function runtimeRoleSql(password, marker) {
+  if (!/^[A-Za-z0-9_-]{32,128}$/u.test(password) || !/^[A-Za-z0-9_-]{32,128}$/u.test(marker)) {
+    throw new Error("As credenciais locais geradas não atendem ao formato seguro.");
+  }
 
-const runtimeRole = "app_runtime_local";
-const runtimePassword = randomBytes(32).toString("base64url");
-const e2eDatabaseMarker = randomBytes(32).toString("base64url");
-const adminDatabaseUrl = new URL(values.DB_URL);
-if (
-  decodeURIComponent(adminDatabaseUrl.username) !== "postgres" ||
-  adminDatabaseUrl.password === "" ||
-  adminDatabaseUrl.pathname !== "/postgres" ||
-  adminDatabaseUrl.search !== "" ||
-  adminDatabaseUrl.hash !== ""
-) {
-  throw new Error("DB_URL não usa a identidade administrativa local esperada.");
-}
-const supabaseAdminDatabaseUrl = new URL(adminDatabaseUrl);
-supabaseAdminDatabaseUrl.username = "supabase_admin";
-const managedSchemaSql = `
+  return `
 begin;
 
 do $block$
 begin
-  if current_user <> 'supabase_admin'
-    or not (select rolsuper from pg_catalog.pg_roles where rolname = current_user)
-  then
-    raise exception 'A normalização de schemas gerenciados exige o superuser local esperado.';
-  end if;
-end
-$block$;
-
-revoke all on schema public from public;
-grant usage on schema public to anon, authenticated, service_role;
-
-do $block$
-declare
-  owner_role text;
-begin
-  if pg_catalog.to_regnamespace('net') is not null then
-    if pg_catalog.current_setting('pg_net.username', true) <> 'postgres' then
-      raise exception 'A identidade local do worker pg_net divergiu do contrato esperado.';
-    end if;
-
-    execute 'revoke all on schema net from public, anon, authenticated, service_role, app_dal';
-    execute 'revoke all on all tables in schema net from public, anon, authenticated, service_role, app_dal';
-    execute 'revoke all on all sequences in schema net from public, anon, authenticated, service_role, app_dal';
-    execute 'revoke all on all functions in schema net from public, anon, authenticated, service_role, app_dal';
-    execute 'grant usage on schema net to postgres';
-    execute 'grant all on all tables in schema net to postgres';
-    execute 'grant all on all sequences in schema net to postgres';
-    execute 'grant execute on all functions in schema net to postgres';
-
-    foreach owner_role in array array['supabase_admin', 'postgres']
-    loop
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net revoke all on tables from public, anon, authenticated, service_role, app_dal',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net grant all on tables to postgres',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net revoke all on sequences from public, anon, authenticated, service_role, app_dal',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net grant all on sequences to postgres',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I revoke execute on functions from public, anon, authenticated, service_role, app_dal',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I revoke usage on types from public, anon, authenticated, service_role, app_dal',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net revoke execute on functions from public, anon, authenticated, service_role, app_dal',
-        owner_role
-      );
-      execute pg_catalog.format(
-        'alter default privileges for role %I in schema net grant execute on functions to postgres',
-        owner_role
-      );
-    end loop;
+  if not exists (select 1 from pg_catalog.pg_roles where rolname = 'app_runtime_local') then
+    create role app_runtime_local;
   end if;
 end
 $block$;
 
 do $block$
-begin
-  if not exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
-    create role ${runtimeRole}
-      login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
-  end if;
-end
-$block$;
-
-revoke all privileges on table
-  pg_catalog.pg_db_role_setting,
-  pg_catalog.pg_roles,
-  pg_catalog.pg_user
-  from public, anon, authenticated, service_role, app_dal, ${runtimeRole};
-
-do $block$
 declare
-  catalog_name text;
-  column_list text;
+  membership record;
 begin
-  foreach catalog_name in array array['pg_db_role_setting', 'pg_roles', 'pg_user']
-  loop
-    select pg_catalog.string_agg(pg_catalog.format('%I', attribute.attname), ', ' order by attribute.attnum)
-      into column_list
-    from pg_catalog.pg_attribute as attribute
-    where attribute.attrelid = pg_catalog.to_regclass(
-        pg_catalog.format('pg_catalog.%I', catalog_name)
-      )
-      and attribute.attnum > 0
-      and not attribute.attisdropped;
-
-    execute pg_catalog.format(
-      'revoke all privileges (%s) on table pg_catalog.%I from public, anon, authenticated, service_role, app_dal, %I',
-      column_list,
-      catalog_name,
-      '${runtimeRole}'
-    );
-  end loop;
-end
-$block$;
-
-grant all privileges on table
-  pg_catalog.pg_db_role_setting,
-  pg_catalog.pg_roles,
-  pg_catalog.pg_user
-  to supabase_admin;
-grant select on table
-  pg_catalog.pg_db_role_setting,
-  pg_catalog.pg_roles,
-  pg_catalog.pg_user
-  to postgres, supabase_admin;
-
-do $block$
-declare
-  membership_record record;
-begin
-  for membership_record in
-    select
-      granted.rolname as granted_role,
-      member.rolname as member_role,
+  for membership in
+    select granted.rolname as granted_role, member.rolname as member_role,
       grantor.rolname as grantor_role
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    join pg_catalog.pg_roles as grantor on grantor.oid = membership.grantor
-    where granted.rolname = any (array['app_dal', '${runtimeRole}'])
-    order by granted.rolname, (member.rolname = 'postgres'), member.rolname, grantor.rolname
+    from pg_catalog.pg_auth_members as relation
+    join pg_catalog.pg_roles as granted on granted.oid = relation.roleid
+    join pg_catalog.pg_roles as member on member.oid = relation.member
+    join pg_catalog.pg_roles as grantor on grantor.oid = relation.grantor
+    where member.rolname = 'app_runtime_local'
+       or granted.rolname = 'app_runtime_local'
+       or (granted.rolname = 'app_dal' and member.rolname = 'postgres')
   loop
     execute pg_catalog.format(
       'revoke %I from %I granted by %I cascade',
-      membership_record.granted_role,
-      membership_record.member_role,
-      membership_record.grantor_role
+      membership.granted_role,
+      membership.member_role,
+      membership.grantor_role
     );
   end loop;
 end
 $block$;
 
-do $block$
-declare
-  database_name text;
-  managed_role text;
-  setting_name text;
-begin
-  for managed_role in
-    select role.rolname
-    from pg_catalog.pg_roles as role
-    where role.rolname = any (array['app_dal', '${runtimeRole}'])
-    order by role.rolname
-  loop
-    for database_name in
-      select database.datname
-      from pg_catalog.pg_db_role_setting as setting
-      join pg_catalog.pg_database as database on database.oid = setting.setdatabase
-      join pg_catalog.pg_roles as role on role.oid = setting.setrole
-      where role.rolname = managed_role
-      order by database.datname
-    loop
-      execute pg_catalog.format(
-        'alter role %I in database %I reset all',
-        managed_role,
-        database_name
-      );
-    end loop;
-    execute pg_catalog.format('alter role %I reset all', managed_role);
-    if managed_role = '${runtimeRole}' then
-      execute pg_catalog.format(
-        'alter role %I in database %I set "app.settings.jwt_secret" = %L',
-        managed_role,
-        pg_catalog.current_database(),
-        ''
-      );
-    end if;
-  end loop;
+alter role app_runtime_local
+  login noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls
+  connection limit 10 valid until 'infinity' password '${password}';
+alter role app_runtime_local reset all;
+alter role app_runtime_local in database postgres reset all;
+alter role app_runtime_local in database postgres set "app.settings.jwt_secret" = '';
 
-  for setting_name in
-    select distinct pg_catalog.split_part(configuration.value, '=', 1)
-    from pg_catalog.pg_db_role_setting as setting
-    cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
-    where setting.setrole = 0
-      and setting.setdatabase = (
-        select database.oid
-        from pg_catalog.pg_database as database
-        where database.datname = pg_catalog.current_database()
-      )
-      and pg_catalog.split_part(configuration.value, '=', 1)
-        not in ('app.settings.jwt_exp', 'app.settings.jwt_secret')
-    order by 1
-  loop
-    execute pg_catalog.format(
-      'alter database %I reset %I',
-      pg_catalog.current_database(),
-      setting_name
-    );
-  end loop;
-end
-$block$;
-
-do $block$
-begin
-  if exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
-    grant ${runtimeRole} to postgres with admin true, inherit false, set false;
-  end if;
-end
-$block$;
-
+revoke all privileges on database postgres from app_runtime_local;
+grant connect on database postgres to app_runtime_local;
+grant app_dal to app_runtime_local with admin false, inherit false, set true;
 grant app_dal to postgres with admin true, inherit false, set false;
+grant app_dal to app_runtime_production with admin false, inherit false, set true;
+grant app_runtime_local to postgres with admin true, inherit false, set false;
+
+comment on database postgres is 'set-livre-e2e:${marker}';
 
 commit;
 `;
-runPsql(supabaseAdminDatabaseUrl.toString(), {
-  input: managedSchemaSql,
-  redactions: [decodeURIComponent(supabaseAdminDatabaseUrl.password)],
-  safeStderr: true,
-});
-const runtimeSql = `
-begin;
-
-do $block$
-begin
-  if not exists (select 1 from pg_catalog.pg_roles where rolname = '${runtimeRole}') then
-    raise exception 'A role local do runtime não foi criada pelo bootstrap privilegiado.';
-  end if;
-end
-$block$;
-
-do $block$
-declare
-  runtime_role_oid oid := (select oid from pg_catalog.pg_roles where rolname = '${runtimeRole}');
-begin
-  if exists (
-    select 1
-    from pg_catalog.pg_roles
-    where rolname = '${runtimeRole}' and (rolsuper or rolreplication or rolbypassrls)
-  ) then
-    raise exception 'A role local do runtime possui atributo que exige correção por superuser.';
-  end if;
-
-  if exists (
-    select 1 from pg_catalog.pg_database where datdba = runtime_role_oid
-    union all
-    select 1 from pg_catalog.pg_namespace where nspowner = runtime_role_oid
-    union all
-    select 1 from pg_catalog.pg_class where relowner = runtime_role_oid
-    union all
-    select 1 from pg_catalog.pg_proc where proowner = runtime_role_oid
-    union all
-    select 1 from pg_catalog.pg_type where typowner = runtime_role_oid
-  ) then
-    raise exception 'A role local do runtime possui objetos e não pode ser normalizada automaticamente.';
-  end if;
-
-  if exists (
-    select 1
-    from pg_catalog.pg_default_acl as defaults
-    cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as privilege
-    where privilege.grantee = runtime_role_oid
-  ) then
-    raise exception 'A role local do runtime possui default privileges residuais.';
-  end if;
-end
-$block$;
-
-alter role ${runtimeRole}
-  login noinherit nocreatedb nocreaterole
-  connection limit 10 valid until 'infinity'
-  password '${runtimePassword}';
-
-revoke all privileges on database postgres from ${runtimeRole};
-
-do $block$
-declare
-  schema_name text;
-  type_name text;
-begin
-  for schema_name in
-    select namespace.nspname
-    from pg_catalog.pg_namespace as namespace
-    where namespace.nspname = any (array['public', 'private', 'audit'])
-  loop
-    execute pg_catalog.format(
-      'revoke all privileges on all tables in schema %I from %I',
-      schema_name,
-      '${runtimeRole}'
-    );
-    execute pg_catalog.format(
-      'revoke all privileges on all sequences in schema %I from %I',
-      schema_name,
-      '${runtimeRole}'
-    );
-    execute pg_catalog.format(
-      'revoke all privileges on all routines in schema %I from %I',
-      schema_name,
-      '${runtimeRole}'
-    );
-    execute pg_catalog.format(
-      'revoke all privileges on schema %I from %I',
-      schema_name,
-      '${runtimeRole}'
-    );
-  end loop;
-
-  for type_name in
-    select pg_catalog.format('%I.%I', namespace.nspname, type_object.typname)
-    from pg_catalog.pg_type as type_object
-    join pg_catalog.pg_namespace as namespace on namespace.oid = type_object.typnamespace
-    cross join lateral pg_catalog.aclexplode(type_object.typacl) as privilege
-    where namespace.nspname = any (array['public', 'private', 'audit'])
-      and privilege.grantee = (select oid from pg_catalog.pg_roles where rolname = '${runtimeRole}')
-  loop
-    execute pg_catalog.format(
-      'revoke all privileges on type %s from %I',
-      type_name,
-      '${runtimeRole}'
-    );
-  end loop;
-end
-$block$;
-
-do $block$
-declare
-  runtime_role_oid oid := (select oid from pg_catalog.pg_roles where rolname = '${runtimeRole}');
-begin
-  if exists (
-    select 1
-    from pg_catalog.pg_namespace as namespace
-    cross join lateral pg_catalog.aclexplode(namespace.nspacl) as privilege
-    where privilege.grantee = runtime_role_oid
-    union all
-    select 1
-    from pg_catalog.pg_class as relation
-    cross join lateral pg_catalog.aclexplode(relation.relacl) as privilege
-    where privilege.grantee = runtime_role_oid
-    union all
-    select 1
-    from pg_catalog.pg_proc as routine
-    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
-    where privilege.grantee = runtime_role_oid
-    union all
-    select 1
-    from pg_catalog.pg_type as type_object
-    cross join lateral pg_catalog.aclexplode(type_object.typacl) as privilege
-    where privilege.grantee = runtime_role_oid
-  ) then
-    raise exception 'A role local do runtime preservou grants diretos fora do escopo normalizável.';
-  end if;
-end
-$block$;
-
-do $block$
-declare
-  granted_role text;
-begin
-  for granted_role in
-    select granted.rolname
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-    where member.rolname = '${runtimeRole}'
-  loop
-    execute pg_catalog.format('revoke %I from %I', granted_role, '${runtimeRole}');
-  end loop;
-end
-$block$;
-
-grant connect on database postgres to ${runtimeRole};
-grant app_dal to ${runtimeRole} with admin false, inherit false, set true;
-comment on database postgres is 'set-livre-e2e:${e2eDatabaseMarker}';
-
-do $block$
-begin
-  if not (
-    select pg_catalog.count(*) = 2
-      and pg_catalog.bool_and(
-        (
-          member.rolname = '${runtimeRole}'
-          and not membership.admin_option
-          and not membership.inherit_option
-          and membership.set_option
-        )
-        or (
-          member.rolname = 'postgres'
-          and membership.admin_option
-          and not membership.inherit_option
-          and not membership.set_option
-        )
-      )
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    where granted.rolname = 'app_dal'
-  ) then
-    raise exception 'O manifesto de membros de app_dal não foi restaurado.';
-  end if;
-
-  if not (
-    select pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        member.rolname = 'postgres'
-        and membership.admin_option
-        and not membership.inherit_option
-        and not membership.set_option
-      )
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    where granted.rolname = '${runtimeRole}'
-  ) then
-    raise exception 'O manifesto administrativo do login restrito local divergiu.';
-  end if;
-
-  if not (
-    select pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        setting.setdatabase = (
-          select database.oid
-          from pg_catalog.pg_database as database
-          where database.datname = pg_catalog.current_database()
-        )
-        and setting.setconfig = array['app.settings.jwt_secret=']::text[]
-      )
-    from pg_catalog.pg_db_role_setting as setting
-    join pg_catalog.pg_roles as role on role.oid = setting.setrole
-    where role.rolname = '${runtimeRole}'
-  ) then
-    raise exception 'O login restrito local não preservou somente a máscara de segredo esperada.';
-  end if;
-
-  if not (
-    select pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        dependency.dbid = 0
-        and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
-        and dependency.objid = (
-          select database.oid
-          from pg_catalog.pg_database as database
-          where database.datname = pg_catalog.current_database()
-        )
-        and dependency.objsubid = 0
-      )
-    from pg_catalog.pg_shdepend as dependency
-    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
-    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
-      and role.rolname = '${runtimeRole}'
-      and dependency.deptype = 'a'
-  ) then
-    raise exception 'O login restrito local possui dependências ACL fora do CONNECT autorizado.';
-  end if;
-
-  if not (
-    select pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        privilege.grantee = role.oid
-        and privilege.grantor <> role.oid
-        and privilege.privilege_type = 'CONNECT'
-        and not privilege.is_grantable
-      )
-    from pg_catalog.pg_database as database
-    cross join pg_catalog.pg_roles as role
-    cross join lateral pg_catalog.aclexplode(database.datacl) as privilege
-    where database.datname = pg_catalog.current_database()
-      and role.rolname = '${runtimeRole}'
-      and (privilege.grantee = role.oid or privilege.grantor = role.oid)
-  ) then
-    raise exception 'O CONNECT direto do login restrito local divergiu do manifesto.';
-  end if;
-
-  if exists (
-    select 1
-    from pg_catalog.pg_shdepend as dependency
-    join pg_catalog.pg_roles as role on role.oid = dependency.refobjid
-    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
-      and role.rolname = '${runtimeRole}'
-      and dependency.deptype = 'o'
-  ) then
-    raise exception 'O login restrito local possui ownership indevido.';
-  end if;
-
-  if exists (
-    select 1
-    from pg_catalog.pg_db_role_setting as setting
-    cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
-    where setting.setrole = 0
-      and setting.setdatabase = (
-        select database.oid
-        from pg_catalog.pg_database as database
-        where database.datname = pg_catalog.current_database()
-      )
-      and pg_catalog.split_part(configuration.value, '=', 1)
-        not in ('app.settings.jwt_exp', 'app.settings.jwt_secret')
-  ) then
-    raise exception 'O banco local possui parâmetro global fora da allowlist.';
-  end if;
-end
-$block$;
-
-commit;
-`;
-runPsql(values.DB_URL, {
-  input: runtimeSql,
-  redactions: [runtimePassword, e2eDatabaseMarker, decodeURIComponent(adminDatabaseUrl.password)],
-  safeStderr: true,
-});
-
-const dalDatabaseUrl = new URL(values.DB_URL);
-dalDatabaseUrl.username = runtimeRole;
-dalDatabaseUrl.password = runtimePassword;
-dalDatabaseUrl.searchParams.set("options", "-c role=app_dal");
-const identity = runPsql(dalDatabaseUrl.toString(), {
-  assumeDalRole: true,
-  command: `select current_user || ':' || session_user || ':'
-    || private.check_readiness('${databaseMigrationHead}') || ':'
-    || private.check_runtime_readiness('${runtimeRole}')`,
-  redactions: [runtimePassword],
-  safeStderr: true,
-}).trim();
-if (identity !== "app_dal:app_runtime_local:true:true") {
-  throw new Error("A conexão DAL local não satisfez o manifesto restrito esperado.");
 }
 
-function applicationEnvironment(applicationUrl) {
+async function provisionLocalRuntime(values) {
+  const runtimePassword = randomBytes(32).toString("base64url");
+  const databaseMarker = randomBytes(32).toString("base64url");
+  const administratorUrl = new URL(values.DB_URL);
+  administratorUrl.username = "supabase_admin";
+  const administrator = new Client({ connectionString: administratorUrl.toString() });
+  await administrator.connect();
+  try {
+    await administrator.query(runtimeRoleSql(runtimePassword, databaseMarker));
+  } finally {
+    await administrator.end();
+  }
+
+  const dalDatabaseUrl = new URL(values.DB_URL);
+  dalDatabaseUrl.username = "app_runtime_local";
+  dalDatabaseUrl.password = runtimePassword;
+  dalDatabaseUrl.searchParams.set("options", "-c role=app_dal");
+
+  const runtime = new Client({ connectionString: dalDatabaseUrl.toString() });
+  await runtime.connect();
+  try {
+    const result = await runtime.query(
+      `select current_user, session_user,
+        private.check_readiness($1::text) as ready,
+        private.check_runtime_readiness($2::text) as runtime_ready`,
+      [databaseMigrationHead, "app_runtime_local"],
+    );
+    const identity = result.rows[0];
+    if (
+      identity?.current_user !== "app_dal" ||
+      identity?.session_user !== "app_runtime_local" ||
+      identity?.ready !== true ||
+      identity?.runtime_ready !== true
+    ) {
+      throw new Error(
+        `A role DAL local não satisfez o contrato de readiness (role=${identity?.current_user}, session=${identity?.session_user}, database=${String(identity?.ready)}, runtime=${String(identity?.runtime_ready)}).`,
+      );
+    }
+  } finally {
+    await runtime.end();
+  }
+
+  return { dalDatabaseUrl: dalDatabaseUrl.toString(), databaseMarker };
+}
+
+function applicationEnvironment(values, dalDatabaseUrl, appUrl) {
   return [
     "APP_ENV=local",
     "APP_RELEASE_SHA=local",
-    `NEXT_PUBLIC_APP_URL=${applicationUrl}`,
+    `NEXT_PUBLIC_APP_URL=${appUrl}`,
     `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
     `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
-    `DATABASE_URL_APP_DAL=${dalDatabaseUrl.toString()}`,
+    `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
     "",
   ].join("\n");
 }
-const e2eEnvironment = [
-  "E2E_ALLOW_LOCAL=1",
-  `E2E_BASE_URL=http://${localIpv4Host}:3000`,
-  `E2E_BACKOFFICE_URL=http://${localIpv4Host}:3001`,
-  `E2E_DATABASE_MARKER=${e2eDatabaseMarker}`,
-  `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
-  `DATABASE_URL_APP_DAL=${dalDatabaseUrl.toString()}`,
-  `E2E_DATABASE_URL=${values.DB_URL}`,
-  "",
-].join("\n");
 
-for (const [path, applicationUrl] of applicationEnvironmentDestinations) {
-  writeEnvironmentFileAtomic(path, applicationEnvironment(applicationUrl));
+async function resetLocalEnvironment() {
+  process.stdout.write("Iniciando a stack Supabase local...\n");
+  runSupabase(["start"], { capture: true });
+  process.stdout.write("Reaplicando migrations e seed...\n");
+  runSupabase(["db", "reset", "--local"], { capture: true });
+  const values = localStatus();
+  process.stdout.write("Provisionando a role DAL local...\n");
+  const { dalDatabaseUrl, databaseMarker } = await provisionLocalRuntime(values);
+
+  await Promise.all([
+    writePrivateEnvironment(
+      resolve(repositoryRoot, ".env.local"),
+      applicationEnvironment(values, dalDatabaseUrl, "http://127.0.0.1:3000"),
+    ),
+    writePrivateEnvironment(
+      resolve(repositoryRoot, "apps/backoffice/.env.local"),
+      applicationEnvironment(values, dalDatabaseUrl, "http://127.0.0.1:3001"),
+    ),
+    writePrivateEnvironment(
+      resolve(repositoryRoot, ".env.e2e.local"),
+      [
+        "E2E_ALLOW_LOCAL=1",
+        "E2E_BASE_URL=http://127.0.0.1:3000",
+        "E2E_BACKOFFICE_URL=http://127.0.0.1:3001",
+        `E2E_DATABASE_MARKER=${databaseMarker}`,
+        `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
+        `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
+        `E2E_DATABASE_URL=${values.DB_URL}`,
+        "",
+      ].join("\n"),
+    ),
+  ]);
+  process.stdout.write("Supabase local reiniciado e ambientes de desenvolvimento atualizados.\n");
 }
-writeEnvironmentFileAtomic(e2eEnvironmentPath, e2eEnvironment);
 
-process.stdout.write(
-  `Supabase local pronto em http://${localIpv4Host}:54321. Runtime e E2E foram gravados separadamente em arquivos ignorados.\n`,
-);
+export async function main(command = "reset") {
+  if (command === "start") {
+    runSupabase(["start"], { capture: true });
+    localStatus();
+    process.stdout.write("Supabase local ativo em 127.0.0.1:54321.\n");
+    return;
+  }
+  if (command === "stop") {
+    runSupabase(["stop"]);
+    return;
+  }
+  if (command === "status") {
+    localStatus();
+    process.stdout.write("Supabase local ativo em 127.0.0.1:54321.\n");
+    return;
+  }
+  if (command === "reset") {
+    await resetLocalEnvironment();
+    return;
+  }
+
+  localStatus();
+  if (command === "generate-schema") {
+    await generateDatabaseArtifacts(runSupabase, { schema: true, types: false });
+  } else if (command === "generate-types") {
+    await generateDatabaseArtifacts(runSupabase, { schema: false, types: true });
+  } else if (command === "generate") {
+    await generateDatabaseArtifacts(runSupabase);
+  } else if (command === "test") {
+    runSupabase(["test", "db", "--local"]);
+    await verifyDatabaseArtifacts(runSupabase);
+    process.stdout.write("Testes SQL e artefatos gerados estão consistentes.\n");
+  } else {
+    throw new Error(`Comando local desconhecido: ${command}.`);
+  }
+}
+
+const executedPath = process.argv[1];
+if (executedPath !== undefined && pathToFileURL(resolve(executedPath)).href === import.meta.url) {
+  await main(process.argv[2]);
+}

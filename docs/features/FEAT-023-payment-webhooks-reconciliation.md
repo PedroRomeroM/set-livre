@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `payments-ops` |
+| Campo            | Valor                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                                        |
+| Prioridade       | P0                                                                                                                                               |
+| Domínio          | `payments-ops`                                                                                                                                   |
 | Specs Playwright | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`<br>`tests/e2e/regression/feat-023-payment-webhooks-reconciliation.spec.ts` |
 
 ## Objetivo
@@ -74,7 +74,7 @@ Transformar eventos externos em estados internos consistentes, mesmo duplicados,
 - Sem payload sensível.
 - Retentativa com feedback.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -95,14 +95,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F023-E2E-001 | P0 | critical | desktop | webhook válido confirma e duplicado é idempotente | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts` |
-| SL-F023-E2E-002 | P0 | critical | desktop | assinatura/replay inválidos são rejeitados | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts` |
-| SL-F023-E2E-003 | P0 | critical | desktop | evento fora de ordem não regride estado | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts` |
-| SL-F023-E2E-004 | P0 | critical | desktop | divergência de valor bloqueia reserva e gera alerta | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts` |
-| SL-F023-E2E-005 | P0 | critical | desktop | reconciliação recupera webhook ausente | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts` |
-| SL-F023-E2E-006 | P1 | regression | desktop | retentativa administrativa mantém auditoria | `tests/e2e/regression/feat-023-payment-webhooks-reconciliation.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                             | Spec                                                                    |
+| --------------- | ---------- | ---------- | -------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| SL-F023-E2E-001 | P0         | critical   | desktop  | webhook válido confirma e duplicado é idempotente   | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`   |
+| SL-F023-E2E-002 | P0         | critical   | desktop  | assinatura/replay inválidos são rejeitados          | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`   |
+| SL-F023-E2E-003 | P0         | critical   | desktop  | evento fora de ordem não regride estado             | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`   |
+| SL-F023-E2E-004 | P0         | critical   | desktop  | divergência de valor bloqueia reserva e gera alerta | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`   |
+| SL-F023-E2E-005 | P0         | critical   | desktop  | reconciliação recupera webhook ausente              | `tests/e2e/critical/feat-023-payment-webhooks-reconciliation.spec.ts`   |
+| SL-F023-E2E-006 | P1         | regression | desktop  | retentativa administrativa mantém auditoria         | `tests/e2e/regression/feat-023-payment-webhooks-reconciliation.spec.ts` |
 
 Regras:
 
@@ -127,7 +127,7 @@ Regras:
 - observability.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `public-web` |
+| Campo            | Valor                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                                                                    |
+| Prioridade       | P0                                                                                                                                                                           |
+| Domínio          | `public-web`                                                                                                                                                                 |
 | Specs Playwright | `tests/e2e/smoke/feat-001-public-shell-home.spec.ts`<br>`tests/e2e/critical/feat-001-public-shell-home.spec.ts`<br>`tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
 
 ## Objetivo
@@ -78,7 +78,7 @@ Apresentar a proposta Set Livre, oferecer navegação pública e transformar a i
 - O carregamento das taxonomias não remove o CTA; falha usa opção sem filtro.
 - Sem JavaScript, conteúdo e links ainda são úteis.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -96,13 +96,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F001-E2E-001 | P0 | smoke | desktop | home pública renderiza, navega e não lista estúdios | `tests/e2e/smoke/feat-001-public-shell-home.spec.ts` |
-| SL-F001-E2E-002 | P0 | critical | mobile | formulário envia data/bairro/tipo para URL da listagem | `tests/e2e/critical/feat-001-public-shell-home.spec.ts` |
-| SL-F001-E2E-003 | P1 | regression | desktop | data inválida bloqueia navegação com erro acessível | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
-| SL-F001-E2E-004 | P1 | regression | mobile | header, menu e CTA funcionam a 320px | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
-| SL-F001-E2E-005 | P1 | regression | desktop | axe não encontra violações críticas | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                | Spec                                                      |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------------ | --------------------------------------------------------- |
+| SL-F001-E2E-001 | P0         | smoke      | desktop  | home pública renderiza, navega e não lista estúdios    | `tests/e2e/smoke/feat-001-public-shell-home.spec.ts`      |
+| SL-F001-E2E-002 | P0         | critical   | mobile   | formulário envia data/bairro/tipo para URL da listagem | `tests/e2e/critical/feat-001-public-shell-home.spec.ts`   |
+| SL-F001-E2E-003 | P1         | regression | desktop  | data inválida bloqueia navegação com erro acessível    | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
+| SL-F001-E2E-004 | P1         | regression | mobile   | header, menu e CTA funcionam a 320px                   | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
+| SL-F001-E2E-005 | P1         | regression | desktop  | axe não encontra violações críticas                    | `tests/e2e/regression/feat-001-public-shell-home.spec.ts` |
 
 Regras:
 
@@ -124,9 +124,9 @@ Regras:
 - ux-blueprint.md
 - design-system.md
 - qa-test-plan.md
-- feature-catalog.md
+- roadmap.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

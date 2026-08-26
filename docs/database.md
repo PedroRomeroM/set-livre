@@ -11,48 +11,46 @@
 - Status evolutivos usam `text` + `check`.
 - Dinheiro usa `bigint` em centavos.
 - Índices não estruturais exigem evidência.
-- Schema snapshot é gerado.
+- Schema snapshot e tipos são gerados.
 
 ### 1.1 Estado implementado até a FEAT-004
 
-A árvore possui 15 migrations append-only e head `20260815000100`. Um único reset, geração e `test:db` passou nesse head; as quatro suítes pgTAP somam 358/358 asserts (`158 + 78 + 57 + 65`). A fundação continua intacta; a FEAT-002 fornece identidade mínima, `legal-core` e recovery, a FEAT-003 completa o perfil e a FEAT-004 acrescenta a autoridade de dono e o recebedor local:
+A árvore possui uma baseline inicial com head `20260824000100`. Antes do primeiro deploy, enquanto o
+projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
+migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
+Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
+dump de schema. As quatro suítes pgTAP somam 213 asserts orientados a resultados:
+baseline/isolamento, identidade e núcleo legal, perfil e dono/recebedor.
 
-- `20260809000100_security_baseline.sql`: extensões estruturais, schemas `private`/`audit`, role `app_dal NOLOGIN NOINHERIT`, revogações e default privileges fechados;
-- `20260809000200_readiness_contract.sql`: `private.check_readiness(text)` como `security definer`, `search_path = ''` e `execute` exclusivo para `app_dal`;
-- `20260809000300_security_default_privileges_hardening.sql`: fecha o default global de `execute` de funções, normaliza `app_dal` e recusa atributos privilegiados que exigiriam superuser;
-- `20260810000100_app_dal_readiness_authorization.sql`: incorpora ao readiness os manifestos exatos de `app_dal` e do login da sessão, cria `private.check_runtime_readiness(text)`, fecha a baseline pública e impede ACL pública efetiva nos objetos alcançáveis de `private` e nos objetos compartilhados monitorados;
-- `20260810000200_pg_catalog_public_acl_hardening.sql`: mantém a leitura pública canônica dos catálogos do PostgreSQL, mas faz o readiness recusar qualquer privilégio de `PUBLIC` em relação ou coluna de `pg_catalog` que exceda a baseline inicial registrada em `pg_init_privs`, inclusive acesso a `pg_authid` ou `rolpassword`;
-- `20260810000300_pg_catalog_public_routine_acl_hardening.sql`: estende o mesmo containment às rotinas de `pg_catalog`, por OID de cada overload, e recusa grantor, privilégio ou grant option público além da ACL inicial canônica;
-- `20260810000400_pg_catalog_implicit_routine_owner_hardening.sql`: elimina `proowner` mutável da derivação das baselines implícitas de rotinas `pg_catalog`; objetos initdb sem membership usam o owner bootstrap OID `10`, membros de extensão usam `pg_extension.extowner`, e qualquer owner divergente falha mesmo sem `EXECUTE` público;
-- `20260811000100_database_temporary_privilege_hardening.sql`: revoga `TEMPORARY` de `PUBLIC` no banco atual, preserva sem ampliar os grants explícitos administrados pela stack e faz os dois entrypoints de readiness recusarem a capacidade efetiva para `app_dal` e para o login restrito;
-- `20260811000200_authentication_legal_core.sql`: cria a base mínima de `profiles`, versões e aceites jurídicos, intenções privadas de cadastro e grants de recovery persistidos no banco, expiráveis e one-shot, trigger atômico em `auth.users`, read models vigentes/próprios, RLS e grants mínimos;
-- `20260811000300_authentication_review_hardening.sql`: habilita RLS sem policy em `private.signup_legal_intents` e impede que `release_identity_recovery_grant` reabra uma claim depois da expiração, sem alterar grants ou a allowlist da DAL;
-- `20260811000400_recovery_session_binding.sql`: invalida grants antigos sem contexto de sessão, vincula cada novo recovery ao `session_id` assinado e à linha canônica de `auth.sessions`, cria a binding/tombstone privada retida depois do grant/cookies, exige `app.settings.jwt_exp=3600` e substitui as cinco operações antigas por seis comandos escopados ao contexto;
-- `20260811000500_profile_account.sql`: adiciona nome, telefone E.164, CPF/CNPJ, documento adicional, máscaras generated e versão otimista a `profiles`; cria `user_preferences` 1:1 com versão independente; valida CPF e CNPJ numérico/alfanumérico no banco; materializa um read model público invoker, três comandos privados e amplia o readiness sem alterar migrations anteriores;
-- `20260812000100_owner_onboarding_recipient.sql`: acrescenta contrato do dono, autoridade e recebedor versionados, preparação/aplicação privada idempotente, projeções seguras, auditoria mínima e quatro entrypoints DAL; reset, geração e sua suíte pgTAP estão verdes.
-- `20260812000200_owner_recipient_projection_split.sql`: correção append-only do review que preserva a migration anterior, renomeia a projeção completa de 21 colunas para `public.get_owner_activation_status()` e recria `public.get_owner_recipient_status()` com 16 colunas, sem título, versão textual, hash ou corpo Markdown do contrato; grants continuam apenas para `authenticated` e o manifesto privado da DAL não cresce.
-- `20260815000100_owner_audit_request_correlation.sql`: separa correlação e replay em `audit.events`, acrescenta `idempotency_key NOT NULL`, troca a unicidade para `(action, target_id, idempotency_key)` e substitui os overloads de ativação/aplicação por assinaturas que recebem `requestId` e chave idempotente separadamente. Linhas legadas copiam o valor antigo de `request_id` para `idempotency_key`; o `request_id` legado não é reescrito porque a correlação HTTP histórica verdadeira não pode ser recuperada.
-- login `app_runtime_local` criado e rotacionado fora das migrations pelo bootstrap local, com atributos, memberships, parâmetros, ownership e grants diretos reconciliados antes de assumir `app_dal` explicitamente. Seu manifesto permite somente `CONNECT` direto no banco atual, a membership de saída para `app_dal`, a referência administrativa de `postgres` sem `SET/INHERIT` e uma máscara vazia para o GUC local de assinatura JWT; qualquer ACL, ownership, parâmetro ou membro adicional falha fechado. O mesmo bootstrap usa somente o superuser da stack local para fechar schema, tabelas, sequências, funções e defaults de `net`, preservando exclusivamente os privilégios administrativos exigidos pelo worker `pg_net` sob `postgres`;
-- readiness consulta as duas funções de saúde por um subpath compartilhado `server-only` e falha se o login ou a role efetiva `app_dal` possuir login, herança, criação, replicação, superuser, `BYPASSRLS` ou `TEMPORARY` no banco; `app_dal` também deve permanecer sem qualquer membership de saída, pois `NOINHERIT` não impede `SET ROLE`;
-- o manifesto mínimo de `app_dal` permite diretamente apenas `USAGE` no schema `private` e `EXECUTE` nas dezesseis rotinas autorizadas: os dois checks de readiness, a criação da intenção legal, seis operações de recovery (`issue context`, `inspect session`, `claim`, `release`, `consume`, `close`), três comandos de perfil (`complete`, `update identity`, `update appearance`) e os quatro entrypoints FEAT-004 (`get owner recipient for user`, `activate owner`, `prepare recipient operation`, `apply recipient operation`). Todos ficam sem grant option. A allowlist exige exatamente dezessete dependências ACL em `pg_shdepend` e inspeciona seus `aclitem`; as leituras públicas invoker `get_my_profile()`, `get_owner_activation_status()` e `get_owner_recipient_status()` não recebem grant DAL. O readiness também rejeita referências da role como grantor e grants adicionais de banco, schema, relação, coluna, função, tipo, objeto grande, linguagem, foreign data wrapper/server, tablespace, parâmetro e default privilege sem depender de enumeração frouxa. Como `USAGE private` torna grants de `PUBLIC` efetivos para a DAL, o guard expande ACLs atuais ou padrão (`acldefault`) de relações, colunas, sequências, rotinas e tipos autônomos desse schema e recusa qualquer entrada pública. Row types de relações, arrays e multiranges implícitos seguem seus objetos canônicos e não são tratados como tipos autônomos; composites explícitos continuam monitorados. Ownership é recusado pelo catálogo compartilhado. O pgTAP introduz cada drift transacionalmente, comprova a falha fechada, restaura o catálogo e exige readiness verde antes do cenário seguinte;
-- `app_dal` não pode assumir nenhuma role. Em sentido inverso, o manifesto permite exatamente o login da sessão com `SET=true`, sem `ADMIN/INHERIT`, e a membership administrativa de `postgres` criada pelo PostgreSQL 17 com `ADMIN=true`, sem `SET/INHERIT`; o login também só pode ser administrado por essa referência `postgres` sem `SET/INHERIT`, portanto uma cadeia intermediária até `app_dal` derruba readiness;
-- a baseline pública permite exatamente `USAGE` em `pg_catalog`/`information_schema`, `CONNECT` no banco e `USAGE` nas quatro linguagens internas, sem grant option. `TEMPORARY` fica restrito aos grants explícitos que a própria stack administra, como o da dashboard local; a migration não cria uma allowlist paralela nem amplia nenhuma role. Ela recusa ACL pública em outros schemas, defaults, objetos grandes, parâmetros, FDW/servers e tablespaces. Em toda relação ou coluna de `pg_catalog`, um privilégio efetivo de `PUBLIC` precisa já existir nos privilégios iniciais `i`/`e` de `pg_init_privs`; privilégios por coluna podem ser cobertos pelo grant inicial da própria coluna ou da relação. Nas rotinas desse schema, cada entrada pública atual precisa estar contida, com grantor e grant option, na ACL `i`/`e` do OID exato. Sem esse registro, a baseline implícita nunca deriva de `proowner`: membros de extensão usam `acldefault('f', pg_extension.extowner)`, exigindo o mesmo owner no objeto, e demais rotinas initdb (`OID < 16384`) usam `acldefault('f', 10)`, com owner bootstrap OID `10` obrigatório. Uma rotina normal posterior sem `pg_init_privs` tem baseline pública vazia. A checagem de owner é independente da presença de `EXECUTE` público, portanto revogar a ACL não mascara ownership adulterado. Isso preserva, por exemplo, o `EXECUTE` built-in de `current_database()` e uma extensão canônica sem init row, sem aceitar um grant em `pg_read_file(text)`, uma função normal nova ou grantor recalculado a partir de owner mutável. `pg_roles`, `pg_user` e `pg_db_role_setting` conservam ainda a baseline mais estrita de somente owner administrativo e `SELECT` de `postgres`, sem ACL por coluna; roles web/DAL também não podem alcançar esses três catálogos por membership transitiva. O contrato não classifica a segurança semântica de cada rotina, não cobre por si só grants a roles nomeadas nem afirma que todo catálogo built-in seja confidencial. Enquanto o ADR-018 suspender APIs externas, `app_dal`, `anon`, `authenticated`, `service_role` e `PUBLIC` não usam nem leem/escrevem/executam o schema `net`; o worker administrativo local conserva apenas o acesso necessário;
-- 358 asserts pgTAP: 158 da baseline de segurança, 78 do `legal-core`, 57 do perfil e 65 da FEAT-004. A suíte `0004_owner_onboarding_recipient.sql` prova ACL/RLS e isolamento A/B, personas adversariais owner/admin sem bypass, ativação e aceite, prepare/apply, renovação contratual, drift de perfil/readiness, transições, bloqueio terminal, concorrência/replay e a separação entre `request_id` e `idempotency_key`. No head `20260815000100`, o trigger permanece habilitado, os overloads antigos não existem, os novos grants são exatos, readiness aceita o head atual e recusa `20260812000200`; os gerados estão sincronizados e a inspeção final encontrou zero linha nas tabelas verificadas;
-- a fotografia final pós-review preservou os 355/355 asserts e terminou novamente com 15 relações, Mailpit e dblink em zero; gates e browser também passaram, sem alterar a lista pública de RPCs `security invoker` descrita abaixo;
-- o smoke runtime final manteve as 15 relações inspecionadas em `0 → 0` durante os GETs/POST guest e redirects do dono; nenhuma request não autenticada produziu fato de banco;
-- a release local histórica do commit `79376b62bdce788c9eb7e1f1696d5acfde0cb215` empacota 14 migrations/head `20260812000200`; ela não contém a migration atual nem significa aplicação remota;
-- snapshot SQL em `supabase/schema.generated.sql` e tipos em `packages/contracts/src/database.generated.ts`.
+A baseline implementada inclui:
 
-`npm run supabase:schema` direciona o dump a um temporário exclusivo e irmão de `schema.generated.sql`; após a CLI terminar com sucesso, comprova que o arquivo físico não mudou, exige declarações dos schemas `audit`, `private` e `public`, normaliza a quebra de linha final, sincroniza em disco e publica por substituição atômica. `npm run supabase:types` usa o mesmo padrão para os tipos, valida os exports e a sintaxe TypeScript e aplica a configuração Prettier versionada antes da publicação. Uma falha da stack local, CLI, leitura, normalização, validação ou formatação preserva o artefato rastreado anterior e não deixa saída parcial.
+- schemas `private` e `audit`, `app_dal NOLOGIN NOINHERIT`, grants mínimos e RLS;
+- identidade mínima, termos/aceites, recovery one-shot e perfil privado;
+- autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
+- read models públicos `security invoker` sob `auth.uid()`;
+- comandos privados `security definer` com `search_path = ''`;
+- `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões.
 
-`npm run test:db` executa o pgTAP e, ainda contra a instância local, torna obrigatória a conferência dos dois artefatos. O gate valida a raiz e cada diretório ancestral físico, gera snapshot e tipos em destinos irmãos exclusivos, nunca nos arquivos rastreados, e preserva as extensões `.sql`/`.ts` para aplicar a mesma normalização e formatação dos comandos de publicação. As leituras usam `O_NOFOLLOW`; identidade e bytes dos quatro arquivos são revalidados depois dos dois geradores e então comparados. Qualquer diferença ou troca detectada pelas revalidações falha e exige correção; o cleanup tenta ambos os nomes temporários exatos, preserva a causa original se uma remoção também falhar e nunca recorre a remoção recursiva ou publica nos contratos versionados.
+A baseline encerra com readiness objetivo: head atual, JWT expiry, atributos mínimos de `app_dal`,
+grants diretos restritos, ausência de acesso direto a dados, RLS em tabelas públicas e negação de
+`CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal` e ausência
+de ownership. Drift retorna apenas `false`.
 
-As migrations aplicadas são imutáveis. Fora dos objetos usados diretamente pelas FEAT-002/003/004, tabelas, RLS e comandos dos demais domínios entram apenas na respectiva fatia vertical.
-Quando uma feature autorizar nova função para `app_dal`, a mesma migration append-only deve atualizar o manifesto de readiness; conceder `EXECUTE` sem ampliar explicitamente a allowlist mantém os apps em `unready`.
+`npm run supabase:lint` executa o linter oficial com warnings fatais. `npm run supabase:generate`
+recria o snapshot SQL e os tipos em temporários irmãos, valida o formato e publica por rename
+atômico. `npm run test:db` executa pgTAP e compara ambos com a geração atual. Falha preserva os
+arquivos rastreados anteriores e não deixa saída parcial.
 
-O gate Git usa a mesma base segura escolhida pelos checks documentais e percorre cada snapshot da cadeia `first-parent` até `HEAD`. Antes de confiar em histórico, índice ou untracked, `git rev-parse --show-toplevel` precisa resolver para o mesmo caminho canônico e o mesmo diretório físico, por dispositivo e inode, da raiz auditada; ambos são revalidados depois da consulta. Um `core.worktree` que desvie o Git para outra árvore falha, enquanto um linked worktree legítimo continua válido quando a raiz informada é o próprio worktree. Todo checkout com `HEAD` precisa expor histórico completo: clone shallow, qualquer referência em `refs/replace` e `info/grafts` legado não vazio falham antes da leitura da cadeia. Depois que uma migration aparece em um commit, caminho, blob e modo tornam-se imutáveis nos commits seguintes; remoção e rename também falham. A base precisa pertencer à cadeia `first-parent`, e uma referência apenas ancestral por outro parent falha fechado em vez de formar uma transição falsa. Cada grupo de migrations introduzido no mesmo commit pode conter vários arquivos, mas todas as versões precisam ser únicas e avançar estritamente o head do snapshot anterior.
+Essa consolidação pré-produção não se repete. A partir do primeiro deploy, toda migration aplicada é
+imutável e a evolução é estritamente append-only/forward-only. Novos objetos entram apenas na fatia
+vertical que os consome; nova função DAL atualiza grants, readiness, tipos, documentação e testes no
+mesmo PR.
 
-O índice e o worktree são comparados separadamente com `HEAD`, inclusive para migrations introduzidas anteriormente na própria feature. Flags `assume-unchanged`, `skip-worktree`, conflitos e nós não físicos são recusados; novas migrations precisam permanecer arquivos regulares exclusivos sob ancestrais físicos e usar nomes canônicos. Toda entrada física do diretório precisa estar no índice ou aparecer exatamente como untracked em `git ls-files --others --exclude-standard`, executado no ambiente Git fechado. Assim uma migration nova e visível continua válida antes do stage, enquanto `.gitignore`, `.git/info/exclude` ou outra regra de ignore não podem esconder SQL físico do gate. Bootstrap sem `HEAD` e o commit raiz continuam aceitando a cadeia inicial, sem dispensar nomes, tipos, exclusividade ou o contrato do head atual.
+`npm run migrations:check` compara byte a byte as migrations presentes na base `main`, rejeita edição
+ou exclusão e aceita somente novos timestamps posteriores. A exceção autoextinguível desta entrega
+aceita a baseline consolidada apenas enquanto `main` ainda não contém essa baseline e aponta para o
+commit auditado que foi comprovado contra a produção vazia. Se a base avançar, o gate falha fechado e
+exige nova verificação explícita antes de qualquer consolidação.
 
 ## 2. Extensões
 
@@ -584,7 +582,7 @@ Snapshot:
 - ip_hash;
 - metadata redigida.
 
-Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.contract_renewed` e `recipient.status_transitioned`. Em fatos novos, `request_id` correlaciona a request HTTP e `idempotency_key` identifica a tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não deduplica domínio. A migration `20260815000100` preenche `idempotency_key` das linhas legadas com o valor antigo de `request_id`, que naquela versão era a chave do browser, e preserva o campo legado sem inventar a correlação original irrecuperável. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna privada para replay e não entra em log operacional, DTO ou metadata; payload, requisito bruto, provider e referência externa também não entram na metadata.
+Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.contract_renewed` e `recipient.status_transitioned`. `request_id` correlaciona a request HTTP e `idempotency_key` identifica a tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna privada para replay e não entra em log operacional, DTO ou metadata; payload, requisito bruto, provider e referência externa também não entram na metadata.
 
 ### 4.34 Idempotência e jobs
 
@@ -744,12 +742,12 @@ Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor defin
 - índices de outbox por status/scheduled_for;
 - índices de payout/refund pendentes.
 
-Qualquer outro índice precisa de evidência em `docs/changes`.
+Qualquer outro índice precisa de evidência por `EXPLAIN (ANALYZE, BUFFERS)` no PR que o introduz.
 
 ## 10. Testes de banco obrigatórios
 
 - reset do zero;
-- migration chain;
+- baseline do zero e futuras migrations forward-only;
 - manifesto de tabelas;
 - manifesto de grants;
 - RLS entre usuário A/B;

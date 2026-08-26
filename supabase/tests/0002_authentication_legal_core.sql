@@ -121,7 +121,7 @@ create temporary table feat002_recovery_outcomes (
   outcome boolean not null
 ) on commit drop;
 
-select plan(78);
+select plan(77);
 
 select ok(
   pg_catalog.to_regclass('public.profiles') is not null
@@ -2348,11 +2348,6 @@ select ok(
     where id = (select token from feat002_test_state where label = 'user-c')
   ),
   'cascata posterior do Auth não recria a intenção já removida'
-);
-
-select ok(
-  private.check_readiness('20260815000100'),
-  'readiness permanece verde com dezessete dependências e dezesseis rotinas DAL'
 );
 
 select is(

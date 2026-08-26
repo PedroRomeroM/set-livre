@@ -22,6 +22,8 @@ supabase/.temp/
 
 # Generated build files
 *.tsbuildinfo
+next-env.d.ts
+apps/*/next-env.d.ts
 
 # Editors and operating systems
 .DS_Store

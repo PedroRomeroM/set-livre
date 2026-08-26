@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `booking-auth` |
+| Campo            | Valor                                                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                            |
+| Prioridade       | P0                                                                                                                   |
+| Domínio          | `booking-auth`                                                                                                       |
 | Specs Playwright | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts`<br>`tests/e2e/regression/feat-019-auth-return-draft.spec.ts` |
 
 ## Objetivo
@@ -72,7 +72,7 @@ Preservar a configuração do visitante durante autenticação e revalidá-la se
 - Erro não apaga notas.
 - Autenticação e retorno funcionam no mobile.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -90,13 +90,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F019-E2E-001 | P0 | critical | desktop | visitante autentica e retorna com o rascunho | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts` |
-| SL-F019-E2E-002 | P0 | critical | desktop | returnTo externo não executa | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts` |
-| SL-F019-E2E-003 | P1 | regression | desktop | rascunho expirado ou inválido é descartado | `tests/e2e/regression/feat-019-auth-return-draft.spec.ts` |
-| SL-F019-E2E-004 | P0 | critical | desktop | slot/preço alterado é informado e revalidado | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts` |
-| SL-F019-E2E-005 | P1 | regression | mobile | cadastro e retorno preservam campos | `tests/e2e/regression/feat-019-auth-return-draft.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                      | Spec                                                      |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------- | --------------------------------------------------------- |
+| SL-F019-E2E-001 | P0         | critical   | desktop  | visitante autentica e retorna com o rascunho | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts`   |
+| SL-F019-E2E-002 | P0         | critical   | desktop  | returnTo externo não executa                 | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts`   |
+| SL-F019-E2E-003 | P1         | regression | desktop  | rascunho expirado ou inválido é descartado   | `tests/e2e/regression/feat-019-auth-return-draft.spec.ts` |
+| SL-F019-E2E-004 | P0         | critical   | desktop  | slot/preço alterado é informado e revalidado | `tests/e2e/critical/feat-019-auth-return-draft.spec.ts`   |
+| SL-F019-E2E-005 | P1         | regression | mobile   | cadastro e retorno preservam campos          | `tests/e2e/regression/feat-019-auth-return-draft.spec.ts` |
 
 Regras:
 
@@ -120,7 +120,7 @@ Regras:
 - security-privacy.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

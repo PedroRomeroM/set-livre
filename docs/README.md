@@ -1,56 +1,52 @@
-# Índice da documentação
+# Documentação do Set Livre
 
-## Finalidade
+## Comece aqui
 
-Este diretório contém a documentação canônica e viva da **plataforma completa Set Livre**. O conjunto foi dividido para que produto, arquitetura, banco, infraestrutura, UX, QA e operação possam evoluir sem concentrar decisões incompatíveis em um único arquivo.
+1. [`AGENTS.md`](../AGENTS.md): contrato obrigatório de implementação, segurança e entrega.
+2. [`specification.md`](specification.md): escopo e comportamento do produto.
+3. [`architecture.md`](architecture.md): fronteiras técnicas atuais.
+4. [`roadmap.md`](roadmap.md): ordem e estado das features.
+5. [`development.md`](development.md): ambiente local, comandos e testes.
 
-Esta documentação não descreve o mini fórum.
+O Blueprint de referência fica em [`reference/architecture-blueprint.md`](reference/architecture-blueprint.md),
+com checksum e procedimento de atualização em
+[`reference/source-integrity.md`](reference/source-integrity.md).
+Decisões que adaptam o Blueprint ao produto ficam em [`adr/`](adr/).
 
-## Cadeia de autoridade
+## Contratos permanentes
 
-1. `reference/architecture-blueprint.md`;
-2. ADRs aceitos em `adr/`;
-3. `specification.md`;
-4. documentos vivos especializados deste diretório;
-5. documentos de feature em `features/`;
-6. migrations, contratos e testes;
-7. código.
+| Área                    | Fonte canônica                                               |
+| ----------------------- | ------------------------------------------------------------ |
+| API e comandos          | [`api-contracts.md`](api-contracts.md)                       |
+| banco, RLS e migrations | [`database.md`](database.md)                                 |
+| domínio                 | [`domain-model.md`](domain-model.md)                         |
+| segurança e LGPD        | [`security-privacy.md`](security-privacy.md)                 |
+| UX e rotas              | [`ux-blueprint.md`](ux-blueprint.md)                         |
+| sistema visual          | [`design-system.md`](design-system.md)                       |
+| acessibilidade          | [`accessibility.md`](accessibility.md)                       |
+| cache remoto            | [`query-cache-invalidation.md`](query-cache-invalidation.md) |
+| QA                      | [`qa-test-plan.md`](qa-test-plan.md)                         |
 
-A forma de resolver divergências está em `00-source-of-truth.md` e `../AGENTS.md`.
+Documentos de domínio especializados existem para calendário/reservas, pagamentos, mídia,
+notificações e backoffice. Eles guardam regras duráveis; não repetem o histórico dos PRs.
 
-## Leitura por responsabilidade
+## Operação
 
-| Necessidade | Documento principal | Complementos |
-|---|---|---|
-| Entender produto e escopo | `specification.md` | `context.md`, `roadmap.md`, `requirements-traceability.md` |
-| Entender arquitetura | `architecture.md` | `reference/architecture-blueprint.md`, `adr/` |
-| Implementar banco | `database.md` | `domain-model.md`, `migration-plan.md`, `api-contracts.md` |
-| Implementar leituras/cache | `query-cache-invalidation.md` | `api-contracts.md`, ADR-003 |
-| Implementar comandos | `api-contracts.md` | ADR-004, ADR-005, `security-privacy.md` |
-| Implementar calendário/reserva | `calendar-reservations.md` | FEAT-012 a FEAT-025 |
-| Implementar pagamentos | `payments.md` | FEAT-004, FEAT-020 a FEAT-026, FEAT-032 |
-| Implementar mídia | `media.md` | FEAT-008, ADR-010 |
-| Implementar UX | `ux-blueprint.md` | `design-system.md`, `accessibility.md` |
-| Implementar backoffice | `backoffice.md` | FEAT-030 a FEAT-033 |
-| Implantar e operar | `infrastructure.md` | `release-runbook.md`, `backup-restore.md`, `runbooks/` |
-| Executar QA | `qa-test-plan.md` | `qa-traceability.md`, `feature-catalog.md` |
-| Ver ordem de implementação | `implementation-order.md` | `CODEX_HANDOFF.md` na raiz |
-| Registrar mudança | `changes/README.md` | `templates/change.md` |
-| Registrar decisão | `templates/adr.md` | `00-source-of-truth.md` |
-| Registrar dívida | `technical-debt.md` | `templates/technical-debt.md` |
+- [`infrastructure.md`](infrastructure.md): Supabase, Oracle, rede, systemd, Nginx e release.
+- [`review-deploy-cycle.md`](review-deploy-cycle.md): review obrigatório, merge e acompanhamento.
+- [`observability.md`](observability.md): health, logs, métricas e alertas.
+- [`runbooks/`](runbooks/): resposta a incidentes concretos.
+- [`../configuration-steps.md`](../configuration-steps.md): ações humanas ainda necessárias na entrega
+  atual.
 
-## Inventário da baseline 1.1
+## Documentos transitórios
 
-- **34** documentos de feature;
-- **16** ADRs iniciais;
-- **193** cenários Playwright catalogados;
-- especificação canônica, modelo de domínio, banco, APIs, segurança, UX, design, infraestrutura, observabilidade, QA e runbooks;
-- fonte arquitetural anexada preservada integralmente em `reference/architecture-blueprint.md`.
+- [`features/`](features/): somente features planejadas ou em andamento; o plano é apagado depois do
+  merge/deploy concluído.
+- [`open-decisions.md`](open-decisions.md): decisões humanas ainda abertas.
+- [`technical-debt.md`](technical-debt.md): dívida aceita com dono e condição de saída.
 
-## Regra de formato
+## Regra contra redundância
 
-Todos os documentos deste pacote permanecem em Markdown. Não versionar PDF, DOCX, exportações renderizadas ou arquivos binários como fonte de verdade.
-
-## Regra de manutenção
-
-Toda mudança em código, banco, infraestrutura, configuração, CI ou comportamento precisa atualizar os `.md` afetados no mesmo PR. Todo PR cria um registro em `changes/`.
+Cada fato tem uma fonte canônica. Outros documentos apontam para ela. Histórico detalhado pertence ao
+Git, ao PR e aos deployments; documentos vivos descrevem apenas o estado atual.

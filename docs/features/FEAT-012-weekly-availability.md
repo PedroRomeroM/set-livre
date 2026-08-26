@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `calendar` |
+| Campo            | Valor                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                |
+| Prioridade       | P0                                                                                                                       |
+| Domínio          | `calendar`                                                                                                               |
 | Specs Playwright | `tests/e2e/critical/feat-012-weekly-availability.spec.ts`<br>`tests/e2e/regression/feat-012-weekly-availability.spec.ts` |
 
 ## Objetivo
@@ -71,7 +71,7 @@ Permitir ao dono definir janelas recorrentes de funcionamento que alimentam disp
 - Erros junto ao dia.
 - Mobile accordions.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -90,13 +90,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F012-E2E-001 | P0 | critical | desktop | configurar múltiplas janelas e refletir disponibilidade | `tests/e2e/critical/feat-012-weekly-availability.spec.ts` |
-| SL-F012-E2E-002 | P0 | critical | desktop | sobreposição ou horário não cheio é rejeitado | `tests/e2e/critical/feat-012-weekly-availability.spec.ts` |
-| SL-F012-E2E-003 | P0 | critical | desktop | dono A não altera B | `tests/e2e/critical/feat-012-weekly-availability.spec.ts` |
-| SL-F012-E2E-004 | P1 | regression | mobile | editar semana em acordeões | `tests/e2e/regression/feat-012-weekly-availability.spec.ts` |
-| SL-F012-E2E-005 | P0 | critical | desktop | mudança conflitante com reserva é bloqueada | `tests/e2e/critical/feat-012-weekly-availability.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                 | Spec                                                        |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------------- | ----------------------------------------------------------- |
+| SL-F012-E2E-001 | P0         | critical   | desktop  | configurar múltiplas janelas e refletir disponibilidade | `tests/e2e/critical/feat-012-weekly-availability.spec.ts`   |
+| SL-F012-E2E-002 | P0         | critical   | desktop  | sobreposição ou horário não cheio é rejeitado           | `tests/e2e/critical/feat-012-weekly-availability.spec.ts`   |
+| SL-F012-E2E-003 | P0         | critical   | desktop  | dono A não altera B                                     | `tests/e2e/critical/feat-012-weekly-availability.spec.ts`   |
+| SL-F012-E2E-004 | P1         | regression | mobile   | editar semana em acordeões                              | `tests/e2e/regression/feat-012-weekly-availability.spec.ts` |
+| SL-F012-E2E-005 | P0         | critical   | desktop  | mudança conflitante com reserva é bloqueada             | `tests/e2e/critical/feat-012-weekly-availability.spec.ts`   |
 
 Regras:
 
@@ -120,7 +120,7 @@ Regras:
 - database.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

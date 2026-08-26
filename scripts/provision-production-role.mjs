@@ -1,0 +1,230 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { Client } from "pg";
+
+import { parseDalDatabaseUrl } from "../packages/contracts/src/database-contract.ts";
+
+const productionRole = "app_runtime_production";
+export const productionCoordinates = Object.freeze({
+  backofficeUrl: "https://ops.setlivre.com",
+  projectRef: "oirvvnojgkzdppkdvhej",
+  publicUrl: "https://147.15.97.227",
+  supabaseUrl: "https://oirvvnojgkzdppkdvhej.supabase.co",
+  vmHost: "147.15.97.227",
+});
+const projectRefPattern = /^[a-z]{20}$/u;
+
+function requiredValue(environment, name) {
+  const value = environment[name];
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`${name} não foi configurado.`);
+  }
+  return value;
+}
+
+function decodedUrlPart(value, label) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new Error(`${label} possui encoding inválido.`);
+  }
+}
+
+export function productionRoleConnections(environment = process.env) {
+  const projectRef = requiredValue(environment, "SUPABASE_PROJECT_REF");
+  const adminPassword = requiredValue(environment, "SUPABASE_DB_PASSWORD");
+  const runtimeUrl = requiredValue(environment, "PRD_DATABASE_URL_APP_DAL");
+  if (!projectRefPattern.test(projectRef)) {
+    throw new Error("SUPABASE_PROJECT_REF possui formato inválido.");
+  }
+  if (projectRef !== productionCoordinates.projectRef) {
+    throw new Error("SUPABASE_PROJECT_REF não identifica o projeto Set Livre de produção.");
+  }
+
+  const contract = parseDalDatabaseUrl(runtimeUrl);
+  if (contract.sessionRole !== productionRole || contract.projectRef !== projectRef) {
+    throw new Error("A URL DAL não identifica a role e o projeto de produção esperados.");
+  }
+
+  const parsed = new URL(contract.connectionString);
+  const database = decodedUrlPart(parsed.pathname.slice(1), "database");
+  const runtimePassword = decodedUrlPart(parsed.password, "senha DAL");
+  const runtimeUser = decodedUrlPart(parsed.username, "usuário DAL");
+  if (database !== "postgres") {
+    throw new Error("A conexão de produção precisa usar o banco postgres.");
+  }
+
+  const shared = {
+    application_name: "set-livre-production-role",
+    connectionTimeoutMillis: 15_000,
+    database,
+    host: parsed.hostname,
+    port: Number(parsed.port),
+    ssl: { rejectUnauthorized: true },
+  };
+  return {
+    admin: {
+      ...shared,
+      password: adminPassword,
+      user: `postgres.${projectRef}`,
+    },
+    runtime: {
+      ...shared,
+      options: "-c role=app_dal",
+      password: runtimePassword,
+      user: runtimeUser,
+    },
+  };
+}
+
+export function assertProductionDeploymentContract(environment = process.env) {
+  const connections = productionRoleConnections(environment);
+  const expectedValues = [
+    ["PRODUCTION_SUPABASE_URL", productionCoordinates.supabaseUrl],
+    ["PRODUCTION_PUBLIC_APP_URL", productionCoordinates.publicUrl],
+    ["PRODUCTION_BACKOFFICE_APP_URL", productionCoordinates.backofficeUrl],
+    ["PRODUCTION_VM_HOST", productionCoordinates.vmHost],
+  ];
+  for (const [name, expected] of expectedValues) {
+    if (requiredValue(environment, name) !== expected) {
+      throw new Error(`${name} diverge da coordenada versionada de produção.`);
+    }
+  }
+
+  const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
+  if (publishableKey.length < 20 || /\s/u.test(publishableKey)) {
+    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY possui formato inválido.");
+  }
+  return connections;
+}
+
+function assertSingleExpectedMembership(rows) {
+  if (rows.length !== 1 || rows[0]?.roleName !== "app_dal") {
+    throw new Error("A role de produção possui membership inesperado.");
+  }
+}
+
+export async function provisionProductionRole(environment = process.env) {
+  const connections = productionRoleConnections(environment);
+  const admin = new Client(connections.admin);
+  let runtime;
+
+  await admin.connect();
+  try {
+    await admin.query("begin");
+    await admin.query("set local statement_timeout = '15s'");
+    await admin.query("set local lock_timeout = '5s'");
+
+    const roles = await admin.query(`
+      select
+        role.rolname as "roleName",
+        role.rolsuper as "superuser",
+        role.rolcreatedb as "createDatabase",
+        role.rolcreaterole as "createRole",
+        role.rolreplication as "replication",
+        role.rolbypassrls as "bypassRls"
+      from pg_catalog.pg_roles as role
+      where role.rolname in ('app_dal', 'app_runtime_production')
+      order by role.rolname
+    `);
+    if (roles.rows.map((row) => row.roleName).join(",") !== "app_dal,app_runtime_production") {
+      throw new Error("As migrations ainda não criaram as roles de produção.");
+    }
+    if (
+      roles.rows.some(
+        (role) =>
+          role.superuser ||
+          role.createDatabase ||
+          role.createRole ||
+          role.replication ||
+          role.bypassRls,
+      )
+    ) {
+      throw new Error("Uma role de produção possui atributo privilegiado.");
+    }
+
+    const memberships = await admin.query(`
+      select granted.rolname as "roleName"
+      from pg_catalog.pg_auth_members as membership
+      join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+      join pg_catalog.pg_roles as member on member.oid = membership.member
+      where member.rolname = 'app_runtime_production'
+      order by granted.rolname
+    `);
+    assertSingleExpectedMembership(memberships.rows);
+
+    const passwordStatement = await admin.query(
+      "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as statement",
+      [connections.runtime.password],
+    );
+    await admin.query(passwordStatement.rows[0].statement);
+    await admin.query(`
+      alter role app_runtime_production
+        noinherit connection limit 10 valid until 'infinity'
+    `);
+    await admin.query("alter role app_runtime_production reset all");
+    await admin.query("alter role app_runtime_production in database postgres reset all");
+    await admin.query(
+      "alter role app_runtime_production in database postgres set \"app.settings.jwt_secret\" = ''",
+    );
+    await admin.query("revoke all privileges on database postgres from app_runtime_production");
+    await admin.query("grant connect on database postgres to app_runtime_production");
+    await admin.query(
+      "grant app_dal to app_runtime_production with admin false, inherit false, set true",
+    );
+    await admin.query("commit");
+
+    runtime = new Client(connections.runtime);
+    await runtime.connect();
+    const readiness = await runtime.query(
+      `
+        select
+          current_user as "currentRole",
+          session_user as "sessionRole",
+          private.check_runtime_readiness($1) as ready
+      `,
+      [productionRole],
+    );
+    const row = readiness.rows[0];
+    if (
+      readiness.rowCount !== 1 ||
+      row?.currentRole !== "app_dal" ||
+      row?.sessionRole !== productionRole ||
+      row?.ready !== true
+    ) {
+      throw new Error("A role de produção não passou no readiness restrito.");
+    }
+  } catch (error) {
+    await admin.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    await runtime?.end().catch(() => undefined);
+    await admin.end().catch(() => undefined);
+  }
+}
+
+function redactedError(error, environment) {
+  let message = error instanceof Error ? error.message : "falha desconhecida";
+  for (const value of [environment.SUPABASE_DB_PASSWORD, environment.PRD_DATABASE_URL_APP_DAL]) {
+    if (typeof value === "string" && value !== "")
+      message = message.replaceAll(value, "[REDACTED]");
+  }
+  return message;
+}
+
+const executedPath = process.argv[1];
+if (executedPath !== undefined && pathToFileURL(resolve(executedPath)).href === import.meta.url) {
+  try {
+    if (process.argv[2] === "--preflight") {
+      assertProductionDeploymentContract();
+      process.stdout.write("Contrato fixo de produção validado.\n");
+    } else {
+      await provisionProductionRole();
+      process.stdout.write("Role restrita de produção ativada e validada.\n");
+    }
+  } catch (error) {
+    process.stderr.write(`production-role: ${redactedError(error, process.env)}\n`);
+    process.exitCode = 1;
+  }
+}

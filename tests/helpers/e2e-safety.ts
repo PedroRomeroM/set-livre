@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { parseLiteralLocalIpv4Url } from "../../scripts/local-network-contract";
-
 const safeEnvironmentSchema = z.object({
   adminDatabaseUrl: z.url(),
   backofficeBaseUrl: z.url(),
@@ -21,6 +19,39 @@ type SafeEnvironmentInput = {
   publicBaseUrl: string | undefined;
   supabaseUrl: string | undefined;
 };
+
+function rawUrlHostname(value: string): string | undefined {
+  const schemeSeparator = value.indexOf("://");
+  if (schemeSeparator <= 0) return undefined;
+
+  const authorityStart = schemeSeparator + 3;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
+  const authorityEnd =
+    authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const hostAndPort = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hostAndPort.startsWith("[")) {
+    const closingBracket = hostAndPort.indexOf("]");
+    return closingBracket === -1 ? undefined : hostAndPort.slice(0, closingBracket + 1);
+  }
+
+  const portSeparator = hostAndPort.lastIndexOf(":");
+  return portSeparator === -1 ? hostAndPort : hostAndPort.slice(0, portSeparator);
+}
+
+function parseLiteralLocalIpv4Url(value: string, label: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} é inválida.`);
+  }
+
+  if (parsed.hostname !== "127.0.0.1" || rawUrlHostname(value) !== "127.0.0.1") {
+    throw new Error(`${label} precisa usar o host IPv4 literal 127.0.0.1.`);
+  }
+  return parsed;
+}
 
 function assertLocalUrl(
   value: string,

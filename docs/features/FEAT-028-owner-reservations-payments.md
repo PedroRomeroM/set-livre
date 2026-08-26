@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `owners-ops` |
+| Campo            | Valor                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                                |
+| Prioridade       | P0                                                                                                                                       |
+| Domínio          | `owners-ops`                                                                                                                             |
 | Specs Playwright | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts`<br>`tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
 
 ## Objetivo
@@ -73,7 +73,7 @@ Oferecer ao dono operação das reservas de seus estúdios e visibilidade financ
 - Status badges.
 - Contact disclosure explained.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -92,14 +92,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F028-E2E-001 | P0 | critical | desktop | dono lista reservas de múltiplos estúdios | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts` |
-| SL-F028-E2E-002 | P0 | critical | desktop | dono vê financeiro correto sem provider IDs | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts` |
-| SL-F028-E2E-003 | P0 | critical | desktop | dono A não vê B | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts` |
-| SL-F028-E2E-004 | P1 | regression | mobile | filtros e cards | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
-| SL-F028-E2E-005 | P1 | regression | desktop | solicitação de cancelamento entra no fluxo de suporte | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
-| SL-F028-E2E-006 | P1 | regression | desktop | PII limitada/mascarada conforme estado | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                               | Spec                                                                |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| SL-F028-E2E-001 | P0         | critical   | desktop  | dono lista reservas de múltiplos estúdios             | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts`   |
+| SL-F028-E2E-002 | P0         | critical   | desktop  | dono vê financeiro correto sem provider IDs           | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts`   |
+| SL-F028-E2E-003 | P0         | critical   | desktop  | dono A não vê B                                       | `tests/e2e/critical/feat-028-owner-reservations-payments.spec.ts`   |
+| SL-F028-E2E-004 | P1         | regression | mobile   | filtros e cards                                       | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
+| SL-F028-E2E-005 | P1         | regression | desktop  | solicitação de cancelamento entra no fluxo de suporte | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
+| SL-F028-E2E-006 | P1         | regression | desktop  | PII limitada/mascarada conforme estado                | `tests/e2e/regression/feat-028-owner-reservations-payments.spec.ts` |
 
 Regras:
 
@@ -123,7 +123,7 @@ Regras:
 - ux-blueprint.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

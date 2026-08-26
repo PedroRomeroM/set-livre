@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `owners` |
+| Campo            | Valor                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                            |
+| Prioridade       | P0                                                                                                                                   |
+| Domínio          | `owners`                                                                                                                             |
 | Specs Playwright | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts`<br>`tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
 
 ## Objetivo
@@ -74,7 +74,7 @@ Oferecer visão operacional dos estúdios, status, próximas reservas e pendênc
 - Refetch não desmonta controles.
 - Nomes longos e statuses acessíveis.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -92,13 +92,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F005-E2E-001 | P0 | critical | desktop | dono com múltiplos estúdios vê portfólio correto | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts` |
-| SL-F005-E2E-002 | P0 | critical | desktop | dono A não vê estúdio B | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts` |
-| SL-F005-E2E-003 | P1 | regression | mobile | estado vazio oferece criação de estúdio | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
-| SL-F005-E2E-004 | P1 | regression | desktop | alerta de revisão/recebedor aponta a rota correta | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
-| SL-F005-E2E-005 | P1 | regression | mobile | axe e nomes longos | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                           | Spec                                                              |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| SL-F005-E2E-001 | P0         | critical   | desktop  | dono com múltiplos estúdios vê portfólio correto  | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts`   |
+| SL-F005-E2E-002 | P0         | critical   | desktop  | dono A não vê estúdio B                           | `tests/e2e/critical/feat-005-owner-dashboard-portfolio.spec.ts`   |
+| SL-F005-E2E-003 | P1         | regression | mobile   | estado vazio oferece criação de estúdio           | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
+| SL-F005-E2E-004 | P1         | regression | desktop  | alerta de revisão/recebedor aponta a rota correta | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
+| SL-F005-E2E-005 | P1         | regression | mobile   | axe e nomes longos                                | `tests/e2e/regression/feat-005-owner-dashboard-portfolio.spec.ts` |
 
 Regras:
 
@@ -122,7 +122,7 @@ Regras:
 - api-contracts.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

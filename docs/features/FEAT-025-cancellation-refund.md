@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `reservations-payments` |
+| Campo            | Valor                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                |
+| Prioridade       | P0                                                                                                                       |
+| Domínio          | `reservations-payments`                                                                                                  |
 | Specs Playwright | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`<br>`tests/e2e/regression/feat-025-cancellation-refund.spec.ts` |
 
 ## Objetivo
@@ -81,7 +81,7 @@ Permitir cancelamento elegível com reembolso total e liberação segura do cale
 - A falha oferece suporte e `requestId`.
 - No optimistic 'refunded'.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -101,14 +101,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F025-E2E-001 | P0 | critical | desktop | locatário cancela antes do início e recebe refund total | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts` |
-| SL-F025-E2E-002 | P0 | critical | desktop | cancelamento pós-início é bloqueado para usuário | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts` |
-| SL-F025-E2E-003 | P0 | critical | desktop | falha do provider mantém reembolso pendente e ocupação conforme a saga | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts` |
-| SL-F025-E2E-004 | P0 | critical | desktop | retentativa não duplica reembolso | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts` |
-| SL-F025-E2E-005 | P0 | critical | desktop | payout é bloqueado/cancelado | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts` |
-| SL-F025-E2E-006 | P1 | regression | mobile | confirmação e status pendente acessíveis | `tests/e2e/regression/feat-025-cancellation-refund.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                                | Spec                                                        |
+| --------------- | ---------- | ---------- | -------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| SL-F025-E2E-001 | P0         | critical   | desktop  | locatário cancela antes do início e recebe refund total                | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`   |
+| SL-F025-E2E-002 | P0         | critical   | desktop  | cancelamento pós-início é bloqueado para usuário                       | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`   |
+| SL-F025-E2E-003 | P0         | critical   | desktop  | falha do provider mantém reembolso pendente e ocupação conforme a saga | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`   |
+| SL-F025-E2E-004 | P0         | critical   | desktop  | retentativa não duplica reembolso                                      | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`   |
+| SL-F025-E2E-005 | P0         | critical   | desktop  | payout é bloqueado/cancelado                                           | `tests/e2e/critical/feat-025-cancellation-refund.spec.ts`   |
+| SL-F025-E2E-006 | P1         | regression | mobile   | confirmação e status pendente acessíveis                               | `tests/e2e/regression/feat-025-cancellation-refund.spec.ts` |
 
 Regras:
 
@@ -133,7 +133,7 @@ Regras:
 - calendar-reservations.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `renter` |
+| Campo            | Valor                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                |
+| Prioridade       | P0                                                                                                                       |
+| Domínio          | `renter`                                                                                                                 |
 | Specs Playwright | `tests/e2e/critical/feat-027-renter-reservations.spec.ts`<br>`tests/e2e/regression/feat-027-renter-reservations.spec.ts` |
 
 ## Objetivo
@@ -72,7 +72,7 @@ Permitir ao locatário acompanhar próximas/passadas/canceladas, pagamento, ende
 - Sticky action only if eligible.
 - Loading stable.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -91,14 +91,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F027-E2E-001 | P0 | critical | desktop | listar próximas/passadas/canceladas por cursor | `tests/e2e/critical/feat-027-renter-reservations.spec.ts` |
-| SL-F027-E2E-002 | P0 | critical | desktop | abrir detalhe com snapshot/status | `tests/e2e/critical/feat-027-renter-reservations.spec.ts` |
-| SL-F027-E2E-003 | P0 | critical | desktop | usuário B não acessa reserva A | `tests/e2e/critical/feat-027-renter-reservations.spec.ts` |
-| SL-F027-E2E-004 | P1 | regression | mobile | lista, detalhe e CTA a 320 px | `tests/e2e/regression/feat-027-renter-reservations.spec.ts` |
-| SL-F027-E2E-005 | P1 | regression | desktop | estados vazio, carregamento e refetch não desmontam filtros | `tests/e2e/regression/feat-027-renter-reservations.spec.ts` |
-| SL-F027-E2E-006 | P0 | critical | desktop | cancel CTA aparece somente elegível | `tests/e2e/critical/feat-027-renter-reservations.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                     | Spec                                                        |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
+| SL-F027-E2E-001 | P0         | critical   | desktop  | listar próximas/passadas/canceladas por cursor              | `tests/e2e/critical/feat-027-renter-reservations.spec.ts`   |
+| SL-F027-E2E-002 | P0         | critical   | desktop  | abrir detalhe com snapshot/status                           | `tests/e2e/critical/feat-027-renter-reservations.spec.ts`   |
+| SL-F027-E2E-003 | P0         | critical   | desktop  | usuário B não acessa reserva A                              | `tests/e2e/critical/feat-027-renter-reservations.spec.ts`   |
+| SL-F027-E2E-004 | P1         | regression | mobile   | lista, detalhe e CTA a 320 px                               | `tests/e2e/regression/feat-027-renter-reservations.spec.ts` |
+| SL-F027-E2E-005 | P1         | regression | desktop  | estados vazio, carregamento e refetch não desmontam filtros | `tests/e2e/regression/feat-027-renter-reservations.spec.ts` |
+| SL-F027-E2E-006 | P0         | critical   | desktop  | cancel CTA aparece somente elegível                         | `tests/e2e/critical/feat-027-renter-reservations.spec.ts`   |
 
 Regras:
 
@@ -122,7 +122,7 @@ Regras:
 - api-contracts.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

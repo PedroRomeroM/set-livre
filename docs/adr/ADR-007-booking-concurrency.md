@@ -1,12 +1,15 @@
 # ADR-007 — Concorrência de reserva no banco
 
 ## Status
+
 Aceito.
 
 ## Contexto
+
 Dois usuários podem iniciar pagamento para o mesmo estúdio e período. O frontend, cache e gateway não garantem exclusão mútua.
 
 ## Decisão
+
 Usar `calendar_allocations` com `tstzrange` e constraint de exclusão GiST por estúdio para períodos ativos.
 
 O fluxo:
@@ -23,11 +26,13 @@ O fluxo:
 Advisory lock por estúdio pode reduzir contenção, mas a constraint é a defesa final.
 
 ## Alternativas
+
 - flag no frontend: rejeitada.
 - unique por slot: rejeitada porque buffer e intervalos são melhor representados por range.
 - lock distribuído externo: rejeitado antes de necessidade comprovada.
 
 ## Consequências
+
 - exige extensão `btree_gist`;
 - testes concorrentes são P0;
 - hold expirado deve ser limpo antes de nova inserção e por job.

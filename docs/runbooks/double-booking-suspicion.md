@@ -1,9 +1,11 @@
 # Runbook — suspeita de dupla reserva
 
 ## Severidade
+
 P0 operacional.
 
 ## Ações
+
 1. pausar novas reservas do estúdio;
 2. consultar allocations/reservations/payments;
 3. não editar dados diretamente;

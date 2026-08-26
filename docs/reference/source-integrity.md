@@ -12,9 +12,9 @@ O arquivo é uma cópia integral da fonte anexada e não deve ser editado para a
 
 1. ser adicionada ou substituída deliberadamente;
 2. atualizar este checksum;
-3. gerar entrada no changelog;
+3. registrar a substituição no PR e, se houver decisão arquitetural, em ADR;
 4. avaliar todos os ADRs impactados;
-5. atualizar `00-source-of-truth.md` e o manifesto.
+5. atualizar `AGENTS.md` e `docs/README.md` se a ordem de autoridade mudar.
 
 ## Verificação
 

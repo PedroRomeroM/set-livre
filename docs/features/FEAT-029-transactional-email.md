@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `notifications` |
+| Campo            | Valor                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                                                |
+| Prioridade       | P0                                                                                                                       |
+| Domínio          | `notifications`                                                                                                          |
 | Specs Playwright | `tests/e2e/critical/feat-029-transactional-email.spec.ts`<br>`tests/e2e/regression/feat-029-transactional-email.spec.ts` |
 
 ## Objetivo
@@ -77,7 +77,7 @@ Enviar comunicação confiável sem acoplar sucesso do domínio à disponibilida
 - CTA claro.
 - Sem segredos.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -96,14 +96,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F029-E2E-001 | P0 | critical | desktop | confirmação da reserva enfileira e envia uma vez ao locatário e ao dono | `tests/e2e/critical/feat-029-transactional-email.spec.ts` |
-| SL-F029-E2E-002 | P0 | critical | desktop | evento de domínio duplicado não duplica e-mail | `tests/e2e/critical/feat-029-transactional-email.spec.ts` |
-| SL-F029-E2E-003 | P0 | critical | desktop | reserva cancelada não recebe lembrete | `tests/e2e/critical/feat-029-transactional-email.spec.ts` |
-| SL-F029-E2E-004 | P1 | regression | desktop | falha do provider é retentada e aparece em operações | `tests/e2e/regression/feat-029-transactional-email.spec.ts` |
-| SL-F029-E2E-005 | P1 | regression | mobile | snapshot HTML do e-mail é responsivo e acessível | `tests/e2e/regression/feat-029-transactional-email.spec.ts` |
-| SL-F029-E2E-006 | P0 | critical | desktop | logs não contêm corpo completo nem dados pessoais excessivos | `tests/e2e/critical/feat-029-transactional-email.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                                 | Spec                                                        |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
+| SL-F029-E2E-001 | P0         | critical   | desktop  | confirmação da reserva enfileira e envia uma vez ao locatário e ao dono | `tests/e2e/critical/feat-029-transactional-email.spec.ts`   |
+| SL-F029-E2E-002 | P0         | critical   | desktop  | evento de domínio duplicado não duplica e-mail                          | `tests/e2e/critical/feat-029-transactional-email.spec.ts`   |
+| SL-F029-E2E-003 | P0         | critical   | desktop  | reserva cancelada não recebe lembrete                                   | `tests/e2e/critical/feat-029-transactional-email.spec.ts`   |
+| SL-F029-E2E-004 | P1         | regression | desktop  | falha do provider é retentada e aparece em operações                    | `tests/e2e/regression/feat-029-transactional-email.spec.ts` |
+| SL-F029-E2E-005 | P1         | regression | mobile   | snapshot HTML do e-mail é responsivo e acessível                        | `tests/e2e/regression/feat-029-transactional-email.spec.ts` |
+| SL-F029-E2E-006 | P0         | critical   | desktop  | logs não contêm corpo completo nem dados pessoais excessivos            | `tests/e2e/critical/feat-029-transactional-email.spec.ts`   |
 
 Regras:
 
@@ -128,7 +128,7 @@ Regras:
 - observability.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

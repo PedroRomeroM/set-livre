@@ -6,7 +6,10 @@ Aceito em 2026-08-09, com aprovação humana expressa para decidir pendências t
 
 ## Contexto
 
-Os documentos de feature usam “dependência” tanto para pré-requisitos de início quanto para capacidades necessárias à experiência final. Isso forma ciclos como FEAT-002/FEAT-034, FEAT-007/FEAT-031, FEAT-008/FEAT-009/FEAT-030, FEAT-017/FEAT-018 e FEAT-024/FEAT-026/FEAT-029. O `CODEX_HANDOFF.md` e `docs/implementation-order.md` também agrupam parte das features de formas diferentes.
+Os documentos de feature usavam “dependência” tanto para pré-requisitos de início quanto para
+capacidades necessárias à experiência final. Isso formava ciclos como FEAT-002/FEAT-034,
+FEAT-007/FEAT-031, FEAT-008/FEAT-009/FEAT-030, FEAT-017/FEAT-018 e
+FEAT-024/FEAT-026/FEAT-029. Fontes antigas também agrupavam parte das features de formas diferentes.
 
 Uma leitura estritamente topológica impediria o início da implementação. Resolver o conflito silenciosamente violaria o Blueprint, seção 2, e a cadeia de autoridade do ADR-001.
 
@@ -21,7 +24,8 @@ Cada dependência passa a ser declarada em uma destas categorias:
 
 Uma branch implementa somente uma feature de produto. Contratos bootstrap compartilhados entram na fundação ou na primeira feature que possui legitimamente a fonte canônica. A branch não antecipa UI, permissões ou comportamento público de outra feature.
 
-Ordem executável após a fundação:
+O estado e a ordem executável vigentes ficam exclusivamente em [`docs/roadmap.md`](../roadmap.md). A
+ordem aprovada por este ADR é:
 
 1. FEAT-002 — autenticação e `legal-core`;
 2. FEAT-003 — perfil;
@@ -78,5 +82,5 @@ Exemplos de quebra dos ciclos:
 - alguns contratos internos surgem antes da UI que os opera;
 - cada feature continua responsável por seus próprios cenários e Definition of Done;
 - integrações futuras não permitem declarar produção pronta antes de suas dependências reais;
-- `docs:check` deve provar ausência de ciclos em `dependency-to-start`, presença única das 34 features e propriedade das integrações posteriores;
-- mudanças nessa sequência exigem atualizar este ADR, `docs/implementation-order.md` e a rastreabilidade.
+- `docs:check` deve provar presença única das 34 features e coerência entre status e planos transitórios;
+- mudanças nessa sequência exigem atualizar este ADR e `docs/roadmap.md` no mesmo PR.

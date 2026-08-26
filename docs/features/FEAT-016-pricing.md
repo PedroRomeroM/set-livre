@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `pricing` |
+| Campo            | Valor                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| Status           | Planejada                                                                                        |
+| Prioridade       | P0                                                                                               |
+| Domínio          | `pricing`                                                                                        |
 | Specs Playwright | `tests/e2e/critical/feat-016-pricing.spec.ts`<br>`tests/e2e/regression/feat-016-pricing.spec.ts` |
 
 ## Objetivo
@@ -79,7 +79,7 @@ Permitir precificação configurável e cálculo determinístico por bloco de um
 - Exemplos em PT-BR.
 - Erros de overlap.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -98,13 +98,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F016-E2E-001 | P0 | critical | desktop | configurar base/dias/faixas | `tests/e2e/critical/feat-016-pricing.spec.ts` |
-| SL-F016-E2E-002 | P0 | critical | desktop | cotação atravessando faixas calcula por hora | `tests/e2e/critical/feat-016-pricing.spec.ts` |
-| SL-F016-E2E-003 | P0 | critical | desktop | overlap/multiplicador inválido falha | `tests/e2e/critical/feat-016-pricing.spec.ts` |
-| SL-F016-E2E-004 | P1 | regression | mobile | editor de preço acessível | `tests/e2e/regression/feat-016-pricing.spec.ts` |
-| SL-F016-E2E-005 | P0 | critical | desktop | alteração não muda quote/reserva snapshot | `tests/e2e/critical/feat-016-pricing.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                      | Spec                                            |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------- | ----------------------------------------------- |
+| SL-F016-E2E-001 | P0         | critical   | desktop  | configurar base/dias/faixas                  | `tests/e2e/critical/feat-016-pricing.spec.ts`   |
+| SL-F016-E2E-002 | P0         | critical   | desktop  | cotação atravessando faixas calcula por hora | `tests/e2e/critical/feat-016-pricing.spec.ts`   |
+| SL-F016-E2E-003 | P0         | critical   | desktop  | overlap/multiplicador inválido falha         | `tests/e2e/critical/feat-016-pricing.spec.ts`   |
+| SL-F016-E2E-004 | P1         | regression | mobile   | editor de preço acessível                    | `tests/e2e/regression/feat-016-pricing.spec.ts` |
+| SL-F016-E2E-005 | P0         | critical   | desktop  | alteração não muda quote/reserva snapshot    | `tests/e2e/critical/feat-016-pricing.spec.ts`   |
 
 Regras:
 
@@ -128,7 +128,7 @@ Regras:
 - calendar-reservations.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 
