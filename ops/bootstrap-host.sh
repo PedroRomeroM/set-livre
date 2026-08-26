@@ -4,8 +4,10 @@ set -Eeuo pipefail
 readonly NODE_VERSION="24.18.0"
 readonly NODE_DIRECTORY="node-v${NODE_VERSION}-linux-x64"
 readonly NODE_INSTALLATION_DIRECTORY="/opt/${NODE_DIRECTORY}"
+readonly NODE_ALIAS_PATH="/opt/node"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly CERTBOT_MINIMUM_VERSION="5.4.0"
+readonly CERTIFICATE_MINIMUM_VALIDITY_SECONDS=$((24 * 60 * 60))
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly MINIMUM_SWAPFILE_BYTES=$((1024 * 1024 * 1024))
 readonly SWAPFILE_PATH="/swapfile"
@@ -32,6 +34,8 @@ active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
 node_previous_directory=""
+node_alias_staging_path=""
+node_alias_previous_path=""
 swap_staging_file=""
 
 fail() {
@@ -43,6 +47,9 @@ node_transient_path_is_managed() {
   local path="$1"
   local prefix="/opt/.${NODE_DIRECTORY}."
   local remainder
+  if [[ ${path} =~ ^/opt/[.]node-alias[.](staging|previous)[.][A-Za-z0-9]{6}$ ]]; then
+    return 0
+  fi
   [[ ${path} == "$prefix"* ]] || return 1
   remainder="${path:${#prefix}}"
   [[ ${remainder} =~ ^(staging|previous)\.[A-Za-z0-9]{6}$ ]]
@@ -52,10 +59,13 @@ remove_node_transient_path() {
   local path="$1"
   node_transient_path_is_managed "$path" || return 1
   [[ -e ${path} || -L ${path} ]] || return 0
-  if [[ -d ${path} && ! -L ${path} ]] && mountpoint --quiet -- "$path"; then
+  if [[ -L ${path} || -f ${path} ]]; then
+    rm -f -- "$path"
+  elif [[ -d ${path} ]] && ! mountpoint --quiet -- "$path"; then
+    rm -rf --one-file-system -- "${path:?}"
+  else
     return 1
   fi
-  rm -rf --one-file-system -- "${path:?}"
 }
 
 cleanup_stale_node_transients() {
@@ -64,7 +74,10 @@ cleanup_stale_node_transients() {
     remove_node_transient_path "$path" || return 1
   done < <(
     find /opt -mindepth 1 -maxdepth 1 \
-      \( -name ".${NODE_DIRECTORY}.staging.*" -o -name ".${NODE_DIRECTORY}.previous.*" \) \
+      \( -name ".${NODE_DIRECTORY}.staging.*" \
+      -o -name ".${NODE_DIRECTORY}.previous.*" \
+      -o -name '.node-alias.staging.*' \
+      -o -name '.node-alias.previous.*' \) \
       -print0
   )
 }
@@ -144,6 +157,55 @@ PYTHON
     "${directory}/bin/node" "${directory}/lib/node_modules/npm/bin/npm-cli.js" --version
   )" || return 1
   [[ ${npm_version} =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+}
+
+node_alias_is_valid() {
+  [[ -L ${NODE_ALIAS_PATH} ]] || return 1
+  [[ $(readlink -- "$NODE_ALIAS_PATH") == "$NODE_INSTALLATION_DIRECTORY" ]] || return 1
+  [[ $(readlink --canonicalize-existing -- "$NODE_ALIAS_PATH") \
+    == "$NODE_INSTALLATION_DIRECTORY" ]]
+}
+
+publish_node_alias() {
+  if node_alias_is_valid; then
+    cleanup_stale_node_transients \
+      || fail "estado transitório do Node não pôde ser removido com segurança."
+    return
+  fi
+
+  node_alias_staging_path="$(mktemp '/opt/.node-alias.staging.XXXXXX')"
+  rm -f -- "$node_alias_staging_path"
+  ln --symbolic -- "$NODE_INSTALLATION_DIRECTORY" "$node_alias_staging_path"
+  [[ -L ${node_alias_staging_path} \
+    && $(readlink -- "$node_alias_staging_path") == "$NODE_INSTALLATION_DIRECTORY" ]] \
+    || fail "alias Node preparado não atende ao contrato."
+
+  if [[ -e ${NODE_ALIAS_PATH} || -L ${NODE_ALIAS_PATH} ]]; then
+    if [[ -d ${NODE_ALIAS_PATH} && ! -L ${NODE_ALIAS_PATH} ]] \
+      && mountpoint --quiet -- "$NODE_ALIAS_PATH"; then
+      fail "alias Node legado é um ponto de montagem; substituição automática recusada."
+    fi
+    if [[ ! -L ${NODE_ALIAS_PATH} && ! -f ${NODE_ALIAS_PATH} \
+      && ! -d ${NODE_ALIAS_PATH} ]]; then
+      fail "alias Node legado possui tipo especial; substituição automática recusada."
+    fi
+    node_alias_previous_path="$(mktemp --directory '/opt/.node-alias.previous.XXXXXX')"
+    rmdir -- "$node_alias_previous_path"
+    mv --no-target-directory -- "$NODE_ALIAS_PATH" "$node_alias_previous_path" \
+      || fail "alias Node legado não pôde ser isolado."
+  fi
+
+  mv --no-target-directory -- "$node_alias_staging_path" "$NODE_ALIAS_PATH" \
+    || fail "alias Node validado não pôde ser publicado."
+  node_alias_staging_path=""
+  node_alias_is_valid || fail "alias Node publicado diverge do runtime validado."
+  if [[ -n ${node_alias_previous_path} ]]; then
+    remove_node_transient_path "$node_alias_previous_path" \
+      || fail "alias Node legado não pôde ser removido com segurança."
+    node_alias_previous_path=""
+  fi
+  cleanup_stale_node_transients \
+    || fail "alias Node transitório não pôde ser removido com segurança."
 }
 
 swapfile_is_active() {
@@ -233,6 +295,22 @@ cleanup() {
   fi
   if [[ -n ${node_staging_directory} ]]; then
     remove_node_transient_path "$node_staging_directory" || true
+  fi
+  if [[ -n ${node_alias_previous_path} \
+    && ( -e ${node_alias_previous_path} || -L ${node_alias_previous_path} ) ]]; then
+    if node_alias_is_valid; then
+      remove_node_transient_path "$node_alias_previous_path" || true
+    else
+      if [[ -L ${NODE_ALIAS_PATH} || -f ${NODE_ALIAS_PATH} ]]; then
+        rm -f -- "$NODE_ALIAS_PATH" || true
+      fi
+      if [[ ! -e ${NODE_ALIAS_PATH} && ! -L ${NODE_ALIAS_PATH} ]]; then
+        mv --no-target-directory -- "$node_alias_previous_path" "$NODE_ALIAS_PATH" || true
+      fi
+    fi
+  fi
+  if [[ -n ${node_alias_staging_path} ]]; then
+    remove_node_transient_path "$node_alias_staging_path" || true
   fi
   if [[ -n ${swap_staging_file} \
     && ${swap_staging_file} =~ ^/swapfile[.]staging[.][A-Za-z0-9]{6}$ \
@@ -427,7 +505,7 @@ else
 fi
 node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY" \
   || fail "runtime Node instalado não atende ao contrato integral."
-ln --symbolic --force --no-dereference "$NODE_INSTALLATION_DIRECTORY" /opt/node
+publish_node_alias
 
 for service_group in setlivre setlivre-web setlivre-backoffice; do
   if ! getent group "$service_group" >/dev/null; then
@@ -491,8 +569,9 @@ private_key_path="/etc/letsencrypt/live/${PRODUCTION_IP}/privkey.pem"
 if [[ -f ${certificate_path} || -f ${private_key_path} ]]; then
   [[ -f ${certificate_path} && -f ${private_key_path} ]] \
     || fail "certificado TLS de IP está incompleto."
-  openssl x509 -checkend 0 -noout -in "$certificate_path" \
-    || fail "certificado TLS de IP expirou."
+  openssl x509 -checkend "$CERTIFICATE_MINIMUM_VALIDITY_SECONDS" -noout \
+    -in "$certificate_path" \
+    || fail "certificado TLS de IP expira em menos de 24 horas."
   openssl x509 -checkip "$PRODUCTION_IP" -noout -in "$certificate_path" \
     || fail "certificado TLS não cobre o IP de produção."
   active_nginx_source=/usr/local/share/set-livre/nginx-tls.conf

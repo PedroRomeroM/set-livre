@@ -107,9 +107,9 @@
             Leituras por read models pequenos; escritas críticas por API, DAL e função SQL privada.
           </li>
           <li>
-            Web por HTTPS no IP reservado, com certificado curto e renovação automática; backoffice
-            separado na 3001 e somente em loopback. A aplicação pública ainda depende do primeiro
-            deploy.
+            Web por HTTPS no IP reservado, com certificado curto, renovação automática e barreira de
+            24 horas de validade mínima; backoffice separado na 3001 e somente em loopback. A
+            aplicação pública ainda depende do primeiro deploy.
           </li>
           <li>
             Releases standalone Linux x86_64 mantêm código e ambientes do mesmo SHA; ativação
@@ -136,8 +136,9 @@
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
           multiengine, acessibilidade, builds standalone e contratos de host. Testes não usam retry,
-          timeout ampliado ou relaxamento de asserção para mascarar falhas; resultados de cada
-          execução permanecem no PR e nos checks.
+          timeout ampliado ou relaxamento de asserção para mascarar falhas; uma falha Playwright
+          retém seus artifacts diagnósticos por sete dias, enquanto resultados de cada execução
+          permanecem no PR e nos checks.
         </p>
         <p>
           O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva

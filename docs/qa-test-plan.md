@@ -107,4 +107,4 @@ cenários P0/P1. Para concluir:
 
 Saída interrompida, timeout ou serviço indisponível é inconclusivo. Um gate passa somente com execução
 terminal e código zero. Artefatos de falha do Playwright — trace, screenshot e vídeo — são retidos no
-CI; evidência verde não precisa ser acumulada no repositório.
+CI por sete dias somente quando a suíte falha; evidência verde não precisa ser acumulada no repositório.

@@ -62,6 +62,8 @@ O workflow `.github/workflows/ci.yml` contém três jobs:
 
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
+Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
+e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
 Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
 `Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
 review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
@@ -124,7 +126,9 @@ ao candidato antes de publicar. Alterações destrutivas exigem backup e recuper
 `ops/bootstrap-host.sh` é idempotente para a VM dedicada e instala apenas:
 
 - Node 24.18 x86_64 verificado pelos `SHASUMS256` oficiais, extraído em staging, validado como árvore
-  root-only funcional e publicado por rename somente depois da prova integral;
+  root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
+  `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
+  recuperável e só então é publicado;
 - Nginx, systemd, OpenSSH, `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
 - units systemd habilitadas, porém inativas antes da primeira release; cada unit exige seu entrypoint
@@ -264,9 +268,10 @@ webroot ACME e habilita o timer de renovação. Referências oficiais:
 e [suporte no Certbot 5.4](https://letsencrypt.org/2026/03/11/shorter-certs-certbot).
 
 Emissão e renovação do certificado exigem comprovar SAN, validade e confiança pública sem desabilitar
-a verificação TLS; a VM mantém o timer de renovação ativo. O Nginx apresenta o certificado no handshake
-padrão porque clientes que acessam uma URL por IP podem omitir SNI, mas somente o `Host` literal
-canônico alcança a aplicação. A evidência de cada execução pertence ao deployment ou PR correspondente.
+a verificação TLS; o bootstrap rejeita certificado com menos de 24 horas restantes e a VM mantém o
+timer de renovação ativo. O Nginx apresenta o certificado no handshake padrão porque clientes que
+acessam uma URL por IP podem omitir SNI, mas somente o `Host` literal canônico alcança a aplicação. A
+evidência de cada execução pertence ao deployment ou PR correspondente.
 
 Enquanto `/etc/letsencrypt/live/147.15.97.227` não existe, o template HTTP permite somente o desafio
 ACME e encerra qualquer outra conexão; a aplicação não é servida em texto claro. Depois da primeira

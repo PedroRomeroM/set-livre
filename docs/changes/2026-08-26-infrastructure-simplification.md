@@ -46,8 +46,9 @@ expand/contract, enquanto o deploy exige o maior head remoto exatamente igual ao
 Secrets permanecem somente no environment `production` do GitHub. PRs não os recebem. SSH usa chave
 exclusiva e comando forçado; a VM expõe apenas 22, 80 e 443, mantém 3000/3001 em loopback e serve cabeçalho
 `X-Robots-Tag` e `robots.txt` bloqueando indexação. O bootstrap publica Node somente após validação
-integral, preserva apenas swapfiles que cumpram o manifesto e a borda encaminha o UUID de correlação
-para validação pela aplicação.
+integral, substitui o alias legado por link canônico recuperável, rejeita certificado com menos de 24
+horas restantes, preserva apenas swapfiles que cumpram o manifesto e a borda encaminha o UUID de
+correlação para validação pela aplicação.
 
 ## Read models, comandos e invalidação
 
@@ -62,6 +63,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 ## Qualidade e QA
 
 - CI Linux e Windows executa os gates estáticos, unitários, SQL, Playwright e builds aplicáveis;
+- falha Playwright preserva relatório, traces, screenshots e vídeos por sete dias sem acumular artifact
+  em execução verde;
 - cenários visíveis permanecem determinísticos entre engines, sem retries ou timeouts ampliados para
   mascarar falhas;
 - o ambiente Supabase local preserva as permissões exigidas pelos serviços oficiais sem ampliar o

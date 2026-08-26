@@ -175,6 +175,31 @@ describe("local tooling contracts", () => {
     expect(atomicPublish).toBeGreaterThan(stagedValidation);
   });
 
+  it("replaces a legacy Node alias through a staged symlink with recoverable quarantine", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const isolateLegacyAlias = bootstrap.indexOf(
+      'mv --no-target-directory -- "$NODE_ALIAS_PATH" "$node_alias_previous_path"',
+    );
+    const publishAlias = bootstrap.indexOf(
+      'mv --no-target-directory -- "$node_alias_staging_path" "$NODE_ALIAS_PATH"',
+    );
+
+    expect(bootstrap).toContain('readonly NODE_ALIAS_PATH="/opt/node"');
+    expect(bootstrap).toContain("publish_node_alias() {");
+    expect(bootstrap).toContain("node_alias_is_valid");
+    expect(bootstrap).toContain("/opt/.node-alias.staging.XXXXXX");
+    expect(bootstrap).toContain("/opt/.node-alias.previous.XXXXXX");
+    expect(bootstrap).toContain('mountpoint --quiet -- "$NODE_ALIAS_PATH"');
+    expect(bootstrap).toContain(
+      'mv --no-target-directory -- "$node_alias_previous_path" "$NODE_ALIAS_PATH" || true',
+    );
+    expect(bootstrap).not.toContain(
+      'ln --symbolic --force --no-dereference "$NODE_INSTALLATION_DIRECTORY" /opt/node',
+    );
+    expect(isolateLegacyAlias).toBeGreaterThan(-1);
+    expect(publishAlias).toBeGreaterThan(isolateLegacyAlias);
+  });
+
   it("recreates an unsafe swapfile without following or recursively deleting its path", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const stagedValidation = bootstrap.indexOf('swapfile_is_valid "$swap_staging_file"');
@@ -351,6 +376,31 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("retains Playwright traces and reports only when the browser gate fails", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const browserStart = workflow.indexOf("- name: Full browser suite");
+    const buildStart = workflow.indexOf("- name: Build and package Linux release", browserStart);
+    const browserDelivery = workflow.slice(browserStart, buildStart);
+
+    expect(browserStart).toBeGreaterThan(-1);
+    expect(buildStart).toBeGreaterThan(browserStart);
+    expect(browserDelivery).toContain("id: browser_suite");
+    expect(browserDelivery).toContain(
+      "if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}",
+    );
+    expect(browserDelivery).toContain(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1",
+    );
+    expect(browserDelivery).toContain(".artifacts/playwright-report");
+    expect(browserDelivery).toContain(".artifacts/test-results");
+    expect(browserDelivery).toContain("if-no-files-found: error");
+    expect(browserDelivery).toContain("include-hidden-files: true");
+    expect(browserDelivery).toContain("retention-days: 7");
+  });
+
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const workflow = readFileSync(
@@ -361,6 +411,11 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('readonly CERTBOT_MINIMUM_VERSION="5.4.0"');
     expect(bootstrap).toContain("snap install certbot --classic");
     expect(bootstrap).toContain("snap refresh certbot");
+    expect(bootstrap).toContain("readonly CERTIFICATE_MINIMUM_VALIDITY_SECONDS=$((24 * 60 * 60))");
+    expect(bootstrap).toContain(
+      'openssl x509 -checkend "$CERTIFICATE_MINIMUM_VALIDITY_SECONDS" -noout',
+    );
+    expect(bootstrap).not.toContain("openssl x509 -checkend 0");
     expect(bootstrap).toContain("openssl x509 -checkip");
     expect(bootstrap).toContain("snap.certbot.renew.timer");
     expect(bootstrap).not.toMatch(/^\s+certbot \\\s*$/mu);
