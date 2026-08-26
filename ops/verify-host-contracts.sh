@@ -185,6 +185,42 @@ grep --fixed-strings 'quantidade de entradas inválida' <<< "$entry_limit_output
   && ! -e "/home/deploy-setlivre/incoming/backoffice-${entry_limit_sha}.env" ]] \
   || fail "archive excessivo deixou uploads residuais."
 
+metadata_limit_sha="$(printf 'a%.0s' {1..40})"
+metadata_limit_archive="$temporary_directory/metadata-limit.tar.gz"
+python3 - "$metadata_limit_archive" <<'PYTHON'
+import sys
+import tarfile
+
+entry = tarfile.TarInfo("web/server.js")
+entry.mode = 0o644
+entry.pax_headers = {"comment": "x" * (65 * 1024)}
+with tarfile.open(sys.argv[1], mode="w:gz", format=tarfile.PAX_FORMAT) as bundle:
+    bundle.addfile(entry)
+PYTHON
+metadata_limit_checksum="$(sha256sum "$metadata_limit_archive" | cut -d ' ' -f 1)"
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${metadata_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$metadata_limit_archive"
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${metadata_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/web.env"
+# shellcheck disable=SC2024
+sudo --user deploy-setlivre -- \
+  env SSH_ORIGINAL_COMMAND="upload-backoffice-environment ${metadata_limit_sha}" \
+  "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
+if metadata_limit_output="$(
+  sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
+    "$metadata_limit_sha" "$metadata_limit_checksum" --verify-only 2>&1
+)"; then
+  fail "archive com metadata PAX excessiva foi aceito."
+fi
+grep --fixed-strings 'metadata estendida excede o limite' <<< "$metadata_limit_output" >/dev/null \
+  || fail "metadata PAX excessiva falhou por motivo inesperado."
+[[ ! -e "/home/deploy-setlivre/incoming/set-livre-${metadata_limit_sha}.tar.gz" \
+  && ! -e "/home/deploy-setlivre/incoming/web-${metadata_limit_sha}.env" \
+  && ! -e "/home/deploy-setlivre/incoming/backoffice-${metadata_limit_sha}.env" ]] \
+  || fail "archive com metadata excessiva deixou uploads residuais."
+
 # O runner confiável abre os fixtures; somente o processo de destino troca de UID.
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-release ${release_sha}" \

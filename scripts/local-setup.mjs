@@ -24,10 +24,115 @@ if (typeof supabaseBin !== "string" || supabaseBin === "") {
 
 const supabaseCliPath = resolve(dirname(supabasePackagePath), supabaseBin);
 
+const localDockerContracts = {
+  linux: new Map([["default", "unix:///var/run/docker.sock"]]),
+  win32: new Map([
+    ["default", "npipe:////./pipe/docker_engine"],
+    ["desktop-linux", "npipe:////./pipe/dockerDesktopLinuxEngine"],
+  ]),
+};
+
+function runDocker(argumentsList, environment = process.env) {
+  const result = spawnSync("docker", argumentsList, {
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 4 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error("A CLI Docker não comprovou o daemon local esperado.");
+  }
+  return (result.stdout ?? "").trim();
+}
+
+function assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride) {
+  if (
+    (typeof dockerHostOverride === "string" && dockerHostOverride.trim() !== "") ||
+    (typeof dockerContextOverride === "string" && dockerContextOverride.trim() !== "")
+  ) {
+    throw new Error("DOCKER_HOST e DOCKER_CONTEXT precisam estar ausentes para operações locais.");
+  }
+}
+
+export function validateLocalDockerContext({
+  contextName,
+  dockerContextOverride,
+  dockerHostOverride,
+  endpoint,
+  engineOperatingSystem,
+  platform,
+}) {
+  assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride);
+
+  const contracts = localDockerContracts[platform];
+  if (contracts === undefined) {
+    throw new Error("O Supabase local possui contrato Docker somente para Windows e Linux.");
+  }
+  if (contracts.get(contextName) !== endpoint) {
+    throw new Error("O contexto Docker ativo não aponta para o daemon local permitido.");
+  }
+  if (engineOperatingSystem !== "linux") {
+    throw new Error("O daemon Docker local precisa executar containers Linux.");
+  }
+  return endpoint;
+}
+
+export function assertLocalDockerDaemon(environment = process.env, platform = process.platform) {
+  const dockerHostOverride = environment.DOCKER_HOST;
+  const dockerContextOverride = environment.DOCKER_CONTEXT;
+  assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride);
+
+  const contextName = runDocker(["context", "show"], environment);
+  if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(contextName)) {
+    throw new Error("O nome do contexto Docker ativo é inválido.");
+  }
+
+  let endpoint;
+  try {
+    endpoint = JSON.parse(
+      runDocker(
+        ["context", "inspect", contextName, "--format", "{{json .Endpoints.docker.Host}}"],
+        environment,
+      ),
+    );
+  } catch {
+    throw new Error("Não foi possível inspecionar o endpoint Docker local.");
+  }
+  if (typeof endpoint !== "string") {
+    throw new Error("O endpoint Docker inspecionado é inválido.");
+  }
+
+  const localEnvironment = { ...environment, DOCKER_HOST: endpoint };
+  delete localEnvironment.DOCKER_CONTEXT;
+  delete localEnvironment.DOCKER_CERT_PATH;
+  delete localEnvironment.DOCKER_TLS_VERIFY;
+
+  let engineOperatingSystem;
+  try {
+    engineOperatingSystem = JSON.parse(
+      runDocker(["info", "--format", "{{json .OSType}}"], localEnvironment),
+    );
+  } catch {
+    throw new Error("Não foi possível inspecionar o daemon Docker local.");
+  }
+
+  validateLocalDockerContext({
+    contextName,
+    dockerContextOverride,
+    dockerHostOverride,
+    endpoint,
+    engineOperatingSystem,
+    platform,
+  });
+  return localEnvironment;
+}
+
 export function runSupabase(argumentsList, { capture = false } = {}) {
+  const localDockerEnvironment = assertLocalDockerDaemon();
   const result = spawnSync(process.execPath, [supabaseCliPath, ...argumentsList], {
     cwd: repositoryRoot,
     encoding: "utf8",
+    env: localDockerEnvironment,
     maxBuffer: 128 * 1024 * 1024,
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });

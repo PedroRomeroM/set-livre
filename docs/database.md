@@ -35,9 +35,11 @@ A baseline implementada inclui:
   `USAGE/CREATE` efetivo de `app_dal` fora de `private` e dos schemas internos do PostgreSQL.
 
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
-expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, ausência de acesso direto ou via
-`PUBLIC` a dados, ausência de acesso efetivo a schemas externos mesmo quando herdado por `PUBLIC`,
-ownership nulo, memberships reversas conhecidas, RLS em tabelas públicas e negação de `CREATE/TEMP`.
+expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, ACL do schema `private` restrita ao
+owner e ao `USAGE` da DAL, ACL de rotinas privadas restrita ao owner e aos `EXECUTE` allowlisted da DAL,
+ausência de acesso direto ou via `PUBLIC` a dados, ausência de acesso efetivo a schemas externos mesmo
+quando herdado por `PUBLIC`, ownership nulo, memberships reversas conhecidas, RLS em tabelas públicas e
+negação de `CREATE/TEMP`.
 O check do runtime prova login restrito, membership única com `SET app_dal` e allowlist
 reversa exata: somente `postgres` pode administrar `app_runtime_production`, sem `SET` ou `INHERIT`;
 qualquer identidade assumível é rejeitada. O runtime mantém zero GUC próprio em produção, somente

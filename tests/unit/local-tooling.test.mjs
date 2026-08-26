@@ -8,7 +8,11 @@ import {
   validateGeneratedDatabaseTypes,
   validateSchemaSnapshot,
 } from "../../scripts/database-artifacts.mjs";
-import { parseSupabaseCliError, parseSupabaseStatus } from "../../scripts/local-setup.mjs";
+import {
+  parseSupabaseCliError,
+  parseSupabaseStatus,
+  validateLocalDockerContext,
+} from "../../scripts/local-setup.mjs";
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
@@ -87,6 +91,7 @@ describe("local tooling contracts", () => {
     expect(webUnit).not.toContain("User=setlivre-backoffice");
     expect(webUnit).toContain("ConditionPathExists=/opt/set-livre/current/web/server.js");
     expect(webUnit).toContain("ConditionPathExists=/etc/set-livre/host-config.sha256");
+    expect(webUnit).toContain("ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
     expect(webUnit).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
     expect(backofficeUnit).toContain("User=setlivre-backoffice");
     expect(backofficeUnit).not.toContain("User=setlivre-web\n");
@@ -94,6 +99,9 @@ describe("local tooling contracts", () => {
       "ConditionPathExists=/opt/set-livre/current/backoffice/apps/backoffice/server.js",
     );
     expect(backofficeUnit).toContain("ConditionPathExists=/etc/set-livre/host-config.sha256");
+    expect(backofficeUnit).toContain(
+      "ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256",
+    );
     expect(backofficeUnit).toContain(
       "EnvironmentFile=/opt/set-livre/current/.runtime/backoffice.env",
     );
@@ -398,6 +406,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("rollback-public-health-observed");
     expect(hostVerification).toContain("archive com mais de 20.000 entradas foi aceito");
+    expect(hostVerification).toContain("archive com metadata PAX excessiva foi aceito");
     expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     const publishableFixtures = [
@@ -453,6 +462,9 @@ describe("local tooling contracts", () => {
     expect(deploy).not.toContain("bundle.getmembers()");
     expect(deploy).toContain("for entry_count, member in enumerate(bundle, start=1):");
     expect(deploy).toContain("if entry_count > maximum_entries:");
+    expect(deploy).toContain("def validate_tar_headers(path):");
+    expect(deploy).toContain("if raw_member.size > maximum_extended_header_bytes:");
+    expect(deploy).toContain('raise ValueError("metadata estendida excede o limite")');
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
     expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
     const rollbackStart = deploy.indexOf("rollback_activation() {");
@@ -471,10 +483,17 @@ describe("local tooling contracts", () => {
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     ).toBeLessThan(bootstrap.indexOf("systemctl restart set-livre-web.service"));
-    expect(bootstrap.indexOf('wait_for_active_public_health "$active_release_sha"')).toBeLessThan(
-      bootstrap.indexOf(
-        'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
-      ),
+    const terminalBootstrap = bootstrap.indexOf(
+      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+    );
+    expect(
+      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
+    ).toBeLessThan(terminalBootstrap);
+    expect(terminalBootstrap).toBeLessThan(
+      bootstrap.indexOf("systemctl restart set-livre-web.service"),
+    );
+    expect(bootstrap).toContain(
+      'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );
     expect(hostVerification).toContain("recovery-public-health-observed");
     expect(hostVerification.indexOf('retention_sha="$(printf')).toBeLessThan(
@@ -595,6 +614,66 @@ describe("local tooling contracts", () => {
         }),
       ),
     ).toMatchObject({ API_URL: "http://127.0.0.1:54321" });
+  });
+
+  it("accepts only the canonical local Docker contexts", () => {
+    expect(
+      validateLocalDockerContext({
+        contextName: "desktop-linux",
+        dockerContextOverride: undefined,
+        dockerHostOverride: undefined,
+        endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine",
+        engineOperatingSystem: "linux",
+        platform: "win32",
+      }),
+    ).toBe("npipe:////./pipe/dockerDesktopLinuxEngine");
+    expect(
+      validateLocalDockerContext({
+        contextName: "default",
+        dockerContextOverride: undefined,
+        dockerHostOverride: undefined,
+        endpoint: "unix:///var/run/docker.sock",
+        engineOperatingSystem: "linux",
+        platform: "linux",
+      }),
+    ).toBe("unix:///var/run/docker.sock");
+  });
+
+  it("rejects remote Docker selectors before a destructive local command", () => {
+    const localContext = {
+      contextName: "default",
+      dockerContextOverride: undefined,
+      dockerHostOverride: undefined,
+      endpoint: "unix:///var/run/docker.sock",
+      engineOperatingSystem: "linux",
+      platform: "linux",
+    };
+
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        dockerHostOverride: "ssh://operator@remote.example.com",
+      }),
+    ).toThrow("DOCKER_HOST e DOCKER_CONTEXT precisam estar ausentes");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        dockerContextOverride: "remote-production",
+      }),
+    ).toThrow("DOCKER_HOST e DOCKER_CONTEXT precisam estar ausentes");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        contextName: "remote-production",
+        endpoint: "ssh://operator@remote.example.com",
+      }),
+    ).toThrow("daemon local permitido");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        engineOperatingSystem: "windows",
+      }),
+    ).toThrow("containers Linux");
   });
 
   it("rejects a non-local Supabase endpoint", () => {

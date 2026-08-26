@@ -6,6 +6,7 @@ Requires=set-livre-release-recovery@link.service
 After=set-livre-release-recovery@link.service
 ConditionPathExists=/opt/set-livre/current/backoffice/apps/backoffice/server.js
 ConditionPathExists=/etc/set-livre/host-config.sha256
+ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
 StartLimitIntervalSec=60s
 StartLimitBurst=5
 

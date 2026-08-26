@@ -117,20 +117,22 @@
             ou reboot. A recuperação de serviços aguarda rede online e Nginx antes de consumir o
             marcador de rollback e só o remove após health interno e público. O bootstrap só
             reutiliza diretórios existentes após validar o marcador operacional ou um marcador
-            transitório de retry root-only, mantém a transição inicial fechada a resíduos legados e
-            só remove o estado de retry depois de publicar o novo digest e provar o SHA também pelo
-            HTTPS público. Os serviços exigem o marcador operacional ativo; release incompatível
-            permanece parada, e o deploy segue bloqueado até a transição atingir health terminal.
+            transitório root-only, mantém boot e deploy bloqueados durante a mutação e encerra a
+            transição estática antes de permitir que systemd reinicie uma release compatível. Os
+            serviços exigem digest operacional ativo e ausência do in-progress; falha posterior de
+            health desativa o symlink sem invalidar o host terminal. Archives são pré-varridos em
+            streaming com limites próprios para headers PAX/GNU antes da extração.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
             catálogo gerenciado legível contém configuração nomeada como segredo. A membership
             reversa de <code>app_runtime_production</code> aceita somente a administração automática
             de <code>postgres</code>, sem permissão para assumir a role. Readiness também bloqueia
-            comando, grant, membro, ownership ou acesso efetivo de <code>app_dal</code> a schema
-            externo fora das allowlists e preserva a release anterior somente quando seu schema
-            permanece aplicado e compatível. Chaves Supabase privilegiadas ou JWT são recusadas
-            antes dos builds; produção aceita somente o formato <code>sb_publishable_</code>.
+            grants do schema ou de comandos privados para qualquer grantee além do owner/DAL,
+            membro, ownership ou acesso efetivo de <code>app_dal</code> a schema externo fora das
+            allowlists e preserva a release anterior somente quando seu schema permanece aplicado e
+            compatível. Chaves Supabase privilegiadas ou JWT são recusadas antes dos builds;
+            produção aceita somente o formato <code>sb_publishable_</code>.
           </li>
         </ul>
       </section>
@@ -151,7 +153,8 @@
           permanecem no PR e nos checks.
         </p>
         <p>
-          O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
+          O bootstrap local fixa o named pipe/socket Docker canônico antes de qualquer operação
+          Supabase. O banco mantém os catálogos sensíveis negados às roles da aplicação e preserva
           para <code>supabase_storage_admin</code> somente a leitura de
           <code>pg_roles</code> exigida pelas migrations oficiais do Storage.
         </p>

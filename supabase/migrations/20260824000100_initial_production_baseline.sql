@@ -904,16 +904,22 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   direct_schema_grants_are_restricted as (
     select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        namespace.nspname = 'private'
-        and privilege.privilege_type = 'USAGE'
-        and not privilege.is_grantable
+      pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid) = 1
+      and coalesce(
+        pg_catalog.bool_and(
+          privilege.grantee = namespace.nspowner
+          or (
+            privilege.grantee = dal_role.oid
+            and privilege.privilege_type = 'USAGE'
+            and not privilege.is_grantable
+          )
+        ),
+        false
       ) as ready
     from pg_catalog.pg_namespace as namespace
     cross join lateral pg_catalog.aclexplode(namespace.nspacl) as privilege
     cross join dal_role
-    where privilege.grantee = dal_role.oid
+    where namespace.nspname = 'private'
   ),
   effective_external_schema_access_is_absent as (
     select not exists (
@@ -930,13 +936,17 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
   ),
   direct_routine_grants_are_restricted as (
     select
-      pg_catalog.count(*) = (select pg_catalog.count(*) from authorized_dal_routines)
+      pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid)
+        = (select pg_catalog.count(*) from authorized_dal_routines)
       and coalesce(
         pg_catalog.bool_and(
-          namespace.nspname = 'private'
-          and routine.oid in (select authorized.oid from authorized_dal_routines as authorized)
-          and privilege.privilege_type = 'EXECUTE'
-          and not privilege.is_grantable
+          privilege.grantee = routine.proowner
+          or (
+            privilege.grantee = dal_role.oid
+            and routine.oid in (select authorized.oid from authorized_dal_routines as authorized)
+            and privilege.privilege_type = 'EXECUTE'
+            and not privilege.is_grantable
+          )
         ),
         false
       )
@@ -949,7 +959,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
     cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
     cross join dal_role
-    where privilege.grantee = dal_role.oid
+    where namespace.nspname = 'private'
   ),
   effective_private_routine_grants_are_restricted as (
     select not exists (

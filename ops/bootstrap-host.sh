@@ -991,6 +991,8 @@ chmod 0640 "$digest_source"
 mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
 digest_source=""
 host_configuration_published=true
+rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
+host_configuration_published=false
 
 if [[ -e /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
@@ -1004,11 +1006,17 @@ if [[ -e /opt/set-livre/current ]]; then
     == "/opt/set-livre/releases/${active_release_sha}" ]] \
     || fail "release ativa mudou durante o bootstrap."
   if [[ ${active_release_compatible} == true ]]; then
-    systemctl restart set-livre-web.service set-livre-backoffice.service
-    if ! wait_for_active_health "$active_release_sha" \
+    if ! systemctl restart set-livre-web.service set-livre-backoffice.service \
+      || ! wait_for_active_health "$active_release_sha" \
       || ! wait_for_active_public_health "$active_release_sha"; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
-      fail "release compatível não recuperou readiness interno e público após o bootstrap."
+      systemctl reset-failed set-livre-web.service set-livre-backoffice.service || true
+      [[ -L /opt/set-livre/current \
+        && $(readlink --canonicalize-existing /opt/set-livre/current) \
+          == "/opt/set-livre/releases/${active_release_sha}" ]] \
+        || fail "release ativa mudou durante a validação pós-bootstrap."
+      rm -f -- /opt/set-livre/current
+      fail "release compatível não recuperou readiness; reenvie uma release aprovada."
     fi
   else
     if systemctl is-active --quiet set-livre-web.service \
@@ -1023,9 +1031,6 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
-
-rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
-host_configuration_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

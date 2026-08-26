@@ -198,32 +198,36 @@ exatamente a `.staging-<sha>.<sufixo-mktemp>`, são diretórios reais dentro de 
 `root`. Isso recupera `SIGKILL` ou reboot entre extração e rename sem aceitar path genérico; nome,
 owner ou tipo divergente bloqueia a ativação para inspeção.
 
+Antes de abrir o archive com `tarfile`, uma pré-varredura streaming lê blocos fixos do TAR, limita cada
+header PAX/GNU a 64 KiB, limita a metadata acumulada a 8 MiB, rejeita sparse e encerra no máximo de
+headers e bytes descompactados. Só então a extração valida as até 20.000 entradas e 512 MiB de conteúdo;
+um gzip pequeno não consegue provocar alocação de metadata proporcional ao tamanho declarado.
+
 O manifesto contém o SHA-256 determinístico dos dez arquivos que definem o host. Antes de qualquer
 mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa e publica
 atomicamente um marcador `bootstrap-in-progress` root-only. Quando existe contrato ativo válido,
-preserva sua cópia `host-config.previous`, invalida o marcador ativo e interrompe os apps antes de
-alterar pacotes ou qualquer superfície gerenciada. As units também exigem a presença do marcador ativo;
-um reboot antes da conclusão das mutações não reinicia a release. Depois de validar integralmente as
-superfícies estáticas, o bootstrap publica o novo `/etc/set-livre/host-config.sha256` por rename atômico
-enquanto ainda mantém `bootstrap-in-progress`; o instalador de release rejeita esse estado transitório.
-Se os digests forem iguais, a release só volta depois da publicação e precisa provar readiness dos dois
-apps antes de remover os marcadores de retry. Se divergirem, o symlink ativo é retirado sem apagar o
-diretório imutável, e os apps permanecem parados até o deploy do artifact que carrega o novo digest; uma
-release antiga nunca executa sob units/proxy novos. Falha intermediária mantém esses
-marcadores transitórios, permitindo que a próxima execução reconheça com segurança os paths já
-gerenciados, enquanto a ausência do marcador ativo mantém novos deploys bloqueados. Sucesso publica o
-digest novo e só então remove ambos os marcadores de retry. Se Nginx, systemd, CA, bootstrap, comando
-SSH ou instalador mudarem, o
+preserva sua cópia `host-config.previous`, invalida o digest ativo e interrompe os apps antes de alterar
+pacotes ou qualquer superfície gerenciada. As units exigem simultaneamente o digest ativo e a ausência
+de `bootstrap-in-progress`; um reboot durante as mutações não reinicia a release. Depois de validar
+integralmente as superfícies estáticas, o bootstrap publica o novo
+`/etc/set-livre/host-config.sha256` por rename atômico enquanto ainda mantém o marcador transitório; o
+instalador de release rejeita esse estado. A remoção dos marcadores encerra atomicamente a transição do
+host e somente então systemd pode iniciar uma release compatível. Se os digests divergirem, o symlink
+ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
+correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
+os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
+release aprovada. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
 Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
-Quando a release ativa já carrega o mesmo digest candidato, a reaplicação reinicia os dois serviços e
-prova o mesmo SHA nos endpoints internos e no HTTPS público antes de encerrar a transição. Falha de
-certificado, Nginx, firewall, roteamento ou health remove o digest candidato em uma saída controlada,
-mantém os marcadores de retry e interrompe os serviços. Uma interrupção não capturável depois da
-publicação mantém o deploy bloqueado por `bootstrap-in-progress` até a reexecução terminal.
+Quando a release ativa já carrega o mesmo digest candidato, a reaplicação encerra primeiro a transição
+estática e só depois reinicia os dois serviços e prova o mesmo SHA nos endpoints internos e no HTTPS
+público. Falha antes do encerramento mantém `bootstrap-in-progress`, remove qualquer digest candidato e
+bloqueia boot/deploy até a reexecução. Depois do encerramento, a configuração do host já é terminal; uma
+falha de health deixa a release desativada para que o próximo deploy a reinstale sem reabrir a mutação do
+host.
 
 ### Rede e SSH
 

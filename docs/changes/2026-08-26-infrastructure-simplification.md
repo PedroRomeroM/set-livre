@@ -85,16 +85,19 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   de uma unit com orçamento de doze minutos e só o consome depois de health interno e público;
 - o laboratório encerra cada falha que preserva o marcador com um retry bem-sucedido e prova sua remoção
   antes de iniciar outro cenário, sem compartilhar estado intermediário entre casos;
-- recuperação anterior a um novo deploy e reexecução do bootstrap com release compatível exigem o SHA
-  esperado tanto nos health checks internos quanto no HTTPS público antes de continuar ou publicar o
-  novo digest operacional;
+- a recuperação anterior a um novo deploy exige o SHA esperado nos health checks internos e no HTTPS
+  público; a reexecução do bootstrap valida o mesmo SHA depois de tornar a configuração estática
+  terminal e desativa o symlink se a release compatível não recuperar readiness;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
   validar tipo, owner, modo e conteúdo do marcador operacional ou dos marcadores transitórios de retry;
 - o bootstrap publica o in-progress, preserva e invalida o digest ativo e interrompe os serviços antes da
-  primeira alteração; as units exigem o marcador ativo, o deploy recusa `bootstrap-in-progress`, e os
-  estados de retry só são removidos após a publicação e o health de uma release compatível;
+  primeira alteração; as units exigem digest ativo e ausência do marcador, o deploy recusa a transição,
+  e uma release compatível só reinicia depois que a configuração estática chega ao estado terminal;
 - a chave de deploy só substitui `authorized_keys` após validação estrutural integral de um único blob
-  Ed25519, e a extração interrompe a leitura no header 20.001 sem materializar entradas ilimitadas;
+  Ed25519; a extração pré-varre headers em streaming, limita metadata PAX/GNU e interrompe a leitura no
+  header lógico 20.001 sem materializar entradas ilimitadas;
+- o wrapper local fixa somente o named pipe/socket Docker canônico antes de chamar a CLI Supabase, e o
+  readiness rejeita grants no schema ou em comandos privados para qualquer grantee além do owner/DAL;
 - gates locais recusam tanto `databaseMigrationHead` divergente da migration mais recente quanto
   referência documental a ADR inexistente;
 - o empacotamento aceita somente conteúdo regular originado da release e das dependências instaladas

@@ -1,6 +1,6 @@
 begin;
 
-select plan(34);
+select plan(36);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -255,6 +255,22 @@ select ok(
   'readiness rejeita rotina privada fora da allowlist DAL'
 );
 revoke execute on function private.profile_command_result(uuid) from app_dal;
+
+grant usage on schema private to public;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita acesso ao schema privado herdado por PUBLIC'
+);
+revoke usage on schema private from public;
+
+grant execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
+  to public;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita comando privado herdado por PUBLIC'
+);
+revoke execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
+  from public;
 
 grant select on table private.identity_recovery_grants to public;
 select ok(

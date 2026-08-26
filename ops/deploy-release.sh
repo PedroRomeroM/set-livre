@@ -386,6 +386,7 @@ remove_stale_staging_directories \
 staging_directory="$(mktemp --directory "${RELEASES_DIRECTORY}/.staging-${release_sha}.XXXXXX")"
 
 python3 - "$trusted_archive" "$staging_directory" <<'PYTHON'
+import gzip
 import sys
 import tarfile
 from pathlib import PurePosixPath
@@ -394,8 +395,96 @@ archive, destination = sys.argv[1:]
 allowed_roots = {"backoffice", "release-manifest.json", "web"}
 maximum_entries = 20_000
 maximum_extracted_bytes = 512 * 1024 * 1024
+maximum_extended_header_bytes = 64 * 1024
+maximum_metadata_bytes = 8 * 1024 * 1024
+maximum_raw_headers = maximum_entries * 2 + 32
+maximum_tar_stream_bytes = (
+    maximum_extracted_bytes
+    + maximum_metadata_bytes
+    + (maximum_raw_headers + 2) * tarfile.BLOCKSIZE
+)
+extended_header_types = {
+    tarfile.GNUTYPE_LONGLINK,
+    tarfile.GNUTYPE_LONGNAME,
+    tarfile.XGLTYPE,
+    tarfile.XHDTYPE,
+}
+solaris_extended_header = getattr(tarfile, "SOLARIS_XHDTYPE", None)
+if solaris_extended_header is not None:
+    extended_header_types.add(solaris_extended_header)
+
+
+def read_exact(stream, size):
+    chunks = []
+    remaining = size
+    while remaining > 0:
+        chunk = stream.read(min(remaining, 64 * 1024))
+        if not chunk:
+            raise ValueError("archive truncado")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def discard_exact(stream, size):
+    remaining = size
+    while remaining > 0:
+        chunk = stream.read(min(remaining, 64 * 1024))
+        if not chunk:
+            raise ValueError("archive truncado")
+        remaining -= len(chunk)
+
+
+def validate_tar_headers(path):
+    metadata_bytes = 0
+    raw_headers = 0
+    stream_bytes = 0
+    zero_blocks = 0
+    with gzip.open(path, mode="rb") as stream:
+        while True:
+            header = read_exact(stream, tarfile.BLOCKSIZE)
+            stream_bytes += tarfile.BLOCKSIZE
+            if header == b"\0" * tarfile.BLOCKSIZE:
+                zero_blocks += 1
+                if zero_blocks == 2:
+                    return
+                continue
+            if zero_blocks != 0:
+                raise ValueError("terminador tar inválido")
+
+            raw_headers += 1
+            if raw_headers > maximum_raw_headers:
+                raise ValueError("quantidade de headers tar inválida")
+            try:
+                raw_member = tarfile.TarInfo.frombuf(
+                    header,
+                    encoding="utf-8",
+                    errors="surrogateescape",
+                )
+            except (tarfile.TarError, UnicodeError, ValueError) as error:
+                raise ValueError("header tar inválido") from error
+
+            if raw_member.size < 0:
+                raise ValueError("tamanho de entrada tar inválido")
+            if raw_member.type == tarfile.GNUTYPE_SPARSE:
+                raise ValueError("formato sparse não autorizado")
+            if raw_member.type in extended_header_types:
+                if raw_member.size > maximum_extended_header_bytes:
+                    raise ValueError("metadata estendida excede o limite")
+                metadata_bytes += raw_member.size
+                if metadata_bytes > maximum_metadata_bytes:
+                    raise ValueError("metadata tar acumulada excede o limite")
+
+            padded_size = (
+                (raw_member.size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+            ) * tarfile.BLOCKSIZE
+            stream_bytes += padded_size
+            if stream_bytes > maximum_tar_stream_bytes:
+                raise ValueError("stream tar descompactado excede o limite")
+            discard_exact(stream, padded_size)
 
 try:
+    validate_tar_headers(archive)
     with tarfile.open(archive, mode="r:gz") as bundle:
         members = []
         extracted_bytes = 0
@@ -437,7 +526,7 @@ try:
         if not members:
             raise ValueError("quantidade de entradas inválida")
         bundle.extractall(path=destination, members=members, filter="data")
-except (OSError, tarfile.TarError, ValueError) as error:
+except (EOFError, OSError, tarfile.TarError, ValueError) as error:
     raise SystemExit(f"archive inválido: {error}") from error
 PYTHON
 

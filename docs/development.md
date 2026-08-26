@@ -27,7 +27,11 @@ assume `app_dal` e grava três arquivos ignorados:
 - `.env.e2e.local` para testes destrutivos.
 
 Os dados são descartáveis. O guardrail relevante não é um firewall especial: Playwright e helpers de
-QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto.
+QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. Antes de qualquer chamada à
+CLI Supabase, o wrapper também exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes, comprova o contexto local
+canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux), confirma containers Linux
+e fixa explicitamente esse endpoint no processo filho. Assim, `start`, `reset` e `stop` nunca alcançam
+um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
 
 ## Comandos cotidianos
 
