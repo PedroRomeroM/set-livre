@@ -308,7 +308,7 @@ jobs:
           [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
           create_archive() {
             local destination="$1"
-            LC_ALL=C tar --sort=name --mtime="@${source_date_epoch}" \
+            LC_ALL=C tar --hard-dereference --sort=name --mtime="@${source_date_epoch}" \
               --owner=0 --group=0 --numeric-owner --format=posix \
               --pax-option=delete=atime,delete=ctime \
               --create --file=- --directory .artifacts/release . \

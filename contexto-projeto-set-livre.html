@@ -116,6 +116,10 @@
             readiness e marcador de recuperação protegem rollback e reboot durante a ativação.
           </li>
           <li>
+            O produtor materializa hard links do standalone como arquivos regulares no archive; o
+            host continua recusando links e tipos de entrada fora do contrato.
+          </li>
+          <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
             catálogo gerenciado legível contém configuração nomeada como segredo; grants diretos de
             <code>CREATE/TEMP</code> também bloqueiam o provisionamento e o health.

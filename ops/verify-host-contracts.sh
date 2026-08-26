@@ -103,7 +103,8 @@ sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
 
 archive="$temporary_directory/host-contract-release.tar.gz"
-tar --create --gzip --file "$archive" --directory "$REPOSITORY_ROOT/.artifacts/release" .
+tar --hard-dereference --create --gzip --file "$archive" \
+  --directory "$REPOSITORY_ROOT/.artifacts/release" .
 checksum="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 host_digest="$(
   jq --raw-output '.hostConfiguration.sha256' \
@@ -266,12 +267,16 @@ package_candidate() {
     "$candidate_directory/backoffice/apps/backoffice"
   install -m 0644 /dev/null "$candidate_directory/web/server.js"
   install -m 0644 /dev/null "$candidate_directory/backoffice/apps/backoffice/server.js"
+  # Prova que o produtor materializa inodes compartilhados sem relaxar o extrator.
+  ln -- "$candidate_directory/web/server.js" \
+    "$candidate_directory/web/hardlink-source-fixture.js"
   jq --arg sha "$candidate_sha" '.commit = $sha' \
     "$REPOSITORY_ROOT/.artifacts/release/release-manifest.json" \
     > "$candidate_directory/release-manifest.next.json"
   mv -- "$candidate_directory/release-manifest.next.json" \
     "$candidate_directory/release-manifest.json"
-  tar --create --gzip --file "$candidate_archive" --directory "$candidate_directory" .
+  tar --hard-dereference --create --gzip --file "$candidate_archive" \
+    --directory "$candidate_directory" .
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
   write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
   write_fixture_environment "$candidate_backoffice_environment" "$PRODUCTION_BACKOFFICE_APP_URL"
@@ -345,6 +350,9 @@ invoke_candidate "$release_sha" success
 assert_current_release "$release_sha"
 [[ ! -e ${stale_staging_directory} ]] \
   || fail "staging residual validado não foi removido antes da ativação."
+[[ $(sudo stat --format '%i' /opt/set-livre/current/web/server.js) \
+  != "$(sudo stat --format '%i' /opt/set-livre/current/web/hardlink-source-fixture.js)" ]] \
+  || fail "hard link do produtor não foi materializado como arquivo regular independente."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/web.env) \
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \

@@ -202,6 +202,14 @@ describe("local tooling contracts", () => {
   it("restricts deployment SSH and fences releases to the installed host contract", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
     const command = readFileSync(
       new URL("../../ops/deploy-ssh-command.sh", import.meta.url),
       "utf8",
@@ -219,6 +227,8 @@ describe("local tooling contracts", () => {
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
+    expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
+    expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     expect(deploy).toContain("readiness HTTPS público");
     expect(deploy).toContain("RETAINED_RELEASES=4");
     expect(deploy).toContain("hostConfiguration.sha256");

@@ -104,6 +104,9 @@ com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ati
 quatro releases, incluindo candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
 produza o mesmo checksum.
+Hard links eventualmente produzidos pelo standalone Linux são materializados pelo empacotador como
+arquivos regulares independentes. O instalador permanece estrito e rejeita links simbólicos, hard links
+e qualquer tipo de entrada diferente de arquivo regular ou diretório.
 Antes da compactação, o empacotador também recusa `.env` e ocorrências exatas das credenciais de banco
 disponíveis ao processo; o artifact parcial é removido em caso de falha.
 

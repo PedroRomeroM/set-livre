@@ -163,6 +163,12 @@ A prova agora, em cada amostra limitada pelo mesmo timeout, rola até o fim atua
 se a nota está alcançável. A ausência de overflow horizontal continua sendo verificada separadamente e não houve
 retry de cenário, aumento de timeout, alteração de produção ou relaxamento do critério de visibilidade.
 
+Com os 114 cenários e o build Linux verdes, o teste real do instalador revelou que o standalone podia
+compartilhar inodes e o GNU tar serializava a segunda ocorrência como hard link. O receptor recusou a
+entrada conforme seu contrato estrito. Os dois produtores de archive agora usam `--hard-dereference`,
+materializando cada ocorrência como arquivo regular; o instalador continua rejeitando links. Um teste
+unitário fixa esse contrato tanto no workflow de produção quanto no laboratório do host.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks
