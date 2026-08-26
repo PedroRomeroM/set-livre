@@ -1,4 +1,15 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -17,6 +28,7 @@ function fixture() {
     ".next/static",
     "apps/backoffice/.next/standalone/apps/backoffice",
     "apps/backoffice/.next/static",
+    "node_modules",
   ]) {
     mkdirSync(resolve(root, directory), { recursive: true });
   }
@@ -79,6 +91,61 @@ describe("release package", () => {
         sensitiveValues: ["runtime-secret"],
       }),
     ).toThrow("valor sensível");
+    expect(existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("materializes internal symbolic and hard links as independent regular files", () => {
+    const root = fixture();
+    const standalone = resolve(root, ".next/standalone");
+    const sharedDirectory = resolve(standalone, "shared-source");
+    const sharedFile = resolve(sharedDirectory, "shared.js");
+    const dependencyDirectory = resolve(root, "node_modules/release-dependency");
+    mkdirSync(sharedDirectory);
+    mkdirSync(dependencyDirectory);
+    writeFileSync(sharedFile, "shared");
+    writeFileSync(resolve(dependencyDirectory, "index.js"), "dependency");
+    symlinkSync(
+      sharedDirectory,
+      resolve(standalone, "shared-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    linkSync(sharedFile, resolve(sharedDirectory, "shared-hardlink.js"));
+    symlinkSync(
+      dependencyDirectory,
+      resolve(standalone, "dependency-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const outputDirectory = resolve(root, ".artifacts/release");
+    packageRelease({ commit, outputDirectory, root });
+
+    const linkedDirectory = resolve(outputDirectory, "web/shared-link");
+    const copiedSource = resolve(outputDirectory, "web/shared-source/shared.js");
+    const copiedHardlink = resolve(outputDirectory, "web/shared-source/shared-hardlink.js");
+    expect(lstatSync(linkedDirectory).isSymbolicLink()).toBe(false);
+    expect(readFileSync(resolve(linkedDirectory, "shared.js"), "utf8")).toBe("shared");
+    expect(readFileSync(resolve(outputDirectory, "web/dependency-link/index.js"), "utf8")).toBe(
+      "dependency",
+    );
+    expect(statSync(copiedSource).nlink).toBe(1);
+    expect(statSync(copiedHardlink).nlink).toBe(1);
+  });
+
+  it("rejects a symbolic link whose target is outside its standalone root", () => {
+    const root = fixture();
+    const externalDirectory = resolve(root, "external-package");
+    mkdirSync(externalDirectory);
+    writeFileSync(resolve(externalDirectory, "outside.js"), "outside");
+    symlinkSync(
+      externalDirectory,
+      resolve(root, ".next/standalone/external-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const outputDirectory = resolve(root, ".artifacts/release");
+    expect(() => packageRelease({ commit, outputDirectory, root })).toThrow(
+      "saiu da raiz permitida",
+    );
     expect(existsSync(outputDirectory)).toBe(false);
   });
 });

@@ -169,6 +169,14 @@ entrada conforme seu contrato estrito. Os dois produtores de archive agora usam 
 materializando cada ocorrência como arquivo regular; o instalador continua rejeitando links. Um teste
 unitário fixa esse contrato tanto no workflow de produção quanto no laboratório do host.
 
+O CI seguinte expôs a segunda forma do mesmo contrato: no Node 24.18, `fs.cpSync` recursivo preservava
+links simbólicos do standalone como referências absolutas à árvore de origem apesar de
+`dereference: true`. O Next também aponta módulos rastreados para o `node_modules` instalado pelo
+lockfile. O empacotador deixou de delegar essa fronteira à API: agora percorre a árvore, permite apenas
+essas duas raízes controladas, materializa cada referência e hard link de forma independente e rejeita
+alvo externo, ciclo ou objeto especial. Testes multiplataforma cobrem materialização e contenção; o
+extrator não foi relaxado.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

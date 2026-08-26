@@ -116,8 +116,9 @@
             readiness e marcador de recuperação protegem rollback e reboot durante a ativação.
           </li>
           <li>
-            O produtor materializa hard links do standalone como arquivos regulares no archive; o
-            host continua recusando links e tipos de entrada fora do contrato.
+            O produtor materializa links restritos ao standalone ou às dependências do lockfile e
+            inodes compartilhados como entradas independentes; referências externas, ciclos e
+            objetos especiais são recusados, e o host continua rejeitando links fora do contrato.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum

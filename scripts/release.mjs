@@ -1,17 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  cpSync,
+  chmodSync,
+  copyFileSync,
   existsSync,
-  mkdirSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -60,9 +62,56 @@ export function hostConfigurationDigest(root = repositoryRoot) {
   return hash.digest("hex");
 }
 
-function copyDirectory(source, destination, label) {
+function isWithinDirectory(directory, candidate) {
+  const path = relative(directory, candidate);
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function copyMaterializedEntry(source, destination, allowedRoots, ancestorDirectories) {
+  const sourceMetadata = lstatSync(source);
+  let materializedSource = source;
+
+  if (sourceMetadata.isSymbolicLink()) {
+    materializedSource = realpathSync(source);
+    if (!allowedRoots.some((root) => isWithinDirectory(root, materializedSource))) {
+      throw new Error(`Link do standalone saiu da raiz permitida: ${source}.`);
+    }
+  }
+
+  const materializedMetadata = statSync(materializedSource);
+  if (materializedMetadata.isFile()) {
+    mkdirSync(resolve(destination, ".."), { recursive: true });
+    copyFileSync(materializedSource, destination);
+    chmodSync(destination, materializedMetadata.mode & 0o777);
+    return;
+  }
+  if (!materializedMetadata.isDirectory()) {
+    throw new Error(`Entrada especial não autorizada na release: ${source}.`);
+  }
+
+  const canonicalDirectory = realpathSync(materializedSource);
+  if (ancestorDirectories.has(canonicalDirectory)) {
+    throw new Error(`Ciclo de links detectado na release: ${source}.`);
+  }
+
+  mkdirSync(destination, { recursive: true });
+  const nextAncestors = new Set(ancestorDirectories).add(canonicalDirectory);
+  for (const entry of readdirSync(materializedSource, { withFileTypes: true })) {
+    copyMaterializedEntry(
+      resolve(materializedSource, entry.name),
+      resolve(destination, entry.name),
+      allowedRoots,
+      nextAncestors,
+    );
+  }
+  chmodSync(destination, materializedMetadata.mode & 0o777);
+}
+
+function copyDirectory(source, destination, label, additionalAllowedRoots = []) {
   requireDirectory(source, label);
-  cpSync(source, destination, { dereference: true, recursive: true });
+  const sourceRoot = realpathSync(source);
+  const allowedRoots = [sourceRoot, ...additionalAllowedRoots.map((root) => realpathSync(root))];
+  copyMaterializedEntry(sourceRoot, destination, allowedRoots, new Set());
 }
 
 function copyOptionalDirectory(source, destination) {
@@ -83,7 +132,9 @@ function assertReleaseDestination(root, destination) {
 function releaseFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
-    return entry.isDirectory() ? releaseFiles(path) : entry.isFile() ? [path] : [];
+    if (entry.isDirectory()) return releaseFiles(path);
+    if (entry.isFile()) return [path];
+    throw new Error(`A release contém entrada não materializada: ${path}.`);
   });
 }
 
@@ -141,6 +192,7 @@ export function packageRelease({
   const applications = [
     {
       buildId: resolve(root, ".next/BUILD_ID"),
+      dependencyRoot: resolve(root, "node_modules"),
       entrypoint: "server.js",
       name: "web",
       publicDirectory: resolve(root, "public"),
@@ -150,6 +202,7 @@ export function packageRelease({
     },
     {
       buildId: resolve(root, "apps/backoffice/.next/BUILD_ID"),
+      dependencyRoot: resolve(root, "node_modules"),
       entrypoint: "apps/backoffice/server.js",
       name: "backoffice",
       publicDirectory: resolve(root, "apps/backoffice/public"),
@@ -177,7 +230,9 @@ export function packageRelease({
   try {
     for (const application of applications) {
       const destination = resolve(output, application.name);
-      copyDirectory(application.standalone, destination, `${application.name} standalone`);
+      copyDirectory(application.standalone, destination, `${application.name} standalone`, [
+        application.dependencyRoot,
+      ]);
       copyDirectory(
         application.staticDirectory,
         resolve(destination, application.staticTarget),
