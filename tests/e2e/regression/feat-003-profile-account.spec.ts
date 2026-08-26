@@ -69,6 +69,60 @@ async function triggerVisibilityRefetch(
     .toBe(true);
 }
 
+async function installPendingProfileRead(page: Page) {
+  await page.evaluate(() => {
+    const nativeFetch = window.fetch.bind(window);
+    const nativeSetTimeout = window.setTimeout.bind(window);
+
+    Object.defineProperty(window, "setTimeout", {
+      configurable: true,
+      value: (handler: TimerHandler, timeout?: number) =>
+        nativeSetTimeout(handler, timeout === 10_000 ? 250 : timeout),
+    });
+    window.fetch = (input, init) => {
+      const requestUrl = input instanceof Request ? input.url : input.toString();
+      const address = new URL(requestUrl, window.location.origin);
+      if (address.pathname !== "/api/account/profile") {
+        return nativeFetch(input, init);
+      }
+
+      Reflect.set(window, "__setLivreQaProfileTimeoutStarted", true);
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      if (signal === undefined || signal === null) {
+        return Promise.reject(new Error("A leitura de perfil não recebeu AbortSignal."));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        const rejectOnAbort = () => {
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (signal.aborted) {
+          rejectOnAbort();
+          return;
+        }
+        signal.addEventListener("abort", rejectOnAbort, { once: true });
+      });
+    };
+  });
+
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const started = Reflect.get(window, "__setLivreQaProfileTimeoutStarted") === true;
+          if (!started) {
+            window.dispatchEvent(new Event("visibilitychange"));
+          }
+          return started;
+        }),
+      {
+        intervals: [100, 250, 500],
+        message: "A revalidação privada com timeout não iniciou.",
+        timeout: 5_000,
+      },
+    )
+    .toBe(true);
+}
+
 function invalidateVerificationDigit(value: string) {
   const replacement = value.endsWith("0") ? "1" : "0";
   return `${value.slice(0, -1)}${replacement}`;
@@ -253,8 +307,6 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   const recoveredPhone = "+55 (41) 99999-3009";
   const fetchRequestStarted = createDeferredSignal();
   const releaseFetchRequest = createDeferredSignal();
-  const timeoutRequestStarted = createDeferredSignal();
-  const releaseTimeoutRequest = createDeferredSignal();
   const logoutRequestStarted = createDeferredSignal();
   const releaseLogoutRequest = createDeferredSignal();
   let profileCommandRequests = 0;
@@ -438,28 +490,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       offlineSecrets.additionalDocument,
     ]);
 
-    await page.evaluate(() => {
-      const nativeSetTimeout = window.setTimeout.bind(window);
-      Object.defineProperty(window, "setTimeout", {
-        configurable: true,
-        value: (handler: TimerHandler, timeout?: number) =>
-          nativeSetTimeout(handler, timeout === 10_000 ? 1_000 : timeout),
-      });
-    });
-    await page.route(
-      "**/api/account/profile",
-      async (route) => {
-        timeoutRequestStarted.resolve();
-        await releaseTimeoutRequest.promise;
-        try {
-          await route.continue();
-        } catch {
-          return;
-        }
-      },
-      { times: 1 },
-    );
-    await triggerVisibilityRefetch(page, timeoutRequestStarted, "revalidação privada com timeout");
+    await installPendingProfileRead(page);
     await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
     await assertFeat003PrivateValuesAbsentFromDom(page, recoveredPrivateValues);
     await assertFeat003SecretsAbsentFromDom(page, [
@@ -480,8 +511,6 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       offlineSecrets.taxId,
       offlineSecrets.additionalDocument,
     ]);
-    releaseTimeoutRequest.resolve();
-
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
     await page.route(
@@ -594,7 +623,6 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     await expectNoHorizontalOverflow(page);
   } finally {
     releaseFetchRequest.resolve();
-    releaseTimeoutRequest.resolve();
     releaseLogoutRequest.resolve();
     await cleanupFeat003QaIdentity(identity);
   }

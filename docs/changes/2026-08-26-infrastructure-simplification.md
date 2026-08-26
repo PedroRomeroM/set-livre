@@ -148,6 +148,14 @@ passou a usar somente o heading renderizado e a barreira já existente de `docum
 ausência de overflow. As duas mudanças removem esperas ambientais sem retry, relaxamento de asserção ou
 alteração do código de produção.
 
+O CI seguinte comprovou 112/114 cenários, mas expôs outro deadlock no mesmo teste composto: para simular uma
+leitura que excede o timeout, o callback de `page.route` aguardava uma Promise externa mesmo depois do
+`AbortController` da aplicação cancelar o `fetch`. O navegador encerrava a operação, mas a interceptação do
+runner continuava pendente até os 180 segundos globais em dois viewports Chromium. A simulação agora instala
+no próprio documento um transporte pendente que rejeita exatamente quando recebe o AbortSignal real da
+aplicação. Ela mantém a asserção E2E da mensagem e da remoção de PII, termina deterministicamente e passou
+20/20 repetições nos dois perfis que falharam, sem retry, aumento do timeout ou mudança de produção.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

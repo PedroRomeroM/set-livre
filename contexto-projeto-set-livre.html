@@ -159,6 +159,12 @@
           documento completo, viewport correto e ausência de overflow.
         </p>
         <p>
+          A simulação E2E de timeout de leitura usa um transporte pendente no navegador e termina
+          pelo AbortSignal real da aplicação. Assim, não mantém callbacks de interceptação do
+          Playwright presos depois do cancelamento e continua provando mensagem de recuperação e
+          remoção de PII sem retry ou relaxamento do timeout global.
+        </p>
+        <p>
           O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
           para <code>supabase_storage_admin</code> somente a leitura de
           <code>pg_roles</code> exigida pelas migrations oficiais do Storage.
