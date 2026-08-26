@@ -66,6 +66,10 @@ O workflow `.github/workflows/ci.yml` contém três jobs:
 3. **Deploy production**: somente em push de `main`, depois dos dois jobs verdes e quando
    `PRD_DEPLOY_ENABLED=true`.
 
+`workflow_dispatch` permite repetir manualmente os dois gates sem fabricar commit quando o evento do
+GitHub não cria uma check suite. Esse evento nunca satisfaz a condição do job de produção, que continua
+restrito ao `push` de `main` com a flag explícita.
+
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
 Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots

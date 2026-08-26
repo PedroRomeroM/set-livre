@@ -404,6 +404,20 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("allows a manual CI retry without authorizing a manual production deploy", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
+
+    expect(workflow).toContain("  workflow_dispatch:\n");
+    expect(deployJob).toContain(
+      "if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRD_DEPLOY_ENABLED == 'true'",
+    );
+    expect(deployJob).not.toContain("github.event_name == 'workflow_dispatch'");
+  });
+
   it("retains Playwright traces and reports only when the browser gate fails", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),

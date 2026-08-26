@@ -65,6 +65,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 ## Qualidade e QA
 
 - CI Linux e Windows executa os gates estáticos, unitários, SQL, Playwright e builds aplicáveis;
+- um dispatch manual repete somente esses gates quando o evento nativo não cria check suite; deploy
+  permanece impossível fora de `push` em `main` com a flag habilitada;
 - falha Playwright preserva relatório, traces, screenshots e vídeos por sete dias sem acumular artifact
   em execução verde;
 - cenários visíveis permanecem determinísticos entre engines, sem retries ou timeouts ampliados para
