@@ -48,7 +48,9 @@ exclusiva e comando forçado; a VM expõe apenas 22, 80 e 443, mantém 3000/3001
 `X-Robots-Tag` e `robots.txt` bloqueando indexação. O bootstrap publica Node somente após validação
 integral, substitui o alias legado por link canônico recuperável, rejeita certificado com menos de 24
 horas restantes, preserva apenas swapfiles que cumpram o manifesto e a borda encaminha o UUID de
-correlação para validação pela aplicação.
+correlação para validação pela aplicação. O contrato também recusa qualquer identidade, unit, credencial,
+ferramenta ou árvore remanescente do deploy pull aposentado; sua retirada é uma migração administrativa
+única e não adiciona outro mecanismo permanente ao repositório.
 
 ## Read models, comandos e invalidação
 

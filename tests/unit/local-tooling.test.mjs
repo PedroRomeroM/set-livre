@@ -141,12 +141,40 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("firewall_transition_active=true");
     expect(bootstrap).toContain('iptables-restore < "$previous_ipv4_rules"');
     expect(bootstrap).not.toContain("netfilter-persistent reload");
-    expect(bootstrap).toContain("rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
+    expect(bootstrap).toContain("/etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
+    expect(bootstrap).not.toContain("rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
     expect(bootstrap).toContain("/etc/nginx/sites-enabled/setlivre");
     expect(bootstrap).toContain("for port in (22, 80, 443)");
     expect(bootstrap).toContain(
       'f"-A {chain} -p tcp --dport {port} -m conntrack --ctstate NEW -j ACCEPT"',
     );
+  });
+
+  it("rejects every retired pull-deployer surface before changing the host", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const guardCall = bootstrap.indexOf("assert_legacy_surface_absent\n");
+    const digestCalculation = bootstrap.indexOf('host_configuration_digest="$(python3');
+
+    for (const legacyPath of [
+      "/etc/setlivre-deployer",
+      "/etc/sudoers.d/setlivre-deployer",
+      "/etc/systemd/system/setlivre-production-deployer.service",
+      "/etc/systemd/system/setlivre-release-recovery.service",
+      "/opt/node-v24.18.0",
+      "/opt/setlivre",
+      "/usr/local/libexec/setlivre-host-tools",
+      "/usr/local/sbin/setlivre-release-manager",
+      "/var/lib/setlivre-deployer",
+    ]) {
+      expect(bootstrap).toContain(legacyPath);
+    }
+    expect(bootstrap).toContain("! getent passwd setlivre-deployer");
+    expect(bootstrap).toContain("! getent passwd setlivre");
+    expect(bootstrap).toContain("! getent group setlivre-deployer");
+    expect(bootstrap).toContain('sysctl --values "net.ipv6.conf.${setting}.disable_ipv6"');
+    expect(bootstrap).not.toContain('rm -rf -- "/opt/setlivre"');
+    expect(guardCall).toBeGreaterThan(-1);
+    expect(digestCalculation).toBeGreaterThan(guardCall);
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {

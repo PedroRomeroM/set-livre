@@ -49,6 +49,9 @@ customizados. A complexidade não era proporcional ao estágio do produto.
   para a evidência; a branch protection exige esse status e qualquer push o invalida;
 - um control plane próprio de review só poderá ser reconsiderado depois de uma limitação concreta,
   recorrente e medida dos mecanismos nativos;
+- o agente pull anterior, suas credenciais no host, identidades, units e ferramentas próprias são
+  retirados uma única vez pela administração; o bootstrap definitivo apenas prova sua ausência e falha
+  fechado se essa superfície reaparecer, sem carregar código permanente de migração;
 - secrets permanecem no ambiente que os consome e nunca entram em workflow de PR, artifact, log ou
   documentação;
 - deploy permanece desabilitado durante o bootstrap e só é ativado quando certificado, credenciais,

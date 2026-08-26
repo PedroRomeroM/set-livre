@@ -39,6 +39,12 @@ flowchart LR
 Produção não usa Docker, build na VM, registry de imagem, runner self-hosted, agente de polling ou login
 OCI em cada merge.
 
+A retirada do antigo agente pull é uma migração administrativa única, não uma camada de compatibilidade
+permanente. O host final não conserva suas units, executáveis, usuários, credenciais ou árvore de
+release; antes de qualquer mutação, o bootstrap recusa a presença de qualquer path ou identidade dessa
+superfície aposentada. Assim, um snapshot antigo ou configuração manual não pode reativar silenciosamente
+o segundo mecanismo de deploy.
+
 ## Desenvolvimento local
 
 `npm run local:setup` inicia a stack oficial da Supabase CLI, recria o banco e grava três arquivos

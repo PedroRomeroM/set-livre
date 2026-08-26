@@ -43,6 +43,71 @@ fail() {
   exit 1
 }
 
+assert_legacy_surface_absent() {
+  local path unit setting
+  for path in \
+    /etc/apt/apt.conf.d/52setlivre-unattended-upgrades \
+    /etc/fail2ban/jail.d/setlivre-sshd.local \
+    /etc/letsencrypt/renewal-hooks/deploy/setlivre-enable-tls \
+    /etc/nginx/conf.d/setlivre-proxy.conf \
+    /etc/nginx/sites-available/setlivre-bootstrap \
+    /etc/nginx/sites-available/setlivre-tls \
+    /etc/nginx/sites-enabled/setlivre \
+    /etc/setlivre-deployer \
+    /etc/ssh/sshd_config.d/60-setlivre-hardening.conf \
+    /etc/sudoers.d/setlivre-deployer \
+    /etc/sysctl.d/60-setlivre-ipv6-disabled.conf \
+    /etc/systemd/system/nginx.service.d/setlivre-release-recovery.conf \
+    /etc/systemd/system/multi-user.target.wants/setlivre-backoffice.service \
+    /etc/systemd/system/multi-user.target.wants/setlivre-production-deployer.service \
+    /etc/systemd/system/multi-user.target.wants/setlivre-release-recovery.service \
+    /etc/systemd/system/multi-user.target.wants/setlivre-web.service \
+    /etc/systemd/system/setlivre-backoffice.service \
+    /etc/systemd/system/setlivre-production-deployer.service \
+    /etc/systemd/system/setlivre-production-deployer.timer \
+    /etc/systemd/system/setlivre-release-recovery.service \
+    /etc/systemd/system/setlivre-web.service \
+    /etc/systemd/system/timers.target.wants/setlivre-production-deployer.timer \
+    /etc/tmpfiles.d/setlivre-production-deployer.conf \
+    /opt/node-v24.18.0 \
+    /opt/setlivre \
+    /run/lock/setlivre-production-deployer-config.lock \
+    /run/lock/setlivre-production-deployer.lock \
+    /run/lock/setlivre-release-manager.lock \
+    /usr/local/bin/node \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx \
+    /usr/local/libexec/setlivre \
+    /usr/local/libexec/setlivre-host-tools \
+    /usr/local/sbin/setlivre-deploy-dispatch \
+    /usr/local/sbin/setlivre-enable-tls \
+    /usr/local/sbin/setlivre-issue-tls-certificate \
+    /usr/local/sbin/setlivre-release-manager \
+    /var/lib/setlivre-bootstrap \
+    /var/lib/setlivre-deployer \
+    /var/lib/setlivre-deployer-config \
+    /var/lib/systemd/timers/stamp-setlivre-timer-contract-probe.timer; do
+    [[ ! -e ${path} && ! -L ${path} ]] \
+      || fail "superfície legada ainda instalada: ${path}."
+  done
+  for unit in \
+    setlivre-backoffice.service \
+    setlivre-production-deployer.service \
+    setlivre-production-deployer.timer \
+    setlivre-release-recovery.service \
+    setlivre-web.service; do
+    ! systemctl cat "$unit" >/dev/null 2>&1 \
+      || fail "unit legada ainda carregada: ${unit}."
+  done
+  ! getent passwd setlivre >/dev/null || fail "usuário runtime legado ainda instalado."
+  ! getent passwd setlivre-deployer >/dev/null || fail "usuário deployer legado ainda instalado."
+  ! getent group setlivre-deployer >/dev/null || fail "grupo deployer legado ainda instalado."
+  for setting in all default lo; do
+    [[ $(sysctl --values "net.ipv6.conf.${setting}.disable_ipv6") == 0 ]] \
+      || fail "IPv6 permanece desabilitado pelo contrato legado (${setting})."
+  done
+}
+
 node_transient_path_is_managed() {
   local path="$1"
   local prefix="/opt/.${NODE_DIRECTORY}."
@@ -351,6 +416,7 @@ IFS= read -r deploy_key < "$deploy_key_file"
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
+assert_legacy_surface_absent
 
 host_configuration_digest="$(python3 - "$SCRIPT_DIRECTORY" <<'PYTHON'
 import hashlib
@@ -578,11 +644,7 @@ if [[ -f ${certificate_path} || -f ${private_key_path} ]]; then
 fi
 install -o root -g root -m 0644 "$active_nginx_source" /etc/nginx/sites-available/set-livre
 ln --symbolic --force /etc/nginx/sites-available/set-livre /etc/nginx/sites-enabled/set-livre
-rm -f -- \
-  /etc/nginx/sites-enabled/default \
-  /etc/nginx/sites-enabled/setlivre \
-  /etc/nginx/sites-available/setlivre-bootstrap \
-  /etc/nginx/sites-available/setlivre-tls
+rm -f -- /etc/nginx/sites-enabled/default
 
 install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 cat > /etc/letsencrypt/renewal-hooks/deploy/set-livre-reload-nginx <<'RENEWAL_HOOK'
@@ -615,7 +677,6 @@ GatewayPorts no
 PermitTunnel no
 AllowUsers ubuntu deploy-setlivre
 SSHD
-rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf
 sshd -t
 systemctl reload ssh
 
