@@ -1,6 +1,6 @@
 begin;
 
-select plan(21);
+select plan(24);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -169,6 +169,43 @@ select ok(
     where member.rolname = 'app_runtime_production'
   ),
   'runtime de produção pode somente assumir app_dal'
+);
+
+select ok(
+  not exists (
+    select 1
+    from pg_catalog.pg_db_role_setting as setting
+    join pg_catalog.pg_roles as role on role.oid = setting.setrole
+    where role.rolname = 'app_runtime_production'
+  ),
+  'runtime de produção não armazena segredo ou configuração em GUC'
+);
+
+select ok(
+  private.managed_runtime_boundaries_are_ready(),
+  'fronteiras gerenciadas de catálogo e HTTP estão seguras'
+);
+
+select ok(
+  not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_db_role_setting', 'SELECT')
+    and not pg_catalog.has_any_column_privilege(
+      'app_dal',
+      'pg_catalog.pg_db_role_setting',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_roles', 'SELECT')
+    and not pg_catalog.has_any_column_privilege(
+      'app_dal',
+      'pg_catalog.pg_roles',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege('app_dal', 'pg_catalog.pg_user', 'SELECT')
+    and not pg_catalog.has_any_column_privilege(
+      'app_dal',
+      'pg_catalog.pg_user',
+      'SELECT'
+    ),
+  'stack local nega à DAL leitura efetiva dos catálogos sensíveis'
 );
 
 select ok(

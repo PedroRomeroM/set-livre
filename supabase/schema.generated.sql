@@ -724,6 +724,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     and (select ready from direct_routine_grants_are_restricted)
     and (select ready from direct_data_grants_are_absent)
     and (select ready from public_tables_use_rls)
+    and private.managed_runtime_boundaries_are_ready()
     and not pg_catalog.has_schema_privilege('public', 'public', 'CREATE')
     and not pg_catalog.has_schema_privilege('anon', 'public', 'CREATE')
     and not pg_catalog.has_schema_privilege('authenticated', 'public', 'CREATE')
@@ -766,17 +767,30 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
       and role.rolvaliduntil = 'infinity'::timestamptz
       and role.rolconfig is null
       and (
-        select pg_catalog.count(*) = 1
-          and pg_catalog.bool_and(
-            setting.setdatabase = (
-              select database.oid
-              from pg_catalog.pg_database as database
-              where database.datname = pg_catalog.current_database()
-            )
-            and setting.setconfig = array['app.settings.jwt_secret=']::text[]
+        (
+          role.rolname = 'app_runtime_production'
+          and (
+            select pg_catalog.count(*) = 0
+            from pg_catalog.pg_db_role_setting as setting
+            where setting.setrole = role.oid
           )
-        from pg_catalog.pg_db_role_setting as setting
-        where setting.setrole = role.oid
+        )
+        or (
+          role.rolname = 'app_runtime_local'
+          and (
+            select pg_catalog.count(*) = 1
+              and pg_catalog.bool_and(
+                setting.setdatabase = (
+                  select database.oid
+                  from pg_catalog.pg_database as database
+                  where database.datname = pg_catalog.current_database()
+                )
+                and setting.setconfig = array['app.settings.jwt_secret=']::text[]
+              )
+            from pg_catalog.pg_db_role_setting as setting
+            where setting.setrole = role.oid
+          )
+        )
       )
   ),
   memberships_are_restricted as (
@@ -796,6 +810,7 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
     pg_catalog.current_setting('role', true) = 'app_dal'
     and pg_catalog.pg_has_role(session_user, 'app_dal', 'MEMBER')
     and (select ready from memberships_are_restricted)
+    and private.managed_runtime_boundaries_are_ready()
     and not pg_catalog.has_database_privilege(
       session_user,
       pg_catalog.current_database(),
@@ -1881,6 +1896,87 @@ ALTER FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") OWN
 
 
 COMMENT ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") IS 'Purga grants expirados e emite token opaco vinculado ao usuário por 15 minutos.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+  with managed_roles(role_name) as (
+    values
+      ('anon'::text),
+      ('authenticated'::text),
+      ('service_role'::text),
+      ('app_dal'::text),
+      ('app_runtime_production'::text)
+  ),
+  sensitive_catalog_access_is_restricted as (
+    select not exists (
+      select 1
+      from (
+        values
+          ('pg_catalog.pg_db_role_setting'::pg_catalog.regclass),
+          ('pg_catalog.pg_roles'::pg_catalog.regclass),
+          ('pg_catalog.pg_user'::pg_catalog.regclass)
+      ) as catalog(relation_oid)
+      cross join managed_roles
+      where pg_catalog.has_table_privilege(
+          managed_roles.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+        or pg_catalog.has_any_column_privilege(
+          managed_roles.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+    ) as ready
+  ),
+  sensitive_settings_are_absent as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_db_role_setting as setting
+      cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
+      where pg_catalog.split_part(configuration.value, '=', 1)
+        ~* '(^|[._-])(secret|password|token|credential|key)([._-]|$)'
+    ) as ready
+  ),
+  managed_http_access_is_restricted as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_namespace as namespace
+      cross join managed_roles
+      where namespace.nspname = 'net'
+        and (
+          pg_catalog.has_schema_privilege(
+            managed_roles.role_name,
+            namespace.oid,
+            'USAGE'
+          )
+          or pg_catalog.has_schema_privilege(
+            managed_roles.role_name,
+            namespace.oid,
+            'CREATE'
+          )
+        )
+    ) as ready
+  )
+  select coalesce(
+    (
+      (select ready from sensitive_catalog_access_is_restricted)
+      or (select ready from sensitive_settings_are_absent)
+    )
+    and (select ready from managed_http_access_is_restricted),
+    false
+  );
+$_$;
+
+
+ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos gerenciados expõem configuração sensível ou se roles runtime alcançam pg_net.';
 
 
 
@@ -3858,6 +3954,10 @@ GRANT ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "u
 
 
 REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() FROM PUBLIC;
 
 
 

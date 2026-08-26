@@ -100,9 +100,14 @@ jobs:
 
       - name: Build and package Linux release
         env:
+          APP_ENV: production
           APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
         run: |
-          npm run build
+          NEXT_PUBLIC_APP_URL="$PRODUCTION_PUBLIC_APP_URL" npm run build:web
+          NEXT_PUBLIC_APP_URL="$PRODUCTION_BACKOFFICE_APP_URL" npm run build:backoffice
           npm run release
 
       - name: Exercise host activation and rollback contracts

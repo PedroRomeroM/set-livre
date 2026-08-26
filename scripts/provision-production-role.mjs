@@ -175,7 +175,6 @@ export async function provisionProductionRole(environment = process.env) {
       throw new Error("A role DAL sem identidade própria diverge do contrato NOLOGIN/NOINHERIT.");
     }
     const runtimeRole = roles.rows.find((role) => role.roleName === productionRole);
-    const activationMode = productionRoleActivationMode(runtimeRole);
 
     const memberships = await admin.query(`
       select
@@ -191,15 +190,21 @@ export async function provisionProductionRole(environment = process.env) {
     `);
     assertSingleExpectedMembership(memberships.rows);
 
+    const managedBoundaries = await admin.query(
+      "select private.managed_runtime_boundaries_are_ready() as ready",
+    );
+    if (managedBoundaries.rowCount !== 1 || managedBoundaries.rows[0]?.ready !== true) {
+      throw new Error("As fronteiras gerenciadas do Supabase não estão restritas para o runtime.");
+    }
+
+    const activationMode = productionRoleActivationMode(runtimeRole);
+
     if (activationMode === "initialize") {
       const passwordStatement = await admin.query(
         "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as statement",
         [connections.runtime.password],
       );
       await admin.query(passwordStatement.rows[0].statement);
-      await admin.query(
-        "alter role app_runtime_production in database postgres set \"app.settings.jwt_secret\" = ''",
-      );
     }
     await admin.query("commit");
     initializedThisRun = activationMode === "initialize";

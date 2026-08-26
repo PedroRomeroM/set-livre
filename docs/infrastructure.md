@@ -147,6 +147,11 @@ shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser execu
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
 
+Depois de adquirir o lock exclusivo, o instalador remove somente diretórios residuais que correspondem
+exatamente a `.staging-<sha>.<sufixo-mktemp>`, são diretórios reais dentro de `releases` e pertencem a
+`root`. Isso recupera `SIGKILL` ou reboot entre extração e rename sem aceitar path genérico; nome,
+owner ou tipo divergente bloqueia a ativação para inspeção.
+
 O manifesto contém o SHA-256 determinístico dos nove arquivos que definem o host. O bootstrap invalida
 o marcador ativo antes de alterar essas superfícies e só publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações; falha intermediária
@@ -202,6 +207,14 @@ credencial que sustenta a release vigente. Rotação futura exige mudança opera
 credenciais/identidades durante a transição, comprovação e retirada da anterior; não faz parte do deploy
 normal. O script não imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps, deixando
 quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
+
+Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
+fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` por role web/DAL bloqueia deploy e
+readiness. Os catálogos `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
+serviço, identidade que o `postgres` do projeto não pode assumir. Quando a ACL gerenciada conserva
+leitura herdada, o banco precisa ter zero setting de role/database cujo nome denote secret, password,
+token, credential ou key. A role de produção não grava o antigo GUC vazio. No local, onde o bootstrap
+usa o superuser próprio da stack, os três catálogos continuam integralmente negados à DAL.
 
 A CA pública oficial do Supabase fica versionada em
 `ops/certificates/supabase-root-2021-ca.crt`. CI e serviços Node a adicionam à cadeia confiável por

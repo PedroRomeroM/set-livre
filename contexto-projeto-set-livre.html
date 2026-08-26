@@ -115,6 +115,10 @@
             Release standalone Linux x86_64 reúne código e ambientes do mesmo SHA; symlink atômico,
             readiness e marcador de recuperação protegem rollback e reboot durante a ativação.
           </li>
+          <li>
+            O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
+            catálogo gerenciado legível contém configuração nomeada como segredo.
+          </li>
         </ul>
       </section>
 
@@ -140,6 +144,11 @@
           Merge em <code>main</code> aplica migrations forward-only e publica na VM. Timeout ou
           serviço indisponível é inconclusivo. Falha pós-merge abre nova branch e repete o ciclo
           completo.
+        </p>
+        <p>
+          O CI compila o artifact Linux com fixtures das coordenadas de produção antes do smoke. O
+          instalador também remove staging residual validado depois de reboot ou
+          <code>SIGKILL</code>, sem aceitar nome, owner ou tipo genérico.
         </p>
       </section>
 

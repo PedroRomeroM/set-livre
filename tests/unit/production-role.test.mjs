@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -95,5 +97,20 @@ describe("production role provisioning", () => {
     expect(() => productionRoleActivationMode({ ...restrictedRole, connectionLimit: 20 })).toThrow(
       "atributos restritos",
     );
+  });
+
+  it("validates managed boundaries before enabling the production login", () => {
+    const source = readFileSync(
+      new URL("../../scripts/provision-production-role.mjs", import.meta.url),
+      "utf8",
+    );
+    const boundaryCheck = source.indexOf(
+      "select private.managed_runtime_boundaries_are_ready() as ready",
+    );
+    const passwordActivation = source.indexOf("alter role app_runtime_production login password");
+
+    expect(boundaryCheck).toBeGreaterThan(-1);
+    expect(passwordActivation).toBeGreaterThan(boundaryCheck);
+    expect(source).not.toContain("app.settings.jwt_secret");
   });
 });

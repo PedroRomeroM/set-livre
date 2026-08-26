@@ -137,6 +137,89 @@ $block$;
 
 do $block$
 declare
+  owner_role text;
+begin
+  if pg_catalog.to_regnamespace('net') is not null then
+    execute 'revoke all on schema net from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production';
+    execute 'revoke all on all tables in schema net from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production';
+    execute 'revoke all on all sequences in schema net from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production';
+    execute 'revoke all on all functions in schema net from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production';
+    execute 'grant usage on schema net to postgres';
+    execute 'grant all on all tables in schema net to postgres';
+    execute 'grant all on all sequences in schema net to postgres';
+    execute 'grant execute on all functions in schema net to postgres';
+
+    foreach owner_role in array array['supabase_admin', 'postgres']
+    loop
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke all on tables from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke all on sequences from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke execute on functions from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production',
+        owner_role
+      );
+      execute pg_catalog.format(
+        'alter default privileges for role %I in schema net revoke usage on types from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production',
+        owner_role
+      );
+    end loop;
+  end if;
+end
+$block$;
+
+revoke all privileges on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+from public, anon, authenticated, service_role, app_dal,
+  app_runtime_local, app_runtime_production;
+
+do $block$
+declare
+  catalog_name text;
+  column_list text;
+begin
+  foreach catalog_name in array array['pg_db_role_setting', 'pg_roles', 'pg_user']
+  loop
+    select pg_catalog.string_agg(
+        pg_catalog.format('%I', attribute.attname),
+        ', ' order by attribute.attnum
+      )
+      into column_list
+    from pg_catalog.pg_attribute as attribute
+    where attribute.attrelid = pg_catalog.to_regclass(
+        pg_catalog.format('pg_catalog.%I', catalog_name)
+      )
+      and attribute.attnum > 0
+      and not attribute.attisdropped;
+
+    execute pg_catalog.format(
+      'revoke all privileges (%s) on table pg_catalog.%I from public, anon, authenticated, service_role, app_dal, app_runtime_local, app_runtime_production',
+      column_list,
+      catalog_name
+    );
+  end loop;
+end
+$block$;
+
+grant all privileges on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+to supabase_admin;
+grant select on table
+  pg_catalog.pg_db_role_setting,
+  pg_catalog.pg_roles,
+  pg_catalog.pg_user
+to postgres, supabase_admin;
+
+do $block$
+declare
   membership record;
 begin
   for membership in

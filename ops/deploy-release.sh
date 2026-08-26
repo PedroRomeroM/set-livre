@@ -139,6 +139,19 @@ activation_complete=false
 activation_failure=""
 previous_release=""
 
+remove_stale_staging_directories() {
+  local name path
+  while IFS= read -r -d '' path; do
+    name="${path##*/}"
+    [[ ${name} =~ ^\.staging-[0-9a-f]{40}\.[A-Za-z0-9]{6}$ ]] || return 1
+    [[ ${path} == "${RELEASES_DIRECTORY}/"* && -d ${path} && ! -L ${path} ]] || return 1
+    [[ $(stat --format '%U' -- "$path") == "root" ]] || return 1
+    rm -rf --one-file-system -- "$path" || return 1
+  done < <(
+    find "$RELEASES_DIRECTORY" -mindepth 1 -maxdepth 1 -name '.staging-*' -print0
+  )
+}
+
 cleanup_files() {
   rm -f -- \
     "$incoming_archive" \
@@ -322,6 +335,8 @@ if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON
 PYTHON
 
 install -d -o root -g setlivre -m 0750 "$RELEASES_DIRECTORY"
+remove_stale_staging_directories \
+  || fail "diretório de staging residual possui identidade ou permissões inválidas."
 staging_directory="$(mktemp --directory "${RELEASES_DIRECTORY}/.staging-${release_sha}.XXXXXX")"
 
 python3 - "$trusted_archive" "$staging_directory" <<'PYTHON'

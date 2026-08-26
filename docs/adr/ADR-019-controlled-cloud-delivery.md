@@ -33,6 +33,12 @@ customizados. A complexidade não era proporcional ao estágio do produto.
   controlam ativação e rollback;
 - o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
   valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
+- objetos internos do Supabase permanecem sob a identidade gerenciada `supabase_admin`, que não pode
+  ser assumida pelo `postgres` do projeto. A produção não armazena segredo em GUC de role/database e
+  o readiness falha se catálogos efetivamente legíveis contiverem configuração com nome sensível;
+- `pg_net` não pertence à baseline. Se o schema `net` existir e `anon`, `authenticated`,
+  `service_role`, `app_dal` ou o login de produção tiver `USAGE/CREATE`, o provisionamento falha antes
+  de habilitar o login e o health existente fica indisponível;
 - branch protection, checks do GitHub e o ciclo documentado de review são a autoridade de merge;
 - depois da revisão limpa, o agente publica o status `Codex review contract` no SHA exato, apontando
   para a evidência; a branch protection exige esse status e qualquer push o invalida;
@@ -50,6 +56,8 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - customizar uma plataforma de CI/review/deploy: rejeitado por custo cognitivo e operacional;
 - executar código de PR na VM: rejeitado por segurança;
 - deploy in-place: rejeitado por rollback frágil.
+- tentar alterar ACLs pertencentes a `supabase_admin`: rejeitado porque o Cloud gerenciado não concede
+  essa identidade ao projeto; um `REVOKE` sem grant option apenas emite warning e não endurece nada.
 
 ## Consequências
 

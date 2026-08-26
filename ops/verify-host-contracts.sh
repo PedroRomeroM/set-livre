@@ -308,11 +308,18 @@ run_expected_failure() {
 initial_failure_sha="$(printf '0%.0s' {1..40})"
 run_expected_failure "$initial_failure_sha" services ""
 
+stale_staging_sha="$(printf 'd%.0s' {1..40})"
+stale_staging_directory="/opt/set-livre/releases/.staging-${stale_staging_sha}.Ab12Cd"
+sudo install -d -o root -g setlivre -m 0750 "$stale_staging_directory"
+sudo install -o root -g setlivre -m 0640 /dev/null "$stale_staging_directory/interrupted"
+
 rm -f -- "$test_state"/*
 package_candidate "$release_sha"
 upload_candidate "$release_sha"
 invoke_candidate "$release_sha" success
 assert_current_release "$release_sha"
+[[ ! -e ${stale_staging_directory} ]] \
+  || fail "staging residual validado não foi removido antes da ativação."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/web.env) \
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \

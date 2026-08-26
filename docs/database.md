@@ -19,7 +19,7 @@ A árvore possui uma baseline inicial com head `20260824000100`. Antes do primei
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. As quatro suítes pgTAP somam 213 asserts orientados a resultados:
+dump de schema. As quatro suítes pgTAP somam 216 asserts orientados a resultados:
 baseline/isolamento, identidade e núcleo legal, perfil e dono/recebedor.
 
 A baseline implementada inclui:
@@ -29,12 +29,17 @@ A baseline implementada inclui:
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
-- `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões.
+- `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
+- readiness da fronteira gerenciada: `pg_net` inacessível e nenhum GUC sensível legível pelos
+  catálogos internos do Cloud.
 
 A baseline encerra com readiness objetivo: head atual, JWT expiry, atributos mínimos de `app_dal`,
 grants diretos restritos, ausência de acesso direto a dados, RLS em tabelas públicas e negação de
-`CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal` e ausência
-de ownership. Drift retorna apenas `false`.
+`CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal`, zero GUC
+próprio em produção e ausência de ownership. No Supabase local, o bootstrap administrativo nega leitura
+efetiva de `pg_roles`, `pg_user` e `pg_db_role_setting`; no Cloud, esses objetos continuam gerenciados
+por `supabase_admin`, então a alternativa suportada exige ausência global de settings com nome de
+segredo enquanto houver leitura herdada. Drift retorna apenas `false`.
 
 `npm run supabase:lint` executa o linter oficial com warnings fatais. `npm run supabase:generate`
 recria o snapshot SQL e os tipos em temporários irmãos, valida o formato e publica por rename

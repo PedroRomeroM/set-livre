@@ -81,6 +81,21 @@ antes da mutation. Cadastro, login e recovery agora executam uma única tentativ
 reconexão. O cenário P0 força explicitamente o estado offline, comprova que a request foi iniciada e
 repete a revalidação SSR; o novo SHA precisa repetir CI e review integralmente.
 
+O review Codex desse SHA anterior encontrou quatro contratos incompletos. O instalador agora recupera
+staging residual validado depois de `SIGKILL`/reboot; a baseline e o provisionador bloqueiam `pg_net` e
+configuração sensível visível por catálogos gerenciados antes de habilitar o login; a role de produção
+não grava mais GUC vazio; e o artifact Linux é compilado com fixtures das coordenadas de produção antes
+do smoke. O ambiente Cloud foi inspecionado sem mutação: `pg_net` está ausente e os catálogos pertencem
+a `supabase_admin`. Como o `postgres` gerenciado não possui grant option, um `REVOKE` direto seria um
+no-op com warning; o contrato suportado preserva a ACL da plataforma e falha fechado sobre o resultado
+de segurança. Testes SQL, unitários e de host cobrem as quatro regressões. O próximo review precisa ser
+pedido somente depois do novo commit e de todos os gates.
+
+No candidato corrigido, 575 testes unitários e 216 asserts pgTAP passaram; format, lint, typecheck,
+docs, migrations, audit sem vulnerabilidades, Knip, lint do banco, builds nativos dos dois apps e
+empacotamento da release também ficaram verdes. O cenário crítico de autenticação passou nos três
+engines (36/36) no SHA anterior; o novo SHA repete a suíte Playwright completa e o build Linux no CI.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks

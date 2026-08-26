@@ -216,7 +216,37 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain(".runtime/web.env");
     expect(deploy).toContain("write_rollback_marker");
     expect(deploy).toContain("recover_link_from_marker");
+    expect(deploy).toContain("remove_stale_staging_directories");
+    expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
     expect(deploy).toContain("trap 'on_signal TERM 143' TERM");
+  });
+
+  it("builds the Linux release with production fixtures before packaging", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const buildStart = workflow.indexOf("- name: Build and package Linux release");
+    const buildEnd = workflow.indexOf(
+      "- name: Exercise host activation and rollback contracts",
+      buildStart,
+    );
+    const buildStep = workflow.slice(buildStart, buildEnd);
+
+    expect(buildStart).toBeGreaterThan(-1);
+    expect(buildEnd).toBeGreaterThan(buildStart);
+    expect(buildStep).toContain("APP_ENV: production");
+    expect(buildStep).toContain("app_runtime_production.oirvvnojgkzdppkdvhej");
+    expect(buildStep).toContain("NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}");
+    expect(buildStep).toContain(
+      'NEXT_PUBLIC_APP_URL="$PRODUCTION_PUBLIC_APP_URL" npm run build:web',
+    );
+    expect(buildStep).toContain(
+      'NEXT_PUBLIC_APP_URL="$PRODUCTION_BACKOFFICE_APP_URL" npm run build:backoffice',
+    );
+    expect(buildStep.indexOf("npm run build:web")).toBeLessThan(
+      buildStep.indexOf("npm run release"),
+    );
   });
 
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
