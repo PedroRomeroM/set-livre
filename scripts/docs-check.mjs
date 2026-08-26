@@ -126,6 +126,15 @@ for (const name of adrFiles) {
   }
 }
 
+for (const path of markdownFiles) {
+  const contents = readFileSync(path, "utf8");
+  const references = new Set([...contents.matchAll(/\bADR-\d{3}\b/gu)].map((match) => match[0]));
+  for (const reference of references) {
+    if (!adrIds.has(reference))
+      errors.push(`Referência a ADR inexistente em ${path}: ${reference}`);
+  }
+}
+
 if (errors.length > 0) {
   process.stderr.write(`docs:check falhou:\n- ${errors.join("\n- ")}\n`);
   process.exitCode = 1;

@@ -2129,6 +2129,19 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
           'TEMPORARY'
         )
     ) as ready
+  ),
+  production_runtime_members_are_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        member.rolname = 'postgres'
+        and membership.admin_option
+        and not membership.inherit_option
+        and not membership.set_option
+      ) as ready
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where granted.rolname = 'app_runtime_production'
   )
   select coalesce(
     (
@@ -2136,7 +2149,8 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
       or (select ready from sensitive_settings_are_absent)
     )
     and (select ready from managed_http_access_is_restricted)
-    and (select ready from application_database_access_is_restricted),
+    and (select ready from application_database_access_is_restricted)
+    and (select ready from production_runtime_members_are_restricted),
     false
   );
 $_$;
@@ -2145,7 +2159,7 @@ $_$;
 ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos expõem configuração sensível, roles runtime alcançam pg_net ou recebem CREATE/TEMP.';
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos expõem configuração sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
 
 
 

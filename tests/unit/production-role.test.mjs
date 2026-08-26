@@ -107,11 +107,15 @@ describe("production role provisioning", () => {
     const boundaryCheck = source.indexOf(
       "select private.managed_runtime_boundaries_are_ready() as ready",
     );
+    const reverseMembershipCheck = source.indexOf(
+      "where granted.rolname = 'app_runtime_production'",
+    );
     const databaseReadiness = source.indexOf("private.check_readiness($1::text) as ready");
     const exactMigrationHead = source.indexOf("pg_catalog.max(migration.version)::text = $1::text");
     const passwordActivation = source.indexOf("alter role app_runtime_production login password");
 
-    expect(boundaryCheck).toBeGreaterThan(-1);
+    expect(reverseMembershipCheck).toBeGreaterThan(-1);
+    expect(boundaryCheck).toBeGreaterThan(reverseMembershipCheck);
     expect(databaseReadiness).toBeGreaterThan(boundaryCheck);
     expect(exactMigrationHead).toBeGreaterThan(databaseReadiness);
     expect(passwordActivation).toBeGreaterThan(exactMigrationHead);

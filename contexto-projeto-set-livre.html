@@ -114,13 +114,17 @@
           <li>
             Releases standalone Linux x86_64 mantêm código e ambientes do mesmo SHA; ativação
             atômica, readiness e recuperação automática preservam a versão anterior em caso de falha
-            ou reboot.
+            ou reboot. A recuperação de serviços aguarda rede online e Nginx antes de consumir o
+            marcador de rollback. O bootstrap só reutiliza diretórios existentes após validar o
+            marcador operacional root-only, mantendo a transição inicial fechada a resíduos legados.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
-            catálogo gerenciado legível contém configuração nomeada como segredo. Readiness também
-            bloqueia comando, grant, membro ou ownership fora das allowlists e preserva a release
-            anterior somente quando seu schema permanece aplicado e compatível.
+            catálogo gerenciado legível contém configuração nomeada como segredo. A membership
+            reversa de <code>app_runtime_production</code> aceita somente a administração automática
+            de <code>postgres</code>, sem permissão para assumir a role. Readiness também bloqueia
+            comando, grant, membro ou ownership fora das allowlists e preserva a release anterior
+            somente quando seu schema permanece aplicado e compatível.
           </li>
         </ul>
       </section>

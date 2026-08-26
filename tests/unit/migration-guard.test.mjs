@@ -65,11 +65,21 @@ describe("migration immutability", () => {
     expect(() => assertImmutableMigrations(fixture)).toThrow("excluída");
   });
 
-  it("allows only a later append-only migration", () => {
+  it("rejects an append-only migration while the compiled head is stale", () => {
     const fixture = repository(baseline);
     const added = "20260825000100_next_slice.sql";
     writeFileSync(resolve(fixture.root, "supabase/migrations", added), "select 2;\n");
 
-    expect(assertImmutableMigrations(fixture)).toMatchObject({ bootstrap: false, added: [added] });
+    expect(() => assertImmutableMigrations(fixture)).toThrow("databaseMigrationHead");
+  });
+
+  it("allows only a later append-only migration linked to the compiled head", () => {
+    const fixture = repository(baseline);
+    const added = "20260825000100_next_slice.sql";
+    writeFileSync(resolve(fixture.root, "supabase/migrations", added), "select 2;\n");
+
+    expect(assertImmutableMigrations({ ...fixture, expectedHead: "20260825000100" })).toMatchObject(
+      { bootstrap: false, added: [added] },
+    );
   });
 });

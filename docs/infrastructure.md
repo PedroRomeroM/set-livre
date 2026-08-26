@@ -111,8 +111,10 @@ SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
-o lock do deploy e estabiliza serviços e health após `SIGKILL`; ela apenas encerra se o deploy normal já
-removeu o marcador. Rollback incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente
+o lock do deploy e estabiliza serviços e health após `SIGKILL`; essa instância depende de
+`network-online.target` e `nginx.service`, portanto não consome o marcador antes de a borda pública estar
+pronta. Ela apenas encerra se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
+readiness interno e HTTPS público interrompe os serviços. Um SHA existente
 com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ativação e mantém no máximo
 quatro releases, incluindo candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
@@ -129,7 +131,9 @@ disponíveis ao processo; o artifact parcial é removido em caso de falha.
 Migrations não sofrem rollback automático. Mudanças usam expand/contract em PRs separados: o health
 aceita o head compilado de uma release enquanto ele existir no histórico aplicado, preservando a
 release anterior durante a ativação, mas o deploy exige que o maior head remoto corresponda exatamente
-ao candidato antes de publicar. Alterações destrutivas exigem backup e recuperação comprovada.
+ao candidato antes de publicar. O gate de PR também recusa `databaseMigrationHead` diferente da
+migration mais recente, impedindo que um schema forward-only seja aplicado antes de detectar o contrato
+compilado obsoleto. Alterações destrutivas exigem backup e recuperação comprovada.
 
 ## Host Oracle
 
@@ -195,6 +199,9 @@ o marcador ativo antes de alterar essas superfícies e só publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações; falha intermediária
 mantém novos deploys bloqueados. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
+Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
+o marcador existente é arquivo regular `root:setlivre 0640` com um único SHA-256 válido. Sem essa prova,
+esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
 
 ### Rede e SSH
 
@@ -250,7 +257,9 @@ quatro slots do limite dez para verificação de deploy, recuperação e variaç
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` ou `CREATE/TEMP` direto no database
-por `app_dal`/login de produção bloqueia deploy e readiness antes de habilitar a senha. Os catálogos
+por `app_dal`/login de produção bloqueia deploy e readiness antes de habilitar a senha. A membership
+reversa aceita somente a administração automática de `postgres`, com `SET/INHERIT` falsos; qualquer
+outro membro de `app_runtime_production` também bloqueia o fluxo. Os catálogos
 `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
 serviço, identidade que o `postgres` do projeto não pode assumir. O bootstrap local preserva para
 `supabase_storage_admin` somente a leitura de `pg_roles` necessária às migrations oficiais do Storage,

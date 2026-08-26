@@ -121,6 +121,9 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).not.toContain("ConditionPathExists=");
     expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
     expect(recoveryUnit).not.toContain("Before=set-livre-web.service");
+    expect(recoveryUnit).toContain("Wants=network-online.target");
+    expect(recoveryUnit).toContain("Requires=nginx.service");
+    expect(recoveryUnit).toContain("After=network-online.target nginx.service");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
     expect(webUnit).toContain("Requires=set-livre-release-recovery@link.service");
@@ -152,7 +155,7 @@ describe("local tooling contracts", () => {
 
   it("rejects every retired pull-deployer surface before changing the host", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
-    const guardCall = bootstrap.indexOf("assert_legacy_surface_absent\n");
+    const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
     const digestCalculation = bootstrap.indexOf('host_configuration_digest="$(python3');
 
     for (const legacyPath of [
@@ -175,6 +178,21 @@ describe("local tooling contracts", () => {
     expect(bootstrap).not.toContain('rm -rf -- "/opt/setlivre"');
     expect(guardCall).toBeGreaterThan(-1);
     expect(digestCalculation).toBeGreaterThan(guardCall);
+  });
+
+  it("permits reused runtime paths only after validating an installed host contract", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const markerValidation = bootstrap.indexOf("installed_host_contract_is_valid() {");
+    const managedDetection = bootstrap.indexOf("if installed_host_contract_is_valid; then");
+    const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
+
+    expect(markerValidation).toBeGreaterThan(-1);
+    expect(bootstrap).toContain("root:setlivre:640");
+    expect(bootstrap).toContain("${#marker_lines[@]} -eq 1");
+    expect(bootstrap).toContain("for path in /opt/node-v24.18.0 /opt/setlivre; do");
+    expect(bootstrap).toContain("if [[ ${managed_host_contract} == false ]]; then");
+    expect(managedDetection).toBeGreaterThan(markerValidation);
+    expect(guardCall).toBeGreaterThan(managedDetection);
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {

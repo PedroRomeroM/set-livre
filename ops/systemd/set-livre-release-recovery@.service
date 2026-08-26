@@ -1,5 +1,8 @@
 [Unit]
 Description=Recover an interrupted Set Livre release activation (%i)
+Wants=network-online.target
+Requires=nginx.service
+After=network-online.target nginx.service
 
 [Service]
 Type=oneshot

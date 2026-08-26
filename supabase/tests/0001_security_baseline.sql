@@ -1,6 +1,6 @@
 begin;
 
-select plan(32);
+select plan(33);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -170,6 +170,17 @@ select ok(
   ),
   'runtime de produção pode somente assumir app_dal'
 );
+
+create role runtime_membership_intruder nologin noinherit;
+grant app_runtime_production to runtime_membership_intruder
+  with admin false, inherit false, set true;
+select ok(
+  not private.managed_runtime_boundaries_are_ready()
+    and not private.check_readiness('20260824000100'),
+  'runtime de produção não pode ser concedido a outra identidade'
+);
+revoke app_runtime_production from runtime_membership_intruder;
+drop role runtime_membership_intruder;
 
 select ok(
   not exists (

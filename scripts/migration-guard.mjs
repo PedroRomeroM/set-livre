@@ -3,6 +3,8 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
+
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const migrationsDirectory = "supabase/migrations";
 const baselineName = "20260824000100_initial_production_baseline.sql";
@@ -45,9 +47,19 @@ function baseMigration(root, baseRef, name) {
   return git(root, ["show", `${baseRef}:${migrationsDirectory}/${name}`], { encoding: null });
 }
 
+function assertCurrentMigrationHead(current, expectedHead) {
+  const currentHead = migrationNamePattern.exec(current.at(-1) ?? "")?.groups?.timestamp;
+  if (!/^\d{14}$/u.test(expectedHead) || currentHead !== expectedHead) {
+    throw new Error(
+      `databaseMigrationHead ${expectedHead} diverge da migration mais recente ${currentHead ?? "ausente"}.`,
+    );
+  }
+}
+
 export function assertImmutableMigrations({
   baseRef = "origin/main",
   bootstrapBaseCommit = initialProductionBaseCommit,
+  expectedHead = databaseMigrationHead,
   root = repositoryRoot,
 } = {}) {
   const baseCommit = git(root, ["rev-parse", "--verify", `${baseRef}^{commit}`]).trim();
@@ -63,6 +75,7 @@ export function assertImmutableMigrations({
     if (current.length !== 1 || current[0] !== baselineName) {
       throw new Error("A transição inicial exige somente a baseline canônica de produção.");
     }
+    assertCurrentMigrationHead(current, expectedHead);
     return { added: [baselineName], bootstrap: true, preserved: [] };
   }
 
@@ -73,6 +86,8 @@ export function assertImmutableMigrations({
       throw new Error(`Migration aplicada foi alterada: ${name}.`);
     }
   }
+
+  assertCurrentMigrationHead(current, expectedHead);
 
   const baseTimestamp = Math.max(
     ...base.map((name) => Number(migrationNamePattern.exec(name)?.groups?.timestamp ?? 0)),

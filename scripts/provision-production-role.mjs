@@ -193,6 +193,28 @@ export async function provisionProductionRole(environment = process.env) {
     `);
     assertSingleExpectedMembership(memberships.rows);
 
+    const runtimeMembers = await admin.query(`
+      select
+        member.rolname as "roleName",
+        membership.admin_option as "adminOption",
+        membership.inherit_option as "inheritOption",
+        membership.set_option as "setOption"
+      from pg_catalog.pg_auth_members as membership
+      join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+      join pg_catalog.pg_roles as member on member.oid = membership.member
+      where granted.rolname = 'app_runtime_production'
+      order by member.rolname
+    `);
+    if (
+      runtimeMembers.rows.length !== 1 ||
+      runtimeMembers.rows[0]?.roleName !== "postgres" ||
+      runtimeMembers.rows[0]?.adminOption !== true ||
+      runtimeMembers.rows[0]?.inheritOption !== false ||
+      runtimeMembers.rows[0]?.setOption !== false
+    ) {
+      throw new Error("A role de produção foi concedida a uma identidade inesperada.");
+    }
+
     const managedBoundaries = await admin.query(
       "select private.managed_runtime_boundaries_are_ready() as ready",
     );

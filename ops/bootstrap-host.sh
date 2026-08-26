@@ -44,6 +44,7 @@ fail() {
 }
 
 assert_legacy_surface_absent() {
+  local managed_host_contract="$1"
   local path unit setting
   for path in \
     /etc/apt/apt.conf.d/52setlivre-unattended-upgrades \
@@ -69,8 +70,6 @@ assert_legacy_surface_absent() {
     /etc/systemd/system/setlivre-web.service \
     /etc/systemd/system/timers.target.wants/setlivre-production-deployer.timer \
     /etc/tmpfiles.d/setlivre-production-deployer.conf \
-    /opt/node-v24.18.0 \
-    /opt/setlivre \
     /run/lock/setlivre-production-deployer-config.lock \
     /run/lock/setlivre-production-deployer.lock \
     /run/lock/setlivre-release-manager.lock \
@@ -90,6 +89,12 @@ assert_legacy_surface_absent() {
     [[ ! -e ${path} && ! -L ${path} ]] \
       || fail "superfície legada ainda instalada: ${path}."
   done
+  if [[ ${managed_host_contract} == false ]]; then
+    for path in /opt/node-v24.18.0 /opt/setlivre; do
+      [[ ! -e ${path} && ! -L ${path} ]] \
+        || fail "superfície legada ainda instalada: ${path}."
+    done
+  fi
   for unit in \
     setlivre-backoffice.service \
     setlivre-production-deployer.service \
@@ -106,6 +111,19 @@ assert_legacy_surface_absent() {
     [[ $(sysctl --values "net.ipv6.conf.${setting}.disable_ipv6") == 0 ]] \
       || fail "IPv6 permanece desabilitado pelo contrato legado (${setting})."
   done
+}
+
+installed_host_contract_is_valid() {
+  local marker=/etc/set-livre/host-config.sha256
+  local -a marker_lines=()
+  [[ -e ${marker} || -L ${marker} ]] || return 1
+  [[ -f ${marker} && ! -L ${marker} ]] \
+    || fail "marcador operacional instalado é inválido."
+  [[ $(stat --format '%U:%G:%a' -- "$marker") == "root:setlivre:640" ]] \
+    || fail "marcador operacional instalado tem owner ou modo inesperado."
+  mapfile -t marker_lines < "$marker"
+  [[ ${#marker_lines[@]} -eq 1 && ${marker_lines[0]} =~ ^[0-9a-f]{64}$ ]] \
+    || fail "marcador operacional instalado tem conteúdo inválido."
 }
 
 node_transient_path_is_managed() {
@@ -416,7 +434,11 @@ IFS= read -r deploy_key < "$deploy_key_file"
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
-assert_legacy_surface_absent
+managed_host_contract=false
+if installed_host_contract_is_valid; then
+  managed_host_contract=true
+fi
+assert_legacy_surface_absent "$managed_host_contract"
 
 host_configuration_digest="$(python3 - "$SCRIPT_DIRECTORY" <<'PYTHON'
 import hashlib
@@ -591,9 +613,7 @@ if ! getent passwd deploy-setlivre >/dev/null; then
 fi
 
 install -d -o root -g setlivre -m 0750 /etc/set-livre /opt/set-livre /opt/set-livre/releases
-if [[ -e /etc/set-livre/host-config.sha256 ]]; then
-  [[ -f /etc/set-livre/host-config.sha256 && ! -L /etc/set-livre/host-config.sha256 ]] \
-    || fail "marcador operacional instalado é inválido."
+if [[ ${managed_host_contract} == true ]]; then
   install -o root -g setlivre -m 0640 /etc/set-livre/host-config.sha256 \
     /etc/set-livre/host-config.previous.sha256
   rm -f -- /etc/set-livre/host-config.sha256

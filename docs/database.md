@@ -36,8 +36,10 @@ A baseline implementada inclui:
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
 expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, ausência de acesso direto ou via
 `PUBLIC` a dados, ownership nulo, memberships reversas conhecidas, RLS em tabelas públicas e negação de
-`CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal`, zero GUC
-próprio em produção, somente `CONNECT` como ACL direta e ausência de ownership. No Supabase local, o bootstrap administrativo nega leitura
+`CREATE/TEMP`. O check do runtime prova login restrito, membership única com `SET app_dal` e allowlist
+reversa exata: somente `postgres` pode administrar `app_runtime_production`, sem `SET` ou `INHERIT`;
+qualquer identidade assumível é rejeitada. O runtime mantém zero GUC próprio em produção, somente
+`CONNECT` como ACL direta e ausência de ownership. No Supabase local, o bootstrap administrativo nega leitura
 efetiva de `pg_roles`, `pg_user` e `pg_db_role_setting` às roles da aplicação, preservando em `pg_roles`
 somente o acesso exigido pelo `supabase_storage_admin`; no Cloud, esses objetos continuam gerenciados
 por `supabase_admin`, então a alternativa suportada exige ausência global de settings com nome de
@@ -60,7 +62,8 @@ vertical que os consome; nova função DAL atualiza grants, readiness, tipos, do
 mesmo PR.
 
 `npm run migrations:check` compara byte a byte as migrations presentes na base `main`, rejeita edição
-ou exclusão e aceita somente novos timestamps posteriores. A exceção autoextinguível desta entrega
+ou exclusão, aceita somente novos timestamps posteriores e exige que `databaseMigrationHead` identifique
+a migration mais recente antes de qualquer `db push`. A exceção autoextinguível desta entrega
 aceita a baseline consolidada apenas enquanto `main` ainda não contém essa baseline e aponta para o
 commit auditado que foi comprovado contra a produção vazia. Se a base avançar, o gate falha fechado e
 exige nova verificação explícita antes de qualquer consolidação.
