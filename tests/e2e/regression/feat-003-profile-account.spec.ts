@@ -393,14 +393,19 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       page.getByRole("textbox", { name: "Telefone" }),
       recoveredPhone,
     );
-    const recoveryResponsePromise = page.waitForResponse((response) => {
-      const address = new URL(response.url());
-      return address.pathname === "/api/commands" && response.request().method() === "POST";
-    });
     await page.getByRole("button", { name: "Salvar alterações" }).click();
-    const recoveryResponse = await recoveryResponsePromise;
+    await expect(page.getByText("Dados do perfil atualizados.", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect
+      .poll(() => profileCommandRequests, {
+        message: "A recuperação online deve enviar exatamente um novo comando de perfil.",
+        timeout: 15_000,
+      })
+      .toBe(commandsAfterOfflineFailure + 1);
+    const recoveryResponse = await page.request.get("/api/account/profile");
     if (recoveryResponse.status() !== 200) {
-      throw new Error("A recuperação online da mutação de perfil não foi aceita.");
+      throw new Error("A recuperação online do perfil não pôde ser relida de forma autoritativa.");
     }
     const recoveryPayload: unknown = await recoveryResponse.json();
     const recoveredProfile = assertFeat003SafeProfileResult(
@@ -418,7 +423,6 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     ) {
       throw new Error("A tentativa offline foi retomada ou alterou a versão autoritativa.");
     }
-    await expect(page.getByText("Dados do perfil atualizados.", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(recoveredName);
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(offlineName);
     const recoveredPrivateValues = [

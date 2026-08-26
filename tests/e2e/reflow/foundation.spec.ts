@@ -11,7 +11,6 @@ test("FOUNDATION-E2E-011 zoom 200% preserva reflow nos dois apps", async ({ page
     [backofficeBaseUrl, "Operação Set Livre"],
   ] as const) {
     await gotoExpectedPage(page, url, heading);
-    await page.waitForLoadState("networkidle");
 
     await expect
       .poll(async () => {

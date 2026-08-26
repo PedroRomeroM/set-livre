@@ -153,6 +153,12 @@
           sem mascarar defeito com retry.
         </p>
         <p>
+          A recuperação online desse cenário comprova a confirmação visível, a contagem exata de
+          comandos e uma releitura autoritativa, todas com limite próprio. Os testes de reflow não
+          aguardam <code>networkidle</code> do HMR: prontidão significa heading renderizado,
+          documento completo, viewport correto e ausência de overflow.
+        </p>
+        <p>
           O bootstrap local mantém os catálogos sensíveis negados às roles da aplicação e preserva
           para <code>supabase_storage_admin</code> somente a leitura de
           <code>pg_roles</code> exigida pelas migrations oficiais do Storage.

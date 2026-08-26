@@ -139,6 +139,15 @@ consecutivas e a suíte integral passou 114/114; os gates estáticos, 576 testes
 builds dos dois apps e empacotamento da release também permaneceram verdes. O próximo SHA deve repetir esse
 conjunto no CI e reiniciar o review.
 
+Na repetição em CI, o mesmo cenário composto concluiu o `POST` de recuperação, mas a observação genérica
+de `page.waitForResponse` permaneceu sem diagnóstico até consumir os 180 segundos globais. O teste agora
+espera a confirmação visível dentro de 15 segundos, prova a contagem exata de comandos e relê o perfil pela
+API autoritativa; nenhuma etapa assíncrona depende mais do timeout total do cenário. A mesma execução mostrou
+que `networkidle` não é um contrato de prontidão válido para o HMR do `next dev` no Firefox. O teste de reflow
+passou a usar somente o heading renderizado e a barreira já existente de `document.readyState`, viewport e
+ausência de overflow. As duas mudanças removem esperas ambientais sem retry, relaxamento de asserção ou
+alteração do código de produção.
+
 ## Observabilidade e operação
 
 Systemd separa web, backoffice e recuperação de release. Nginx publica somente a web, health checks
