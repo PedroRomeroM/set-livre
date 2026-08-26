@@ -915,6 +915,19 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     cross join dal_role
     where privilege.grantee = dal_role.oid
   ),
+  effective_external_schema_access_is_absent as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_namespace as namespace
+      where namespace.nspname <> 'private'
+        and namespace.nspname <> 'information_schema'
+        and namespace.nspname !~ '^pg_'
+        and (
+          pg_catalog.has_schema_privilege('app_dal', namespace.oid, 'USAGE')
+          or pg_catalog.has_schema_privilege('app_dal', namespace.oid, 'CREATE')
+        )
+    ) as ready
+  ),
   direct_routine_grants_are_restricted as (
     select
       pg_catalog.count(*) = (select pg_catalog.count(*) from authorized_dal_routines)
@@ -1058,6 +1071,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     (select ready from migration_is_applied)
     and pg_catalog.current_setting('app.settings.jwt_exp', true) = '3600'
     and (select ready from direct_schema_grants_are_restricted)
+    and (select ready from effective_external_schema_access_is_absent)
     and (select ready from direct_routine_grants_are_restricted)
     and (select ready from effective_private_routine_grants_are_restricted)
     and (select ready from direct_data_grants_are_absent)
@@ -1082,7 +1096,7 @@ $_$;
 ALTER FUNCTION "private"."check_readiness"("expected_version" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health do app: migration aplicada e compatível com rollback, role DAL mínima, RLS e allowlists exatas.';
+COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health do app: migration aplicada e compatível com rollback, role DAL restrita ao schema private, RLS e allowlists exatas.';
 
 
 

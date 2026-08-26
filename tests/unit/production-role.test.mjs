@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertProductionDeploymentContract,
+  assertSupabasePublishableKey,
   productionRoleActivationMode,
   productionRoleConnections,
 } from "../../scripts/provision-production-role.mjs";
@@ -78,6 +79,21 @@ describe("production role provisioning", () => {
         PRODUCTION_PUBLIC_APP_URL: "https://wrong.example",
       }),
     ).toThrow("diverge");
+  });
+
+  it("accepts only a Supabase publishable key and rejects privileged key classes", () => {
+    const serviceRoleJwt = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ iss: "supabase", role: "service_role" })).toString("base64url"),
+      "synthetic-signature",
+    ].join(".");
+
+    expect(() => assertSupabasePublishableKey("sb_publishable_test-contract")).not.toThrow();
+    expect(() => assertSupabasePublishableKey("sb_secret_synthetic-contract")).toThrow(
+      "chave privilegiada",
+    );
+    expect(() => assertSupabasePublishableKey(serviceRoleJwt)).toThrow("chave privilegiada");
+    expect(() => assertSupabasePublishableKey("synthetic-anon-value")).toThrow("formato inválido");
   });
 
   it("initializes credentials only for the migration-created NOLOGIN role", () => {

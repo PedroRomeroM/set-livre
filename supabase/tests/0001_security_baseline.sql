@@ -1,6 +1,6 @@
 begin;
 
-select plan(33);
+select plan(34);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -262,6 +262,17 @@ select ok(
   'readiness rejeita acesso a dados herdado por PUBLIC'
 );
 revoke select on table private.identity_recovery_grants from public;
+
+savepoint managed_schema_drift;
+create schema readiness_external;
+create table readiness_external.public_probe (id bigint primary key);
+grant usage on schema readiness_external to public;
+grant select on table readiness_external.public_probe to public;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita acesso efetivo da DAL a schema externo herdado por PUBLIC'
+);
+rollback to savepoint managed_schema_drift;
 
 create role readiness_intruder nologin noinherit;
 grant app_dal to readiness_intruder with admin false, inherit false, set true;

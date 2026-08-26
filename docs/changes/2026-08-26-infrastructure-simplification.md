@@ -38,7 +38,9 @@ A produção vazia recebe somente `20260824000100_initial_production_baseline.sq
 baseline final, grants mínimos, RLS e as roles restritas. O login runtime é inicializado uma única vez;
 deploys seguintes apenas validam a credencial existente, sem rotação implícita. Readiness usa uma
 allowlist exata de comandos DAL, rejeita ACL herdada por `PUBLIC`, ownership ou membership inesperada e
-aceita somente `CONNECT` como grant direto do login. A membership reversa aceita apenas o vínculo
+aceita somente `CONNECT` como grant direto do login. Também rejeita `USAGE/CREATE` efetivo de `app_dal`
+em qualquer schema não sistêmico fora de `private`, inclusive quando o acesso nasce de `PUBLIC`. A
+membership reversa aceita apenas o vínculo
 administrativo automático de `postgres`, sem `SET/INHERIT`; qualquer identidade assumível é rejeitada.
 O health preserva heads aplicados para rollback
 expand/contract, enquanto o deploy exige o maior head remoto exatamente igual ao candidato.
@@ -52,7 +54,8 @@ integral, substitui o alias legado por link canônico recuperável, rejeita cert
 horas restantes, preserva apenas swapfiles que cumpram o manifesto e a borda encaminha o UUID de
 correlação para validação pela aplicação. O contrato também recusa qualquer identidade, unit, credencial,
 ferramenta ou árvore remanescente do deploy pull aposentado; sua retirada é uma migração administrativa
-única e não adiciona outro mecanismo permanente ao repositório.
+única e não adiciona outro mecanismo permanente ao repositório. O preflight e o instalador aceitam
+somente chave Supabase `sb_publishable_`, impedindo que uma chave privilegiada alcance build ou artifact.
 
 ## Read models, comandos e invalidação
 
@@ -78,13 +81,15 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
   standalone sob as mesmas fronteiras instaladas na VM;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
-  essas dependências ainda não estiverem disponíveis;
+  essas dependências ainda não estiverem disponíveis, e só o consome depois de health interno e público;
 - recuperação anterior a um novo deploy e reexecução do bootstrap com release compatível exigem o SHA
   esperado tanto nos health checks internos quanto no HTTPS público antes de continuar ou publicar o
   novo digest operacional;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
-  validar tipo, owner, modo e conteúdo do marcador operacional root-only; sem marcador válido, resíduos
-  nesses caminhos continuam bloqueando a transição;
+  validar tipo, owner, modo e conteúdo do marcador operacional ou dos marcadores transitórios de retry;
+  o bootstrap publica o in-progress antes da primeira mutação, preserva o digest anterior e remove ambos
+  somente após publicar o novo digest; sem marcador válido, resíduos nesses caminhos continuam bloqueando
+  a transição;
 - gates locais recusam tanto `databaseMigrationHead` divergente da migration mais recente quanto
   referência documental a ADR inexistente;
 - o empacotamento aceita somente conteúdo regular originado da release e das dependências instaladas

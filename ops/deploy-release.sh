@@ -80,7 +80,6 @@ recover_link_from_marker() {
     activate_link "$target" || return 1
     recovered_release="$(basename -- "$target")"
   fi
-  rm -f -- "$ROLLBACK_MARKER"
 }
 
 write_rollback_marker() {
@@ -106,7 +105,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
   fi
   if [[ -e ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
-    printf 'Ativação interrompida recuperada antes do início dos serviços.\n'
+    printf 'Link da ativação interrompida recuperado; estabilização dos serviços permanece armada.\n'
   fi
   exit 0
 fi
@@ -125,6 +124,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
       fail "a release recuperada não atingiu readiness; serviços interrompidos."
     fi
+    rm -f -- "$ROLLBACK_MARKER"
     printf 'Ativação interrompida recuperada e serviços estabilizados.\n'
   fi
   exit 0
@@ -211,11 +211,13 @@ rollback_activation() {
   fi
   if [[ -z ${recovered_release} ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
+    rm -f -- "$ROLLBACK_MARKER"
     return 0
   fi
   if systemctl restart set-livre-web.service set-livre-backoffice.service \
     && wait_for_health "$recovered_release" \
     && wait_for_public_health "$recovered_release"; then
+    rm -f -- "$ROLLBACK_MARKER"
     return 0
   fi
   systemctl stop set-livre-web.service set-livre-backoffice.service || true
@@ -257,6 +259,7 @@ if [[ -e ${ROLLBACK_MARKER} ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
     fail "a release recuperada não atingiu readiness interno e público."
   fi
+  rm -f -- "$ROLLBACK_MARKER"
 fi
 
 trust_incoming_file() {
@@ -338,7 +341,7 @@ def read_environment(path, label, expected_app_url):
     if values["NEXT_PUBLIC_SUPABASE_URL"] != supabase_url:
         fail(label, "projeto Supabase")
     publishable_key = values["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
-    if len(publishable_key) < 20 or any(character.isspace() for character in publishable_key):
+    if re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{12,}", publishable_key) is None:
         fail(label, "publishable key")
 
     try:

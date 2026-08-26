@@ -127,7 +127,7 @@ write_fixture_environment() {
     printf 'APP_ENV=production\n'
     printf 'DATABASE_URL_APP_DAL=postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%%20role%%3Dapp_dal\n'
     printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
-    printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ci_contract\n'
+    printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ci_contract_key\n'
     printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
   } > "$destination"
 }
@@ -354,12 +354,17 @@ invoke_candidate_through_forced_command() {
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
 
-assert_current_release() {
+assert_current_link() {
   local expected="$1"
   local current
   current="$(sudo readlink --canonicalize-existing /opt/set-livre/current)"
   [[ ${current} == "/opt/set-livre/releases/${expected}" ]] \
     || fail "release ativa divergiu depois do teste de rollback."
+}
+
+assert_current_release() {
+  local expected="$1"
+  assert_current_link "$expected"
   [[ ! -e /opt/set-livre/.activation-rollback ]] \
     || fail "marcador de rollback permaneceu depois de estado terminal."
 }
@@ -368,6 +373,7 @@ run_expected_failure() {
   local candidate_sha="$1"
   local phase="$2"
   local expected_current="$3"
+  local expected_marker="${4:-absent}"
   rm -f -- "$test_state"/*
   package_candidate "$candidate_sha"
   upload_candidate "$candidate_sha"
@@ -377,6 +383,10 @@ run_expected_failure() {
   if [[ -z ${expected_current} ]]; then
     [[ ! -e /opt/set-livre/current ]] || fail "primeira ativação falha deixou release ativa."
     [[ ! -e /opt/set-livre/.activation-rollback ]] || fail "rollback inicial deixou marcador."
+  elif [[ ${expected_marker} == retained ]]; then
+    assert_current_link "$expected_current"
+    [[ -e /opt/set-livre/.activation-rollback ]] \
+      || fail "falha de estabilização consumiu o marcador necessário ao retry."
   else
     assert_current_release "$expected_current"
   fi
@@ -411,7 +421,7 @@ run_expected_failure "$(printf '3%.0s' {1..40})" services "$release_sha"
 run_expected_failure "$(printf '4%.0s' {1..40})" internal-health "$release_sha"
 run_expected_failure "$(printf '5%.0s' {1..40})" public-health "$release_sha"
 rollback_public_sha="$(printf 'e%.0s' {1..40})"
-run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha"
+run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha" retained
 [[ -e "$test_state/rollback-public-health-observed" ]] \
   || fail "rollback não consultou o readiness HTTPS público da release anterior."
 grep --fixed-strings --line-regexp \
@@ -438,7 +448,7 @@ printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
-run_expected_failure "$recovery_public_sha" recovery-public-health "$release_sha"
+run_expected_failure "$recovery_public_sha" recovery-public-health "$release_sha" retained
 [[ -e "$test_state/recovery-public-health-observed" ]] \
   || fail "recuperação anterior ao deploy não consultou o readiness HTTPS público."
 grep --fixed-strings --line-regexp \
@@ -451,6 +461,24 @@ sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activati
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-link
+assert_current_link "$release_sha"
+[[ -e /opt/set-livre/.activation-rollback ]] \
+  || fail "recuperação do link consumiu o marcador antes de estabilizar os serviços."
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=recovery-public-health \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
+  fail "recuperação de serviços aceitou readiness HTTPS público com falha."
+fi
+assert_current_link "$release_sha"
+[[ -e /opt/set-livre/.activation-rollback ]] \
+  || fail "recuperação falha consumiu o marcador necessário ao retry."
+sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
 assert_current_release "$release_sha"
 
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback

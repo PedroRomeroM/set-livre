@@ -117,7 +117,7 @@ jobs:
           APP_ENV: production
           APP_RELEASE_SHA: ${{ github.sha }}
           DATABASE_URL_APP_DAL: postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
         run: |
           NEXT_PUBLIC_APP_URL="$PRODUCTION_PUBLIC_APP_URL" npm run build:web
@@ -133,7 +133,7 @@ jobs:
           APP_RELEASE_SHA: ${{ github.sha }}
           DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
           NEXT_PUBLIC_APP_URL: https://setlivre.example
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-public-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
           NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
         run: |
           processes=()
@@ -226,7 +226,7 @@ jobs:
           APP_RELEASE_SHA: ${{ github.sha }}
           DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
           NEXT_PUBLIC_APP_URL: https://setlivre.example
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-public-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
           NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
         run: |
           npm run build

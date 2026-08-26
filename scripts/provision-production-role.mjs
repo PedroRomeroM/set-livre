@@ -17,6 +17,7 @@ export const productionCoordinates = Object.freeze({
   vmHost: "147.15.97.227",
 });
 const projectRefPattern = /^[a-z]{20}$/u;
+const publishableKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{12,}$/u;
 
 function requiredValue(environment, name) {
   const value = environment[name];
@@ -31,6 +32,29 @@ function decodedUrlPart(value, label) {
     return decodeURIComponent(value);
   } catch {
     throw new Error(`${label} possui encoding inválido.`);
+  }
+}
+
+export function assertSupabasePublishableKey(value) {
+  if (typeof value !== "string" || value.startsWith("sb_secret_")) {
+    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY não pode ser uma chave privilegiada.");
+  }
+  const jwtParts = value.split(".");
+  if (jwtParts.length === 3) {
+    let role;
+    try {
+      const payload = JSON.parse(Buffer.from(jwtParts[1], "base64url").toString("utf8"));
+      role = payload?.role;
+    } catch {
+      role = undefined;
+    }
+    if (role === "service_role") {
+      throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY não pode ser uma chave privilegiada.");
+    }
+    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY precisa usar o formato sb_publishable_.");
+  }
+  if (!publishableKeyPattern.test(value)) {
+    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY possui formato inválido.");
   }
 }
 
@@ -96,9 +120,7 @@ export function assertProductionDeploymentContract(environment = process.env) {
   }
 
   const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
-  if (publishableKey.length < 20 || /\s/u.test(publishableKey)) {
-    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY possui formato inválido.");
-  }
+  assertSupabasePublishableKey(publishableKey);
   return connections;
 }
 

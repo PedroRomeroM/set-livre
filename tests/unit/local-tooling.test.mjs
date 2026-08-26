@@ -180,19 +180,37 @@ describe("local tooling contracts", () => {
     expect(digestCalculation).toBeGreaterThan(guardCall);
   });
 
-  it("permits reused runtime paths only after validating an installed host contract", () => {
+  it("permits reused runtime paths only after validating a retryable host state", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
-    const markerValidation = bootstrap.indexOf("installed_host_contract_is_valid() {");
-    const managedDetection = bootstrap.indexOf("if installed_host_contract_is_valid; then");
+    const markerValidation = bootstrap.indexOf("host_state_marker_is_valid() {");
+    const installedDetection = bootstrap.indexOf('"$HOST_CONFIGURATION_DIGEST"');
+    const previousDetection = bootstrap.indexOf('"$HOST_CONFIGURATION_PREVIOUS_DIGEST"');
+    const pendingDetection = bootstrap.indexOf('"$HOST_BOOTSTRAP_IN_PROGRESS"');
     const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
+    const pendingPublish = bootstrap.indexOf(
+      'mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+    );
+    const activeReleaseInspection = bootstrap.indexOf("if [[ -e /opt/set-livre/current ]]; then");
+    const finalDigestPublish = bootstrap.indexOf(
+      'mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
+    );
+    const retryMarkersRemoved = bootstrap.indexOf(
+      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+    );
 
     expect(markerValidation).toBeGreaterThan(-1);
     expect(bootstrap).toContain("root:setlivre:640");
+    expect(bootstrap).toContain("root:root:600");
     expect(bootstrap).toContain("${#marker_lines[@]} -eq 1");
     expect(bootstrap).toContain("for path in /opt/node-v24.18.0 /opt/setlivre; do");
     expect(bootstrap).toContain("if [[ ${managed_host_contract} == false ]]; then");
-    expect(managedDetection).toBeGreaterThan(markerValidation);
-    expect(guardCall).toBeGreaterThan(managedDetection);
+    expect(installedDetection).toBeGreaterThan(markerValidation);
+    expect(previousDetection).toBeGreaterThan(installedDetection);
+    expect(pendingDetection).toBeGreaterThan(previousDetection);
+    expect(guardCall).toBeGreaterThan(pendingDetection);
+    expect(pendingPublish).toBeGreaterThan(guardCall);
+    expect(pendingPublish).toBeLessThan(activeReleaseInspection);
+    expect(retryMarkersRemoved).toBeGreaterThan(finalDigestPublish);
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {
@@ -336,12 +354,14 @@ describe("local tooling contracts", () => {
     );
 
     expect(bootstrap).toContain('restrict,command="/usr/local/sbin/set-livre-deploy-ssh"');
-    expect(bootstrap).toContain("/etc/set-livre/host-config.sha256");
+    expect(bootstrap).toContain(
+      'readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"',
+    );
     for (const path of hostConfigurationFiles) {
       expect(bootstrap).toContain(path.slice("ops/".length));
     }
     expect(bootstrap.indexOf("systemctl enable --now snap.certbot.renew.timer")).toBeLessThan(
-      bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
+      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
     expect(command).toContain("cleanup_abandoned_uploads");
@@ -370,6 +390,16 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("rollback-public-health-observed");
     expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
+    const publishableFixtures = [
+      ...workflow.matchAll(/NEXT_PUBLIC_SUPABASE_ANON_KEY: (sb_publishable_[A-Za-z0-9_-]+)/gu),
+      ...hostVerification.matchAll(
+        /NEXT_PUBLIC_SUPABASE_ANON_KEY=(sb_publishable_[A-Za-z0-9_-]+)/gu,
+      ),
+    ].map((match) => match[1]);
+    expect(publishableFixtures).toHaveLength(4);
+    for (const publishableFixture of publishableFixtures) {
+      expect(publishableFixture).toMatch(/^sb_publishable_[A-Za-z0-9_-]{12,}$/u);
+    }
     expect(deploy).toContain("readiness HTTPS público");
     expect(deploy).toContain("RETAINED_RELEASES=4");
     expect(deploy).toContain("hostConfiguration.sha256");
@@ -378,6 +408,26 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("recover_link_from_marker");
     expect(deploy).toContain("--recover-link");
     expect(deploy).toContain("--recover-services");
+    const recoveryFunctionStart = deploy.indexOf("recover_link_from_marker() {");
+    const recoveryFunctionEnd = deploy.indexOf(
+      "\nwrite_rollback_marker() {",
+      recoveryFunctionStart,
+    );
+    expect(deploy.slice(recoveryFunctionStart, recoveryFunctionEnd)).not.toContain(
+      'rm -f -- "$ROLLBACK_MARKER"',
+    );
+    const serviceRecoveryStart = deploy.indexOf(
+      'if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]',
+    );
+    const serviceRecoveryEnd = deploy.indexOf("\nverify_only=false", serviceRecoveryStart);
+    const serviceRecovery = deploy.slice(serviceRecoveryStart, serviceRecoveryEnd);
+    expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
+      serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
+    );
+    expect(hostVerification).toContain(
+      "recuperação do link consumiu o marcador antes de estabilizar os serviços",
+    );
+    expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
     expect(deploy).toContain("^\\.staging-[0-9a-f]{40}\\.[A-Za-z0-9]{6}$");
@@ -387,12 +437,16 @@ describe("local tooling contracts", () => {
     const rollback = deploy.slice(rollbackStart, rollbackEnd);
     expect(rollback).toContain('wait_for_health "$recovered_release"');
     expect(rollback).toContain('wait_for_public_health "$recovered_release"');
+    expect(rollback.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
+      rollback.lastIndexOf('rm -f -- "$ROLLBACK_MARKER"'),
+    );
     expect(deploy.match(/wait_for_public_health "\$recovered_release"/gu)).toHaveLength(3);
+    expect(deploy).toContain('re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{12,}", publishable_key)');
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
     expect(bootstrap).toContain('wait_for_active_public_health "$active_release_sha"');
     expect(bootstrap.indexOf('wait_for_active_public_health "$active_release_sha"')).toBeLessThan(
-      bootstrap.indexOf('mv --force -- "$digest_source" /etc/set-livre/host-config.sha256'),
+      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     );
     expect(hostVerification).toContain("recovery-public-health-observed");
     expect(hostVerification.indexOf('retention_sha="$(printf')).toBeLessThan(

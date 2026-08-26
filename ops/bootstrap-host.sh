@@ -11,6 +11,10 @@ readonly CERTIFICATE_MINIMUM_VALIDITY_SECONDS=$((24 * 60 * 60))
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly MINIMUM_SWAPFILE_BYTES=$((1024 * 1024 * 1024))
 readonly SWAPFILE_PATH="/swapfile"
+readonly HOST_STATE_DIRECTORY="/etc/set-livre"
+readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"
+readonly HOST_CONFIGURATION_PREVIOUS_DIGEST="${HOST_STATE_DIRECTORY}/host-config.previous.sha256"
+readonly HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -30,6 +34,7 @@ persisted_ipv6_existed=false
 firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
+bootstrap_marker_source=""
 active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
@@ -113,17 +118,19 @@ assert_legacy_surface_absent() {
   done
 }
 
-installed_host_contract_is_valid() {
-  local marker=/etc/set-livre/host-config.sha256
+host_state_marker_is_valid() {
+  local marker="$1"
+  local expected_identity="$2"
+  local label="$3"
   local -a marker_lines=()
   [[ -e ${marker} || -L ${marker} ]] || return 1
   [[ -f ${marker} && ! -L ${marker} ]] \
-    || fail "marcador operacional instalado é inválido."
-  [[ $(stat --format '%U:%G:%a' -- "$marker") == "root:setlivre:640" ]] \
-    || fail "marcador operacional instalado tem owner ou modo inesperado."
+    || fail "${label} é inválido."
+  [[ $(stat --format '%U:%G:%a' -- "$marker") == "$expected_identity" ]] \
+    || fail "${label} tem owner ou modo inesperado."
   mapfile -t marker_lines < "$marker"
   [[ ${#marker_lines[@]} -eq 1 && ${marker_lines[0]} =~ ^[0-9a-f]{64}$ ]] \
-    || fail "marcador operacional instalado tem conteúdo inválido."
+    || fail "${label} tem conteúdo inválido."
 }
 
 node_transient_path_is_managed() {
@@ -422,6 +429,7 @@ cleanup() {
   [[ -z ${previous_persisted_ipv4} ]] || rm -f -- "$previous_persisted_ipv4"
   [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
+  [[ -z ${bootstrap_marker_source} ]] || rm -f -- "$bootstrap_marker_source"
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
 trap cleanup EXIT
@@ -449,7 +457,18 @@ IFS= read -r deploy_key < "$deploy_key_file"
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
 managed_host_contract=false
-if installed_host_contract_is_valid; then
+installed_host_contract=false
+if host_state_marker_is_valid \
+  "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640" "marcador operacional instalado"; then
+  managed_host_contract=true
+  installed_host_contract=true
+fi
+if host_state_marker_is_valid \
+  "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "root:setlivre:640" "marcador operacional anterior"; then
+  managed_host_contract=true
+fi
+if host_state_marker_is_valid \
+  "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600" "marcador de bootstrap em andamento"; then
   managed_host_contract=true
 fi
 assert_legacy_surface_absent "$managed_host_contract"
@@ -489,6 +508,19 @@ PYTHON
 
 [[ ! -e ${ROLLBACK_MARKER} ]] \
   || fail "há uma ativação interrompida; recupere-a antes de alterar o host."
+if [[ -e ${HOST_STATE_DIRECTORY} || -L ${HOST_STATE_DIRECTORY} ]]; then
+  [[ -d ${HOST_STATE_DIRECTORY} && ! -L ${HOST_STATE_DIRECTORY} \
+    && $(stat --format '%U' -- "$HOST_STATE_DIRECTORY") == "root" ]] \
+    || fail "diretório de estado operacional é inválido."
+else
+  install -d -o root -g root -m 0755 "$HOST_STATE_DIRECTORY"
+fi
+bootstrap_marker_source="$(mktemp "${HOST_STATE_DIRECTORY}/.bootstrap-in-progress.XXXXXX")"
+printf '%s\n' "$host_configuration_digest" > "$bootstrap_marker_source"
+chown root:root "$bootstrap_marker_source"
+chmod 0600 "$bootstrap_marker_source"
+mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"
+bootstrap_marker_source=""
 if [[ -e /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current ]] || fail "release ativa não é link simbólico."
   active_release="$(readlink --canonicalize-existing /opt/set-livre/current)"
@@ -626,11 +658,11 @@ if ! getent passwd deploy-setlivre >/dev/null; then
   useradd --create-home --shell /bin/bash deploy-setlivre
 fi
 
-install -d -o root -g setlivre -m 0750 /etc/set-livre /opt/set-livre /opt/set-livre/releases
-if [[ ${managed_host_contract} == true ]]; then
-  install -o root -g setlivre -m 0640 /etc/set-livre/host-config.sha256 \
-    /etc/set-livre/host-config.previous.sha256
-  rm -f -- /etc/set-livre/host-config.sha256
+install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY" /opt/set-livre /opt/set-livre/releases
+if [[ ${installed_host_contract} == true ]]; then
+  install -o root -g setlivre -m 0640 "$HOST_CONFIGURATION_DIGEST" \
+    "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
+  rm -f -- "$HOST_CONFIGURATION_DIGEST"
 fi
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
@@ -930,13 +962,13 @@ fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
 systemctl enable --now snap.certbot.renew.timer
 
-digest_source="$(mktemp /etc/set-livre/.host-config.XXXXXX)"
+digest_source="$(mktemp "${HOST_STATE_DIRECTORY}/.host-config.XXXXXX")"
 printf '%s\n' "$host_configuration_digest" > "$digest_source"
 chown root:setlivre "$digest_source"
 chmod 0640 "$digest_source"
-mv --force -- "$digest_source" /etc/set-livre/host-config.sha256
+mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
 digest_source=""
-rm -f -- /etc/set-livre/host-config.previous.sha256
+rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

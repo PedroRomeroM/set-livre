@@ -112,8 +112,10 @@ HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do 
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
 o lock do deploy e estabiliza serviços e health após `SIGKILL`; essa instância depende de
-`network-online.target` e `nginx.service`, portanto não consome o marcador antes de a borda pública estar
-pronta. Ela apenas encerra se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
+`network-online.target` e `nginx.service`. Recuperar o link nunca consome o marcador; todos os caminhos
+de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
+HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
+apenas encerra sem trabalho se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
 readiness interno e HTTPS público interrompe os serviços. Um SHA existente
 com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ativação e mantém no máximo
 quatro releases, incluindo candidata e anterior.
@@ -165,6 +167,8 @@ Diretórios e identidades:
 /opt/set-livre/.activation-rollback marcador transitório root:root 0600
 /home/deploy-setlivre/incoming/.incoming.lock deploy-setlivre 0600
 /etc/set-livre/host-config.sha256 root:setlivre 0640
+/etc/set-livre/host-config.previous.sha256 root:setlivre 0640, somente durante bootstrap
+/etc/set-livre/bootstrap-in-progress.sha256 root:root 0600, somente durante bootstrap
 /etc/set-livre/supabase-root-2021-ca.crt root:root 0644
 ```
 
@@ -173,7 +177,8 @@ devices privados, capabilities vazias, namespaces/realtime bloqueados, filesyste
 AF_UNIX/IPv4/IPv6. O grupo compartilhado `setlivre` concede somente leitura do artifact e do SHA
 ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (`APP_ENV`, URL DAL,
 origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
-projeto/role/host divergente ou ambiente entre os apps inconsistente. A chave de deploy usa
+projeto/role/host divergente, qualquer chave que não use `sb_publishable_` ou ambiente entre os apps
+inconsistente. A chave de deploy usa
 `authorized_keys command=` e aceita apenas uploads limitados e `deploy <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
@@ -196,11 +201,17 @@ a release depois de reaplicar o contrato e exige readiness dos dois apps. Se div
 apps antes da primeira alteração e os mantém parados até o deploy do artifact que carrega o novo
 digest; uma release antiga nunca executa sob units/proxy novos. Depois disso, o bootstrap invalida
 o marcador ativo antes de alterar essas superfícies e só publica o novo
-`/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações; falha intermediária
-mantém novos deploys bloqueados. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
+`/etc/set-livre/host-config.sha256` por rename atômico depois de todas as validações. Antes da primeira
+mutação, publica atomicamente um marcador `bootstrap-in-progress` root-only; quando existe contrato
+ativo válido, também preserva sua cópia `host-config.previous`. Falha intermediária mantém esses
+marcadores transitórios, permitindo que a próxima execução reconheça com segurança os paths já
+gerenciados, enquanto a ausência do marcador ativo mantém novos deploys bloqueados. Sucesso publica o
+digest novo e só então remove ambos os marcadores de retry. Se Nginx, systemd, CA, bootstrap, comando
+SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
 Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
-o marcador existente é arquivo regular `root:setlivre 0640` com um único SHA-256 válido. Sem essa prova,
+ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
+SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
 Quando a release ativa já carrega o mesmo digest candidato, a reaplicação só publica novamente o
 marcador operacional depois de reiniciar os dois serviços e provar o mesmo SHA nos endpoints internos e
@@ -260,8 +271,9 @@ normal. O script não imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre c
 quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
-fica desabilitado; qualquer `USAGE/CREATE` efetivo no schema `net` ou `CREATE/TEMP` direto no database
-por `app_dal`/login de produção bloqueia deploy e readiness antes de habilitar a senha. A membership
+fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de
+`private` — inclusive herdado por `PUBLIC` — ou `CREATE/TEMP` direto no database por DAL/login de
+produção bloqueia deploy e readiness antes de habilitar a senha. A membership
 reversa aceita somente a administração automática de `postgres`, com `SET/INHERIT` falsos; qualquer
 outro membro de `app_runtime_production` também bloqueia o fluxo. Os catálogos
 `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
@@ -327,8 +339,10 @@ Secrets do environment `production`:
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
 
-O publishable key e a host key SSH são públicos por natureza; senhas, access token, URL DAL e chave SSH
-privada nunca entram em logs, artifacts ou documentação.
+O publishable key e a host key SSH são públicos por natureza. O preflight anterior aos builds e o
+instalador da VM aceitam exclusivamente o formato moderno `sb_publishable_`; `sb_secret_`, JWT legado
+`service_role` e qualquer JWT genérico são recusados antes de alcançar bundle ou artifact. Senhas,
+access token, URL DAL e chave SSH privada nunca entram em logs, artifacts ou documentação.
 
 ## Operação e capacidade
 
