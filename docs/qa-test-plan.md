@@ -84,11 +84,14 @@ Antes de qualquer mutação, os helpers exigem:
 - web em `http://127.0.0.1:3000`;
 - backoffice em `http://127.0.0.1:3001`;
 - Supabase em `http://127.0.0.1:54321`;
+- chave pública Supabase `sb_publishable_...` ou JWT com role `anon`;
 - PostgreSQL em `127.0.0.1:54322`;
 - login DAL `app_runtime_local` com `options=-c role=app_dal`;
 - marcador aleatório gravado no comentário do banco pelo último reset.
 
-Qualquer URL cloud ou representação alternativa falha antes do teste.
+Qualquer URL cloud, representação alternativa ou chave de `service_role` falha antes do teste. Os
+servidores web recebem explicitamente esse mesmo contrato validado, sem herdar valores de aplicação
+potencialmente divergentes do shell.
 
 ## Contrato por feature
 

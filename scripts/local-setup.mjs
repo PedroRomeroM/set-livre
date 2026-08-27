@@ -452,6 +452,7 @@ async function resetLocalEnvironment() {
         "E2E_BACKOFFICE_URL=http://127.0.0.1:3001",
         `E2E_DATABASE_MARKER=${databaseMarker}`,
         `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
+        `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
         `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
         `E2E_DATABASE_URL=${values.DB_URL}`,
         "",

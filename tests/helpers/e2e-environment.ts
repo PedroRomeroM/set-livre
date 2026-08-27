@@ -14,5 +14,6 @@ export const safeE2EEnvironment = assertSafeE2EEnvironment({
   dalDatabaseUrl: environmentValue("DATABASE_URL_APP_DAL"),
   explicitLocalPermission: environmentValue("E2E_ALLOW_LOCAL"),
   publicBaseUrl: environmentValue("E2E_BASE_URL"),
+  supabaseAnonKey: environmentValue("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
   supabaseUrl: environmentValue("NEXT_PUBLIC_SUPABASE_URL"),
 });

@@ -81,6 +81,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   em execução verde;
 - cenários visíveis permanecem determinísticos entre engines, sem retries ou timeouts ampliados para
   mascarar falhas;
+- os webServers Playwright neutralizam o ambiente herdado e recebem explicitamente o mesmo conjunto
+  local validado pelas fixtures, impedindo divergência quando o shell já exporta variáveis da aplicação;
 - o ambiente Supabase local preserva as permissões exigidas pelos serviços oficiais sem ampliar o
   acesso das roles da aplicação;
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact

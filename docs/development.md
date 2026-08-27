@@ -68,9 +68,12 @@ DATABASE_URL_APP_DAL=<login app_runtime_local com options=-c role=app_dal>
 ```
 
 O backoffice usa `NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001`. O arquivo E2E acrescenta as URLs dos dois
-apps, a conexão administrativa local e um marcador aleatório do banco. O webServer do Playwright fixa
-`APP_ENV=test`; somente nessa fronteira as fixtures privadas e allowlisted dos adapters locais ficam
-disponíveis. Nunca copie esses arquivos para produção.
+apps, a chave pública `anon`, a conexão administrativa local e um marcador aleatório do banco. O
+webServer do Playwright neutraliza o ambiente herdado e repõe explicitamente em cada app somente os
+valores locais já validados, inclusive a URL DAL que as fixtures usam; assim, uma variável exportada no
+shell não sobrepõe nem diverge do processo testado. Ele também fixa `APP_ENV=test`; somente nessa
+fronteira as fixtures privadas e allowlisted dos adapters locais ficam disponíveis. Nunca copie esses
+arquivos para produção.
 
 ## Estratégia de testes
 

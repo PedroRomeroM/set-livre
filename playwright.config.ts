@@ -7,7 +7,20 @@ import { createPlaywrightWebServerEnvironmentOverlay } from "./tests/helpers/pla
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
-const webServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env);
+const applicationEnvironment = (appUrl: string) => ({
+  DATABASE_URL_APP_DAL: safeEnvironment.dalDatabaseUrl,
+  NEXT_PUBLIC_APP_URL: appUrl,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: safeEnvironment.supabaseAnonKey,
+  NEXT_PUBLIC_SUPABASE_URL: safeEnvironment.supabaseUrl,
+});
+const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
+  process.env,
+  applicationEnvironment(publicBaseUrl),
+);
+const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
+  process.env,
+  applicationEnvironment(backofficeBaseUrl),
+);
 const posixGracefulWebServerShutdown = {
   gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 } satisfies {
@@ -159,7 +172,7 @@ export default defineConfig({
   webServer: [
     {
       command: "npm run dev",
-      env: webServerEnvironment,
+      env: publicWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",
@@ -169,7 +182,7 @@ export default defineConfig({
     },
     {
       command: "npm run dev:backoffice",
-      env: webServerEnvironment,
+      env: backofficeWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",

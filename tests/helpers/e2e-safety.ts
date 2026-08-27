@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import { z } from "zod";
 
 const safeEnvironmentSchema = z.object({
@@ -7,6 +9,7 @@ const safeEnvironmentSchema = z.object({
   dalDatabaseUrl: z.url(),
   explicitLocalPermission: z.literal("1"),
   publicBaseUrl: z.url(),
+  supabaseAnonKey: z.string().min(1).max(8_192),
   supabaseUrl: z.url(),
 });
 
@@ -17,8 +20,31 @@ type SafeEnvironmentInput = {
   dalDatabaseUrl: string | undefined;
   explicitLocalPermission: string | undefined;
   publicBaseUrl: string | undefined;
+  supabaseAnonKey: string | undefined;
   supabaseUrl: string | undefined;
 };
+
+const publishableKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{12,}$/u;
+const jwtSegmentPattern = /^[A-Za-z0-9_-]+$/u;
+
+function assertPublicSupabaseKey(value: string) {
+  if (publishableKeyPattern.test(value)) return;
+
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY não é uma chave pública Supabase válida.");
+  }
+
+  try {
+    const payload = z
+      .object({ role: z.literal("anon") })
+      .passthrough()
+      .parse(JSON.parse(Buffer.from(segments[1] ?? "", "base64url").toString("utf8")));
+    if (payload.role !== "anon") throw new Error("role inesperada");
+  } catch {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY precisa usar a role pública anon.");
+  }
+}
 
 function rawUrlHostname(value: string): string | undefined {
   const schemeSeparator = value.indexOf("://");
@@ -88,6 +114,7 @@ function assertBareOrigin(parsed: URL, label: string) {
 
 export function assertSafeE2EEnvironment(input: SafeEnvironmentInput) {
   const parsed = safeEnvironmentSchema.parse(input);
+  assertPublicSupabaseKey(parsed.supabaseAnonKey);
 
   const publicBaseUrl = assertLocalUrl(
     parsed.publicBaseUrl,

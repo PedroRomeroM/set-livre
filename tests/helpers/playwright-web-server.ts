@@ -36,6 +36,13 @@ const operationalEnvironmentNames = [
 
 const pathEnvironmentNames = new Set(["PATH", "Path"]);
 
+export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
+  DATABASE_URL_APP_DAL: string;
+  NEXT_PUBLIC_APP_URL: string;
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
+  NEXT_PUBLIC_SUPABASE_URL: string;
+}>;
+
 function sanitizedOperationalValue(name: string, value: string | undefined) {
   if (value === undefined || value === "" || value.includes("\0")) {
     return undefined;
@@ -53,6 +60,7 @@ function sanitizedOperationalValue(name: string, value: string | undefined) {
 
 export function createPlaywrightWebServerEnvironmentOverlay(
   inheritedEnvironment: Readonly<Record<string, string | undefined>>,
+  applicationEnvironment: ValidatedPlaywrightApplicationEnvironment,
 ) {
   const overlay: Record<string, string> = Object.fromEntries(
     Object.keys(inheritedEnvironment).map((name) => [name, ""]),
@@ -65,6 +73,8 @@ export function createPlaywrightWebServerEnvironmentOverlay(
     }
   }
 
+  Object.assign(overlay, applicationEnvironment);
   overlay.APP_ENV = "test";
+  overlay.APP_RELEASE_SHA = "local";
   return overlay;
 }
