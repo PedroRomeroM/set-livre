@@ -262,6 +262,12 @@ describe("local tooling contracts", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
     const digestCalculation = bootstrap.indexOf('host_configuration_digest="$(python3');
+    const guardDefinitionStart = bootstrap.indexOf("assert_legacy_surface_absent() {");
+    const guardDefinitionEnd = bootstrap.indexOf(
+      "\nhost_state_marker_is_valid() {",
+      guardDefinitionStart,
+    );
+    const guardDefinition = bootstrap.slice(guardDefinitionStart, guardDefinitionEnd);
 
     for (const legacyPath of [
       "/etc/setlivre-deployer",
@@ -283,6 +289,15 @@ describe("local tooling contracts", () => {
     expect(bootstrap).not.toContain('rm -rf -- "/opt/setlivre"');
     expect(bootstrap).toContain("/etc/fail2ban/jail.d/setlivre-sshd.local");
     expect(bootstrap).toContain("cat > /etc/fail2ban/jail.d/set-livre-sshd.local");
+    expect(bootstrap).toContain('local managed_nginx_link="/etc/nginx/sites-enabled/setlivre"');
+    expect(bootstrap).toContain(
+      'local managed_nginx_target="/etc/nginx/sites-available/set-livre"',
+    );
+    expect(bootstrap).toContain('$(readlink -- "$managed_nginx_link") == "$managed_nginx_target"');
+    expect(bootstrap).toContain("[[ ${managed_host_contract} == true \\");
+    expect(guardDefinitionStart).toBeGreaterThan(-1);
+    expect(guardDefinitionEnd).toBeGreaterThan(guardDefinitionStart);
+    expect(guardDefinition.match(/\/etc\/nginx\/sites-enabled\/setlivre/gu) ?? []).toHaveLength(1);
     expect(guardCall).toBeGreaterThan(-1);
     expect(digestCalculation).toBeGreaterThan(guardCall);
   });
@@ -290,6 +305,10 @@ describe("local tooling contracts", () => {
   it("permits reused runtime paths only after validating a retryable host state", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const markerValidation = bootstrap.indexOf("host_state_marker_is_valid() {");
+    const stateDirectorySecured = bootstrap.indexOf(
+      'ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700',
+      markerValidation,
+    );
     const installedDetection = bootstrap.indexOf(
       '"$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"',
       markerValidation,
@@ -323,6 +342,8 @@ describe("local tooling contracts", () => {
     );
 
     expect(markerValidation).toBeGreaterThan(-1);
+    expect(stateDirectorySecured).toBeGreaterThan(markerValidation);
+    expect(stateDirectorySecured).toBeLessThan(installedDetection);
     expect(bootstrap).toContain("root:setlivre:640");
     expect(bootstrap).toContain("root:root:600");
     expect(bootstrap).toContain("${#marker_lines[@]} -eq 1");
@@ -335,6 +356,9 @@ describe("local tooling contracts", () => {
       bootstrap.indexOf("managed_host_contract=true"),
     );
     expect(existingRootsValidation).toBeGreaterThan(pendingDetection);
+    expect(bootstrap).toContain(
+      'ensure_managed_directory "$HOST_STATE_DIRECTORY" root setlivre 0750',
+    );
     expect(existingRootsValidation).toBeLessThan(guardCall);
     expect(existingRootsValidation).toBeLessThan(
       bootstrap.indexOf("\nclear_dangling_current_link\n", guardCall),

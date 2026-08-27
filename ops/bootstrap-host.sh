@@ -256,6 +256,8 @@ stop_application_services() {
 
 assert_legacy_surface_absent() {
   local managed_host_contract="$1"
+  local managed_nginx_link="/etc/nginx/sites-enabled/setlivre"
+  local managed_nginx_target="/etc/nginx/sites-available/set-livre"
   local path unit setting
   for path in \
     /etc/apt/apt.conf.d/52setlivre-unattended-upgrades \
@@ -264,7 +266,6 @@ assert_legacy_surface_absent() {
     /etc/nginx/conf.d/setlivre-proxy.conf \
     /etc/nginx/sites-available/setlivre-bootstrap \
     /etc/nginx/sites-available/setlivre-tls \
-    /etc/nginx/sites-enabled/setlivre \
     /etc/setlivre-deployer \
     /etc/ssh/sshd_config.d/60-setlivre-hardening.conf \
     /etc/sudoers.d/setlivre-deployer \
@@ -300,6 +301,12 @@ assert_legacy_surface_absent() {
     [[ ! -e ${path} && ! -L ${path} ]] \
       || fail "superfície legada ainda instalada: ${path}."
   done
+  if [[ -e ${managed_nginx_link} || -L ${managed_nginx_link} ]]; then
+    [[ ${managed_host_contract} == true \
+      && -L ${managed_nginx_link} \
+      && $(readlink -- "$managed_nginx_link") == "$managed_nginx_target" ]] \
+      || fail "link Nginx gerenciado é inválido: ${managed_nginx_link}."
+  fi
   if [[ ${managed_host_contract} == false ]]; then
     for path in /opt/node-v24.18.0 /opt/set-livre /opt/setlivre; do
       [[ ! -e ${path} && ! -L ${path} ]] \
@@ -728,6 +735,8 @@ fi
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
+ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700 \
+  || fail "diretório de estado operacional é inválido."
 managed_host_contract=false
 installed_host_contract=false
 if host_state_marker_is_valid \
@@ -793,13 +802,6 @@ PYTHON
 [[ ! -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
   && ! -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] \
   || fail "há um recovery de bootstrap interrompido; estabilize-o antes de alterar o host."
-if [[ -e ${HOST_STATE_DIRECTORY} || -L ${HOST_STATE_DIRECTORY} ]]; then
-  [[ -d ${HOST_STATE_DIRECTORY} && ! -L ${HOST_STATE_DIRECTORY} \
-    && $(stat --format '%U' -- "$HOST_STATE_DIRECTORY") == "root" ]] \
-    || fail "diretório de estado operacional é inválido."
-else
-  install -d -o root -g root -m 0755 "$HOST_STATE_DIRECTORY"
-fi
 publish_bootstrap_in_progress "$host_configuration_digest" \
   || fail "não foi possível publicar o marcador de bootstrap."
 bootstrap_gate_published=true

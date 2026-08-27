@@ -284,6 +284,10 @@ Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0`, `/opt/
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
+Antes de ler esses marcadores, o bootstrap abre `/etc/set-livre` sem seguir links e o restringe a
+`root:root 0700`; depois de validar as identidades canônicas, publica o estado final como
+`root:setlivre 0750`. O link Nginx de uma instalação gerenciada pode estar ausente ou apontar exatamente
+para `/etc/nginx/sites-available/set-livre`; qualquer tipo ou destino diferente falha fechado.
 Quando a release ativa já carrega o mesmo digest candidato, a reaplicação publica a configuração
 estática, arma a recuperação, libera o start controlado e prova o mesmo SHA nos endpoints internos e no
 HTTPS público antes de remover o rollback. Falha anterior mantém `bootstrap-in-progress`, remove o
