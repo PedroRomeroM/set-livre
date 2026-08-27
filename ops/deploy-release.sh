@@ -19,6 +19,22 @@ fail() {
   exit 1
 }
 
+release_tree_digest() {
+  local directory="$1"
+  [[ -d ${directory} && ! -L ${directory} ]] || return 1
+  LC_ALL=C tar \
+    --create \
+    --file=- \
+    --directory="$directory" \
+    --sort=name \
+    --format=gnu \
+    --mtime='@0' \
+    --numeric-owner \
+    . \
+    | sha256sum \
+    | cut --delimiter=' ' --fields=1
+}
+
 activate_link() {
   local target="$1"
   local candidate="${CURRENT_LINK}.next"
@@ -593,6 +609,12 @@ if [[ -e ${release_directory} ]]; then
     || fail "SHA já existe com ambiente backoffice diferente."
   [[ $(< "${release_directory}/.runtime/release.env") == "APP_RELEASE_SHA=${release_sha}" ]] \
     || fail "SHA já existe com identidade de release diferente."
+  staging_tree_digest="$(release_tree_digest "$staging_directory")" \
+    || fail "árvore preparada da release não pôde ser verificada."
+  installed_tree_digest="$(release_tree_digest "$release_directory")" \
+    || fail "árvore instalada da release não pôde ser verificada."
+  [[ ${installed_tree_digest} == "${staging_tree_digest}" ]] \
+    || fail "SHA já existe com árvore instalada divergente."
   rm -rf -- "$staging_directory"
   staging_directory=""
 else

@@ -350,6 +350,63 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("https://147.15.97.227/robots.txt");
   });
 
+  it("validates canonical host identities before publishing the deploy key", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const deployAccountStart = bootstrap.indexOf("if ! getent passwd deploy-setlivre");
+    const deployIdentityValidation = bootstrap.indexOf(
+      "deploy-setlivre deploy-setlivre /home/deploy-setlivre /bin/bash",
+      deployAccountStart,
+    );
+    const deployGroupValidation = bootstrap.indexOf(
+      "account_groups_are_exact deploy-setlivre deploy-setlivre",
+      deployAccountStart,
+    );
+    const deployPasswordValidation = bootstrap.indexOf(
+      "account_password_is_locked deploy-setlivre",
+      deployAccountStart,
+    );
+    const keyPublication = bootstrap.indexOf(
+      "> /home/deploy-setlivre/.ssh/authorized_keys",
+      deployAccountStart,
+    );
+
+    expect(bootstrap).toContain("account_identity_is_canonical() {");
+    expect(bootstrap).toContain("account_groups_are_exact() {");
+    expect(bootstrap).toContain("account_password_is_locked() {");
+    expect(bootstrap).toContain("identidade ${service_identity} divergiu do contrato canônico");
+    expect(deployIdentityValidation).toBeGreaterThan(deployAccountStart);
+    expect(deployGroupValidation).toBeGreaterThan(deployAccountStart);
+    expect(deployPasswordValidation).toBeGreaterThan(deployAccountStart);
+    expect(keyPublication).toBeGreaterThan(deployIdentityValidation);
+    expect(keyPublication).toBeGreaterThan(deployGroupValidation);
+    expect(keyPublication).toBeGreaterThan(deployPasswordValidation);
+  });
+
+  it("derives integrity from the complete installed release tree before SHA reuse", () => {
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const existingReleaseBranch = deploy.indexOf("if [[ -e ${release_directory} ]]");
+    const installedDigest = deploy.indexOf(
+      'installed_tree_digest="$(release_tree_digest "$release_directory")"',
+      existingReleaseBranch,
+    );
+    const stagingDiscard = deploy.indexOf('rm -rf -- "$staging_directory"', existingReleaseBranch);
+
+    expect(deploy).toContain("release_tree_digest() {");
+    expect(deploy).toContain("--sort=name");
+    expect(deploy).toContain("--mtime='@0'");
+    expect(deploy).toContain("--numeric-owner");
+    expect(deploy).toContain("SHA já existe com árvore instalada divergente");
+    expect(installedDigest).toBeGreaterThan(existingReleaseBranch);
+    expect(stagingDiscard).toBeGreaterThan(installedDigest);
+    expect(hostVerification).toContain(
+      "release existente adulterada foi reutilizada pelo mesmo SHA",
+    );
+  });
+
   it("restricts deployment SSH and fences releases to the installed host contract", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
@@ -408,6 +465,9 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("archive com mais de 20.000 entradas foi aceito");
     expect(hostVerification).toContain("archive com metadata PAX excessiva foi aceito");
     expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
+    expect(hostVerification.match(/--sort=name/gu)).toHaveLength(2);
+    expect(hostVerification.match(/--mtime='@0'/gu)).toHaveLength(2);
+    expect(hostVerification.match(/gzip --best --no-name/gu)).toHaveLength(2);
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     const publishableFixtures = [
       ...workflow.matchAll(/NEXT_PUBLIC_SUPABASE_ANON_KEY: (sb_publishable_[A-Za-z0-9_-]+)/gu),

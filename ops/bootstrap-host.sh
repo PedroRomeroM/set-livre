@@ -49,6 +49,41 @@ fail() {
   exit 1
 }
 
+account_identity_is_canonical() {
+  local identity="$1"
+  local expected_primary_group="$2"
+  local expected_home="$3"
+  local expected_shell="$4"
+  local entry username uid home shell
+  entry="$(getent passwd "$identity")" || return 1
+  IFS=: read -r username _ uid _ _ home shell <<< "$entry"
+  [[ ${username} == "$identity" \
+    && ${uid} =~ ^[0-9]+$ \
+    && ${uid} -ne 0 \
+    && ${home} == "$expected_home" \
+    && ${shell} == "$expected_shell" \
+    && $(id --group --name "$identity") == "$expected_primary_group" ]]
+}
+
+account_groups_are_exact() {
+  local identity="$1"
+  shift
+  local actual expected
+  actual="$(id --groups --name "$identity" | tr ' ' '\n' | LC_ALL=C sort --unique | paste -sd, -)" \
+    || return 1
+  expected="$(printf '%s\n' "$@" | LC_ALL=C sort --unique | paste -sd, -)" || return 1
+  [[ ${actual} == "$expected" ]]
+}
+
+account_password_is_locked() {
+  local identity="$1"
+  local shadow_entry password_hash
+  shadow_entry="$(getent shadow "$identity")" || return 1
+  password_hash="${shadow_entry#*:}"
+  password_hash="${password_hash%%:*}"
+  [[ ${password_hash} == '!'* || ${password_hash} == '*'* ]]
+}
+
 assert_legacy_surface_absent() {
   local managed_host_contract="$1"
   local path unit setting
@@ -704,21 +739,50 @@ for service_group in setlivre setlivre-web setlivre-backoffice; do
     groupadd --system "$service_group"
   fi
 done
+if ! getent group deploy-setlivre >/dev/null; then
+  groupadd deploy-setlivre
+fi
 for service_identity in setlivre-web setlivre-backoffice; do
   if ! getent passwd "$service_identity" >/dev/null; then
     useradd --system --gid "$service_identity" --groups setlivre \
       --home-dir /nonexistent --shell /usr/sbin/nologin "$service_identity"
   else
-    usermod --append --groups setlivre "$service_identity"
+    account_identity_is_canonical \
+      "$service_identity" "$service_identity" /nonexistent /usr/sbin/nologin \
+      || fail "identidade ${service_identity} divergiu do contrato canônico."
+  fi
+  usermod --append --groups setlivre --lock "$service_identity"
+  if ! account_identity_is_canonical \
+    "$service_identity" "$service_identity" /nonexistent /usr/sbin/nologin \
+    || ! account_groups_are_exact "$service_identity" "$service_identity" setlivre \
+    || ! account_password_is_locked "$service_identity"; then
+    fail "identidade ${service_identity} não pôde ser restringida."
   fi
 done
 if ! getent passwd deploy-setlivre >/dev/null; then
-  useradd --create-home --shell /bin/bash deploy-setlivre
+  useradd --create-home --gid deploy-setlivre \
+    --home-dir /home/deploy-setlivre --shell /bin/bash deploy-setlivre
+else
+  account_identity_is_canonical \
+    deploy-setlivre deploy-setlivre /home/deploy-setlivre /bin/bash \
+    || fail "identidade deploy-setlivre divergiu do contrato canônico."
+fi
+usermod --lock deploy-setlivre
+if ! account_identity_is_canonical \
+  deploy-setlivre deploy-setlivre /home/deploy-setlivre /bin/bash \
+  || ! account_groups_are_exact deploy-setlivre deploy-setlivre \
+  || ! account_password_is_locked deploy-setlivre; then
+  fail "identidade deploy-setlivre não pôde ser restringida."
 fi
 
 install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY" /opt/set-livre /opt/set-livre/releases
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
+if [[ -e /home/deploy-setlivre || -L /home/deploy-setlivre ]]; then
+  [[ -d /home/deploy-setlivre && ! -L /home/deploy-setlivre ]] \
+    || fail "home canônico de deploy-setlivre é inválido."
+fi
+install -d -o deploy-setlivre -g deploy-setlivre -m 0750 /home/deploy-setlivre
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh
 install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
 incoming_lock=/home/deploy-setlivre/incoming/.incoming.lock

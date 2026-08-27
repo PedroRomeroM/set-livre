@@ -121,7 +121,9 @@
             transição estática antes de permitir que systemd reinicie uma release compatível. Os
             serviços exigem digest operacional ativo e ausência do in-progress; falha posterior de
             health desativa o symlink sem invalidar o host terminal. Archives são pré-varridos em
-            streaming com limites próprios para headers PAX/GNU antes da extração.
+            streaming com limites próprios para headers PAX/GNU antes da extração. A reutilização de
+            um SHA compara deterministicamente toda a árvore instalada com a candidata e recusa
+            qualquer adulteração, mesmo quando o marcador do artifact não mudou.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
@@ -130,11 +132,12 @@
             de <code>postgres</code>, sem permissão para assumir a role. Readiness também bloqueia
             grants do schema ou de comandos privados para qualquer grantee além do owner/DAL e exige
             que o schema <code>private</code> e todas as suas rotinas pertençam ao owner canônico
-            <code>postgres</code>, membro, ownership ou acesso efetivo de <code>app_dal</code> a
-            schema externo fora das allowlists e preserva a release anterior somente quando seu
-            schema permanece aplicado e compatível. Chaves Supabase privilegiadas ou JWT são
-            recusadas antes dos builds; produção aceita somente o formato
-            <code>sb_publishable_</code>.
+            <code>postgres</code>. Os comandos allowlisted permanecem
+            <code>security definer</code> com <code>search_path = ''</code>; membership, ownership
+            ou acesso efetivo de <code>app_dal</code> a schema externo fora das allowlists também
+            são recusados. A release anterior só é preservada quando seu schema permanece aplicado e
+            compatível. Chaves Supabase privilegiadas ou JWT são recusadas antes dos builds;
+            produção aceita somente o formato <code>sb_publishable_</code>.
           </li>
         </ul>
       </section>
@@ -164,6 +167,8 @@
           Merge em <code>main</code> aplica migrations forward-only e publica uma release imutável
           na VM, com health interno e público, rollback e recuperação após interrupção. Timeout ou
           serviço indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
+          Antes de aceitar a chave de entrega, o bootstrap valida a identidade canônica, os grupos,
+          o home, o shell e o bloqueio de senha de cada conta operacional.
         </p>
       </section>
 

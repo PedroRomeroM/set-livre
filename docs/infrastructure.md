@@ -118,9 +118,11 @@ minutos, suficiente para o lock e para os dois health checks limitados. Recupera
 de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
 HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
 apenas encerra sem trabalho se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
-readiness interno e HTTPS público interrompe os serviços. Um SHA existente
-com artifact ou ambiente diferente é recusado. A retenção ocorre antes da ativação e mantém no máximo
-quatro releases, incluindo candidata e anterior.
+readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode ser reutilizado
+quando artifact, ambientes e o digest determinístico da árvore instalada completa correspondem à
+árvore recém-preparada; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes de
+descartar o staging. A retenção ocorre antes da ativação e mantém no máximo quatro releases, incluindo
+candidata e anterior.
 Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
 produza o mesmo checksum.
 O empacotador percorre o standalone sem preservar referências de filesystem: links simbólicos cujos
@@ -154,8 +156,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
 - pelo menos 1 GiB de swap para reduzir risco de OOM no shape de 1 GB; somente arquivo regular,
   root-owned, `0600`, sem hard link e já formatado como swap é preservado, e qualquer estado inválido é
   removido sem seguir symlink nem apagar diretório recursivamente antes da substituição atômica;
-- usuários sem login separados `setlivre-web` e `setlivre-backoffice`, além de
-  `deploy-setlivre` para entrega;
+- usuários sem senha separados `setlivre-web` e `setlivre-backoffice`, com home inexistente e shell de
+  nologin, além de `deploy-setlivre` com home e shell estritamente fixados para entrega por chave;
 - units, sites Nginx, comando SSH forçado e instalador de release revisados no repositório.
 
 Diretórios e identidades:
@@ -167,6 +169,8 @@ Diretórios e identidades:
   .runtime/release.env           root:setlivre 0640
 /opt/set-livre/current           symlink para código + ambientes do mesmo SHA
 /opt/set-livre/.activation-rollback marcador transitório root:root 0600
+/home/deploy-setlivre            deploy-setlivre:deploy-setlivre 0750
+/home/deploy-setlivre/.ssh       deploy-setlivre:deploy-setlivre 0700
 /home/deploy-setlivre/incoming/.incoming.lock deploy-setlivre 0600
 /etc/set-livre/host-config.sha256 root:setlivre 0640
 /etc/set-livre/host-config.previous.sha256 root:setlivre 0640, somente durante bootstrap
@@ -180,9 +184,12 @@ AF_UNIX/IPv4/IPv6. O grupo compartilhado `setlivre` concede somente leitura do a
 ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (`APP_ENV`, URL DAL,
 origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
 projeto/role/host divergente, qualquer chave que não use `sb_publishable_` ou ambiente entre os apps
-inconsistente. O bootstrap exige exatamente uma chave pública, decodifica o blob SSH e comprova o
-algoritmo Ed25519 e os 32 bytes de material antes de substituir `authorized_keys`. A chave instalada usa
-`authorized_keys command=` e aceita apenas uploads limitados e `deploy <sha> <checksum>`; não abre
+inconsistente. Antes de escrever qualquer chave, o bootstrap exige nomes, UIDs não root, grupos
+primários e suplementares exatos, homes, shells e senhas bloqueadas para as três identidades; uma conta
+preexistente divergente falha fechada, sem deixar outro home autoritativo. Em seguida, exige exatamente
+uma chave pública, decodifica o blob SSH e comprova o algoritmo Ed25519 e os 32 bytes de material antes
+de substituir `authorized_keys`. A chave instalada usa `authorized_keys command=` e aceita apenas
+uploads limitados e `deploy <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.

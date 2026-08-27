@@ -1,6 +1,6 @@
 begin;
 
-select plan(38);
+select plan(40);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -274,6 +274,24 @@ select ok(
   'readiness rejeita owner não canônico em comando private'
 );
 rollback to savepoint private_routine_owner_drift;
+
+savepoint authorized_dal_security_mode_drift;
+alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
+  security invoker;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita comando DAL sem security definer'
+);
+rollback to savepoint authorized_dal_security_mode_drift;
+
+savepoint authorized_dal_search_path_drift;
+alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
+  reset search_path;
+select ok(
+  not private.check_readiness('20260824000100'),
+  'readiness rejeita comando DAL sem search_path vazio fixado'
+);
+rollback to savepoint authorized_dal_search_path_drift;
 
 insert into supabase_migrations.schema_migrations(version, statements, name)
 values ('20260815000100', array[]::text[], 'rollback-readiness-probe');

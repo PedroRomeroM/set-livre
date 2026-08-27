@@ -41,8 +41,9 @@ allowlist exata de comandos DAL, rejeita ACL herdada por `PUBLIC`, ownership ou 
 aceita somente `CONNECT` como grant direto do login. Também rejeita `USAGE/CREATE` efetivo de `app_dal`
 em qualquer schema não sistêmico fora de `private`, inclusive quando o acesso nasce de `PUBLIC`. A
 propriedade do schema `private` e de todas as rotinas privadas é fixada na role canônica `postgres`; o
-owner observado no catálogo nunca é aceito como autoridade por si só. A
-membership reversa aceita apenas o vínculo
+owner observado no catálogo nunca é aceito como autoridade por si só. Cada comando allowlisted também
+deve continuar `security definer` e manter exatamente `search_path = ''`. A membership reversa aceita
+apenas o vínculo
 administrativo automático de `postgres`, sem `SET/INHERIT`; qualquer identidade assumível é rejeitada.
 O health preserva heads aplicados para rollback
 expand/contract, enquanto o deploy exige o maior head remoto exatamente igual ao candidato.
@@ -56,8 +57,10 @@ integral, substitui o alias legado por link canônico recuperável, rejeita cert
 horas restantes, preserva apenas swapfiles que cumpram o manifesto e a borda encaminha o UUID de
 correlação para validação pela aplicação. O contrato também recusa qualquer identidade, unit, credencial,
 ferramenta ou árvore remanescente do deploy pull aposentado; sua retirada é uma migração administrativa
-única e não adiciona outro mecanismo permanente ao repositório. O preflight e o instalador aceitam
-somente chave Supabase `sb_publishable_`, impedindo que uma chave privilegiada alcance build ou artifact.
+única e não adiciona outro mecanismo permanente ao repositório. Antes de publicar a chave, nomes, UIDs,
+grupos, homes, shells e bloqueio de senha das identidades do host precisam corresponder ao contrato
+canônico. O preflight e o instalador aceitam somente chave Supabase `sb_publishable_`, impedindo que uma
+chave privilegiada alcance build ou artifact.
 
 ## Read models, comandos e invalidação
 
@@ -100,11 +103,17 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   header lógico 20.001 sem materializar entradas ilimitadas;
 - o wrapper local fixa somente o named pipe/socket Docker canônico antes de chamar a CLI Supabase, e o
   readiness rejeita grants no schema ou em comandos privados para qualquer grantee além do owner/DAL
-  e rejeita qualquer drift do owner canônico `postgres` nessas superfícies;
+  e rejeita qualquer drift de owner, modo de segurança ou `search_path` nessas superfícies;
+- o bootstrap falha antes de publicar `authorized_keys` quando uma identidade preexistente diverge de
+  seu home, shell, grupo ou bloqueio de senha canônico;
+- o teste SSR de hidratação mantém seu servidor isolado, usa a transformação Oxc nativa do Vite e
+  controla preparação/encerramento em hooks da suíte, sem cobrar esse lifecycle do cenário testado;
 - gates locais recusam tanto `databaseMigrationHead` divergente da migration mais recente quanto
   referência documental a ADR inexistente;
 - o empacotamento aceita somente conteúdo regular originado da release e das dependências instaladas
-  pelo lockfile, enquanto o host rejeita entradas fora desse contrato.
+  pelo lockfile, enquanto o host rejeita entradas fora desse contrato e compara a árvore completa antes
+  de reutilizar um diretório do mesmo SHA; o laboratório normaliza seus archives como produção,
+  reproduz o mesmo SHA em instantes diferentes, adultera código instalado e prova a recusa.
 
 Resultados de execução, diagnósticos, contagens e histórico de correções permanecem no PR, nos checks e
 no Git.

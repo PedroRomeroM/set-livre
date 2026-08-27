@@ -925,6 +925,16 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
           and routine.proowner <> trusted_owner.oid
       ) as ready
   ),
+  authorized_dal_routine_attributes_are_trusted as (
+    select not exists (
+      select 1
+      from authorized_dal_routines as authorized
+      left join pg_catalog.pg_proc as routine on routine.oid = authorized.oid
+      where routine.oid is null
+        or not routine.prosecdef
+        or routine.proconfig is distinct from array['search_path=""']::text[]
+    ) as ready
+  ),
   direct_schema_grants_are_restricted as (
     select
       pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid) = 1
@@ -1106,6 +1116,7 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
     (select ready from migration_is_applied)
     and pg_catalog.current_setting('app.settings.jwt_exp', true) = '3600'
     and (select ready from private_ownership_is_trusted)
+    and (select ready from authorized_dal_routine_attributes_are_trusted)
     and (select ready from direct_schema_grants_are_restricted)
     and (select ready from effective_external_schema_access_is_absent)
     and (select ready from direct_routine_grants_are_restricted)

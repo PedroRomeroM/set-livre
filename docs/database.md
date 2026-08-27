@@ -35,9 +35,10 @@ A baseline implementada inclui:
   `USAGE/CREATE` efetivo de `app_dal` fora de `private` e dos schemas internos do PostgreSQL.
 
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
-expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, ACL do schema `private` restrita ao
-owner canônico `postgres` e ao `USAGE` da DAL, ownership do schema e de toda rotina privada fixado em
-`postgres`, ACL de rotinas privadas restrita a esse owner e aos `EXECUTE` allowlisted da DAL,
+expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, comandos allowlisted preservados
+como `security definer` com a configuração exata `search_path = ''`, ACL do schema `private` restrita
+ao owner canônico `postgres` e ao `USAGE` da DAL, ownership do schema e de toda rotina privada fixado
+em `postgres`, ACL de rotinas privadas restrita a esse owner e aos `EXECUTE` allowlisted da DAL,
 ausência de acesso direto ou via `PUBLIC` a dados, ausência de acesso efetivo a schemas externos mesmo
 quando herdado por `PUBLIC`, ownership nulo, memberships reversas conhecidas, RLS em tabelas públicas e
 negação de `CREATE/TEMP`.

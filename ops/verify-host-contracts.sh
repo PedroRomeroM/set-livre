@@ -45,8 +45,25 @@ create_system_identity setlivre-web
 create_system_identity setlivre-backoffice
 getent group deploy-setlivre >/dev/null || sudo groupadd deploy-setlivre
 if ! getent passwd deploy-setlivre >/dev/null; then
-  sudo useradd --create-home --gid deploy-setlivre --shell /bin/bash deploy-setlivre
+  sudo useradd --create-home --gid deploy-setlivre \
+    --home-dir /home/deploy-setlivre --shell /bin/bash deploy-setlivre
 fi
+sudo usermod --lock deploy-setlivre
+deploy_account_entry="$(getent passwd deploy-setlivre)"
+IFS=: read -r deploy_username _ deploy_uid _ _ deploy_home deploy_shell <<< "$deploy_account_entry"
+[[ ${deploy_username} == deploy-setlivre \
+  && ${deploy_uid} =~ ^[0-9]+$ \
+  && ${deploy_uid} -ne 0 \
+  && ${deploy_home} == /home/deploy-setlivre \
+  && ${deploy_shell} == /bin/bash \
+  && $(id --group --name deploy-setlivre) == deploy-setlivre \
+  && $(id --groups --name deploy-setlivre) == deploy-setlivre ]] \
+  || fail "identidade deploy-setlivre do laboratório não é canônica."
+deploy_shadow_entry="$(sudo getent shadow deploy-setlivre)"
+deploy_password_hash="${deploy_shadow_entry#*:}"
+deploy_password_hash="${deploy_password_hash%%:*}"
+[[ ${deploy_password_hash} == '!'* || ${deploy_password_hash} == '*'* ]] \
+  || fail "identidade deploy-setlivre do laboratório aceita senha."
 
 sudo install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
 sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null \
@@ -108,8 +125,11 @@ sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
 
 archive="$temporary_directory/host-contract-release.tar.gz"
-tar --hard-dereference --create --gzip --file "$archive" \
-  --directory "$REPOSITORY_ROOT/.artifacts/release" .
+LC_ALL=C tar --hard-dereference --sort=name --mtime='@0' \
+  --owner=0 --group=0 --numeric-owner --format=posix \
+  --pax-option=delete=atime,delete=ctime \
+  --create --file=- --directory "$REPOSITORY_ROOT/.artifacts/release" . \
+  | gzip --best --no-name > "$archive"
 checksum="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 host_digest="$(
   jq --raw-output '.hostConfiguration.sha256' \
@@ -384,8 +404,11 @@ package_candidate() {
     > "$candidate_directory/release-manifest.next.json"
   mv -- "$candidate_directory/release-manifest.next.json" \
     "$candidate_directory/release-manifest.json"
-  tar --hard-dereference --create --gzip --file "$candidate_archive" \
-    --directory "$candidate_directory" .
+  LC_ALL=C tar --hard-dereference --sort=name --mtime='@0' \
+    --owner=0 --group=0 --numeric-owner --format=posix \
+    --pax-option=delete=atime,delete=ctime \
+    --create --file=- --directory "$candidate_directory" . \
+    | gzip --best --no-name > "$candidate_archive"
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
   write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
   write_fixture_environment "$candidate_backoffice_environment" "$PRODUCTION_BACKOFFICE_APP_URL"
@@ -498,6 +521,26 @@ assert_current_release "$release_sha"
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \
   == "root:setlivre-backoffice:640" ]] || fail "ambiente backoffice versionado tem permissões inválidas."
+
+integrity_guard_sha="$(printf 'deadc0de%.0s' {1..5})"
+rm -f -- "$test_state"/*
+package_candidate "$integrity_guard_sha"
+upload_candidate "$integrity_guard_sha"
+invoke_candidate "$integrity_guard_sha" success
+assert_current_release "$integrity_guard_sha"
+package_candidate "$release_sha"
+upload_candidate "$release_sha"
+invoke_candidate "$release_sha" success
+assert_current_release "$release_sha"
+printf 'release adulterada\n' \
+  | sudo tee "/opt/set-livre/releases/${integrity_guard_sha}/web/server.js" >/dev/null
+package_candidate "$integrity_guard_sha"
+upload_candidate "$integrity_guard_sha"
+if invoke_candidate "$integrity_guard_sha" success; then
+  fail "release existente adulterada foi reutilizada pelo mesmo SHA."
+fi
+assert_current_release "$release_sha"
+sudo rm -rf -- "/opt/set-livre/releases/${integrity_guard_sha}"
 
 run_expected_failure "$(printf '1%.0s' {1..40})" environment "$release_sha"
 run_expected_failure "$(printf '2%.0s' {1..40})" symlink "$release_sha"
