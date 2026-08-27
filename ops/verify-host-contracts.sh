@@ -26,6 +26,16 @@ fail() {
   exit 1
 }
 
+privileged_path_exists() {
+  local path="$1"
+  sudo test -e "$path" || sudo test -L "$path"
+}
+
+privileged_regular_file_exists() {
+  local path="$1"
+  sudo test -f "$path" && ! sudo test -L "$path"
+}
+
 [[ $# -eq 2 ]] || fail "uso: verify-host-contracts.sh <sha> <temporary-directory>."
 release_sha="$1"
 temporary_directory="$(realpath -e -- "$2")"
@@ -201,10 +211,12 @@ if entry_limit_output="$(
 fi
 grep --fixed-strings 'quantidade de entradas inválida' <<< "$entry_limit_output" >/dev/null \
   || fail "archive excessivo falhou por motivo inesperado."
-[[ ! -e "/home/deploy-setlivre/incoming/set-livre-${entry_limit_sha}.tar.gz" \
-  && ! -e "/home/deploy-setlivre/incoming/web-${entry_limit_sha}.env" \
-  && ! -e "/home/deploy-setlivre/incoming/backoffice-${entry_limit_sha}.env" ]] \
-  || fail "archive excessivo deixou uploads residuais."
+for residual in \
+  "/home/deploy-setlivre/incoming/set-livre-${entry_limit_sha}.tar.gz" \
+  "/home/deploy-setlivre/incoming/web-${entry_limit_sha}.env" \
+  "/home/deploy-setlivre/incoming/backoffice-${entry_limit_sha}.env"; do
+  ! privileged_path_exists "$residual" || fail "archive excessivo deixou uploads residuais."
+done
 
 metadata_limit_sha="$(printf 'a%.0s' {1..40})"
 metadata_limit_archive="$temporary_directory/metadata-limit.tar.gz"
@@ -237,10 +249,13 @@ if metadata_limit_output="$(
 fi
 grep --fixed-strings 'metadata estendida excede o limite' <<< "$metadata_limit_output" >/dev/null \
   || fail "metadata PAX excessiva falhou por motivo inesperado."
-[[ ! -e "/home/deploy-setlivre/incoming/set-livre-${metadata_limit_sha}.tar.gz" \
-  && ! -e "/home/deploy-setlivre/incoming/web-${metadata_limit_sha}.env" \
-  && ! -e "/home/deploy-setlivre/incoming/backoffice-${metadata_limit_sha}.env" ]] \
-  || fail "archive com metadata excessiva deixou uploads residuais."
+for residual in \
+  "/home/deploy-setlivre/incoming/set-livre-${metadata_limit_sha}.tar.gz" \
+  "/home/deploy-setlivre/incoming/web-${metadata_limit_sha}.env" \
+  "/home/deploy-setlivre/incoming/backoffice-${metadata_limit_sha}.env"; do
+  ! privileged_path_exists "$residual" \
+    || fail "archive com metadata excessiva deixou uploads residuais."
+done
 
 # O runner confiável abre os fixtures; somente o processo de destino troca de UID.
 # shellcheck disable=SC2024
@@ -251,7 +266,7 @@ for abandoned in \
   "/home/deploy-setlivre/incoming/web-${abandoned_sha}.env" \
   "/home/deploy-setlivre/incoming/backoffice-${abandoned_sha}.env" \
   "/home/deploy-setlivre/incoming/.upload.Ab12Cd"; do
-  [[ ! -e ${abandoned} ]] || fail "upload abandonado não foi removido."
+  ! privileged_path_exists "$abandoned" || fail "upload abandonado não foi removido."
 done
 # shellcheck disable=SC2024
 sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-web-environment ${release_sha}" \
@@ -262,7 +277,7 @@ sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-backoffice-envir
 stale_trusted=/var/tmp/set-livre-trusted.Ab12Cd.env
 sudo install -o root -g root -m 0600 /dev/null "$stale_trusted"
 sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --verify-only
-[[ ! -e ${stale_trusted} ]] || fail "arquivo confiável residual não foi removido."
+! privileged_path_exists "$stale_trusted" || fail "arquivo confiável residual não foi removido."
 
 # A ativação usa comandos controlados para exercitar o instalador real sem iniciar systemd no runner.
 sudo rm -rf -- /opt/set-livre/current
@@ -378,7 +393,7 @@ exit 0
 JOURNAL
 chmod 0755 "$fake_bin"/*
 
-[[ ! -e ${FORCED_COMMAND_SUDOERS} ]] \
+! privileged_path_exists "$FORCED_COMMAND_SUDOERS" \
   || fail "sudoers temporário do contrato já existe."
 [[ ${fake_bin} =~ ^/[A-Za-z0-9_./-]+$ ]] \
   || fail "diretório de comandos controlados inválido."
@@ -520,14 +535,14 @@ assert_symlinked_release_component_rejected() (
     link_path=/opt/set-livre/releases
     backup=/opt/set-livre/releases.host-contracts-backup
   fi
-  [[ ! -e ${backup} && ! -L ${backup} ]] || fail "backup do probe de symlink já existe."
+  ! privileged_path_exists "$backup" || fail "backup do probe de symlink já existe."
   # Invocada indiretamente pelo trap local do probe.
   # shellcheck disable=SC2317,SC2329
   restore_release_component() {
-    if [[ -L ${link_path} ]]; then
+    if sudo test -L "$link_path"; then
       sudo rm -f -- "$link_path"
     fi
-    if [[ -d ${backup} && ! -L ${backup} ]]; then
+    if sudo test -d "$backup" && ! sudo test -L "$backup"; then
       sudo mv --no-target-directory -- "$backup" "$link_path"
     fi
   }
@@ -574,7 +589,7 @@ assert_current_link() {
 assert_current_release() {
   local expected="$1"
   assert_current_link "$expected"
-  [[ ! -e /opt/set-livre/.activation-rollback ]] \
+  ! privileged_path_exists /opt/set-livre/.activation-rollback \
     || fail "marcador de rollback permaneceu depois de estado terminal."
 }
 
@@ -586,8 +601,7 @@ recover_services_successfully() {
     SET_LIVRE_TEST_STATE="$test_state" \
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
   assert_current_release "$expected"
-  [[ ! -e /etc/set-livre/bootstrap-in-progress.sha256 \
-    && ! -L /etc/set-livre/bootstrap-in-progress.sha256 ]] \
+  ! privileged_path_exists /etc/set-livre/bootstrap-in-progress.sha256 \
     || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }
 
@@ -603,11 +617,13 @@ run_expected_failure() {
     fail "falha injetada em ${phase} foi aceita como sucesso."
   fi
   if [[ -z ${expected_current} ]]; then
-    [[ ! -e /opt/set-livre/current ]] || fail "primeira ativação falha deixou release ativa."
-    [[ ! -e /opt/set-livre/.activation-rollback ]] || fail "rollback inicial deixou marcador."
+    ! privileged_path_exists /opt/set-livre/current \
+      || fail "primeira ativação falha deixou release ativa."
+    ! privileged_path_exists /opt/set-livre/.activation-rollback \
+      || fail "rollback inicial deixou marcador."
   elif [[ ${expected_marker} == retained ]]; then
     assert_current_link "$expected_current"
-    [[ -e /opt/set-livre/.activation-rollback ]] \
+    privileged_regular_file_exists /opt/set-livre/.activation-rollback \
       || fail "falha de estabilização consumiu o marcador necessário ao retry."
   else
     assert_current_release "$expected_current"
@@ -627,7 +643,7 @@ package_candidate "$release_sha"
 upload_candidate "$release_sha"
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"
 assert_current_release "$release_sha"
-[[ ! -e ${stale_staging_directory} ]] \
+! privileged_path_exists "$stale_staging_directory" \
   || fail "staging residual validado não foi removido antes da ativação."
 [[ $(sudo stat --format '%i' /opt/set-livre/current/web/server.js) \
   != "$(sudo stat --format '%i' /opt/set-livre/current/web/hardlink-source-fixture.js)" ]] \
@@ -651,7 +667,7 @@ fi
 [[ $(sudo readlink --canonicalize-existing /opt/set-livre/current) \
   == "/opt/set-livre/releases/${release_sha}/web" ]] \
   || fail "a recusa do current aninhado alterou seu destino antes da ativação."
-[[ ! -e /opt/set-livre/.activation-rollback ]] \
+! privileged_path_exists /opt/set-livre/.activation-rollback \
   || fail "current aninhado publicou marcador de rollback inválido."
 sudo rm -rf -- "/opt/set-livre/releases/${nested_current_sha}"
 sudo ln --symbolic --force "/opt/set-livre/releases/${release_sha}" \
@@ -728,7 +744,7 @@ sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-l
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-link
 assert_current_link "$release_sha"
-[[ -e /opt/set-livre/.activation-rollback ]] \
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "recuperação do link consumiu o marcador antes de estabilizar os serviços."
 if sudo env \
   PATH="$fake_bin:$PATH" \
@@ -738,11 +754,13 @@ if sudo env \
   fail "recuperação de serviços aceitou readiness HTTPS público com falha."
 fi
 assert_current_link "$release_sha"
-[[ -e /opt/set-livre/.activation-rollback ]] \
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "recuperação falha consumiu o marcador necessário ao retry."
 recover_services_successfully "$release_sha"
 
 bootstrap_marker_source="$temporary_directory/bootstrap-in-progress.sha256"
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 printf '%s\n' "$(printf '0%.0s' {1..64})" > "$bootstrap_marker_source"
 sudo install -o root -g root -m 0600 \
   "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
@@ -755,9 +773,11 @@ if sudo env \
   bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
   fail "recovery aceitou digests divergentes no estado intermediário do bootstrap."
 fi
-[[ -e /opt/set-livre/.activation-rollback \
-  && -e /etc/set-livre/bootstrap-in-progress.sha256 ]] \
-  || fail "recovery inválido consumiu o estado intermediário do bootstrap."
+if ! privileged_regular_file_exists /opt/set-livre/.activation-rollback \
+  || ! privileged_regular_file_exists /etc/set-livre/bootstrap-in-progress.sha256; then
+  fail "recovery inválido consumiu o estado intermediário do bootstrap."
+fi
+assert_current_link "$retention_sha"
 
 printf '%s\n' "$host_digest" > "$bootstrap_marker_source"
 sudo install -o root -g root -m 0600 \
@@ -770,10 +790,10 @@ if sudo env \
   bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
   fail "recovery de bootstrap aceitou readiness HTTPS público com falha."
 fi
-grep --fixed-strings --line-regexp "$host_digest" \
+sudo grep --fixed-strings --line-regexp "$host_digest" \
   /etc/set-livre/bootstrap-in-progress.sha256 >/dev/null \
   || fail "recovery falho não republicou o bloqueio autenticado de bootstrap."
-[[ -e /opt/set-livre/.activation-rollback ]] \
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "recovery falho consumiu o rollback do bootstrap."
 recover_services_successfully "$release_sha"
 
@@ -803,7 +823,7 @@ recovery_process=$!
 /usr/bin/sleep 0.1
 kill -0 "$recovery_process" 2>/dev/null \
   || fail "watcher de recuperação não aguardou o lock do deploy."
-[[ -e /opt/set-livre/.activation-rollback ]] \
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "watcher alterou o marcador enquanto o deploy mantinha o lock."
 touch "$recovery_lock_release"
 wait "$lock_holder"

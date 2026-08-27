@@ -171,14 +171,28 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain('publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest"');
     for (const recoveryMode of ["--recover-link", "--recover-services"]) {
       const branchStart = deploy.indexOf(`\${1:-} == "${recoveryMode}"`);
-      const branchEnd = deploy.indexOf("\nfi\n", branchStart) + 4;
+      const branchEnd = deploy.indexOf("\n  exit 0\nfi\n", branchStart) + 13;
       const branch = deploy.slice(branchStart, branchEnd);
       expect(branchStart).toBeGreaterThan(-1);
+      expect(branchEnd).toBeGreaterThan(branchStart);
       expect(branch).toContain("managed_release_directories_are_valid");
       expect(branch.indexOf("managed_release_directories_are_valid")).toBeLessThan(
-        branch.indexOf("recover_link_from_marker"),
+        Math.max(
+          branch.indexOf("read_rollback_marker"),
+          branch.indexOf("recover_link_from_marker"),
+        ),
       );
     }
+    const servicesStart = deploy.indexOf('\${1:-} == "--recover-services"');
+    const servicesEnd = deploy.indexOf("\n  exit 0\nfi\n", servicesStart);
+    const servicesRecovery = deploy.slice(servicesStart, servicesEnd);
+    expect(servicesRecovery.indexOf("read_rollback_marker")).toBeLessThan(
+      servicesRecovery.indexOf("authorize_interrupted_bootstrap_recovery"),
+    );
+    expect(servicesRecovery.indexOf("authorize_interrupted_bootstrap_recovery")).toBeLessThan(
+      servicesRecovery.indexOf("activate_recovered_link"),
+    );
+    expect(hostVerification).toContain("privileged_regular_file_exists");
     expect(hostVerification).toContain(
       "recovery aceitou digests divergentes no estado intermediário do bootstrap",
     );

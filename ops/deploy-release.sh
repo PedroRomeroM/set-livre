@@ -16,6 +16,8 @@ readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
 bootstrap_recovery_digest=""
+recovered_release=""
+recovered_target=""
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -117,22 +119,34 @@ finally:
 PYTHON
 }
 
-recover_link_from_marker() {
+read_rollback_marker() {
   recovered_release=""
+  recovered_target=""
   [[ -f ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]] || return 1
   [[ $(stat --format '%U:%G:%a' -- "$ROLLBACK_MARKER") == "root:root:600" ]] \
     || return 1
 
   local target
   target="$(< "$ROLLBACK_MARKER")"
-  if [[ ${target} == "NONE" ]]; then
-    rm -f -- "$CURRENT_LINK" "${CURRENT_LINK}.next" || return 1
-  else
+  if [[ ${target} != "NONE" ]]; then
     [[ ${target} =~ ^${RELEASES_DIRECTORY}/[0-9a-f]{40}$ ]] || return 1
     [[ -d ${target} && ! -L ${target} ]] || return 1
-    activate_link "$target" || return 1
+    recovered_target="$target"
     recovered_release="$(basename -- "$target")"
   fi
+}
+
+activate_recovered_link() {
+  if [[ -z ${recovered_target} ]]; then
+    rm -f -- "$CURRENT_LINK" "${CURRENT_LINK}.next" || return 1
+  else
+    activate_link "$recovered_target" || return 1
+  fi
+}
+
+recover_link_from_marker() {
+  read_rollback_marker || return 1
+  activate_recovered_link
 }
 
 write_rollback_marker() {
@@ -253,11 +267,12 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   trap restore_bootstrap_recovery_blocker_on_failure EXIT
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
-    recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
+    read_rollback_marker || fail "não foi possível ler a ativação interrompida."
     if [[ -e ${HOST_BOOTSTRAP_IN_PROGRESS} || -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
       authorize_interrupted_bootstrap_recovery "$recovered_release" \
         || fail "o estado intermediário do bootstrap não autorizou a recuperação."
     fi
+    activate_recovered_link || fail "não foi possível recuperar a ativação interrompida."
     if [[ -z ${recovered_release} ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
         || fail "não foi possível estabilizar o host sem release anterior."

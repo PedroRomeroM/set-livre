@@ -241,7 +241,8 @@ marcador de rollback para a própria raiz SHA e só então remove o in-progress 
 recuperação existente permanece responsável pela transição até os dois readiness internos e o HTTPS
 público passarem. Quando os dois marcadores coexistem após uma interrupção, ela só libera os serviços
 se `bootstrap-in-progress`, `host-config.sha256` e o digest do manifesto da release apontada forem
-idênticos e tiverem tipo, owner e modo exatos. Falha de readiness republica atomicamente o bloqueio de
+idênticos e tiverem tipo, owner e modo exatos. Essa autenticação termina antes de qualquer troca de
+`current`; estado inválido não altera o link ativo. Falha de readiness republica atomicamente o bloqueio de
 bootstrap antes de parar os serviços e preserva o rollback para retry; estado divergente permanece
 intocado e falha fechado. Reboot ou `SIGKILL` nessa janela relê o marcador e estabiliza a mesma release.
 Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
