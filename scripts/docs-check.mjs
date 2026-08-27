@@ -95,6 +95,21 @@ for (const name of featureFiles) {
 }
 
 const roadmap = read("docs/roadmap.md");
+const executiveContext = read("contexto-projeto-set-livre.html");
+if (!executiveContext.includes('href="docs/infrastructure.md"')) {
+  errors.push("Contexto executivo não aponta para a fonte canônica de infraestrutura.");
+}
+for (const operationalDetail of [
+  "ExecStopPost",
+  "SIGKILL",
+  "--recover-",
+  "acme-challenge",
+  "PAX/GNU",
+]) {
+  if (executiveContext.includes(operationalDetail)) {
+    errors.push(`Contexto executivo repete detalhe operacional: ${operationalDetail}.`);
+  }
+}
 const roadmapEntries = [
   ...roadmap.matchAll(
     /^\|\s*\d+\s*\|\s*(FEAT-\d{3})\s*\|.*?\|\s*(Concluída|Planejada|Em andamento)\s*\|/gmu,

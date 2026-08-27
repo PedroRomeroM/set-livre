@@ -117,21 +117,21 @@ SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do
 `/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
 só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
-esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
-dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
-o lock do deploy por no máximo cinco minutos e estabiliza serviços e health após `SIGKILL`; essa
-instância depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze
-minutos, suficiente para o lock e para os dois health checks limitados. Uma fase root-only adicional é
-publicada em disco antes de remover o blocker do bootstrap e permanece até o readiness terminal. Se o
-recovery de serviços recebe `SIGKILL`, o `ExecStopPost` específico de `@services` recompõe o blocker a
-partir dessa fase e interrompe os apps; `@link` usa um pós-stop sem lock para não esperar pelo próprio
-bootstrap que requisitou o start. Se o host perde energia, `@link` sela a fase antes que as units possam
-iniciar. O link só é alterado depois
-de autenticar blocker/fase, digest instalado e manifesto da release. Recuperar o link nunca consome o marcador; todos os caminhos
-de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
-HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
-apenas encerra sem trabalho se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
-readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode ser reutilizado
+esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units estáticas, sem vínculo
+direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
+`set-livre-release-recovery.service` termine com sucesso antes de iniciá-las. A mesma recovery unit é
+disparada pela path unit quando existe marcador, aguarda o lock do deploy por no máximo cinco minutos,
+depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
+pode iniciar os apps internamente para provar health sem depender do gate e, portanto, sem ciclo de
+units. Uma fase root-only adicional é publicada antes de remover o blocker do bootstrap e permanece até
+o readiness terminal. Se a recuperação recebe `SIGKILL`, seu `ExecStopPost` interrompe os apps e, no
+fluxo de bootstrap, também recompõe o blocker. O link só é alterado depois de autenticar blocker/fase,
+digest instalado e manifesto
+da release; rollback, boot e retry removem o marcador apenas depois de estabilizar os serviços e provar
+readiness interno e HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os
+serviços. A recovery unit encerra sem trabalho se o deploy normal já removeu o marcador. Rollback
+incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode
+ser reutilizado
 quando artifact, ambientes e o digest determinístico da árvore instalada completa correspondem à
 árvore recém-preparada; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes de
 descartar o staging. A retenção ocorre antes da ativação e mantém no máximo quatro releases, incluindo
@@ -164,8 +164,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   recuperável e só então é publicado;
 - Nginx, systemd, OpenSSH, `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
-- units systemd habilitadas, porém inativas antes da primeira release; cada unit exige seu entrypoint
-  imutável e limita tentativas de restart para não criar loop em host vazio ou artefato inválido;
+- gate de boot e recovery habilitados; as units dos apps são estáticas, exigem seu entrypoint imutável e
+  limitam tentativas de restart para não criar loop em host vazio ou artefato inválido;
 - pelo menos 1 GiB de swap para reduzir risco de OOM no shape de 1 GB; somente arquivo regular,
   root-owned, `0600`, sem hard link e já formatado como swap é preservado, e qualquer estado inválido é
   removido sem seguir symlink nem apagar diretório recursivamente antes da substituição atômica;
@@ -236,11 +236,13 @@ header PAX/GNU a 64 KiB, limita a metadata acumulada a 8 MiB, rejeita sparse e e
 headers e bytes descompactados. Só então a extração valida as até 20.000 entradas e 512 MiB de conteúdo;
 um gzip pequeno não consegue provocar alocação de metadata proporcional ao tamanho declarado.
 
-O manifesto contém o SHA-256 determinístico dos dez arquivos que definem o host. Antes de qualquer
-mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa e publica
-atomicamente um marcador `bootstrap-in-progress` root-only. Quando existe contrato ativo válido,
-preserva sua cópia `host-config.previous`, invalida o digest ativo e interrompe os apps antes de alterar
-pacotes ou qualquer superfície gerenciada. As units exigem simultaneamente o digest ativo e a ausência
+O manifesto contém o SHA-256 determinístico dos arquivos versionados que definem o host. Antes de
+qualquer mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa e publica
+atomicamente um marcador `bootstrap-in-progress` root-only. Imediatamente depois, interrompe toda unit
+de app carregada e prova que ambas estão inativas antes de inspecionar ou reparar `current`, validar a
+release e alterar pacotes ou qualquer superfície gerenciada. Quando existe contrato ativo válido,
+preserva sua cópia `host-config.previous` e invalida o digest ativo. As units exigem simultaneamente o
+digest ativo e a ausência
 de `bootstrap-in-progress`; um reboot durante as mutações não reinicia a release. Depois de validar
 integralmente as superfícies estáticas, o bootstrap publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico enquanto ainda mantém o marcador transitório; o
@@ -265,7 +267,7 @@ correto. Se uma release compatível não recuperar readiness interno e público 
 os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
 release aprovada. Se o health falha, o bootstrap republica o in-progress antes de retirar o symlink e o
 rollback, mantendo boot e deploy bloqueados até uma reexecução segura. Um `current` pendente, cujo
-destino já não existe, é removido pelo bootstrap antes da
+destino já não existe, é removido pelo bootstrap somente depois de parar e verificar os apps, antes da
 validação de release para que uma entrega aprovada possa reparar o host. Se Nginx, systemd, CA,
 bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.

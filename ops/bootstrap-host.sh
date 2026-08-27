@@ -39,6 +39,7 @@ bootstrap_marker_source=""
 bootstrap_recovery_marker_source=""
 recovery_marker_source=""
 host_configuration_published=false
+bootstrap_gate_published=false
 active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
@@ -240,6 +241,17 @@ clear_dangling_current_link() {
   if [[ -L ${current_link} && ! -e ${current_link} ]]; then
     rm -f -- "$current_link"
   fi
+}
+
+stop_application_services() {
+  local load_state service
+  for service in set-livre-web.service set-livre-backoffice.service; do
+    load_state="$(systemctl show --property=LoadState --value "$service")" || return 1
+    if [[ ${load_state} != "not-found" ]]; then
+      systemctl stop "$service" || return 1
+    fi
+    ! systemctl is-active --quiet "$service" || return 1
+  done
 }
 
 assert_legacy_surface_absent() {
@@ -628,8 +640,10 @@ cleanup() {
     || rm -f -- "$bootstrap_recovery_marker_source"
   [[ -z ${recovery_marker_source} ]] || rm -f -- "$recovery_marker_source"
   [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
+  if [[ ${bootstrap_gate_published} == true ]]; then
+    stop_application_services || true
+  fi
   if [[ ${host_configuration_published} == true ]]; then
-    systemctl stop set-livre-web.service set-livre-backoffice.service || true
     if [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
       || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]; then
       publish_bootstrap_in_progress "$host_configuration_digest" || true
@@ -654,7 +668,8 @@ for required_source in \
   "$NGINX_TLS_SOURCE" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" \
-  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery@.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-application-start.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path"; do
   [[ -f ${required_source} && ! -L ${required_source} ]] || fail "fonte operacional ausente ou inválida."
 done
@@ -752,9 +767,10 @@ files = [
     "deploy-ssh-command.sh",
     "nginx/set-livre-http.conf",
     "nginx/set-livre-tls.conf",
+    "systemd/set-livre-application-start.service",
     "systemd/set-livre-backoffice.service",
     "systemd/set-livre-release-recovery.path",
-    "systemd/set-livre-release-recovery@.service",
+    "systemd/set-livre-release-recovery.service",
     "systemd/set-livre-web.service",
 ]
 digest = hashlib.sha256()
@@ -786,6 +802,9 @@ else
 fi
 publish_bootstrap_in_progress "$host_configuration_digest" \
   || fail "não foi possível publicar o marcador de bootstrap."
+bootstrap_gate_published=true
+stop_application_services \
+  || fail "não foi possível interromper os apps antes de inspecionar a release ativa."
 clear_dangling_current_link
 if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current ]] || fail "release ativa não é link simbólico."
@@ -829,12 +848,8 @@ if [[ ${installed_host_contract} == true ]]; then
     "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
   rm -f -- "$HOST_CONFIGURATION_DIGEST"
 fi
-if [[ -n ${active_release_sha} ]]; then
-  systemctl stop set-livre-web.service set-livre-backoffice.service \
-    || fail "não foi possível interromper a release antes de alterar o host."
-  if [[ ${active_release_compatible} == false ]]; then
-    rm -f -- /opt/set-livre/current
-  fi
+if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
+  rm -f -- /opt/set-livre/current
 fi
 
 export DEBIAN_FRONTEND=noninteractive
@@ -1003,12 +1018,13 @@ install -o root -g root -m 0755 "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-l
 install -o root -g root -m 0755 "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" /etc/systemd/system/set-livre-web.service
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" /etc/systemd/system/set-livre-backoffice.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery@.service" \
-  /etc/systemd/system/set-livre-release-recovery@.service
+install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-application-start.service" \
+  /etc/systemd/system/set-livre-application-start.service
+install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
+  /etc/systemd/system/set-livre-release-recovery.service
 install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path" \
   /etc/systemd/system/set-livre-release-recovery.path
-systemctl stop set-livre-release-recovery.service 2>/dev/null || true
-rm -f -- /etc/systemd/system/set-livre-release-recovery.service
+rm -f -- /etc/systemd/system/set-livre-release-recovery@.service
 install -d -o root -g root -m 0755 /usr/local/share/set-livre
 install -o root -g root -m 0644 "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf
 install -o root -g root -m 0644 "$NGINX_TLS_SOURCE" /usr/local/share/set-livre/nginx-tls.conf
@@ -1242,9 +1258,9 @@ nginx -t
 systemctl daemon-reload
 systemctl enable nginx unattended-upgrades
 systemctl restart nginx
+systemctl disable set-livre-web.service set-livre-backoffice.service
 systemctl enable \
-  set-livre-web.service \
-  set-livre-backoffice.service \
+  set-livre-application-start.service \
   set-livre-release-recovery.path
 systemctl start set-livre-release-recovery.path
 systemctl enable --now snap.certbot.renew.timer
@@ -1311,6 +1327,7 @@ if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   rm -f -- "$ROLLBACK_MARKER"
 fi
 host_configuration_published=false
+bootstrap_gate_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

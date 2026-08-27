@@ -24,9 +24,10 @@ export const hostConfigurationFiles = Object.freeze([
   "ops/deploy-ssh-command.sh",
   "ops/nginx/set-livre-http.conf",
   "ops/nginx/set-livre-tls.conf",
+  "ops/systemd/set-livre-application-start.service",
   "ops/systemd/set-livre-backoffice.service",
   "ops/systemd/set-livre-release-recovery.path",
-  "ops/systemd/set-livre-release-recovery@.service",
+  "ops/systemd/set-livre-release-recovery.service",
   "ops/systemd/set-livre-web.service",
 ]);
 

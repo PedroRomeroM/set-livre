@@ -2,8 +2,6 @@
 Description=Set Livre backoffice
 After=network-online.target
 Wants=network-online.target
-Requires=set-livre-release-recovery@link.service
-After=set-livre-release-recovery@link.service
 ConditionPathExists=/opt/set-livre/current/backoffice/apps/backoffice/server.js
 ConditionPathExists=/etc/set-livre/host-config.sha256
 ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
@@ -50,6 +48,3 @@ RestrictSUIDSGID=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
-
-[Install]
-WantedBy=multi-user.target

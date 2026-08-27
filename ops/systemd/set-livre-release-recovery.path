@@ -3,7 +3,7 @@ Description=Watch for an interrupted Set Livre release activation
 
 [Path]
 PathExists=/opt/set-livre/.activation-rollback
-Unit=set-livre-release-recovery@services.service
+Unit=set-livre-release-recovery.service
 
 [Install]
 WantedBy=multi-user.target

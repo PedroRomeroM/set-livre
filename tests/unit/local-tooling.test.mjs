@@ -77,8 +77,12 @@ describe("local tooling contracts", () => {
       new URL("../../ops/systemd/set-livre-backoffice.service", import.meta.url),
       "utf8",
     );
+    const applicationStartUnit = readFileSync(
+      new URL("../../ops/systemd/set-livre-application-start.service", import.meta.url),
+      "utf8",
+    );
     const recoveryUnit = readFileSync(
-      new URL("../../ops/systemd/set-livre-release-recovery@.service", import.meta.url),
+      new URL("../../ops/systemd/set-livre-release-recovery.service", import.meta.url),
       "utf8",
     );
     const recoveryPath = readFileSync(
@@ -127,20 +131,34 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("systemctl reset-failed set-livre-web.service || true");
     expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
     expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
-    expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i");
+    for (const unit of [webUnit, backofficeUnit]) {
+      expect(unit).not.toContain("[Install]");
+      expect(unit).not.toContain("WantedBy=multi-user.target");
+      expect(unit).not.toContain("set-livre-release-recovery@link.service");
+    }
+    expect(applicationStartUnit).toContain("Requires=set-livre-release-recovery.service");
+    expect(applicationStartUnit).toContain("After=set-livre-release-recovery.service");
+    expect(applicationStartUnit).toContain(
+      "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
+    );
+    expect(applicationStartUnit).toContain("RemainAfterExit=yes");
+    expect(applicationStartUnit).toContain("WantedBy=multi-user.target");
+    expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-services");
     expect(recoveryUnit).toContain("TimeoutStartSec=12min");
     expect(recoveryUnit).not.toContain("ConditionPathExists=");
     expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
-    expect(recoveryUnit).not.toContain("Before=set-livre-web.service");
+    expect(recoveryUnit).not.toContain("set-livre-application-start.service");
     expect(recoveryUnit).toContain("Wants=network-online.target");
     expect(recoveryUnit).toContain("Requires=nginx.service");
     expect(recoveryUnit).toContain("After=network-online.target nginx.service");
-    expect(recoveryUnit).toContain("ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-%i");
+    expect(recoveryUnit).toContain("ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-services");
     expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
-    expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
-    expect(webUnit).toContain("Requires=set-livre-release-recovery@link.service");
-    expect(backofficeUnit).toContain("Requires=set-livre-release-recovery@link.service");
+    expect(recoveryPath).toContain("Unit=set-livre-release-recovery.service");
+    expect(bootstrap).toContain(
+      "systemctl disable set-livre-web.service set-livre-backoffice.service",
+    );
+    expect(bootstrap).toContain("set-livre-application-start.service");
   });
 
   it("authenticates and consumes a paired bootstrap recovery state", () => {
@@ -182,35 +200,20 @@ describe("local tooling contracts", () => {
       begin.indexOf('rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"'),
     );
     expect(deploy).toContain("ensure_bootstrap_recovery_blocker");
-    for (const recoveryMode of ["--recover-link", "--recover-services"]) {
-      const branchStart = deploy.indexOf(`\${1:-} == "${recoveryMode}"`);
-      const branchEnd = deploy.indexOf("\n  exit 0\nfi\n", branchStart) + 13;
-      const branch = deploy.slice(branchStart, branchEnd);
-      expect(branchStart).toBeGreaterThan(-1);
-      expect(branchEnd).toBeGreaterThan(branchStart);
-      expect(branch).toContain("managed_release_directories_are_valid");
-      expect(branch.indexOf("managed_release_directories_are_valid")).toBeLessThan(
-        Math.max(
-          branch.indexOf("read_rollback_marker"),
-          branch.indexOf("recover_link_from_marker"),
-        ),
-      );
-    }
+    expect(deploy).not.toContain("--recover-link");
+    expect(deploy).not.toContain("--seal-link");
+    const recoveryBranchStart = deploy.indexOf('\${1:-} == "--recover-services"');
+    const recoveryBranchEnd = deploy.indexOf("\n  exit 0\nfi\n", recoveryBranchStart) + 13;
+    const recoveryBranch = deploy.slice(recoveryBranchStart, recoveryBranchEnd);
+    expect(recoveryBranchStart).toBeGreaterThan(-1);
+    expect(recoveryBranchEnd).toBeGreaterThan(recoveryBranchStart);
+    expect(recoveryBranch).toContain("managed_release_directories_are_valid");
+    expect(recoveryBranch.indexOf("managed_release_directories_are_valid")).toBeLessThan(
+      recoveryBranch.indexOf("read_rollback_marker"),
+    );
     const sealStart = deploy.indexOf('\${1:-} == "--seal-services"');
     const sealEnd = deploy.indexOf("\n  exit 0\nfi\n", sealStart);
     expect(deploy.slice(sealStart, sealEnd)).toContain("managed_release_directories_are_valid");
-    const linkSealStart = deploy.indexOf('\${1:-} == "--seal-link"');
-    const linkSealEnd = deploy.indexOf("\n  exit 0\nfi\n", linkSealStart);
-    expect(deploy.slice(linkSealStart, linkSealEnd)).not.toContain("flock");
-    const linkStart = deploy.indexOf('\${1:-} == "--recover-link"');
-    const linkEnd = deploy.indexOf("\n  exit 0\nfi\n", linkStart);
-    const linkRecovery = deploy.slice(linkStart, linkEnd);
-    expect(linkRecovery.indexOf("read_rollback_marker")).toBeLessThan(
-      linkRecovery.indexOf("authorize_interrupted_bootstrap_recovery"),
-    );
-    expect(linkRecovery.indexOf("authorize_interrupted_bootstrap_recovery")).toBeLessThan(
-      linkRecovery.indexOf("activate_recovered_link"),
-    );
     const servicesStart = deploy.indexOf('\${1:-} == "--recover-services"');
     const servicesEnd = deploy.indexOf("\n  exit 0\nfi\n", servicesStart);
     const servicesRecovery = deploy.slice(servicesStart, servicesEnd);
@@ -228,11 +231,8 @@ describe("local tooling contracts", () => {
       "recovery selado não restaurou o bloqueio autenticado de bootstrap",
     );
     expect(hostVerification).toContain("SIGKILL consumiu a fase durável do recovery");
-    expect(hostVerification).toContain(
-      "selamento da instância link esperou recursivamente pelo lock do bootstrap",
-    );
-    expect(hostVerification).toContain("for recovery_mode in --recover-link --recover-services");
-    expect(hostVerification).toContain("recovery ${recovery_mode} aceitou");
+    expect(hostVerification).toContain("selamento pós-SIGKILL comum não interrompeu os serviços");
+    expect(deploy).toContain("seal_interrupted_release_recovery() {");
   });
 
   it("preserves Oracle networking while exposing only the production entrypoints", () => {
@@ -613,6 +613,10 @@ describe("local tooling contracts", () => {
 
   it("clears a dangling current link before validating an active release", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const gatePublish = bootstrap.indexOf(
+      'publish_bootstrap_in_progress "$host_configuration_digest"',
+    );
+    const stopInvocation = bootstrap.indexOf("\nstop_application_services \\", gatePublish);
     const cleanupDeclaration = bootstrap.indexOf("clear_dangling_current_link() {");
     const cleanupInvocation = bootstrap.indexOf(
       "\nclear_dangling_current_link\n",
@@ -627,8 +631,16 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("if [[ -L ${current_link} && ! -e ${current_link} ]]; then");
     expect(bootstrap).toContain('rm -f -- "$current_link"');
     expect(cleanupDeclaration).toBeGreaterThan(-1);
+    expect(stopInvocation).toBeGreaterThan(gatePublish);
+    expect(stopInvocation).toBeLessThan(cleanupInvocation);
     expect(cleanupInvocation).toBeGreaterThan(cleanupDeclaration);
     expect(activeReleaseValidation).toBeGreaterThan(cleanupInvocation);
+    expect(activeReleaseValidation).toBeLessThan(bootstrap.indexOf("\napt-get update\n"));
+    expect(bootstrap).toContain('systemctl show --property=LoadState --value "$service"');
+    expect(bootstrap).toContain('if [[ ${load_state} != "not-found" ]]; then');
+    expect(bootstrap).toContain('systemctl stop "$service"');
+    expect(bootstrap).toContain('! systemctl is-active --quiet "$service"');
+    expect(bootstrap).toContain("if [[ ${bootstrap_gate_published} == true ]]; then");
     expect(
       bootstrap.match(
         /if \[\[ -e \/opt\/set-livre\/current \|\| -L \/opt\/set-livre\/current \]\]; then/gu,
@@ -733,7 +745,7 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain(".runtime/web.env");
     expect(deploy).toContain("write_rollback_marker");
     expect(deploy).toContain("recover_link_from_marker");
-    expect(deploy).toContain("--recover-link");
+    expect(deploy).not.toContain("--recover-link");
     expect(deploy).toContain("--recover-services");
     expect(deploy).toContain(
       'readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"',
@@ -761,12 +773,9 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery).toContain(
       'flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9',
     );
-    expect(hostVerification).toContain(
-      "recuperação do link consumiu o marcador antes de estabilizar os serviços",
-    );
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      5,
+      6,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
@@ -795,7 +804,7 @@ describe("local tooling contracts", () => {
       bootstrap.indexOf("cleanup() {"),
       bootstrap.indexOf("\ntrap cleanup EXIT"),
     );
-    expect(bootstrapCleanup.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+    expect(bootstrapCleanup.indexOf("stop_application_services")).toBeLessThan(
       bootstrapCleanup.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"'),
     );
     expect(bootstrapCleanup).toContain("HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS");
@@ -806,7 +815,7 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("[[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]");
     expect(
       deploy.match(/if \[\[ -e \$\{ROLLBACK_MARKER\} \|\| -L \$\{ROLLBACK_MARKER\} \]\]; then/gu),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     ).toBeLessThan(bootstrap.indexOf("systemctl restart set-livre-web.service"));
@@ -866,7 +875,9 @@ describe("local tooling contracts", () => {
     expect(bootstrap.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"')).toBeLessThan(
       bootstrap.indexOf("apt-get update"),
     );
-    expect(bootstrap).toContain("if [[ ${active_release_compatible} == false ]]; then");
+    expect(bootstrap).toContain(
+      "if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then",
+    );
     expect(bootstrap).toContain("rm -f -- /opt/set-livre/current");
     expect(bootstrap).toContain("host_configuration_published=true");
   });

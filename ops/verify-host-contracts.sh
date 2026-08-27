@@ -229,22 +229,11 @@ sudo install -o root -g setlivre -m 0640 "$temporary_directory/release.env" \
 sudo install -m 0755 "$REPOSITORY_ROOT/ops/deploy-release.sh" /usr/local/sbin/set-livre-deploy
 sudo install -o root -g root -m 0755 \
   "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" "$INSTALLED_DEPLOY_SSH_COMMAND"
-deploy_lock_ready="$temporary_directory/deploy-lock-ready"
-sudo flock --exclusive /run/lock/set-livre-deploy.lock \
-  bash -c 'touch "$1"; sleep 3' _ "$deploy_lock_ready" &
-deploy_lock_holder=$!
-for _ in {1..20}; do
-  [[ ! -e ${deploy_lock_ready} ]] || break
-  /usr/bin/sleep 0.05
-done
-[[ -e ${deploy_lock_ready} ]] || fail "lock controlado do deploy não ficou pronto."
-timeout 1 sudo /usr/local/sbin/set-livre-deploy --seal-link \
-  || fail "selamento da instância link esperou recursivamente pelo lock do bootstrap."
-wait "$deploy_lock_holder"
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
-  "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery@.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
 
 archive="$temporary_directory/host-contract-release.tar.gz"
@@ -412,10 +401,11 @@ if [[ ${1:-} == "restart" && ${phase} == "signal" && ! -e "$state/signal-once" ]
   kill -TERM "$PPID"
   /usr/bin/sleep 0.1
 fi
+sigkill_marker="$state/${phase}-once"
 if [[ ${1:-} == "restart" \
-  && ${phase} == "bootstrap-sigkill" \
-  && ! -e "$state/bootstrap-sigkill-once" ]]; then
-  touch "$state/bootstrap-sigkill-once"
+  && ${phase} =~ ^(bootstrap|recovery)-sigkill$ \
+  && ! -e ${sigkill_marker} ]]; then
+  touch "$sigkill_marker"
   kill -KILL "$PPID"
   /usr/bin/sleep 0.1
 fi
@@ -679,17 +669,16 @@ assert_symlinked_release_component_rejected() (
   grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
     "$output" >/dev/null \
     || fail "componente ${component} em symlink falhou por motivo inesperado."
-  for recovery_mode in --recover-link --recover-services; do
-    # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
-    # shellcheck disable=SC2024
-    if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode" \
-      > "$output" 2>&1; then
-      fail "recovery ${recovery_mode} aceitou ${component} em symlink."
-    fi
-    grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
-      "$output" >/dev/null \
-      || fail "recovery ${recovery_mode} falhou por motivo inesperado no probe ${component}."
-  done
+  recovery_mode=--recover-services
+  # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
+  # shellcheck disable=SC2024
+  if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode" \
+    > "$output" 2>&1; then
+    fail "recovery ${recovery_mode} aceitou ${component} em symlink."
+  fi
+  grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
+    "$output" >/dev/null \
+    || fail "recovery ${recovery_mode} falhou por motivo inesperado no probe ${component}."
   metadata_after="$(stat --format '%u:%g:%a' -- "$external")"
   [[ ${metadata_after} == "$metadata_before" ]] \
     || fail "probe ${component} alterou owner ou modo do alvo externo."
@@ -861,10 +850,6 @@ printf '/opt/set-livre/releases/%s\n' "$release_sha" > "$rollback_source"
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
-sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-link
-assert_current_link "$release_sha"
-privileged_regular_file_exists /opt/set-livre/.activation-rollback \
-  || fail "recuperação do link consumiu o marcador antes de estabilizar os serviços."
 if sudo env \
   PATH="$fake_bin:$PATH" \
   SET_LIVRE_TEST_PHASE=recovery-public-health \
@@ -877,30 +862,53 @@ privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "recuperação falha consumiu o marcador necessário ao retry."
 recover_services_successfully "$release_sha"
 
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
+rm -f -- "$test_state"/*
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=recovery-sigkill \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
+  fail "recovery comum sobreviveu ao SIGKILL injetado."
+fi
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
+  || fail "SIGKILL comum consumiu o rollback necessário ao recovery."
+sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --seal-services
+grep --fixed-strings --line-regexp \
+  'stop set-livre-web.service set-livre-backoffice.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "selamento pós-SIGKILL comum não interrompeu os serviços."
+recover_services_successfully "$release_sha"
+
 bootstrap_marker_source="$temporary_directory/bootstrap-in-progress.sha256"
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 printf '%s\n' "$(printf '0%.0s' {1..64})" > "$bootstrap_marker_source"
-for recovery_mode in --recover-link --recover-services; do
-  sudo install -o root -g root -m 0600 \
-    "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
-  sudo install -o root -g root -m 0600 \
-    "$rollback_source" /opt/set-livre/.activation-rollback
-  sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
-  sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
-  if sudo env \
-    PATH="$fake_bin:$PATH" \
-    SET_LIVRE_TEST_PHASE=success \
-    SET_LIVRE_TEST_STATE="$test_state" \
-    bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode"; then
-    fail "recovery ${recovery_mode} aceitou digests divergentes no bootstrap."
-  fi
-  if ! privileged_regular_file_exists /opt/set-livre/.activation-rollback \
-    || ! privileged_regular_file_exists /etc/set-livre/bootstrap-in-progress.sha256; then
-    fail "recovery ${recovery_mode} inválido consumiu o estado intermediário."
-  fi
-  assert_current_link "$retention_sha"
-done
+recovery_mode=--recover-services
+sudo install -o root -g root -m 0600 \
+  "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
+sudo install -o root -g root -m 0600 \
+  "$rollback_source" /opt/set-livre/.activation-rollback
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode"; then
+  fail "recovery ${recovery_mode} aceitou digests divergentes no bootstrap."
+fi
+if ! privileged_regular_file_exists /opt/set-livre/.activation-rollback \
+  || ! privileged_regular_file_exists /etc/set-livre/bootstrap-in-progress.sha256; then
+  fail "recovery ${recovery_mode} inválido consumiu o estado intermediário."
+fi
+assert_current_link "$retention_sha"
 
 printf '%s\n' "$host_digest" > "$bootstrap_marker_source"
 sudo install -o root -g root -m 0600 \

@@ -294,47 +294,28 @@ seal_interrupted_bootstrap_recovery() {
   authorize_interrupted_bootstrap_recovery "$recovered_release"
 }
 
+seal_interrupted_release_recovery() {
+  if bootstrap_recovery_state_is_present; then
+    seal_interrupted_bootstrap_recovery
+    return
+  fi
+  [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]] || return 0
+  systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
+  read_rollback_marker
+}
+
 # Invocada exclusivamente pelo trap do recovery de serviços.
 # shellcheck disable=SC2317,SC2329
-seal_interrupted_bootstrap_recovery_on_failure() {
+seal_interrupted_release_recovery_on_failure() {
   local status=$?
   trap - EXIT
   if [[ ${status} -ne 0 ]]; then
-    seal_interrupted_bootstrap_recovery || status=1
+    seal_interrupted_release_recovery || status=1
   fi
   exit "$status"
 }
 
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
-
-if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
-  exec 9>/run/lock/set-livre-deploy.lock
-  if ! flock --nonblock 9; then
-    printf 'Deploy ativo; a recuperação pós-lock permanece armada.\n'
-    exit 0
-  fi
-  managed_release_directories_are_valid \
-    || fail "raiz de releases não atende ao contrato físico e de permissões."
-  if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
-    read_rollback_marker || fail "não foi possível ler a ativação interrompida."
-    if [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
-      || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]; then
-      ensure_bootstrap_recovery_blocker \
-        || fail "não foi possível selar o recovery intermediário do bootstrap."
-    fi
-    if bootstrap_recovery_state_is_present; then
-      authorize_interrupted_bootstrap_recovery "$recovered_release" \
-        || fail "o estado intermediário do bootstrap não autorizou a recuperação do link."
-    fi
-    activate_recovered_link || fail "não foi possível recuperar a ativação interrompida."
-    printf 'Link da ativação interrompida recuperado; estabilização dos serviços permanece armada.\n'
-  fi
-  exit 0
-fi
-
-if [[ $# -eq 1 && ${1:-} == "--seal-link" ]]; then
-  exit 0
-fi
 
 if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
@@ -342,8 +323,8 @@ if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
     || fail "o lock de deploy permaneceu ocupado durante o selamento da recuperação."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
-  seal_interrupted_bootstrap_recovery \
-    || fail "não foi possível selar a recuperação interrompida do bootstrap."
+  seal_interrupted_release_recovery \
+    || fail "não foi possível selar a recuperação interrompida."
   exit 0
 fi
 
@@ -353,7 +334,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
-  trap seal_interrupted_bootstrap_recovery_on_failure EXIT
+  trap seal_interrupted_release_recovery_on_failure EXIT
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     read_rollback_marker || fail "não foi possível ler a ativação interrompida."
     if bootstrap_recovery_state_is_present; then
@@ -387,7 +368,7 @@ verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link, --recover-services, --seal-link ou --seal-services."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-services ou --seal-services."
 fi
 
 release_sha="$1"
