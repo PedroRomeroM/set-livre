@@ -8,9 +8,12 @@ readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
 readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
 readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"
+readonly FAIL2BAN_TEST_CONFIG="/etc/fail2ban/jail.d/set-livre-sshd.local"
+readonly FAIL2BAN_TEST_OVERRIDE="/etc/fail2ban/action.d/nftables-host-contracts.local"
 nginx_test_active=false
 nginx_backend_process=""
 forced_command_sudoers_installed=false
+fail2ban_test_active=false
 
 cleanup() {
   if [[ ${nginx_test_active} == true ]]; then
@@ -22,6 +25,10 @@ cleanup() {
   fi
   if [[ ${forced_command_sudoers_installed} == true ]]; then
     sudo rm -f -- "$FORCED_COMMAND_SUDOERS"
+  fi
+  if [[ ${fail2ban_test_active} == true ]]; then
+    sudo rm -f -- "$FAIL2BAN_TEST_OVERRIDE" "$FAIL2BAN_TEST_CONFIG"
+    sudo systemctl stop fail2ban >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -79,6 +86,200 @@ deploy_password_hash="${deploy_shadow_entry#*:}"
 deploy_password_hash="${deploy_password_hash%%:*}"
 [[ ${deploy_password_hash} == '!'* || ${deploy_password_hash} == '*'* ]] \
   || fail "identidade deploy-setlivre do laboratório aceita senha."
+
+bootstrap_primitive_markers=(
+  "BEGIN SET_LIVRE_MANAGED_FILE_PRIMITIVES"
+  "END SET_LIVRE_MANAGED_FILE_PRIMITIVES"
+  "BEGIN SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES"
+  "END SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES"
+  "BEGIN SET_LIVRE_FAIL2BAN_PRIMITIVE"
+  "END SET_LIVRE_FAIL2BAN_PRIMITIVE"
+  "BEGIN SET_LIVRE_FAIL2BAN_CONFIGURATION"
+  "END SET_LIVRE_FAIL2BAN_CONFIGURATION"
+)
+for marker in "${bootstrap_primitive_markers[@]}"; do
+  [[ $(grep --fixed-strings --count "$marker" "$REPOSITORY_ROOT/ops/bootstrap-host.sh") -eq 1 ]] \
+    || fail "marcador de primitive do bootstrap ausente ou duplicado: ${marker}."
+done
+bootstrap_primitive_runtime="$temporary_directory/bootstrap-primitive-runtime.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
+  sed -n \
+    '/^# BEGIN SET_LIVRE_MANAGED_FILE_PRIMITIVES$/,/^# END SET_LIVRE_MANAGED_FILE_PRIMITIVES$/p' \
+    "$REPOSITORY_ROOT/ops/bootstrap-host.sh"
+  sed -n \
+    '/^# BEGIN SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES$/,/^# END SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES$/p' \
+    "$REPOSITORY_ROOT/ops/bootstrap-host.sh"
+  cat <<'BOOTSTRAP_PRIMITIVE_RUNTIME'
+fail() {
+  printf 'bootstrap-primitives: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || fail "diretório de teste ausente."
+test_root="$1"
+[[ ${test_root} == /* && -d ${test_root} && ! -L ${test_root} ]] \
+  || fail "diretório de teste inválido."
+HOST_STATE_DIRECTORY="${test_root}/state"
+HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"
+HOST_CONFIGURATION_PREVIOUS_DIGEST="${HOST_STATE_DIRECTORY}/host-config.previous.sha256"
+HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
+HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-recovery-in-progress.sha256"
+MANAGED_FILE_STAGING_DIRECTORY="${HOST_STATE_DIRECTORY}/.managed-file-staging"
+ROLLBACK_MARKER="${test_root}/activation-rollback"
+bootstrap_marker_source=""
+bootstrap_recovery_marker_source=""
+recovery_marker_source=""
+managed_file_staging=""
+
+install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY"
+install -d -o root -g root -m 0755 "$test_root/targets" "$test_root/hooks"
+printf 'source\n' > "$test_root/source"
+printf 'victim\n' > "$test_root/victim"
+chown root:root "$test_root/source" "$test_root/victim"
+chmod 0644 "$test_root/source" "$test_root/victim"
+
+target="$test_root/targets/managed.conf"
+publish_managed_file "$test_root/source" "$target" root root 0644 \
+  || fail "folha regular válida não foi publicada."
+[[ $(< "$target") == source ]] || fail "folha publicada divergiu da fonte."
+
+rm -f -- "$target"
+ln -s -- "$test_root/victim" "$target"
+if publish_managed_file "$test_root/source" "$target" root root 0644; then
+  fail "symlink existente foi aceito como folha gerenciada."
+fi
+[[ $(< "$test_root/victim") == victim ]] || fail "destino do symlink foi alterado."
+rm -f -- "$target"
+ln -s -- "$test_root/missing" "$target"
+if publish_managed_file "$test_root/source" "$target" root root 0644; then
+  fail "dangling symlink foi aceito como folha gerenciada."
+fi
+rm -f -- "$target"
+ln -- "$test_root/victim" "$target"
+if publish_managed_file "$test_root/source" "$target" root root 0644; then
+  fail "hardlink foi aceito como folha gerenciada."
+fi
+[[ $(< "$test_root/victim") == victim ]] || fail "inode do hardlink foi alterado."
+rm -f -- "$target"
+mkfifo -- "$target"
+if publish_managed_file "$test_root/source" "$target" root root 0644; then
+  fail "arquivo especial foi aceito como folha gerenciada."
+fi
+rm -f -- "$target"
+
+hook_target="$test_root/hooks/reload-hook"
+publish_managed_file "$test_root/source" "$hook_target" root root 0755 \
+  || fail "hook inicial não foi publicado."
+hook_id="$(printf '%s' "$hook_target" | sha256sum | cut -d ' ' -f 1)"
+stale_hook="${MANAGED_FILE_STAGING_DIRECTORY}/${hook_id}.ABC123"
+install -o root -g root -m 0755 "$test_root/source" "$stale_hook"
+publish_managed_file "$test_root/source" "$hook_target" root root 0755 \
+  || fail "staging executável válido não foi recuperado."
+[[ ! -e ${stale_hook} && ! -L ${stale_hook} ]] \
+  || fail "staging executável permaneceu após retry."
+[[ $(stat --format '%U:%G:%a' -- "$MANAGED_FILE_STAGING_DIRECTORY") == root:root:700 ]] \
+  || fail "staging compartilhado não ficou isolado de scanners e identidades."
+[[ -z $(find "$test_root/hooks" -mindepth 1 -maxdepth 1 ! -name reload-hook -print -quit) ]] \
+  || fail "staging ficou endereçável no diretório de hooks."
+group_target="$test_root/targets/group-owned.conf"
+group_target_id="$(printf '%s' "$group_target" | sha256sum | cut -d ' ' -f 1)"
+stale_group_target="${MANAGED_FILE_STAGING_DIRECTORY}/${group_target_id}.DEF456"
+install -o root -g root -m 0640 "$test_root/source" "$stale_group_target"
+publish_managed_file "$test_root/source" "$group_target" root setlivre 0640 \
+  || fail "staging intermediário root:root com modo final não foi recuperado."
+[[ ! -e ${stale_group_target} && ! -L ${stale_group_target} \
+  && $(stat --format '%U:%G:%a:%h' -- "$group_target") == root:setlivre:640:1 ]] \
+  || fail "retry não publicou owner, grupo e modo finais após estado intermediário."
+ln -s -- "$test_root/victim" "$stale_hook"
+if publish_managed_file "$test_root/source" "$hook_target" root root 0755; then
+  fail "staging residual ligado foi removido silenciosamente."
+fi
+rm -f -- "$stale_hook"
+
+digest="$(printf 'a%.0s' {1..64})"
+set +e
+(
+  publish_bootstrap_in_progress "$digest" || exit 120
+  kill -KILL "$BASHPID"
+  ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700
+)
+kill_status=$?
+set -e
+[[ ${kill_status} -eq 137 ]] || fail "SIGKILL anterior à restrição não foi exercitado."
+[[ $(stat --format '%U:%G:%a' -- "$HOST_STATE_DIRECTORY") == root:setlivre:750 ]] \
+  || fail "estado saudável foi restringido antes da publicação do blocker."
+[[ -f ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} \
+  && $(stat --format '%U:%G:%a' -- "$HOST_BOOTSTRAP_IN_PROGRESS") == root:root:600 \
+  && $(< "$HOST_BOOTSTRAP_IN_PROGRESS") == "$digest" ]] \
+  || fail "SIGKILL anterior à restrição não preservou blocker autenticado."
+rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
+
+set +e
+(
+  publish_bootstrap_in_progress "$digest" || exit 121
+  ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700 || exit 122
+  kill -KILL "$BASHPID"
+)
+kill_status=$?
+set -e
+[[ ${kill_status} -eq 137 ]] || fail "SIGKILL posterior à restrição não foi exercitado."
+[[ $(stat --format '%U:%G:%a' -- "$HOST_STATE_DIRECTORY") == root:root:700 \
+  && -f ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} \
+  && $(stat --format '%U:%G:%a' -- "$HOST_BOOTSTRAP_IN_PROGRESS") == root:root:600 \
+  && $(< "$HOST_BOOTSTRAP_IN_PROGRESS") == "$digest" ]] \
+  || fail "restrição interrompida não preservou blocker autenticado."
+
+printf 'bootstrap primitive runtime contracts OK\n'
+BOOTSTRAP_PRIMITIVE_RUNTIME
+} > "$bootstrap_primitive_runtime"
+chmod 0700 "$bootstrap_primitive_runtime"
+bootstrap_primitive_root="$temporary_directory/bootstrap-primitives"
+mkdir -- "$bootstrap_primitive_root"
+sudo bash "$bootstrap_primitive_runtime" "$bootstrap_primitive_root"
+sudo chown -R "$(id --user):$(id --group)" "$bootstrap_primitive_root"
+
+! privileged_path_exists "$FAIL2BAN_TEST_CONFIG" \
+  || fail "configuração Fail2ban do contrato já existe no runner."
+! privileged_path_exists "$FAIL2BAN_TEST_OVERRIDE" \
+  || fail "override Fail2ban do contrato já existe no runner."
+fail2ban_config_source="$temporary_directory/set-livre-sshd.local"
+sed -n \
+  '/^# BEGIN SET_LIVRE_FAIL2BAN_CONFIGURATION$/,/^# END SET_LIVRE_FAIL2BAN_CONFIGURATION$/p' \
+  "$REPOSITORY_ROOT/ops/bootstrap-host.sh" > "$fail2ban_config_source"
+grep --fixed-strings --line-regexp 'banaction = nftables' "$fail2ban_config_source" >/dev/null \
+  || fail "configuração extraída não fixa a ação nftables."
+fail2ban_runtime="$temporary_directory/fail2ban-contract-runtime.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'
+  sed -n \
+    '/^# BEGIN SET_LIVRE_FAIL2BAN_PRIMITIVE$/,/^# END SET_LIVRE_FAIL2BAN_PRIMITIVE$/p' \
+    "$REPOSITORY_ROOT/ops/bootstrap-host.sh"
+  printf '%s\n' 'fail2ban_contract_is_ready'
+} > "$fail2ban_runtime"
+chmod 0700 "$fail2ban_runtime"
+sudo install -o root -g root -m 0644 "$fail2ban_config_source" "$FAIL2BAN_TEST_CONFIG"
+fail2ban_test_active=true
+sudo systemctl restart fail2ban
+fail2ban_contract_ready=false
+for _ in {1..15}; do
+  if sudo fail2ban-client ping >/dev/null 2>&1 \
+    && sudo fail2ban-client status sshd >/dev/null 2>&1 \
+    && sudo bash "$fail2ban_runtime"; then
+    fail2ban_contract_ready=true
+    break
+  fi
+  sleep 1
+done
+[[ ${fail2ban_contract_ready} == true ]] \
+  || fail "ação nftables efetiva do Fail2ban não ficou pronta no laboratório."
+sudo install -o root -g root -m 0644 /dev/null "$FAIL2BAN_TEST_OVERRIDE"
+if sudo bash "$fail2ban_runtime"; then
+  fail "override local da ação nftables foi aceito no laboratório."
+fi
+sudo rm -f -- "$FAIL2BAN_TEST_OVERRIDE"
+sudo bash "$fail2ban_runtime" \
+  || fail "remoção do override não restaurou o contrato Fail2ban."
 
 sudo install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
 sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null \

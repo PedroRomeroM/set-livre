@@ -16,6 +16,7 @@ readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"
 readonly HOST_CONFIGURATION_PREVIOUS_DIGEST="${HOST_STATE_DIRECTORY}/host-config.previous.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
 readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-recovery-in-progress.sha256"
+readonly MANAGED_FILE_STAGING_DIRECTORY="${HOST_STATE_DIRECTORY}/.managed-file-staging"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -33,7 +34,6 @@ previous_persisted_ipv6=""
 persisted_ipv4_existed=false
 persisted_ipv6_existed=false
 firewall_transition_active=false
-fail2ban_stopped=false
 digest_source=""
 bootstrap_marker_source=""
 bootstrap_recovery_marker_source=""
@@ -48,6 +48,7 @@ node_alias_staging_path=""
 node_alias_previous_path=""
 swap_staging_file=""
 authorized_keys_source=""
+managed_file_staging=""
 
 fail() {
   printf 'bootstrap: %s\n' "$1" >&2
@@ -106,6 +107,7 @@ account_password_is_locked() {
   [[ ${password_hash} == '!'* || ${password_hash} == '*'* ]]
 }
 
+# BEGIN SET_LIVRE_MANAGED_FILE_PRIMITIVES
 ensure_managed_directory() {
   local path="$1"
   local owner="$2"
@@ -151,6 +153,171 @@ with contextlib.ExitStack() as descriptors:
 PYTHON
 }
 
+ensure_bootstrap_state_directory() {
+  local path="$1"
+  python3 - "$path" <<'PYTHON'
+import contextlib
+import grp
+import os
+import pathlib
+import stat
+import sys
+
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+path = pathlib.Path(sys.argv[1])
+if not path.is_absolute() or path.name in {"", ".", ".."}:
+    raise SystemExit("bootstrap state directory path is invalid")
+with contextlib.ExitStack() as descriptors:
+    directory_fd = os.open("/", flags)
+    descriptors.callback(os.close, directory_fd)
+    for index, component in enumerate(path.parts[1:]):
+        is_final = index == len(path.parts[1:]) - 1
+        created = False
+        if is_final:
+            try:
+                os.mkdir(component, 0o700, dir_fd=directory_fd)
+                created = True
+            except FileExistsError:
+                pass
+        child_fd = os.open(component, flags, dir_fd=directory_fd)
+        descriptors.callback(os.close, child_fd)
+        directory_fd = child_fd
+        if is_final:
+            if created:
+                os.fchown(directory_fd, 0, 0)
+                os.fchmod(directory_fd, 0o700)
+            metadata = os.fstat(directory_fd)
+            healthy_group = None
+            try:
+                healthy_group = grp.getgrnam("setlivre").gr_gid
+            except KeyError:
+                pass
+            allowed = (
+                stat.S_ISDIR(metadata.st_mode)
+                and metadata.st_uid == 0
+                and (
+                    (metadata.st_gid == 0 and stat.S_IMODE(metadata.st_mode) == 0o700)
+                    or (
+                        healthy_group is not None
+                        and metadata.st_gid == healthy_group
+                        and stat.S_IMODE(metadata.st_mode) == 0o750
+                    )
+                )
+            )
+            if not allowed:
+                raise SystemExit("bootstrap state directory metadata is invalid")
+PYTHON
+}
+
+publish_managed_file() {
+  local source="$1"
+  local target="$2"
+  local owner="$3"
+  local group="$4"
+  local mode="$5"
+  local parent basename target_id staging_prefix expected_mode stale stale_suffix identity
+  local nullglob_was_enabled=false
+  local -a stale_files=()
+  [[ -f ${source} && ! -L ${source} && ${target} == /* ]] || return 1
+  parent="$(dirname -- "$target")" || return 1
+  basename="$(basename -- "$target")" || return 1
+  [[ ${basename} != "." && ${basename} != ".." \
+    && $(realpath -e -- "$parent") == "$parent" ]] || return 1
+  if [[ -e ${target} || -L ${target} ]]; then
+    [[ -f ${target} && ! -L ${target} && $(stat --format '%h' -- "$target") == 1 ]] \
+      || return 1
+  fi
+  ensure_managed_directory "$MANAGED_FILE_STAGING_DIRECTORY" root root 0700 || return 1
+  [[ $(stat --format '%d' -- "$MANAGED_FILE_STAGING_DIRECTORY") \
+    == "$(stat --format '%d' -- "$parent")" ]] || return 1
+  target_id="$(printf '%s' "$target" | sha256sum | cut -d ' ' -f 1)" || return 1
+  [[ ${target_id} =~ ^[0-9a-f]{64}$ ]] || return 1
+  staging_prefix="${MANAGED_FILE_STAGING_DIRECTORY}/${target_id}"
+  expected_mode="${mode#0}"
+  if shopt -q nullglob; then
+    nullglob_was_enabled=true
+  fi
+  shopt -s nullglob
+  stale_files=("${staging_prefix}."*)
+  [[ ${nullglob_was_enabled} == true ]] || shopt -u nullglob
+  for stale in "${stale_files[@]}"; do
+    [[ ${stale} == "${staging_prefix}."* && -f ${stale} && ! -L ${stale} ]] || return 1
+    stale_suffix="${stale#"${staging_prefix}."}"
+    [[ ${stale_suffix} =~ ^[A-Za-z0-9]{6}$ ]] || return 1
+    identity="$(stat --format '%U:%G:%a:%h' -- "$stale")" || return 1
+    [[ ${identity} == "root:root:600:1" \
+      || ${identity} == "root:root:${expected_mode}:1" \
+      || ${identity} == "${owner}:${group}:${expected_mode}:1" ]] || return 1
+    rm -f -- "$stale" || return 1
+  done
+  managed_file_staging="$(mktemp "${staging_prefix}.XXXXXX")" || return 1
+  if ! install -o root -g root -m 0600 "$source" "$managed_file_staging" \
+    || ! chmod "$mode" "$managed_file_staging" \
+    || ! chown "${owner}:${group}" "$managed_file_staging"; then
+    rm -f -- "$managed_file_staging"
+    managed_file_staging=""
+    return 1
+  fi
+  if ! mv --no-target-directory --force -- "$managed_file_staging" "$target"; then
+    rm -f -- "$managed_file_staging"
+    managed_file_staging=""
+    return 1
+  fi
+  managed_file_staging=""
+  [[ -f ${target} && ! -L ${target} \
+    && $(stat --format '%U:%G:%a:%h' -- "$target") == "${owner}:${group}:${expected_mode}:1" ]]
+}
+
+publish_managed_content() {
+  local target="$1"
+  local owner="$2"
+  local group="$3"
+  local mode="$4"
+  local source status
+  source="$(mktemp /run/set-livre-managed-content.XXXXXX)" || return 1
+  if ! cat > "$source"; then
+    rm -f -- "$source"
+    return 1
+  fi
+  if publish_managed_file "$source" "$target" "$owner" "$group" "$mode"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$source"
+  return "$status"
+}
+# END SET_LIVRE_MANAGED_FILE_PRIMITIVES
+
+ensure_fstab_swap_entry() {
+  local source status
+  [[ -f /etc/fstab && ! -L /etc/fstab \
+    && $(stat --format '%U:%G:%h' -- /etc/fstab) == "root:root:1" ]] || return 1
+  source="$(mktemp /run/set-livre-fstab.XXXXXX)" || return 1
+  if ! awk '
+    BEGIN { canonical = "/swapfile none swap sw 0 0" }
+    $1 == "/swapfile" {
+      count += 1
+      if ($0 != canonical || count > 1) invalid = 1
+    }
+    { print }
+    END {
+      if (invalid) exit 42
+      if (count == 0) print canonical
+    }
+  ' /etc/fstab > "$source"; then
+    rm -f -- "$source"
+    return 1
+  fi
+  if publish_managed_file "$source" /etc/fstab root root 0644; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f -- "$source"
+  return "$status"
+}
+
 existing_release_directories_are_valid() {
   python3 <<'PYTHON'
 import contextlib
@@ -186,6 +353,7 @@ except (KeyError, OSError) as error:
 PYTHON
 }
 
+# BEGIN SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES
 publish_bootstrap_in_progress() {
   local digest="$1"
   [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -194,7 +362,8 @@ publish_bootstrap_in_progress() {
   if ! printf '%s\n' "$digest" > "$bootstrap_marker_source" \
     || ! chown root:root "$bootstrap_marker_source" \
     || ! chmod 0600 "$bootstrap_marker_source" \
-    || ! mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"; then
+    || ! mv --no-target-directory --force -- \
+      "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"; then
     rm -f -- "$bootstrap_marker_source"
     bootstrap_marker_source=""
     return 1
@@ -211,7 +380,7 @@ publish_bootstrap_recovery_in_progress() {
   if ! printf '%s\n' "$digest" > "$bootstrap_recovery_marker_source" \
     || ! chown root:root "$bootstrap_recovery_marker_source" \
     || ! chmod 0600 "$bootstrap_recovery_marker_source" \
-    || ! mv --force -- \
+    || ! mv --no-target-directory --force -- \
       "$bootstrap_recovery_marker_source" "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"; then
     rm -f -- "$bootstrap_recovery_marker_source"
     bootstrap_recovery_marker_source=""
@@ -228,13 +397,14 @@ write_bootstrap_recovery_marker() {
   if ! printf '%s\n' "$target" > "$recovery_marker_source" \
     || ! chown root:root "$recovery_marker_source" \
     || ! chmod 0600 "$recovery_marker_source" \
-    || ! mv --force -- "$recovery_marker_source" "$ROLLBACK_MARKER"; then
+    || ! mv --no-target-directory --force -- "$recovery_marker_source" "$ROLLBACK_MARKER"; then
     rm -f -- "$recovery_marker_source"
     recovery_marker_source=""
     return 1
   fi
   recovery_marker_source=""
 }
+# END SET_LIVRE_BOOTSTRAP_MARKER_PRIMITIVES
 
 clear_dangling_current_link() {
   local current_link="/opt/set-livre/current"
@@ -586,17 +756,51 @@ wait_for_active_public_health() {
   return 1
 }
 
+# BEGIN SET_LIVRE_FAIL2BAN_PRIMITIVE
+fail2ban_contract_is_ready() {
+  local action_start action_ban action_check override_scan
+  local -a actions=()
+  mapfile -t actions < <(
+    fail2ban-client get sshd actions \
+      | tail --lines +2 \
+      | sed '/^[[:space:]]*$/d'
+  )
+  [[ ${#actions[@]} -eq 1 && ${actions[0]} == "nftables" ]] || return 1
+  override_scan="$(
+    find /etc/fail2ban/action.d -mindepth 1 -maxdepth 1 -name 'nftables*.local' -print
+  )" || return 1
+  [[ -z ${override_scan} ]] || return 1
+  action_start="$(fail2ban-client get sshd action nftables actionstart)" || return 1
+  action_ban="$(fail2ban-client get sshd action nftables actionban)" || return 1
+  action_check="$(fail2ban-client get sshd action nftables actioncheck)" || return 1
+  [[ ${action_start} == *"nft add table inet f2b-table"* \
+    && ${action_start} == *"type filter hook input priority -1"* \
+    && ${action_start} == *"nft add set inet f2b-table <addr_set>"* \
+    && ${action_start} \
+      == *"dport \{ \$(echo 'ssh' | sed s/:/-/g) \} <addr_family>"* \
+    && ${action_start} == *"saddr @<addr_set> reject"* \
+    && ${action_ban} == "nft add element inet f2b-table <addr_set> \{ <ip> \}" \
+    && ${action_check} \
+      == "nft list chain inet f2b-table f2b-chain | grep -q '@<addr_set>[ \t]'" ]] \
+    || return 1
+  nft list table inet f2b-table >/dev/null 2>&1
+  nft list chain inet f2b-table f2b-chain >/dev/null 2>&1
+}
+# END SET_LIVRE_FAIL2BAN_PRIMITIVE
+
 cleanup() {
   if [[ ${firewall_transition_active} == true ]]; then
     [[ -z ${previous_ipv4_rules} ]] || iptables-restore < "$previous_ipv4_rules" || true
     [[ -z ${previous_ipv6_rules} ]] || ip6tables-restore < "$previous_ipv6_rules" || true
     if [[ ${persisted_ipv4_existed} == true ]]; then
-      install -o root -g root -m 0600 "$previous_persisted_ipv4" /etc/iptables/rules.v4 || true
+      publish_managed_file \
+        "$previous_persisted_ipv4" /etc/iptables/rules.v4 root root 0600 || true
     else
       rm -f -- /etc/iptables/rules.v4
     fi
     if [[ ${persisted_ipv6_existed} == true ]]; then
-      install -o root -g root -m 0600 "$previous_persisted_ipv6" /etc/iptables/rules.v6 || true
+      publish_managed_file \
+        "$previous_persisted_ipv6" /etc/iptables/rules.v6 root root 0600 || true
     else
       rm -f -- /etc/iptables/rules.v6
     fi
@@ -647,6 +851,13 @@ cleanup() {
     || rm -f -- "$bootstrap_recovery_marker_source"
   [[ -z ${recovery_marker_source} ]] || rm -f -- "$recovery_marker_source"
   [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
+  if [[ -n ${managed_file_staging} \
+    && $(dirname -- "$managed_file_staging") == "$MANAGED_FILE_STAGING_DIRECTORY" \
+    && $(basename -- "$managed_file_staging") \
+      =~ ^[0-9a-f]{64}[.][A-Za-z0-9]{6}$ \
+    && -f ${managed_file_staging} && ! -L ${managed_file_staging} ]]; then
+    rm -f -- "$managed_file_staging"
+  fi
   if [[ ${bootstrap_gate_published} == true ]]; then
     stop_application_services || true
   fi
@@ -661,7 +872,6 @@ cleanup() {
       publish_bootstrap_in_progress "$host_configuration_digest" || true
     fi
   fi
-  [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
 trap cleanup EXIT
 
@@ -735,8 +945,8 @@ fi
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --exclusive 9
-ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700 \
-  || fail "diretório de estado operacional é inválido."
+ensure_bootstrap_state_directory "$HOST_STATE_DIRECTORY" \
+  || fail "diretório de estado operacional não é um estado inicial ou gerenciado válido."
 managed_host_contract=false
 installed_host_contract=false
 if host_state_marker_is_valid \
@@ -805,6 +1015,8 @@ PYTHON
 publish_bootstrap_in_progress "$host_configuration_digest" \
   || fail "não foi possível publicar o marcador de bootstrap."
 bootstrap_gate_published=true
+ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700 \
+  || fail "diretório de estado operacional não pôde ser restringido após o bloqueio."
 stop_application_services \
   || fail "não foi possível interromper os apps antes de inspecionar a release ativa."
 clear_dangling_current_link
@@ -846,8 +1058,10 @@ PYTHON
   fi
 fi
 if [[ ${installed_host_contract} == true ]]; then
-  install -o root -g setlivre -m 0640 "$HOST_CONFIGURATION_DIGEST" \
-    "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
+  publish_managed_file \
+    "$HOST_CONFIGURATION_DIGEST" "$HOST_CONFIGURATION_PREVIOUS_DIGEST" \
+    root setlivre 0640 \
+    || fail "digest operacional anterior não pôde ser preservado atomicamente."
   rm -f -- "$HOST_CONFIGURATION_DIGEST"
 fi
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
@@ -864,6 +1078,7 @@ apt-get install --yes --no-install-recommends \
   iptables-persistent \
   jq \
   nginx \
+  nftables \
   openssh-server \
   python3 \
   snapd \
@@ -992,7 +1207,9 @@ for acme_directory in \
   ensure_managed_directory "$acme_directory" root root 0755 \
     || fail "webroot ACME contém componente inválido: ${acme_directory}."
 done
-install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
+publish_managed_file \
+  "$SUPABASE_CA_SOURCE" /etc/set-livre/supabase-root-2021-ca.crt root root 0644 \
+  || fail "CA raiz do Supabase não pôde ser publicada atomicamente."
 ensure_managed_directory /home/deploy-setlivre root deploy-setlivre 0750 \
   || fail "home canônico de deploy-setlivre é inválido."
 ensure_managed_directory /home/deploy-setlivre/.ssh root deploy-setlivre 0750 \
@@ -1001,35 +1218,49 @@ ensure_managed_directory /home/deploy-setlivre/incoming deploy-setlivre deploy-s
   || fail "diretório de entrada de deploy-setlivre é inválido."
 incoming_lock=/home/deploy-setlivre/incoming/.incoming.lock
 if [[ ! -e ${incoming_lock} && ! -L ${incoming_lock} ]]; then
-  install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$incoming_lock"
+  publish_managed_content "$incoming_lock" deploy-setlivre deploy-setlivre 0600 </dev/null \
+    || fail "lock de upload não pôde ser publicado atomicamente."
 fi
 [[ -f ${incoming_lock} && ! -L ${incoming_lock} \
-  && $(stat --format '%U:%G' -- "$incoming_lock") == "deploy-setlivre:deploy-setlivre" ]] \
+  && $(stat --format '%U:%G:%a:%h' -- "$incoming_lock") \
+    == "deploy-setlivre:deploy-setlivre:600:1" ]] \
   || fail "lock de upload instalado é inválido."
-chmod 0600 "$incoming_lock"
-authorized_keys_source="$(mktemp /home/deploy-setlivre/.ssh/.authorized_keys.XXXXXX)"
+authorized_keys_source="$(mktemp /run/set-livre-authorized-keys.XXXXXX)"
 printf 'restrict,command="/usr/local/sbin/set-livre-deploy-ssh" %s\n' "$deploy_key" \
   > "$authorized_keys_source"
-chown root:deploy-setlivre "$authorized_keys_source"
-chmod 0640 "$authorized_keys_source"
-mv --no-target-directory --force -- \
-  "$authorized_keys_source" /home/deploy-setlivre/.ssh/authorized_keys
+publish_managed_file \
+  "$authorized_keys_source" /home/deploy-setlivre/.ssh/authorized_keys \
+  root deploy-setlivre 0640 \
+  || fail "authorized_keys de deploy não pôde ser publicado atomicamente."
+rm -f -- "$authorized_keys_source"
 authorized_keys_source=""
 
-install -o root -g root -m 0755 "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-livre-deploy
-install -o root -g root -m 0755 "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" /etc/systemd/system/set-livre-web.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" /etc/systemd/system/set-livre-backoffice.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-application-start.service" \
-  /etc/systemd/system/set-livre-application-start.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
-  /etc/systemd/system/set-livre-release-recovery.service
-install -o root -g root -m 0644 "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path" \
-  /etc/systemd/system/set-livre-release-recovery.path
+publish_managed_file \
+  "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-livre-deploy root root 0755 \
+  || fail "instalador de release não pôde ser publicado atomicamente."
+publish_managed_file \
+  "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh root root 0755 \
+  || fail "comando SSH de deploy não pôde ser publicado atomicamente."
+for systemd_unit in \
+  set-livre-web.service \
+  set-livre-backoffice.service \
+  set-livre-application-start.service \
+  set-livre-release-recovery.service \
+  set-livre-release-recovery.path; do
+  publish_managed_file \
+    "${SCRIPT_DIRECTORY}/systemd/${systemd_unit}" "/etc/systemd/system/${systemd_unit}" \
+    root root 0644 \
+    || fail "unit ${systemd_unit} não pôde ser publicada atomicamente."
+done
 rm -f -- /etc/systemd/system/set-livre-release-recovery@.service
-install -d -o root -g root -m 0755 /usr/local/share/set-livre
-install -o root -g root -m 0644 "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf
-install -o root -g root -m 0644 "$NGINX_TLS_SOURCE" /usr/local/share/set-livre/nginx-tls.conf
+ensure_managed_directory /usr/local/share/set-livre root root 0755 \
+  || fail "diretório de templates Nginx é inválido."
+publish_managed_file \
+  "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf root root 0644 \
+  || fail "template HTTP do Nginx não pôde ser publicado atomicamente."
+publish_managed_file \
+  "$NGINX_TLS_SOURCE" /usr/local/share/set-livre/nginx-tls.conf root root 0644 \
+  || fail "template TLS do Nginx não pôde ser publicado atomicamente."
 
 active_nginx_source=/usr/local/share/set-livre/nginx-http.conf
 certificate_path="/etc/letsencrypt/live/${PRODUCTION_IP}/fullchain.pem"
@@ -1044,26 +1275,33 @@ if [[ -f ${certificate_path} || -f ${private_key_path} ]]; then
     || fail "certificado TLS não cobre o IP de produção."
   active_nginx_source=/usr/local/share/set-livre/nginx-tls.conf
 fi
-install -o root -g root -m 0644 "$active_nginx_source" /etc/nginx/sites-available/set-livre
-ln --symbolic --force /etc/nginx/sites-available/set-livre /etc/nginx/sites-enabled/set-livre
+publish_managed_file \
+  "$active_nginx_source" /etc/nginx/sites-available/set-livre root root 0644 \
+  || fail "site Nginx não pôde ser publicado atomicamente."
+ln --symbolic --force --no-dereference --no-target-directory \
+  /etc/nginx/sites-available/set-livre /etc/nginx/sites-enabled/set-livre
 rm -f -- /etc/nginx/sites-enabled/default
 
-install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/set-livre-reload-nginx <<'RENEWAL_HOOK'
+ensure_managed_directory /etc/letsencrypt/renewal-hooks/deploy root root 0755 \
+  || fail "diretório de hooks do Certbot é inválido."
+publish_managed_content \
+  /etc/letsencrypt/renewal-hooks/deploy/set-livre-reload-nginx root root 0755 \
+  <<'RENEWAL_HOOK' \
+  || fail "hook de renovação TLS não pôde ser publicado atomicamente."
 #!/bin/sh
 set -eu
 nginx -t
 systemctl reload nginx
 RENEWAL_HOOK
-chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/set-livre-reload-nginx
 
-cat > /etc/sudoers.d/set-livre-deploy <<'SUDOERS'
+publish_managed_content /etc/sudoers.d/set-livre-deploy root root 0440 <<'SUDOERS' \
+  || fail "sudoers de deploy não pôde ser publicado atomicamente."
 deploy-setlivre ALL=(root) NOPASSWD: /usr/local/sbin/set-livre-deploy
 SUDOERS
-chmod 0440 /etc/sudoers.d/set-livre-deploy
 visudo --check --file /etc/sudoers.d/set-livre-deploy
 
-cat > /etc/ssh/sshd_config.d/60-set-livre.conf <<'SSHD'
+publish_managed_content /etc/ssh/sshd_config.d/60-set-livre.conf root root 0644 <<'SSHD' \
+  || fail "configuração SSH não pôde ser publicada atomicamente."
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
@@ -1082,16 +1320,32 @@ SSHD
 sshd -t
 systemctl reload ssh
 
-cat > /etc/fail2ban/jail.d/set-livre-sshd.local <<'FAIL2BAN'
+publish_managed_content /etc/fail2ban/jail.d/set-livre-sshd.local root root 0644 <<'FAIL2BAN' \
+  || fail "configuração Fail2ban não pôde ser publicada atomicamente."
+# BEGIN SET_LIVRE_FAIL2BAN_CONFIGURATION
 [sshd]
 enabled = true
 backend = systemd
+banaction = nftables
+banaction_allports = nftables[type=allports]
 bantime = 1h
 findtime = 10m
 maxretry = 5
+# END SET_LIVRE_FAIL2BAN_CONFIGURATION
 FAIL2BAN
-chown root:root /etc/fail2ban/jail.d/set-livre-sshd.local
-chmod 0644 /etc/fail2ban/jail.d/set-livre-sshd.local
+systemctl enable fail2ban
+systemctl restart fail2ban
+fail2ban_ready=false
+for _ in {1..15}; do
+  if fail2ban-client ping >/dev/null 2>&1 \
+    && fail2ban-client status sshd >/dev/null 2>&1 \
+    && fail2ban_contract_is_ready; then
+    fail2ban_ready=true
+    break
+  fi
+  sleep 1
+done
+[[ ${fail2ban_ready} == true ]] || fail "Fail2ban não ficou pronto antes da transição."
 
 # Ubuntu images supplied by Oracle depend on the InstanceServices OUTPUT chain for boot-volume and
 # metadata traffic. Build and validate a complete replacement ruleset before one restore transaction.
@@ -1107,8 +1361,6 @@ oracle_rules_before="$({
     | grep --extended-regexp '^:InstanceServices |^-A OUTPUT .* -j InstanceServices$|^-A InstanceServices '
 } | sha256sum | cut -d ' ' -f 1)"
 
-systemctl stop fail2ban || true
-fail2ban_stopped=true
 previous_ipv4_rules="$(mktemp)"
 previous_ipv6_rules="$(mktemp)"
 iptables-save > "$previous_ipv4_rules"
@@ -1217,21 +1469,22 @@ oracle_rules_after="$({
 [[ ${oracle_rules_after} == "${oracle_rules_before}" ]] \
   || fail "as regras InstanceServices da Oracle foram alteradas."
 
-install -o root -g root -m 0600 "$ipv4_rules" /etc/iptables/rules.v4
-install -o root -g root -m 0600 "$ipv6_rules" /etc/iptables/rules.v6
-systemctl enable netfilter-persistent fail2ban
-systemctl restart fail2ban
+publish_managed_file "$ipv4_rules" /etc/iptables/rules.v4 root root 0600 \
+  || fail "regras IPv4 persistidas não puderam ser publicadas atomicamente."
+publish_managed_file "$ipv6_rules" /etc/iptables/rules.v6 root root 0600 \
+  || fail "regras IPv6 persistidas não puderam ser publicadas atomicamente."
+systemctl enable netfilter-persistent
 fail2ban_ready=false
 for _ in {1..15}; do
-  if fail2ban-client ping >/dev/null 2>&1; then
+  if fail2ban-client ping >/dev/null 2>&1 \
+    && fail2ban-client status sshd >/dev/null 2>&1 \
+    && fail2ban_contract_is_ready; then
     fail2ban_ready=true
     break
   fi
   sleep 1
 done
 [[ ${fail2ban_ready} == true ]] || fail "Fail2ban não ficou pronto."
-fail2ban-client status sshd >/dev/null
-fail2ban_stopped=false
 firewall_transition_active=false
 
 if ! swapfile_is_valid "$SWAPFILE_PATH"; then
@@ -1252,9 +1505,7 @@ if ! swapfile_is_active "$SWAPFILE_PATH"; then
   swapon -- "$SWAPFILE_PATH"
 fi
 swapfile_is_active "$SWAPFILE_PATH" || fail "swapfile não foi ativado."
-if ! grep --fixed-strings --line-regexp '/swapfile none swap sw 0 0' /etc/fstab >/dev/null; then
-  printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
-fi
+ensure_fstab_swap_entry || fail "/etc/fstab é inválido ou não pôde ser publicado atomicamente."
 
 nginx -t
 systemctl daemon-reload
@@ -1271,7 +1522,7 @@ digest_source="$(mktemp "${HOST_STATE_DIRECTORY}/.host-config.XXXXXX")"
 printf '%s\n' "$host_configuration_digest" > "$digest_source"
 chown root:setlivre "$digest_source"
 chmod 0640 "$digest_source"
-mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
+mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
 digest_source=""
 host_configuration_published=true
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then

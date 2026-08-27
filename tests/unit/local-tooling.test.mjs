@@ -237,6 +237,11 @@ describe("local tooling contracts", () => {
 
   it("preserves Oracle networking while exposing only the production entrypoints", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const fail2banRestart = bootstrap.indexOf("systemctl restart fail2ban");
+    const firewallSnapshot = bootstrap.indexOf('previous_ipv4_rules="$(mktemp)"');
+    const fail2banContractChecks = [...bootstrap.matchAll(/&& fail2ban_contract_is_ready;/gu)].map(
+      (match) => match.index,
+    );
 
     expect(bootstrap).not.toMatch(/apt-get install[\s\S]*\\\n\s+ufw\b/u);
     expect(bootstrap).toContain("iptables-persistent");
@@ -249,6 +254,22 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("firewall_transition_active=true");
     expect(bootstrap).toContain('iptables-restore < "$previous_ipv4_rules"');
     expect(bootstrap).not.toContain("netfilter-persistent reload");
+    expect(bootstrap).not.toContain("systemctl stop fail2ban");
+    expect(bootstrap).not.toContain("fail2ban_stopped");
+    expect(fail2banRestart).toBeGreaterThan(-1);
+    expect(fail2banRestart).toBeLessThan(firewallSnapshot);
+    expect(bootstrap).toContain("Fail2ban não ficou pronto antes da transição");
+    expect(bootstrap).toContain("fail2ban-client status sshd");
+    expect(bootstrap).toContain("banaction = nftables");
+    expect(bootstrap).toContain("banaction_allports = nftables[type=allports]");
+    expect(bootstrap).toContain("fail2ban_contract_is_ready() {");
+    expect(bootstrap).toContain("fail2ban-client get sshd action nftables actionban");
+    expect(bootstrap).toContain("nft list table inet f2b-table");
+    expect(fail2banContractChecks).toHaveLength(2);
+    expect(fail2banContractChecks[0]).toBeLessThan(firewallSnapshot);
+    expect(fail2banContractChecks[1]).toBeGreaterThan(
+      bootstrap.indexOf('ip6tables-restore < "$ipv6_rules"'),
+    );
     expect(bootstrap).toContain("/etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
     expect(bootstrap).not.toContain("rm -f -- /etc/ssh/sshd_config.d/60-setlivre-hardening.conf");
     expect(bootstrap).toContain("/etc/nginx/sites-enabled/setlivre");
@@ -288,7 +309,9 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('sysctl --values "net.ipv6.conf.${setting}.disable_ipv6"');
     expect(bootstrap).not.toContain('rm -rf -- "/opt/setlivre"');
     expect(bootstrap).toContain("/etc/fail2ban/jail.d/setlivre-sshd.local");
-    expect(bootstrap).toContain("cat > /etc/fail2ban/jail.d/set-livre-sshd.local");
+    expect(bootstrap).toContain(
+      "publish_managed_content /etc/fail2ban/jail.d/set-livre-sshd.local",
+    );
     expect(bootstrap).toContain('local managed_nginx_link="/etc/nginx/sites-enabled/setlivre"');
     expect(bootstrap).toContain(
       'local managed_nginx_target="/etc/nginx/sites-available/set-livre"',
@@ -305,9 +328,10 @@ describe("local tooling contracts", () => {
   it("permits reused runtime paths only after validating a retryable host state", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const markerValidation = bootstrap.indexOf("host_state_marker_is_valid() {");
-    const stateDirectorySecured = bootstrap.indexOf(
-      'ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700',
-      markerValidation,
+    const lockAcquired = bootstrap.indexOf("exec 9>/run/lock/set-livre-deploy.lock");
+    const stateDirectoryPrepared = bootstrap.indexOf(
+      'ensure_bootstrap_state_directory "$HOST_STATE_DIRECTORY" \\',
+      lockAcquired,
     );
     const installedDetection = bootstrap.indexOf(
       '"$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"',
@@ -326,11 +350,15 @@ describe("local tooling contracts", () => {
       'publish_bootstrap_in_progress "$host_configuration_digest"',
       guardCall,
     );
+    const stateDirectorySecured = bootstrap.indexOf(
+      'ensure_managed_directory "$HOST_STATE_DIRECTORY" root root 0700',
+      pendingPublish,
+    );
     const activeReleaseInspection = bootstrap.indexOf(
       "if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then",
     );
     const finalDigestPublish = bootstrap.indexOf(
-      'mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
+      'mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
     );
     const previousMarkerRemoved = bootstrap.indexOf(
       'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST"',
@@ -342,8 +370,9 @@ describe("local tooling contracts", () => {
     );
 
     expect(markerValidation).toBeGreaterThan(-1);
-    expect(stateDirectorySecured).toBeGreaterThan(markerValidation);
-    expect(stateDirectorySecured).toBeLessThan(installedDetection);
+    expect(lockAcquired).toBeGreaterThan(markerValidation);
+    expect(stateDirectoryPrepared).toBeGreaterThan(lockAcquired);
+    expect(stateDirectoryPrepared).toBeLessThan(installedDetection);
     expect(bootstrap).toContain("root:setlivre:640");
     expect(bootstrap).toContain("root:root:600");
     expect(bootstrap).toContain("${#marker_lines[@]} -eq 1");
@@ -368,9 +397,85 @@ describe("local tooling contracts", () => {
     expect(pendingDetection).toBeGreaterThan(previousDetection);
     expect(guardCall).toBeGreaterThan(pendingDetection);
     expect(pendingPublish).toBeGreaterThan(guardCall);
+    expect(stateDirectorySecured).toBeGreaterThan(pendingPublish);
     expect(pendingPublish).toBeLessThan(activeReleaseInspection);
+    expect(stateDirectorySecured).toBeLessThan(activeReleaseInspection);
     expect(previousMarkerRemoved).toBeGreaterThan(finalDigestPublish);
     expect(compatibleGateReleased).toBeGreaterThan(previousMarkerRemoved);
+  });
+
+  it("publishes every managed host leaf without following links", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const primitiveStart = bootstrap.indexOf("publish_managed_file() {");
+    const primitiveEnd = bootstrap.indexOf("\npublish_managed_content() {", primitiveStart);
+    const primitive = bootstrap.slice(primitiveStart, primitiveEnd);
+
+    expect(primitiveStart).toBeGreaterThan(-1);
+    expect(primitiveEnd).toBeGreaterThan(primitiveStart);
+    expect(primitive).toContain("[[ -f ${source} && ! -L ${source} && ${target} == /* ]]");
+    expect(primitive).toContain("[[ -f ${target} && ! -L ${target}");
+    expect(primitive).toContain("stat --format '%h'");
+    expect(bootstrap).toContain(
+      'readonly MANAGED_FILE_STAGING_DIRECTORY="${HOST_STATE_DIRECTORY}/.managed-file-staging"',
+    );
+    expect(primitive).toContain(
+      'ensure_managed_directory "$MANAGED_FILE_STAGING_DIRECTORY" root root 0700',
+    );
+    expect(primitive).toContain("stat --format '%d'");
+    expect(primitive).toContain('mktemp "${staging_prefix}.XXXXXX"');
+    expect(primitive).toContain('install -o root -g root -m 0600 "$source"');
+    const stagedModePublished = primitive.indexOf('chmod "$mode" "$managed_file_staging"');
+    const stagedOwnerPublished = primitive.indexOf(
+      'chown "${owner}:${group}" "$managed_file_staging"',
+    );
+    expect(stagedModePublished).toBeGreaterThan(-1);
+    expect(stagedOwnerPublished).toBeGreaterThan(-1);
+    expect(stagedModePublished).toBeLessThan(stagedOwnerPublished);
+    expect(primitive).toContain('${identity} == "root:root:${expected_mode}:1"');
+    expect(primitive).toContain("mv --no-target-directory --force");
+    expect(primitive).toContain('$(realpath -e -- "$parent") == "$parent"');
+
+    for (const managedLeaf of [
+      "/etc/fail2ban/jail.d/set-livre-sshd.local",
+      "/etc/fstab",
+      "/etc/letsencrypt/renewal-hooks/deploy/set-livre-reload-nginx",
+      "/etc/nginx/sites-available/set-livre",
+      "/etc/ssh/sshd_config.d/60-set-livre.conf",
+      "/etc/sudoers.d/set-livre-deploy",
+      "/etc/systemd/system/${systemd_unit}",
+      "/usr/local/sbin/set-livre-deploy",
+    ]) {
+      expect(bootstrap).toContain(managedLeaf);
+    }
+    expect(bootstrap).not.toMatch(/cat\s*>\s*\/etc\//u);
+    expect(bootstrap).not.toMatch(/>>\s*\/etc\/fstab/u);
+    expect(bootstrap).toContain("ensure_fstab_swap_entry || fail");
+    expect(bootstrap).toContain('publish_managed_file "$source" /etc/fstab root root 0644');
+    expect(bootstrap).toContain("stale_suffix");
+    expect(bootstrap).toContain("managed_file_staging");
+    expect(hostVerification).toContain("symlink existente foi aceito como folha gerenciada");
+    expect(hostVerification).toContain("dangling symlink foi aceito como folha gerenciada");
+    expect(hostVerification).toContain("hardlink foi aceito como folha gerenciada");
+    expect(hostVerification).toContain("arquivo especial foi aceito como folha gerenciada");
+    expect(hostVerification).toContain("staging executável permaneceu após retry");
+    expect(hostVerification).toContain(
+      "staging intermediário root:root com modo final não foi recuperado",
+    );
+    expect(hostVerification).toContain("SIGKILL anterior à restrição não foi exercitado");
+    expect(hostVerification).toContain("SIGKILL posterior à restrição não foi exercitado");
+    expect(hostVerification).toContain(
+      "ação nftables efetiva do Fail2ban não ficou pronta no laboratório",
+    );
+    expect(hostVerification).toContain("override local da ação nftables foi aceito no laboratório");
+    expect(workflow).toContain("curl fail2ban nftables nginx shellcheck");
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {
@@ -589,7 +694,10 @@ describe("local tooling contracts", () => {
     expect(bootstrap).not.toContain(
       "install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge",
     );
-    expect(bootstrap).toContain('chown root:deploy-setlivre "$authorized_keys_source"');
+    expect(bootstrap).toContain(
+      '"$authorized_keys_source" /home/deploy-setlivre/.ssh/authorized_keys',
+    );
+    expect(bootstrap).toContain("root deploy-setlivre 0640");
     expect(bootstrap).not.toContain(
       "install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh",
     );
@@ -706,7 +814,9 @@ describe("local tooling contracts", () => {
       expect(bootstrap).toContain(path.slice("ops/".length));
     }
     expect(bootstrap.indexOf("systemctl enable --now snap.certbot.renew.timer")).toBeLessThan(
-      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
+      bootstrap.indexOf(
+        'mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
+      ),
     );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
     expect(command).toContain("cleanup_abandoned_uploads");
@@ -846,9 +956,9 @@ describe("local tooling contracts", () => {
     expect(
       deploy.match(/if \[\[ -e \$\{ROLLBACK_MARKER\} \|\| -L \$\{ROLLBACK_MARKER\} \]\]; then/gu),
     ).toHaveLength(2);
-    expect(
-      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
-    ).toBeLessThan(bootstrap.indexOf("systemctl restart set-livre-web.service"));
+    const bootstrapDigestPublished = bootstrap.indexOf(
+      'mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
+    );
     const recoveryArmed = bootstrap.indexOf(
       'write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}"',
     );
@@ -889,9 +999,24 @@ describe("local tooling contracts", () => {
       'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
       recoveryDisarmed,
     );
-    expect(
-      bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
-    ).toBeLessThan(recoveryArmed);
+    for (const position of [
+      bootstrapDigestPublished,
+      recoveryArmed,
+      recoveryPhaseArmed,
+      previousDigestRemoved,
+      bootstrapGateReleased,
+      bootstrapRestart,
+      bootstrapReadiness,
+      terminalGateCommitted,
+      terminalBootstrap,
+      recoveryPhaseDisarmed,
+      recoveryDisarmed,
+      emptyHostGateReleased,
+    ]) {
+      expect(position).toBeGreaterThan(-1);
+    }
+    expect(bootstrapDigestPublished).toBeLessThan(bootstrapRestart);
+    expect(bootstrapDigestPublished).toBeLessThan(recoveryArmed);
     expect(recoveryArmed).toBeLessThan(recoveryPhaseArmed);
     expect(recoveryPhaseArmed).toBeLessThan(previousDigestRemoved);
     expect(previousDigestRemoved).toBeLessThan(bootstrapGateReleased);

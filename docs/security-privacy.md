@@ -88,6 +88,11 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - archive é identificado por SHA-256 e manifesto com o commit completo;
 - VM aceita SSH somente por chave; senha e root login ficam desabilitados;
 - usuário de deploy possui apenas um comando sudo allowlisted;
+- arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
+  filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
+  retirar o acesso dos serviços ao CA;
+- Fail2ban fixa a ação efetiva `nftables`, recusa override local e permanece ativo durante a transição
+  atômica do firewall, com ação/tabela/chain/daemon/jail comprovados antes e depois dela;
 - serviços Node rodam sem root, em loopback e com hardening systemd;
 - release é imutável, ativada por symlink e revertida por readiness;
 - migrations são forward-only e não usam seed em produção.

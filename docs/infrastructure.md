@@ -284,10 +284,23 @@ Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0`, `/opt/
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
-Antes de ler esses marcadores, o bootstrap abre `/etc/set-livre` sem seguir links e o restringe a
-`root:root 0700`; depois de validar as identidades canônicas, publica o estado final como
+Ao entrar, o bootstrap abre `/etc/set-livre` sem seguir links e aceita somente o estado saudável
+`root:setlivre 0750` ou o estado já bloqueado `root:root 0700`; em host novo, cria diretamente o segundo.
+Ele valida os marcadores e superfícies existentes sem alterar o estado saudável, publica primeiro o
+`bootstrap-in-progress` e somente então restringe o diretório a `root:root 0700`. Assim, até `SIGKILL`
+entre a restrição e a parada dos serviços deixa uma barreira durável que impede restart/reboot com o
+CA inacessível. Depois de validar as identidades canônicas, publica o estado final como
 `root:setlivre 0750`. O link Nginx de uma instalação gerenciada pode estar ausente ou apontar exatamente
 para `/etc/nginx/sites-available/set-livre`; qualquer tipo ou destino diferente falha fechado.
+Toda folha gerenciada — CA, chave autorizada, binários de deploy, units, templates/site Nginx, hook de
+renovação, sudoers, configuração SSH/Fail2ban, regras persistidas e `fstab` — recusa destino symlink ou
+hardlink. O conteúdo com owner/modo final é preparado em
+`/etc/set-livre/.managed-file-staging`, diretório `root:root 0700` no mesmo filesystem, e entra no destino
+por rename atômico. Um `SIGKILL` pode deixar somente um arquivo inacessível nesse staging privado — nunca
+um executável dentro do diretório de hooks — e o retry remove apenas nomes, tipo, owner e modo que
+correspondam exatamente à publicação interrompida; resíduo divergente falha fechado. `fstab` aceita
+exatamente uma entrada canônica de swap; configuração conflitante bloqueia o bootstrap em vez de ser
+duplicada.
 Quando a release ativa já carrega o mesmo digest candidato, a reaplicação publica a configuração
 estática, arma a recuperação, libera o start controlado e prova o mesmo SHA nos endpoints internos e no
 HTTPS público antes de remover o rollback. Falha anterior mantém `bootstrap-in-progress`, remove o
@@ -323,6 +336,11 @@ aplicação imediata usa `iptables-restore` após o teste; o comando `netfilter-
 usado porque a imagem Oracle configura restore sem flush e uma recarga em runtime duplicaria regras.
 Timestamps e contadores são removidos do arquivo persistido para que reexecuções idênticas produzam os
 mesmos bytes.
+O arquivo do Fail2ban é publicado atomicamente, fixa `banaction = nftables`/allports e o restart fica sob
+responsabilidade do systemd antes do snapshot do firewall. O bootstrap rejeita override local da ação e
+prova os comandos efetivos, a tabela/chain `inet f2b-table`, o daemon e a jail `sshd` antes e depois da
+transição. O daemon permanece ativo durante a construção e as transações de `iptables-restore`; não há
+`stop` manual que possa sobreviver a `SIGKILL` ou OOM nem dependência de um default externo do pacote.
 
 Nginx substitui `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` e `X-Forwarded-For`; o último recebe
 somente `$remote_addr`, nunca uma cadeia fornecida pelo cliente. Respostas autenticadas não são
