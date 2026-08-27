@@ -545,6 +545,17 @@ assert_symlinked_release_component_rejected() (
   grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
     "$output" >/dev/null \
     || fail "componente ${component} em symlink falhou por motivo inesperado."
+  for recovery_mode in --recover-link --recover-services; do
+    # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
+    # shellcheck disable=SC2024
+    if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode" \
+      > "$output" 2>&1; then
+      fail "recovery ${recovery_mode} aceitou ${component} em symlink."
+    fi
+    grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
+      "$output" >/dev/null \
+      || fail "recovery ${recovery_mode} falhou por motivo inesperado no probe ${component}."
+  done
   metadata_after="$(stat --format '%u:%g:%a' -- "$external")"
   [[ ${metadata_after} == "$metadata_before" ]] \
     || fail "probe ${component} alterou owner ou modo do alvo externo."
@@ -575,6 +586,9 @@ recover_services_successfully() {
     SET_LIVRE_TEST_STATE="$test_state" \
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
   assert_current_release "$expected"
+  [[ ! -e /etc/set-livre/bootstrap-in-progress.sha256 \
+    && ! -L /etc/set-livre/bootstrap-in-progress.sha256 ]] \
+    || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }
 
 run_expected_failure() {
@@ -726,6 +740,41 @@ fi
 assert_current_link "$release_sha"
 [[ -e /opt/set-livre/.activation-rollback ]] \
   || fail "recuperação falha consumiu o marcador necessário ao retry."
+recover_services_successfully "$release_sha"
+
+bootstrap_marker_source="$temporary_directory/bootstrap-in-progress.sha256"
+printf '%s\n' "$(printf '0%.0s' {1..64})" > "$bootstrap_marker_source"
+sudo install -o root -g root -m 0600 \
+  "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
+sudo install -o root -g root -m 0600 \
+  "$rollback_source" /opt/set-livre/.activation-rollback
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
+  fail "recovery aceitou digests divergentes no estado intermediário do bootstrap."
+fi
+[[ -e /opt/set-livre/.activation-rollback \
+  && -e /etc/set-livre/bootstrap-in-progress.sha256 ]] \
+  || fail "recovery inválido consumiu o estado intermediário do bootstrap."
+
+printf '%s\n' "$host_digest" > "$bootstrap_marker_source"
+sudo install -o root -g root -m 0600 \
+  "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
+rm -f -- "$test_state"/*
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=recovery-public-health \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
+  fail "recovery de bootstrap aceitou readiness HTTPS público com falha."
+fi
+grep --fixed-strings --line-regexp "$host_digest" \
+  /etc/set-livre/bootstrap-in-progress.sha256 >/dev/null \
+  || fail "recovery falho não republicou o bloqueio autenticado de bootstrap."
+[[ -e /opt/set-livre/.activation-rollback ]] \
+  || fail "recovery falho consumiu o rollback do bootstrap."
 recover_services_successfully "$release_sha"
 
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback

@@ -135,10 +135,58 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).toContain("Wants=network-online.target");
     expect(recoveryUnit).toContain("Requires=nginx.service");
     expect(recoveryUnit).toContain("After=network-online.target nginx.service");
+    expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
     expect(webUnit).toContain("Requires=set-livre-release-recovery@link.service");
     expect(backofficeUnit).toContain("Requires=set-livre-release-recovery@link.service");
+  });
+
+  it("authenticates and consumes a paired bootstrap recovery state", () => {
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const authorizationStart = deploy.indexOf("authorize_interrupted_bootstrap_recovery() {");
+    const authorizationEnd = deploy.indexOf(
+      "\nrestore_bootstrap_recovery_blocker_on_failure() {",
+      authorizationStart,
+    );
+    const authorization = deploy.slice(authorizationStart, authorizationEnd);
+
+    expect(authorizationStart).toBeGreaterThan(-1);
+    expect(authorizationEnd).toBeGreaterThan(authorizationStart);
+    expect(authorization).toContain(
+      'read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"',
+    );
+    expect(authorization).toContain(
+      'read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"',
+    );
+    expect(authorization).toContain('[[ ${bootstrap_digest} == "$installed_digest" ]]');
+    expect(authorization).toContain('manifest.get("commit") != expected_release');
+    expect(authorization).toContain("not isinstance(host_configuration, dict)");
+    expect(authorization).toContain('host_configuration.get("sha256") != expected_digest');
+    expect(authorization).toContain('rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"');
+    expect(deploy).toContain('publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest"');
+    for (const recoveryMode of ["--recover-link", "--recover-services"]) {
+      const branchStart = deploy.indexOf(`\${1:-} == "${recoveryMode}"`);
+      const branchEnd = deploy.indexOf("\nfi\n", branchStart) + 4;
+      const branch = deploy.slice(branchStart, branchEnd);
+      expect(branchStart).toBeGreaterThan(-1);
+      expect(branch).toContain("managed_release_directories_are_valid");
+      expect(branch.indexOf("managed_release_directories_are_valid")).toBeLessThan(
+        branch.indexOf("recover_link_from_marker"),
+      );
+    }
+    expect(hostVerification).toContain(
+      "recovery aceitou digests divergentes no estado intermediário do bootstrap",
+    );
+    expect(hostVerification).toContain(
+      "recovery falho não republicou o bloqueio autenticado de bootstrap",
+    );
+    expect(hostVerification).toContain("for recovery_mode in --recover-link --recover-services");
+    expect(hostVerification).toContain("recovery ${recovery_mode} aceitou");
   });
 
   it("preserves Oracle networking while exposing only the production entrypoints", () => {
@@ -332,6 +380,19 @@ describe("local tooling contracts", () => {
       expect(nginx).toContain("server_name 147.15.97.227;");
       expect(nginx).toContain('X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;');
       expect(nginx).not.toContain("ops.setlivre.com");
+      const logFormatStart = nginx.indexOf("log_format set_livre_redacted escape=json");
+      const logFormatEnd = nginx.indexOf(";\n", logFormatStart);
+      const logFormat = nginx.slice(logFormatStart, logFormatEnd);
+      const serverCount = nginx.match(/^server \{/gmu)?.length ?? 0;
+      expect(logFormatStart).toBeGreaterThan(-1);
+      expect(logFormatEnd).toBeGreaterThan(logFormatStart);
+      expect(logFormat).toContain("$sent_http_x_request_id");
+      expect(logFormat).not.toMatch(
+        /\$(?:args|binary_remote_addr|http_referer|http_user_agent|remote_addr|request_uri|uri)\b/u,
+      );
+      expect(
+        nginx.match(/access_log \/var\/log\/nginx\/set-livre-access\.log set_livre_redacted;/gu),
+      ).toHaveLength(serverCount);
     }
 
     const http = readFileSync(
@@ -623,7 +684,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      3,
+      4,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");

@@ -239,8 +239,12 @@ integralmente as superfícies estáticas, o bootstrap publica o novo
 instalador de release rejeita esse estado. Quando a release é compatível, o bootstrap arma primeiro o
 marcador de rollback para a própria raiz SHA e só então remove o in-progress que bloqueia as units. A
 recuperação existente permanece responsável pela transição até os dois readiness internos e o HTTPS
-público passarem; reboot ou `SIGKILL` nessa janela relê o marcador e estabiliza a mesma release. Somente
-depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
+público passarem. Quando os dois marcadores coexistem após uma interrupção, ela só libera os serviços
+se `bootstrap-in-progress`, `host-config.sha256` e o digest do manifesto da release apontada forem
+idênticos e tiverem tipo, owner e modo exatos. Falha de readiness republica atomicamente o bloqueio de
+bootstrap antes de parar os serviços e preserva o rollback para retry; estado divergente permanece
+intocado e falha fechado. Reboot ou `SIGKILL` nessa janela relê o marcador e estabiliza a mesma release.
+Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
 os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
@@ -274,6 +278,11 @@ uma hora. OCI Bastion pode permanecer como acesso emergencial, mas não particip
 O IPv4 público é reservado e regional para que DNS, trust SSH e recuperação não dependam do ciclo de
 vida da VNIC. A distinção oficial entre endereços efêmeros e reservados está na
 [documentação de Public IP Addresses da Oracle](https://docs.oracle.com/en-us/iaas/Content/Network/Tasks/managingpublicIPs.htm).
+Uma VM substituta preserva o IP, mas recebe outra host key. Antes de atualizar
+`PRD_VM_SSH_HOST_KEY`, o fingerprint Ed25519 é lido pela Console/Serial Console autenticada da OCI e
+comparado fora da conexão SSH; `ssh-keyscan` sozinho nunca estabelece confiança. Só depois dessa rotação
+o workflow volta a usar `StrictHostKeyChecking=yes`. A sequência operacional completa está em
+[`backup-restore.md`](backup-restore.md#recuperação-da-vm).
 O bootstrap deriva o ruleset completo a partir do estado Oracle, valida-o antes da aplicação e troca
 cada família com uma única transação `iptables-restore`. Snapshot de memória e arquivos persistidos são
 restaurados automaticamente se qualquer etapa falhar. A cadeia `InstanceServices` fornecida pela imagem
@@ -295,6 +304,10 @@ vazia e não consomem essa zona; os limiters específicos do app continuam sendo
 Hosts desconhecidos são recusados. Nesta fase, somente o Host literal `147.15.97.227` chega ao web; o
 backoffice não possui virtual host público. Todas as respostas públicas recebem `X-Robots-Tag` com
 `noindex`, e `/robots.txt` bloqueia crawling. A validação estrita de origem usa a mesma origem HTTPS.
+Cada bloco `server` substitui o access log `combined` herdado por JSON redigido mantido no repositório.
+O registro conserva horário, método, status, bytes, durações e o `X-Request-Id` efetivamente enviado pela
+aplicação, mas não persiste IP, host, target/query, referer ou user-agent. O IP continua existindo apenas
+na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 
 ## Banco de produção
 

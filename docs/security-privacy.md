@@ -62,6 +62,8 @@ evidência Playwright.
 Escritas cookie-based exigem método, body limitado, content type, `Origin`/`Host` exatos e, em produção,
 `X-Forwarded-Host` e `X-Forwarded-Proto=https` substituídos pelo Nginx confiável.
 `X-Forwarded-For` recebe um único `$remote_addr`; cadeia fornecida pelo cliente é descartada.
+O access log do Nginx substitui o formato `combined`: registra somente horário, método, status, bytes,
+durações e o `X-Request-Id` autoritativo da resposta, sem IP, host, target/query, referer ou user-agent.
 
 Rate limiting ocorre antes do parse e novamente por ação/identidade pseudonimizada. A camada em memória
 protege o processo único; iptables/Fail2ban, Nginx e constraints/idempotência formam as demais camadas. Horizontalizar

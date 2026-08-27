@@ -15,6 +15,7 @@ readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
+bootstrap_recovery_digest=""
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -147,6 +148,86 @@ write_rollback_marker() {
   fi
 }
 
+read_host_state_digest() {
+  local marker="$1"
+  local expected_identity="$2"
+  local -a lines=()
+  [[ -f ${marker} && ! -L ${marker} ]] || return 1
+  [[ $(stat --format '%U:%G:%a' -- "$marker") == "$expected_identity" ]] || return 1
+  mapfile -t lines < "$marker"
+  [[ ${#lines[@]} -eq 1 && ${lines[0]} =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "${lines[0]}"
+}
+
+publish_bootstrap_recovery_blocker() {
+  local digest="$1"
+  local temporary
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  temporary="$(mktemp /etc/set-livre/.bootstrap-in-progress.XXXXXX)" || return 1
+  if ! printf '%s\n' "$digest" > "$temporary" \
+    || ! chown root:root "$temporary" \
+    || ! chmod 0600 "$temporary" \
+    || ! mv --force -- "$temporary" "$HOST_BOOTSTRAP_IN_PROGRESS"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+authorize_interrupted_bootstrap_recovery() {
+  local recovered_sha="$1"
+  local bootstrap_digest installed_digest manifest
+  [[ ${recovered_sha} =~ ^[0-9a-f]{40}$ ]] || return 1
+  bootstrap_digest="$(
+    read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"
+  )" || return 1
+  installed_digest="$(
+    read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"
+  )" || return 1
+  [[ ${bootstrap_digest} == "$installed_digest" ]] || return 1
+
+  manifest="${RELEASES_DIRECTORY}/${recovered_sha}/release-manifest.json"
+  [[ -f ${manifest} && ! -L ${manifest} ]] || return 1
+  python3 - "$manifest" "$recovered_sha" "$bootstrap_digest" <<'PYTHON' || return 1
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+expected_release = sys.argv[2]
+expected_digest = sys.argv[3]
+try:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    raise SystemExit("release manifest is unreadable") from error
+host_configuration = manifest.get("hostConfiguration")
+if (
+    manifest.get("version") != 2
+    or manifest.get("commit") != expected_release
+    or not isinstance(host_configuration, dict)
+    or host_configuration.get("sha256") != expected_digest
+):
+    raise SystemExit("release manifest does not authorize bootstrap recovery")
+PYTHON
+
+  bootstrap_recovery_digest="$bootstrap_digest"
+  rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
+}
+
+# Invocada exclusivamente pelo trap do recovery de serviços.
+# shellcheck disable=SC2317,SC2329
+restore_bootstrap_recovery_blocker_on_failure() {
+  local status=$?
+  trap - EXIT
+  if [[ ${status} -ne 0 \
+    && -n ${bootstrap_recovery_digest} \
+    && ( -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ) \
+    && ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} \
+    && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
+    publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest" || status=1
+  fi
+  exit "$status"
+}
+
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
 
 if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
@@ -155,6 +236,8 @@ if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
     printf 'Deploy ativo; a recuperação pós-lock permanece armada.\n'
     exit 0
   fi
+  managed_release_directories_are_valid \
+    || fail "raiz de releases não atende ao contrato físico e de permissões."
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
     printf 'Link da ativação interrompida recuperado; estabilização dos serviços permanece armada.\n'
@@ -166,18 +249,31 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
   flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
     || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
+  managed_release_directories_are_valid \
+    || fail "raiz de releases não atende ao contrato físico e de permissões."
+  trap restore_bootstrap_recovery_blocker_on_failure EXIT
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
+    if [[ -e ${HOST_BOOTSTRAP_IN_PROGRESS} || -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
+      authorize_interrupted_bootstrap_recovery "$recovered_release" \
+        || fail "o estado intermediário do bootstrap não autorizou a recuperação."
+    fi
     if [[ -z ${recovered_release} ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
         || fail "não foi possível estabilizar o host sem release anterior."
     elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_health "$recovered_release" \
       || ! wait_for_public_health "$recovered_release"; then
+      if [[ -n ${bootstrap_recovery_digest} ]]; then
+        publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest" \
+          || fail "não foi possível restaurar o bloqueio do bootstrap após falha de readiness."
+        bootstrap_recovery_digest=""
+      fi
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
       fail "a release recuperada não atingiu readiness; serviços interrompidos."
     fi
     rm -f -- "$ROLLBACK_MARKER"
+    bootstrap_recovery_digest=""
     printf 'Ativação interrompida recuperada e serviços estabilizados.\n'
   fi
   exit 0
