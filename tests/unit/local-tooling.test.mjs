@@ -361,24 +361,50 @@ describe("local tooling contracts", () => {
       "account_groups_are_exact deploy-setlivre deploy-setlivre",
       deployAccountStart,
     );
+    const deployReverseGroupValidation = bootstrap.indexOf(
+      "group_members_are_exact deploy-setlivre deploy-setlivre",
+      deployAccountStart,
+    );
     const deployPasswordValidation = bootstrap.indexOf(
       "account_password_is_locked deploy-setlivre",
       deployAccountStart,
     );
     const keyPublication = bootstrap.indexOf(
-      "> /home/deploy-setlivre/.ssh/authorized_keys",
+      'authorized_keys_source" /home/deploy-setlivre/.ssh/authorized_keys',
       deployAccountStart,
     );
 
     expect(bootstrap).toContain("account_identity_is_canonical() {");
     expect(bootstrap).toContain("account_groups_are_exact() {");
+    expect(bootstrap).toContain("group_members_are_exact() {");
     expect(bootstrap).toContain("account_password_is_locked() {");
+    expect(bootstrap).toContain("ensure_managed_directory() {");
+    expect(bootstrap).toContain("os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW");
+    expect(bootstrap).toContain(
+      "group_members_are_exact setlivre setlivre-web setlivre-backoffice",
+    );
+    expect(bootstrap).toContain('group_members_are_exact "$service_identity" "$service_identity"');
+    expect(bootstrap).toContain(
+      "ensure_managed_directory /home/deploy-setlivre root deploy-setlivre 0750",
+    );
+    expect(bootstrap).toContain(
+      "ensure_managed_directory /home/deploy-setlivre/.ssh root deploy-setlivre 0750",
+    );
+    expect(bootstrap).toContain(
+      "ensure_managed_directory /home/deploy-setlivre/incoming deploy-setlivre deploy-setlivre 0700",
+    );
+    expect(bootstrap).toContain('chown root:deploy-setlivre "$authorized_keys_source"');
+    expect(bootstrap).not.toContain(
+      "install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh",
+    );
     expect(bootstrap).toContain("identidade ${service_identity} divergiu do contrato canônico");
     expect(deployIdentityValidation).toBeGreaterThan(deployAccountStart);
     expect(deployGroupValidation).toBeGreaterThan(deployAccountStart);
+    expect(deployReverseGroupValidation).toBeGreaterThan(deployAccountStart);
     expect(deployPasswordValidation).toBeGreaterThan(deployAccountStart);
     expect(keyPublication).toBeGreaterThan(deployIdentityValidation);
     expect(keyPublication).toBeGreaterThan(deployGroupValidation);
+    expect(keyPublication).toBeGreaterThan(deployReverseGroupValidation);
     expect(keyPublication).toBeGreaterThan(deployPasswordValidation);
   });
 
@@ -405,6 +431,18 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain(
       "release existente adulterada foi reutilizada pelo mesmo SHA",
     );
+  });
+
+  it("accepts current only when it resolves to an exact SHA release root", () => {
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+
+    expect(deploy).toContain("[[ ${previous_release} =~ ^${RELEASES_DIRECTORY}/[0-9a-f]{40}$");
+    expect(hostVerification).toContain("current aninhado foi aceito como raiz de release anterior");
+    expect(hostVerification).toContain("current aninhado publicou marcador de rollback inválido");
   });
 
   it("restricts deployment SSH and fences releases to the installed host contract", () => {

@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readOptionalE2EEnvironmentFile } from "../helpers/e2e-environment-file";
+import {
+  localE2EEnvironmentValue,
+  readOptionalE2EEnvironmentFile,
+} from "../helpers/e2e-environment-file";
 
 const temporaryDirectories: string[] = [];
 
@@ -40,5 +43,26 @@ describe("E2E environment file", () => {
     writeFileSync(resolve(repository, ".env.e2e.local"), "INVALID='unterminated\n");
 
     expect(() => readOptionalE2EEnvironmentFile(repository)).toThrow("interpretar");
+  });
+
+  it("prefers the generated local contract over divergent inherited values", () => {
+    const localEnvironment = {
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_local_contract_key",
+    };
+    const inheritedEnvironment = {
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_production_contract_key",
+      VALUE_WITHOUT_LOCAL_ENTRY: "inherited",
+    };
+
+    expect(
+      localE2EEnvironmentValue(
+        localEnvironment,
+        inheritedEnvironment,
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      ),
+    ).toBe("sb_publishable_local_contract_key");
+    expect(
+      localE2EEnvironmentValue(localEnvironment, inheritedEnvironment, "VALUE_WITHOUT_LOCAL_ENTRY"),
+    ).toBe("inherited");
   });
 });

@@ -148,4 +148,28 @@ describe("release package", () => {
     );
     expect(existsSync(outputDirectory)).toBe(false);
   });
+
+  it("rejects a linked artifacts ancestor without deleting its external target", () => {
+    const root = fixture();
+    const externalRoot = mkdtempSync(resolve(tmpdir(), "set-livre-release-external-"));
+    roots.push(externalRoot);
+    const externalRelease = resolve(externalRoot, "release");
+    mkdirSync(externalRelease);
+    const sentinel = resolve(externalRelease, "must-survive.txt");
+    writeFileSync(sentinel, "preserved");
+    symlinkSync(
+      externalRoot,
+      resolve(root, ".artifacts"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    expect(() =>
+      packageRelease({
+        commit,
+        outputDirectory: resolve(root, ".artifacts/release"),
+        root,
+      }),
+    ).toThrow("ancestral simbólico ou junction");
+    expect(readFileSync(sentinel, "utf8")).toBe("preserved");
+  });
 });

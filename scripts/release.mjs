@@ -119,13 +119,31 @@ function copyOptionalDirectory(source, destination) {
 }
 
 function assertReleaseDestination(root, destination) {
-  const expected = resolve(root, ".artifacts/release");
+  const resolvedRoot = resolve(root);
+  const expected = resolve(resolvedRoot, ".artifacts/release");
   if (resolve(destination) !== expected) {
     throw new Error("A release só pode ser publicada em .artifacts/release.");
   }
-  const pathFromRoot = relative(root, destination);
+  const pathFromRoot = relative(resolvedRoot, destination);
   if (pathFromRoot.startsWith(`..${sep}`) || pathFromRoot === "..") {
     throw new Error("O destino da release saiu do repositório.");
+  }
+
+  const canonicalRoot = realpathSync(resolvedRoot);
+  let current = resolvedRoot;
+  for (const segment of pathFromRoot.split(sep)) {
+    current = resolve(current, segment);
+    const metadata = lstatSync(current, { throwIfNoEntry: false });
+    if (metadata === undefined) break;
+    if (metadata.isSymbolicLink()) {
+      throw new Error("O destino da release possui um ancestral simbólico ou junction.");
+    }
+    if (!metadata.isDirectory()) {
+      throw new Error("O destino existente da release não é um diretório regular.");
+    }
+    if (!isWithinDirectory(canonicalRoot, realpathSync(current))) {
+      throw new Error("O destino físico da release saiu do repositório.");
+    }
   }
 }
 

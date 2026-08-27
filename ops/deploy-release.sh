@@ -624,7 +624,8 @@ fi
 
 if [[ -L ${CURRENT_LINK} ]]; then
   previous_release="$(readlink --canonicalize-existing -- "$CURRENT_LINK")"
-  [[ ${previous_release} == "${RELEASES_DIRECTORY}/"* && -d ${previous_release} ]] \
+  [[ ${previous_release} =~ ^${RELEASES_DIRECTORY}/[0-9a-f]{40}$ \
+    && -d ${previous_release} && ! -L ${previous_release} ]] \
     || fail "symlink current aponta para destino inválido."
 elif [[ -e ${CURRENT_LINK} ]]; then
   fail "current existe e não é link simbólico."

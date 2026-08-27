@@ -43,6 +43,7 @@ node_previous_directory=""
 node_alias_staging_path=""
 node_alias_previous_path=""
 swap_staging_file=""
+authorized_keys_source=""
 
 fail() {
   printf 'bootstrap: %s\n' "$1" >&2
@@ -75,6 +76,23 @@ account_groups_are_exact() {
   [[ ${actual} == "$expected" ]]
 }
 
+group_members_are_exact() {
+  local group="$1"
+  shift
+  local group_entry group_name group_gid listed_members actual expected
+  group_entry="$(getent group "$group")" || return 1
+  IFS=: read -r group_name _ group_gid listed_members <<< "$group_entry"
+  [[ ${group_name} == "$group" && ${group_gid} =~ ^[0-9]+$ ]] || return 1
+  actual="$({
+    if [[ -n ${listed_members} ]]; then
+      tr ',' '\n' <<< "$listed_members"
+    fi
+    getent passwd | awk -F: -v gid="$group_gid" '$4 == gid { print $1 }'
+  } | sed '/^$/d' | LC_ALL=C sort --unique | paste -sd, -)" || return 1
+  expected="$(printf '%s\n' "$@" | LC_ALL=C sort --unique | paste -sd, -)" || return 1
+  [[ ${actual} == "$expected" ]]
+}
+
 account_password_is_locked() {
   local identity="$1"
   local shadow_entry password_hash
@@ -82,6 +100,47 @@ account_password_is_locked() {
   password_hash="${shadow_entry#*:}"
   password_hash="${password_hash%%:*}"
   [[ ${password_hash} == '!'* || ${password_hash} == '*'* ]]
+}
+
+ensure_managed_directory() {
+  local path="$1"
+  local owner="$2"
+  local group="$3"
+  local mode="$4"
+  python3 - "$path" "$owner" "$group" "$mode" <<'PYTHON'
+import grp
+import os
+import pathlib
+import pwd
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_absolute() or path.name in {"", ".", ".."}:
+    raise SystemExit("managed directory path is invalid")
+
+owner_id = pwd.getpwnam(sys.argv[2]).pw_uid
+group_id = grp.getgrnam(sys.argv[3]).gr_gid
+mode = int(sys.argv[4], 8)
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+parent_fd = os.open(path.parent, flags)
+try:
+    try:
+        os.mkdir(path.name, mode, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    directory_fd = os.open(path.name, flags, dir_fd=parent_fd)
+    try:
+        metadata = os.fstat(directory_fd)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise SystemExit("managed path is not a directory")
+        os.fchown(directory_fd, owner_id, group_id)
+        os.fchmod(directory_fd, mode)
+    finally:
+        os.close(directory_fd)
+finally:
+    os.close(parent_fd)
+PYTHON
 }
 
 assert_legacy_surface_absent() {
@@ -466,6 +525,7 @@ cleanup() {
   [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
   [[ -z ${bootstrap_marker_source} ]] || rm -f -- "$bootstrap_marker_source"
+  [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
   [[ ${host_configuration_published} == false ]] || rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
@@ -755,10 +815,13 @@ for service_identity in setlivre-web setlivre-backoffice; do
   if ! account_identity_is_canonical \
     "$service_identity" "$service_identity" /nonexistent /usr/sbin/nologin \
     || ! account_groups_are_exact "$service_identity" "$service_identity" setlivre \
+    || ! group_members_are_exact "$service_identity" "$service_identity" \
     || ! account_password_is_locked "$service_identity"; then
     fail "identidade ${service_identity} não pôde ser restringida."
   fi
 done
+group_members_are_exact setlivre setlivre-web setlivre-backoffice \
+  || fail "grupo compartilhado setlivre possui membros inesperados."
 if ! getent passwd deploy-setlivre >/dev/null; then
   useradd --create-home --gid deploy-setlivre \
     --home-dir /home/deploy-setlivre --shell /bin/bash deploy-setlivre
@@ -771,6 +834,7 @@ usermod --lock deploy-setlivre
 if ! account_identity_is_canonical \
   deploy-setlivre deploy-setlivre /home/deploy-setlivre /bin/bash \
   || ! account_groups_are_exact deploy-setlivre deploy-setlivre \
+  || ! group_members_are_exact deploy-setlivre deploy-setlivre \
   || ! account_password_is_locked deploy-setlivre; then
   fail "identidade deploy-setlivre não pôde ser restringida."
 fi
@@ -778,25 +842,28 @@ fi
 install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY" /opt/set-livre /opt/set-livre/releases
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
-if [[ -e /home/deploy-setlivre || -L /home/deploy-setlivre ]]; then
-  [[ -d /home/deploy-setlivre && ! -L /home/deploy-setlivre ]] \
-    || fail "home canônico de deploy-setlivre é inválido."
-fi
-install -d -o deploy-setlivre -g deploy-setlivre -m 0750 /home/deploy-setlivre
-install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh
-install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
+ensure_managed_directory /home/deploy-setlivre root deploy-setlivre 0750 \
+  || fail "home canônico de deploy-setlivre é inválido."
+ensure_managed_directory /home/deploy-setlivre/.ssh root deploy-setlivre 0750 \
+  || fail "diretório SSH de deploy-setlivre é inválido."
+ensure_managed_directory /home/deploy-setlivre/incoming deploy-setlivre deploy-setlivre 0700 \
+  || fail "diretório de entrada de deploy-setlivre é inválido."
 incoming_lock=/home/deploy-setlivre/incoming/.incoming.lock
-if [[ ! -e ${incoming_lock} ]]; then
+if [[ ! -e ${incoming_lock} && ! -L ${incoming_lock} ]]; then
   install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$incoming_lock"
 fi
 [[ -f ${incoming_lock} && ! -L ${incoming_lock} \
   && $(stat --format '%U:%G' -- "$incoming_lock") == "deploy-setlivre:deploy-setlivre" ]] \
   || fail "lock de upload instalado é inválido."
 chmod 0600 "$incoming_lock"
+authorized_keys_source="$(mktemp /home/deploy-setlivre/.ssh/.authorized_keys.XXXXXX)"
 printf 'restrict,command="/usr/local/sbin/set-livre-deploy-ssh" %s\n' "$deploy_key" \
-  > /home/deploy-setlivre/.ssh/authorized_keys
-chown deploy-setlivre:deploy-setlivre /home/deploy-setlivre/.ssh/authorized_keys
-chmod 0600 /home/deploy-setlivre/.ssh/authorized_keys
+  > "$authorized_keys_source"
+chown root:deploy-setlivre "$authorized_keys_source"
+chmod 0640 "$authorized_keys_source"
+mv --no-target-directory --force -- \
+  "$authorized_keys_source" /home/deploy-setlivre/.ssh/authorized_keys
+authorized_keys_source=""
 
 install -o root -g root -m 0755 "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-livre-deploy
 install -o root -g root -m 0755 "$DEPLOY_SSH_COMMAND_SOURCE" /usr/local/sbin/set-livre-deploy-ssh

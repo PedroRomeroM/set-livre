@@ -522,6 +522,27 @@ assert_current_release "$release_sha"
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \
   == "root:setlivre-backoffice:640" ]] || fail "ambiente backoffice versionado tem permissões inválidas."
 
+nested_current_sha="$(printf 'facefeed%.0s' {1..5})"
+rm -f -- "$test_state"/*
+package_candidate "$nested_current_sha"
+upload_candidate "$nested_current_sha"
+sudo ln --symbolic --force "/opt/set-livre/releases/${release_sha}/web" \
+  /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+if invoke_candidate "$nested_current_sha" success; then
+  fail "current aninhado foi aceito como raiz de release anterior."
+fi
+[[ $(sudo readlink --canonicalize-existing /opt/set-livre/current) \
+  == "/opt/set-livre/releases/${release_sha}/web" ]] \
+  || fail "a recusa do current aninhado alterou seu destino antes da ativação."
+[[ ! -e /opt/set-livre/.activation-rollback ]] \
+  || fail "current aninhado publicou marcador de rollback inválido."
+sudo rm -rf -- "/opt/set-livre/releases/${nested_current_sha}"
+sudo ln --symbolic --force "/opt/set-livre/releases/${release_sha}" \
+  /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+assert_current_release "$release_sha"
+
 integrity_guard_sha="$(printf 'deadc0de%.0s' {1..5})"
 rm -f -- "$test_state"/*
 package_candidate "$integrity_guard_sha"

@@ -153,11 +153,75 @@ export function productionRoleActivationMode(role) {
   return role.canLogin === true ? "validate" : "initialize";
 }
 
-export async function provisionProductionRole(environment = process.env) {
+function createPostgresClient(configuration) {
+  return new Client(configuration);
+}
+
+async function productionRoleLoginIsDisabled(adminConnection, createClient) {
+  const verifier = createClient(adminConnection);
+  try {
+    await verifier.connect();
+    const result = await verifier.query(`
+      select role.rolcanlogin as "canLogin"
+      from pg_catalog.pg_roles as role
+      where role.rolname = 'app_runtime_production'
+    `);
+    if (result.rowCount !== 1 || typeof result.rows[0]?.canLogin !== "boolean") {
+      throw new Error("A role de produção não pôde ser relida após a compensação.");
+    }
+    return result.rows[0].canLogin === false;
+  } finally {
+    await verifier.end().catch(() => undefined);
+  }
+}
+
+export async function forceProductionRoleDisabled({
+  adminConnection,
+  createClient = createPostgresClient,
+  maximumAttempts = 2,
+}) {
+  if (!Number.isInteger(maximumAttempts) || maximumAttempts < 1 || maximumAttempts > 3) {
+    throw new Error("Quantidade de tentativas de compensação inválida.");
+  }
+
+  let lastError = new Error("A role de produção ainda aceita login.");
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const recovery = createClient(adminConnection);
+    try {
+      await recovery.connect();
+      await recovery.query("begin");
+      await recovery.query("set local statement_timeout = '15s'");
+      await recovery.query("set local lock_timeout = '5s'");
+      await recovery.query("alter role app_runtime_production nologin password null");
+      await recovery.query("commit");
+    } catch (error) {
+      lastError = error;
+      await recovery.query("rollback").catch(() => undefined);
+    } finally {
+      await recovery.end().catch(() => undefined);
+    }
+
+    try {
+      if (await productionRoleLoginIsDisabled(adminConnection, createClient)) return;
+      lastError = new Error("A role de produção permaneceu com LOGIN após a compensação.");
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error("Não foi possível comprovar a desativação da role de produção.", {
+    cause: lastError,
+  });
+}
+
+export async function provisionProductionRole(
+  environment = process.env,
+  { createClient = createPostgresClient } = {},
+) {
   const connections = productionRoleConnections(environment);
-  const admin = new Client(connections.admin);
+  const admin = createClient(connections.admin);
   let runtime;
-  let initializedThisRun = false;
+  let activationMayHaveCommitted = false;
 
   await admin.connect();
   try {
@@ -271,11 +335,11 @@ export async function provisionProductionRole(environment = process.env) {
         [connections.runtime.password],
       );
       await admin.query(passwordStatement.rows[0].statement);
+      activationMayHaveCommitted = true;
     }
     await admin.query("commit");
-    initializedThisRun = activationMode === "initialize";
 
-    runtime = new Client(connections.runtime);
+    runtime = createClient(connections.runtime);
     await runtime.connect();
     const readiness = await runtime.query(
       `
@@ -295,17 +359,18 @@ export async function provisionProductionRole(environment = process.env) {
     ) {
       throw new Error("A role de produção não passou no readiness restrito.");
     }
+    activationMayHaveCommitted = false;
   } catch (error) {
     await admin.query("rollback").catch(() => undefined);
-    if (initializedThisRun) {
+    if (activationMayHaveCommitted) {
       try {
-        await admin.query("begin");
-        await admin.query("alter role app_runtime_production nologin password null");
-        await admin.query("commit");
-      } catch {
-        await admin.query("rollback").catch(() => undefined);
+        await forceProductionRoleDisabled({
+          adminConnection: connections.admin,
+          createClient,
+        });
+      } catch (recoveryError) {
         throw new Error("A inicialização falhou e a role não pôde ser desativada com segurança.", {
-          cause: error,
+          cause: new AggregateError([error, recoveryError]),
         });
       }
     }

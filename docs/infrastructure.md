@@ -89,13 +89,19 @@ review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
 └── release-manifest.json
 ```
 
+Antes de remover qualquer artifact anterior, o empacotador exige que `.artifacts` e cada componente
+existente do destino sejam diretórios físicos sob a raiz física do repositório; symlink ou junction em
+qualquer ancestral falha sem tocar seu alvo.
+
 No merge, o workflow:
 
 1. aplica migrations pendentes com `supabase db push --linked`, sem seed;
 2. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
 3. aplica migrations e exige que o maior head remoto seja exatamente o head compilado pelo candidato;
-4. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; nos
-   deploys seguintes apenas valida a credencial existente, sem rotacioná-la ou imprimi-la;
+4. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
+   resultado ambíguo do commit abre conexões administrativas novas, força `NOLOGIN` de forma
+   idempotente e exige releitura positiva antes de falhar; nos deploys seguintes apenas valida a
+   credencial existente, sem rotacioná-la ou imprimi-la;
 5. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
 6. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
 7. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
@@ -107,8 +113,9 @@ O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manife
 ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
 interrompe a leitura no primeiro header além das 20.000 entradas permitidas, sem materializar uma lista
 não limitada; aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
-SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. A troca de
-`/opt/set-livre/current` ativa essa unidade inteira, reinicia os serviços e exige readiness interno e
+SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. O link
+`/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
+só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link` recupera o symlink antes
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
@@ -169,8 +176,10 @@ Diretórios e identidades:
   .runtime/release.env           root:setlivre 0640
 /opt/set-livre/current           symlink para código + ambientes do mesmo SHA
 /opt/set-livre/.activation-rollback marcador transitório root:root 0600
-/home/deploy-setlivre            deploy-setlivre:deploy-setlivre 0750
-/home/deploy-setlivre/.ssh       deploy-setlivre:deploy-setlivre 0700
+/home/deploy-setlivre            root:deploy-setlivre 0750
+/home/deploy-setlivre/.ssh       root:deploy-setlivre 0750
+/home/deploy-setlivre/.ssh/authorized_keys root:deploy-setlivre 0640
+/home/deploy-setlivre/incoming   deploy-setlivre:deploy-setlivre 0700
 /home/deploy-setlivre/incoming/.incoming.lock deploy-setlivre 0600
 /etc/set-livre/host-config.sha256 root:setlivre 0640
 /etc/set-livre/host-config.previous.sha256 root:setlivre 0640, somente durante bootstrap
@@ -185,10 +194,13 @@ ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (
 origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
 projeto/role/host divergente, qualquer chave que não use `sb_publishable_` ou ambiente entre os apps
 inconsistente. Antes de escrever qualquer chave, o bootstrap exige nomes, UIDs não root, grupos
-primários e suplementares exatos, homes, shells e senhas bloqueadas para as três identidades; uma conta
-preexistente divergente falha fechada, sem deixar outro home autoritativo. Em seguida, exige exatamente
-uma chave pública, decodifica o blob SSH e comprova o algoritmo Ed25519 e os 32 bytes de material antes
-de substituir `authorized_keys`. A chave instalada usa `authorized_keys command=` e aceita apenas
+primários e suplementares exatos, ausência de membros reversos inesperados, homes, shells e senhas
+bloqueadas para as três identidades; uma conta preexistente divergente falha fechada. Home e `.ssh` do
+deployer são root-owned, cada diretório gerenciado é aberto com `O_NOFOLLOW` antes de qualquer mudança
+de owner ou modo, e somente `incoming` permanece gravável pelo deployer. Em seguida, o bootstrap exige
+exatamente uma chave pública, decodifica o blob SSH, comprova o algoritmo Ed25519 e os 32 bytes de
+material e substitui `authorized_keys` por rename atômico. A chave instalada usa
+`authorized_keys command=` e aceita apenas
 uploads limitados e `deploy <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
@@ -281,7 +293,10 @@ O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite tota
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é
 `CONNECT` sem grant option; qualquer outro grant direto bloqueia readiness. A migration cria a role
 como `NOLOGIN`; `scripts/provision-production-role.mjs` define a senha e habilita `LOGIN` uma única vez,
-somente nesse estado inicial, e então prova uma conexão real que assume `app_dal`. Quando a role já tem
+somente nesse estado inicial, e então prova uma conexão real que assume `app_dal`. Da alteração até o
+readiness, qualquer erro trata o commit como potencialmente aplicado: uma conexão administrativa nova
+repete `NOLOGIN PASSWORD NULL` e outra relê `rolcanlogin=false`; erro de commit da compensação não conta
+como falha se essa releitura independente comprovar o estado seguro. Quando a role já tem
 `LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM sem alterar a
 credencial que sustenta a release vigente. Rotação futura exige mudança operacional própria com duas
 credenciais/identidades durante a transição, comprovação e retirada da anterior; não faz parte do deploy

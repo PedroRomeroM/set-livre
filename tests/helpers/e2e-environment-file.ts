@@ -33,3 +33,11 @@ export function readOptionalE2EEnvironmentFile(repositoryRoot: string) {
     throw new Error("Não foi possível interpretar o ambiente E2E local.", { cause: error });
   }
 }
+
+export function localE2EEnvironmentValue(
+  localEnvironment: Readonly<Record<string, string>>,
+  inheritedEnvironment: Readonly<Record<string, string | undefined>>,
+  name: string,
+) {
+  return localEnvironment[name] ?? inheritedEnvironment[name];
+}

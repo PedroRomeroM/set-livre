@@ -36,7 +36,9 @@ documentação canônica e remoção dos artefatos redundantes identificados na 
 
 A produção vazia recebe somente `20260824000100_initial_production_baseline.sql`. A migration cria a
 baseline final, grants mínimos, RLS e as roles restritas. O login runtime é inicializado uma única vez;
-deploys seguintes apenas validam a credencial existente, sem rotação implícita. Readiness usa uma
+um commit de ativação ambíguo é compensado por conexões administrativas novas e só encerra depois de
+reler `NOLOGIN`. Deploys seguintes apenas validam a credencial existente, sem rotação implícita.
+Readiness usa uma
 allowlist exata de comandos DAL, rejeita ACL herdada por `PUBLIC`, ownership ou membership inesperada e
 aceita somente `CONNECT` como grant direto do login. Também rejeita `USAGE/CREATE` efetivo de `app_dal`
 em qualquer schema não sistêmico fora de `private`, inclusive quando o acesso nasce de `PUBLIC`. A
@@ -82,11 +84,13 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 - cenários visíveis permanecem determinísticos entre engines, sem retries ou timeouts ampliados para
   mascarar falhas;
 - os webServers Playwright neutralizam o ambiente herdado e recebem explicitamente o mesmo conjunto
-  local validado pelas fixtures, impedindo divergência quando o shell já exporta variáveis da aplicação;
+  local validado pelas fixtures; `.env.e2e.local` prevalece sobre variáveis já exportadas, impedindo
+  inclusive que uma publishable key de outro projeto seja combinada com a URL local;
 - o ambiente Supabase local preserva as permissões exigidas pelos serviços oficiais sem ampliar o
   acesso das roles da aplicação;
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
-  standalone sob as mesmas fronteiras instaladas na VM;
+  standalone sob as mesmas fronteiras instaladas na VM, e recusa `current` apontado para um filho da
+  release em vez de sua raiz SHA exata;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
   essas dependências ainda não estiverem disponíveis, aguarda o lock por no máximo cinco minutos dentro
   de uma unit com orçamento de doze minutos e só o consome depois de health interno e público;
@@ -97,6 +101,10 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   terminal e desativa o symlink se a release compatível não recuperar readiness;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
   validar tipo, owner, modo e conteúdo do marcador operacional ou dos marcadores transitórios de retry;
+- os grupos que protegem ambientes e entrega recusam membros reversos inesperados; home e `.ssh` do
+  deployer são root-owned, diretórios são abertos com `O_NOFOLLOW` e a chave é publicada por rename;
+- o empacotador recusa symlink ou junction em qualquer ancestral de `.artifacts/release` antes da
+  remoção recursiva, preservando alvos externos;
 - o bootstrap publica o in-progress, preserva e invalida o digest ativo e interrompe os serviços antes da
   primeira alteração; as units exigem digest ativo e ausência do marcador, o deploy recusa a transição,
   e uma release compatível só reinicia depois que a configuração estática chega ao estado terminal;

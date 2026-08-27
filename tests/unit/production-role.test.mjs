@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertProductionDeploymentContract,
   assertSupabasePublishableKey,
+  forceProductionRoleDisabled,
   productionRoleActivationMode,
   productionRoleConnections,
 } from "../../scripts/provision-production-role.mjs";
@@ -115,6 +116,69 @@ describe("production role provisioning", () => {
     );
   });
 
+  it("proves NOLOGIN with a fresh connection after an ambiguous compensation commit", async () => {
+    let canLogin = true;
+    const clients = [];
+    const createClient = () => {
+      const clientIndex = clients.length;
+      const client = {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async (statement) => {
+          const sql = String(statement).trim().toLowerCase();
+          if (clientIndex === 0 && sql === "commit") {
+            canLogin = false;
+            throw new Error("connection lost after commit");
+          }
+          if (sql.includes('role.rolcanlogin as "canlogin"')) {
+            return { rowCount: 1, rows: [{ canLogin }] };
+          }
+          return { rowCount: null, rows: [] };
+        }),
+      };
+      clients.push(client);
+      return client;
+    };
+
+    await expect(
+      forceProductionRoleDisabled({
+        adminConnection: { application_name: "test" },
+        createClient,
+      }),
+    ).resolves.toBeUndefined();
+    expect(canLogin).toBe(false);
+    expect(clients).toHaveLength(2);
+    expect(clients[0].query).toHaveBeenCalledWith("commit");
+    expect(clients[1].query).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when a fresh connection still observes LOGIN", async () => {
+    let clientIndex = 0;
+    const createClient = () => {
+      const currentIndex = clientIndex;
+      clientIndex += 1;
+      return {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async (statement) => {
+          const sql = String(statement).trim().toLowerCase();
+          if (currentIndex === 1 && sql.includes('role.rolcanlogin as "canlogin"')) {
+            return { rowCount: 1, rows: [{ canLogin: true }] };
+          }
+          return { rowCount: null, rows: [] };
+        }),
+      };
+    };
+
+    await expect(
+      forceProductionRoleDisabled({
+        adminConnection: { application_name: "test" },
+        createClient,
+        maximumAttempts: 1,
+      }),
+    ).rejects.toThrow("comprovar a desativação");
+  });
+
   it("validates managed boundaries and the exact deployment head before enabling login", () => {
     const source = readFileSync(
       new URL("../../scripts/provision-production-role.mjs", import.meta.url),
@@ -129,12 +193,18 @@ describe("production role provisioning", () => {
     const databaseReadiness = source.indexOf("private.check_readiness($1::text) as ready");
     const exactMigrationHead = source.indexOf("pg_catalog.max(migration.version)::text = $1::text");
     const passwordActivation = source.indexOf("alter role app_runtime_production login password");
+    const ambiguousActivationFence = source.indexOf("activationMayHaveCommitted = true");
+    const activationCommit = source.indexOf('await admin.query("commit")', passwordActivation);
+    const compensation = source.indexOf("await forceProductionRoleDisabled({", activationCommit);
 
     expect(reverseMembershipCheck).toBeGreaterThan(-1);
     expect(boundaryCheck).toBeGreaterThan(reverseMembershipCheck);
     expect(databaseReadiness).toBeGreaterThan(boundaryCheck);
     expect(exactMigrationHead).toBeGreaterThan(databaseReadiness);
     expect(passwordActivation).toBeGreaterThan(exactMigrationHead);
+    expect(ambiguousActivationFence).toBeGreaterThan(passwordActivation);
+    expect(activationCommit).toBeGreaterThan(ambiguousActivationFence);
+    expect(compensation).toBeGreaterThan(activationCommit);
     expect(source).not.toContain("app.settings.jwt_secret");
   });
 });
