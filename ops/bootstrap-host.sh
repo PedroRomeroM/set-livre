@@ -39,7 +39,6 @@ bootstrap_marker_source=""
 bootstrap_recovery_marker_source=""
 recovery_marker_source=""
 host_configuration_published=false
-bootstrap_recovery_armed=false
 active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
@@ -631,10 +630,14 @@ cleanup() {
   [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
   if [[ ${host_configuration_published} == true ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
-    if [[ ${bootstrap_recovery_armed} == true ]]; then
+    if [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+      || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]; then
       publish_bootstrap_in_progress "$host_configuration_digest" || true
+    elif rm -f -- "$ROLLBACK_MARKER" \
+      && rm -f -- "$HOST_CONFIGURATION_DIGEST"; then
+      :
     else
-      rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
+      publish_bootstrap_in_progress "$host_configuration_digest" || true
     fi
   fi
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
@@ -1258,7 +1261,6 @@ if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
     || fail "não foi possível armar a recuperação da release durante o bootstrap."
   publish_bootstrap_recovery_in_progress "$host_configuration_digest" \
     || fail "não foi possível persistir a fase de recovery do bootstrap."
-  bootstrap_recovery_armed=true
 fi
 rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
 
@@ -1289,7 +1291,6 @@ if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
         /opt/set-livre/current \
         "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" \
         "$ROLLBACK_MARKER"
-      bootstrap_recovery_armed=false
       fail "release compatível não recuperou readiness; reenvie uma release aprovada."
     fi
   else
@@ -1307,7 +1308,6 @@ fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
-  bootstrap_recovery_armed=false
   rm -f -- "$ROLLBACK_MARKER"
 fi
 host_configuration_published=false

@@ -39,6 +39,9 @@ export function assertSupabasePublishableKey(value) {
   if (typeof value !== "string" || value.startsWith("sb_secret_")) {
     throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY não pode ser uma chave privilegiada.");
   }
+  if (value.includes("\n") || value.includes("\r") || value.length > 4096) {
+    throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY possui formato inválido.");
+  }
   const jwtParts = value.split(".");
   if (jwtParts.length === 3) {
     let role;
@@ -121,6 +124,56 @@ export function assertProductionDeploymentContract(environment = process.env) {
 
   const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
   assertSupabasePublishableKey(publishableKey);
+  return connections;
+}
+
+export async function verifyProductionDeploymentContract(
+  environment = process.env,
+  { fetchImplementation = globalThis.fetch } = {},
+) {
+  const connections = assertProductionDeploymentContract(environment);
+  const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
+  if (typeof fetchImplementation !== "function") {
+    throw new Error("O cliente HTTP do probe Supabase não está disponível.");
+  }
+
+  let response;
+  try {
+    response = await fetchImplementation(`${productionCoordinates.supabaseUrl}/auth/v1/settings`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        apikey: publishableKey,
+      },
+      method: "GET",
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new Error("Não foi possível validar a chave publishable no projeto de produção.", {
+      cause: error,
+    });
+  }
+  if (response.status !== 200) {
+    throw new Error(`O projeto de produção recusou a chave publishable (${response.status}).`);
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error("O endpoint Auth do projeto de produção retornou um payload inválido.");
+  }
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    typeof payload.disable_signup !== "boolean" ||
+    payload.external === null ||
+    typeof payload.external !== "object" ||
+    Array.isArray(payload.external)
+  ) {
+    throw new Error("O endpoint Auth do projeto de produção retornou um contrato inválido.");
+  }
   return connections;
 }
 
@@ -383,7 +436,11 @@ export async function provisionProductionRole(
 
 function redactedError(error, environment) {
   let message = error instanceof Error ? error.message : "falha desconhecida";
-  for (const value of [environment.SUPABASE_DB_PASSWORD, environment.PRD_DATABASE_URL_APP_DAL]) {
+  for (const value of [
+    environment.SUPABASE_DB_PASSWORD,
+    environment.PRD_DATABASE_URL_APP_DAL,
+    environment.PRD_SUPABASE_PUBLISHABLE_KEY,
+  ]) {
     if (typeof value === "string" && value !== "")
       message = message.replaceAll(value, "[REDACTED]");
   }
@@ -394,7 +451,7 @@ const executedPath = process.argv[1];
 if (executedPath !== undefined && pathToFileURL(resolve(executedPath)).href === import.meta.url) {
   try {
     if (process.argv[2] === "--preflight") {
-      assertProductionDeploymentContract();
+      await verifyProductionDeploymentContract();
       process.stdout.write("Contrato fixo de produção validado.\n");
     } else {
       await provisionProductionRole();

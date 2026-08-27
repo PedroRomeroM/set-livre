@@ -135,7 +135,7 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).toContain("Wants=network-online.target");
     expect(recoveryUnit).toContain("Requires=nginx.service");
     expect(recoveryUnit).toContain("After=network-online.target nginx.service");
-    expect(recoveryUnit).toContain("ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-recovery");
+    expect(recoveryUnit).toContain("ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-%i");
     expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
@@ -196,9 +196,12 @@ describe("local tooling contracts", () => {
         ),
       );
     }
-    const sealStart = deploy.indexOf('\${1:-} == "--seal-recovery"');
+    const sealStart = deploy.indexOf('\${1:-} == "--seal-services"');
     const sealEnd = deploy.indexOf("\n  exit 0\nfi\n", sealStart);
     expect(deploy.slice(sealStart, sealEnd)).toContain("managed_release_directories_are_valid");
+    const linkSealStart = deploy.indexOf('\${1:-} == "--seal-link"');
+    const linkSealEnd = deploy.indexOf("\n  exit 0\nfi\n", linkSealStart);
+    expect(deploy.slice(linkSealStart, linkSealEnd)).not.toContain("flock");
     const linkStart = deploy.indexOf('\${1:-} == "--recover-link"');
     const linkEnd = deploy.indexOf("\n  exit 0\nfi\n", linkStart);
     const linkRecovery = deploy.slice(linkStart, linkEnd);
@@ -225,6 +228,9 @@ describe("local tooling contracts", () => {
       "recovery selado não restaurou o bloqueio autenticado de bootstrap",
     );
     expect(hostVerification).toContain("SIGKILL consumiu a fase durável do recovery");
+    expect(hostVerification).toContain(
+      "selamento da instância link esperou recursivamente pelo lock do bootstrap",
+    );
     expect(hostVerification).toContain("for recovery_mode in --recover-link --recover-services");
     expect(hostVerification).toContain("recovery ${recovery_mode} aceitou");
   });
@@ -439,7 +445,9 @@ describe("local tooling contracts", () => {
       expect(nginx.match(/add_header X-Request-Id \$set_livre_request_id always;/gu)).toHaveLength(
         serverCount,
       );
-      expect(nginx).toContain("error_log /var/log/nginx/set-livre-error.log warn;");
+      expect(nginx).toContain("error_log /var/log/nginx/set-livre-error.log crit;");
+      expect(nginx).toContain("disable_symlinks on from=/var/www/set-livre-acme;");
+      expect(nginx).toContain("error_log /dev/null crit;");
     }
 
     const http = readFileSync(
@@ -483,6 +491,18 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("https://147.15.97.227/robots.txt");
     expect(hostVerification).toContain("rate limiter não retornou 429 no laboratório");
     expect(hostVerification).toContain("error log expôs diagnóstico do request limitado");
+    expect(hostVerification).toContain(
+      "Nginx não recusou o arquivo symlink dentro do webroot ACME",
+    );
+    expect(hostVerification).toContain(
+      "http://147.15.97.227/.well-known/acme-challenge/regular-probe",
+    );
+    expect(hostVerification).toContain(
+      "http://147.15.97.227/.well-known/acme-challenge/symlink-probe",
+    );
+    expect(hostVerification).toContain(
+      "error log persistiu diagnóstico bruto da falha de upstream",
+    );
   });
 
   it("validates canonical host identities before publishing the deploy key", () => {
@@ -778,6 +798,11 @@ describe("local tooling contracts", () => {
     expect(bootstrapCleanup.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
       bootstrapCleanup.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"'),
     );
+    expect(bootstrapCleanup).toContain("HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS");
+    expect(bootstrapCleanup.indexOf('rm -f -- "$ROLLBACK_MARKER"')).toBeLessThan(
+      bootstrapCleanup.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"'),
+    );
+    expect(bootstrap).not.toContain("bootstrap_recovery_armed");
     expect(bootstrap).toContain("[[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]");
     expect(
       deploy.match(/if \[\[ -e \$\{ROLLBACK_MARKER\} \|\| -L \$\{ROLLBACK_MARKER\} \]\]; then/gu),
@@ -824,7 +849,7 @@ describe("local tooling contracts", () => {
     expect(recoveryDisarmed).toBeLessThan(terminalBootstrap);
     expect(
       bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(bootstrap).toContain(
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );

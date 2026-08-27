@@ -123,8 +123,10 @@ o lock do deploy por no máximo cinco minutos e estabiliza serviços e health ap
 instância depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze
 minutos, suficiente para o lock e para os dois health checks limitados. Uma fase root-only adicional é
 publicada em disco antes de remover o blocker do bootstrap e permanece até o readiness terminal. Se o
-processo recebe `SIGKILL`, `ExecStopPost` recompõe o blocker a partir dessa fase e interrompe os apps; se
-o host perde energia, `@link` faz o mesmo antes que as units possam iniciar. O link só é alterado depois
+recovery de serviços recebe `SIGKILL`, o `ExecStopPost` específico de `@services` recompõe o blocker a
+partir dessa fase e interrompe os apps; `@link` usa um pós-stop sem lock para não esperar pelo próprio
+bootstrap que requisitou o start. Se o host perde energia, `@link` sela a fase antes que as units possam
+iniciar. O link só é alterado depois
 de autenticar blocker/fase, digest instalado e manifesto da release. Recuperar o link nunca consome o marcador; todos os caminhos
 de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
 HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
@@ -253,6 +255,10 @@ idênticos e tiverem tipo, owner e modo exatos. Essa autenticação termina ante
 bootstrap antes de parar os serviços e preserva fase e rollback para retry; estado divergente permanece
 intocado e falha fechado. Reboot relê a fase antes do start; `SIGKILL` aciona o selamento do systemd e
 estabiliza a mesma release em uma nova tentativa.
+Se a publicação da fase falha ou um sinal capturável chega entre o rollback e essa publicação, o cleanup
+remove primeiro o rollback ainda não recuperável e somente então o digest instalado; se a fase já existe,
+mantém digest/rollback e recompõe o blocker. Assim, nenhum caminho deixa rollback sem a identidade usada
+para autenticá-lo.
 Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
@@ -313,7 +319,9 @@ que possua headers; até conexões `444` sem resposta conservam o mesmo identifi
 média de uma request por segundo, burst de 30 sem atraso e resposta `429`. Demais rotas usam chave
 vazia e não consomem essa zona; os limiters específicos do app continuam sendo a segunda camada. O
 diagnóstico por-request do limiter fica abaixo do threshold do error log para não reintroduzir IP ou
-target fora do access log redigido.
+target fora do access log redigido. O error log persiste somente severidade `crit`, porque o formato fixo
+do Nginx inclui dados brutos em falhas rotineiras de upstream; status, duração e request ID dessas falhas
+continuam no access log redigido, e journal/systemd preservam o diagnóstico interno da aplicação.
 Hosts desconhecidos são recusados. Nesta fase, somente o Host literal `147.15.97.227` chega ao web; o
 backoffice não possui virtual host público. Todas as respostas públicas recebem `X-Robots-Tag` com
 `noindex`, e `/robots.txt` bloqueia crawling. A validação estrita de origem usa a mesma origem HTTPS.
@@ -374,7 +382,10 @@ O domínio permanece sem apontamento nesta fase por decisão explícita do respo
 temporária é o IPv4 reservado em HTTPS. Let's Encrypt oferece certificados de IP de curta duração, e o
 Certbot passou a suportar emissão por webroot para IP a partir da versão 5.4. O bootstrap remove a
 distribuição antiga do Ubuntu, instala a versão oficial estável via Snap, exige no mínimo 5.4, prepara o
-webroot ACME abrindo cada componente com `O_NOFOLLOW` e habilita o timer de renovação. Referências oficiais:
+webroot ACME abrindo cada componente com `O_NOFOLLOW` e configura o Nginx para recusar também
+arquivos-folha symlink dentro dessa raiz. Como essa recusa nativa inclui request e IP em severidade
+`crit`, a localização ACME descarta seu error log não redigível; status e request ID continuam no access
+log redigido. O timer de renovação permanece habilitado. Referências oficiais:
 [disponibilidade geral de certificados de IP](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability.html)
 e [suporte no Certbot 5.4](https://letsencrypt.org/2026/03/11/shorter-certs-certbot).
 
@@ -415,10 +426,13 @@ Secrets do environment `production`:
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
 
-O publishable key e a host key SSH são públicos por natureza. O preflight anterior aos builds e o
-instalador da VM aceitam exclusivamente o formato moderno `sb_publishable_`; `sb_secret_`, JWT legado
-`service_role` e qualquer JWT genérico são recusados antes de alcançar bundle ou artifact. Senhas,
-access token, URL DAL e chave SSH privada nunca entram em logs, artifacts ou documentação.
+O publishable key e a host key SSH são públicos por natureza. Antes de migrations e builds, o preflight
+consulta `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
+header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
+chave. O instalador da VM também aceita exclusivamente o formato moderno
+`sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
+alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
+artifacts ou documentação.
 
 ## Operação e capacidade
 

@@ -66,7 +66,11 @@ gera um UUIDv4 a partir do `$request_id` interno, substitui o header não confi�
 mesmo valor no upstream, na resposta e no log. O access log do Nginx substitui o formato `combined`:
 registra somente horário, método, status, bytes, durações e esse request ID, sem IP, host, target/query,
 referer ou user-agent. O rate limiter registra eventos por-request abaixo do threshold do error log para
-que respostas `429` não recoloquem endereço ou URI em outro sink.
+que respostas `429` não recoloquem endereço ou URI em outro sink. Como o formato nativo de erro não é
+redigível e inclui request/IP em falhas rotineiras de proxy, a persistência fica em severidade `crit`;
+respostas `502` permanecem observáveis no access log redigido pelo request ID autoritativo. A localização
+ACME recusa symlinks também nos arquivos-folha em tempo de request e descarta o diagnóstico nativo dessa
+recusa, que contém IP e target; o access log redigido preserva status e request ID.
 
 Rate limiting ocorre antes do parse e novamente por ação/identidade pseudonimizada. A camada em memória
 protege o processo único; iptables/Fail2ban, Nginx e constraints/idempotência formam as demais camadas. Horizontalizar

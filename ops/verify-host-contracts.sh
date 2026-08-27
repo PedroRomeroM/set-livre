@@ -96,6 +96,13 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 sudo install -d -m 0755 /etc/letsencrypt/live/147.15.97.227
 sudo install -m 0644 "$temporary_directory/ip.crt" /etc/letsencrypt/live/147.15.97.227/fullchain.pem
 sudo install -m 0600 "$temporary_directory/ip.key" /etc/letsencrypt/live/147.15.97.227/privkey.pem
+sudo install -d -o root -g root -m 0755 \
+  /var/www/set-livre-acme/.well-known/acme-challenge
+printf 'set-livre-acme-regular\n' > "$temporary_directory/acme-regular"
+sudo install -o root -g root -m 0644 "$temporary_directory/acme-regular" \
+  /var/www/set-livre-acme/.well-known/acme-challenge/regular-probe
+sudo ln --symbolic --force --no-dereference /etc/passwd \
+  /var/www/set-livre-acme/.well-known/acme-challenge/symlink-probe
 sudo install -m 0644 "$REPOSITORY_ROOT/ops/nginx/set-livre-tls.conf" /etc/nginx/sites-available/set-livre
 sudo nginx -t
 python3 -m http.server 3000 --bind 127.0.0.1 --directory "$temporary_directory" \
@@ -134,6 +141,21 @@ edge_request_id="$(
 [[ ${edge_request_id} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || fail "edge não publicou request ID UUIDv4 autoritativo."
 grep --fixed-strings --line-regexp 'Disallow: /' "$temporary_directory/ip.robots" >/dev/null
+curl --fail --silent --show-error --max-time 2 \
+  --noproxy '*' \
+  --resolve "147.15.97.227:80:127.0.0.1" \
+  http://147.15.97.227/.well-known/acme-challenge/regular-probe \
+  | grep --fixed-strings --line-regexp 'set-livre-acme-regular' >/dev/null
+symlink_status="$(
+  curl --silent --show-error --max-time 2 \
+    --noproxy '*' \
+    --resolve "147.15.97.227:80:127.0.0.1" \
+    --output "$temporary_directory/acme-symlink-response" \
+    --write-out '%{http_code}' \
+    http://147.15.97.227/.well-known/acme-challenge/symlink-probe
+)"
+[[ ${symlink_status} == 404 ]] \
+  || fail "Nginx não recusou o arquivo symlink dentro do webroot ACME."
 curl --silent --show-error --max-time 2 \
   --header 'Host: invalid.example' \
   --output /dev/null \
@@ -157,6 +179,24 @@ if sudo grep --extended-regexp --quiet \
   /var/log/nginx/set-livre-error.log; then
   fail "error log expôs diagnóstico do request limitado."
 fi
+kill "$nginx_backend_process"
+wait "$nginx_backend_process" 2>/dev/null || true
+nginx_backend_process=""
+sudo truncate --size 0 /var/log/nginx/set-livre-error.log
+upstream_status="$(
+  curl --silent --show-error --max-time 5 \
+    --noproxy '*' \
+    --cacert "$temporary_directory/ip.crt" \
+    --resolve "147.15.97.227:443:127.0.0.1" \
+    --dump-header "$temporary_directory/upstream.headers" \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    https://147.15.97.227/upstream-contract-probe
+)"
+[[ ${upstream_status} == 502 ]] || fail "falha do upstream não retornou 502 no laboratório."
+if sudo test -s /var/log/nginx/set-livre-error.log; then
+  fail "error log persistiu diagnóstico bruto da falha de upstream."
+fi
 sudo cp /var/log/nginx/set-livre-access.log "$temporary_directory/set-livre-access.log"
 sudo chown "$(id --user):$(id --group)" "$temporary_directory/set-livre-access.log"
 jq --exit-status --slurp '
@@ -171,9 +211,6 @@ if grep --extended-regexp --quiet \
 fi
 sudo nginx -s stop
 nginx_test_active=false
-kill "$nginx_backend_process"
-wait "$nginx_backend_process" 2>/dev/null || true
-nginx_backend_process=""
 
 sudo install -d -m 0755 \
   /opt/node/bin \
@@ -192,6 +229,18 @@ sudo install -o root -g setlivre -m 0640 "$temporary_directory/release.env" \
 sudo install -m 0755 "$REPOSITORY_ROOT/ops/deploy-release.sh" /usr/local/sbin/set-livre-deploy
 sudo install -o root -g root -m 0755 \
   "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" "$INSTALLED_DEPLOY_SSH_COMMAND"
+deploy_lock_ready="$temporary_directory/deploy-lock-ready"
+sudo flock --exclusive /run/lock/set-livre-deploy.lock \
+  bash -c 'touch "$1"; sleep 3' _ "$deploy_lock_ready" &
+deploy_lock_holder=$!
+for _ in {1..20}; do
+  [[ ! -e ${deploy_lock_ready} ]] || break
+  /usr/bin/sleep 0.05
+done
+[[ -e ${deploy_lock_ready} ]] || fail "lock controlado do deploy não ficou pronto."
+timeout 1 sudo /usr/local/sbin/set-livre-deploy --seal-link \
+  || fail "selamento da instância link esperou recursivamente pelo lock do bootstrap."
+wait "$deploy_lock_holder"
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
@@ -897,7 +946,7 @@ sudo env \
   PATH="$fake_bin:$PATH" \
   SET_LIVRE_TEST_PHASE=success \
   SET_LIVRE_TEST_STATE="$test_state" \
-  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --seal-recovery
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --seal-services
 sudo grep --fixed-strings --line-regexp "$host_digest" \
   /etc/set-livre/bootstrap-in-progress.sha256 >/dev/null \
   || fail "recovery selado não restaurou o bloqueio autenticado de bootstrap."

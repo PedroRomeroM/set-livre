@@ -7,7 +7,7 @@ After=network-online.target nginx.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/set-livre-deploy --recover-%i
-ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-recovery
+ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-%i
 TimeoutStartSec=12min
 NoNewPrivileges=true
 PrivateTmp=true

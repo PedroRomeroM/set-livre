@@ -8,6 +8,7 @@ import {
   forceProductionRoleDisabled,
   productionRoleActivationMode,
   productionRoleConnections,
+  verifyProductionDeploymentContract,
 } from "../../scripts/provision-production-role.mjs";
 
 const projectRef = "oirvvnojgkzdppkdvhej";
@@ -95,6 +96,89 @@ describe("production role provisioning", () => {
     );
     expect(() => assertSupabasePublishableKey(serviceRoleJwt)).toThrow("chave privilegiada");
     expect(() => assertSupabasePublishableKey("synthetic-anon-value")).toThrow("formato inválido");
+  });
+
+  it("confirms the configured publishable key against the exact production project", async () => {
+    const publishableKey = "sb_publishable_project-contract";
+    const environment = {
+      ...fixedCoordinates,
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      PRD_SUPABASE_PUBLISHABLE_KEY: publishableKey,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    };
+    const fetchImplementation = vi.fn(async () =>
+      Response.json({ disable_signup: false, external: {} }, { status: 200 }),
+    );
+
+    await expect(
+      verifyProductionDeploymentContract(environment, { fetchImplementation }),
+    ).resolves.toBeDefined();
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+    const [url, options] = fetchImplementation.mock.calls[0];
+    expect(url).toBe("https://oirvvnojgkzdppkdvhej.supabase.co/auth/v1/settings");
+    expect(options).toMatchObject({
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        apikey: publishableKey,
+      },
+      method: "GET",
+      redirect: "error",
+    });
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("fails closed for a foreign key, invalid payload, redirect, or network failure", async () => {
+    const publishableKey = "sb_publishable_foreign-contract";
+    const environment = {
+      ...fixedCoordinates,
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      PRD_SUPABASE_PUBLISHABLE_KEY: publishableKey,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    };
+    const verifyWith = (fetchImplementation) =>
+      verifyProductionDeploymentContract(environment, { fetchImplementation });
+
+    await expect(verifyWith(async () => new Response(null, { status: 401 }))).rejects.toThrow(
+      "recusou a chave publishable (401)",
+    );
+    await expect(verifyWith(async () => new Response(null, { status: 503 }))).rejects.toThrow(
+      "recusou a chave publishable (503)",
+    );
+    await expect(verifyWith(async () => new Response("not-json", { status: 200 }))).rejects.toThrow(
+      "payload inválido",
+    );
+    await expect(verifyWith(async () => Response.json({ error: "unexpected" }))).rejects.toThrow(
+      "contrato inválido",
+    );
+    await expect(
+      verifyWith(async () => {
+        throw new TypeError("redirect blocked");
+      }),
+    ).rejects.toThrow("Não foi possível validar");
+    await expect(
+      verifyWith(async () => {
+        throw new Error(`network failure for ${publishableKey}`);
+      }),
+    ).rejects.not.toThrow(publishableKey);
+  });
+
+  it("runs the key probe before migrations, builds, and packaging", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const preflight = workflow.indexOf("- name: Validate fixed production contract");
+    const migrations = workflow.indexOf("- name: Apply forward-only Supabase migrations");
+    const webBuild = workflow.indexOf("- name: Build web release");
+    const packaging = workflow.indexOf("- name: Package immutable release");
+
+    expect(preflight).toBeGreaterThan(-1);
+    expect(preflight).toBeLessThan(migrations);
+    expect(migrations).toBeLessThan(webBuild);
+    expect(webBuild).toBeLessThan(packaging);
   });
 
   it("initializes credentials only for the migration-created NOLOGIN role", () => {

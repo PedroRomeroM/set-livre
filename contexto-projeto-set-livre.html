@@ -86,8 +86,8 @@
               <td>
                 Oracle <code>VM.Standard.E2.1.Micro</code> Always Free-eligible, x86_64, Ubuntu
                 24.04, IPv4 reservado, Nginx/systemd e SSH de deploy dedicado; bootstrap e reboot
-                verificados, recovery durável selado pelo systemd e request IDs confiáveis na borda,
-                sem o antigo agente pull ou suas credenciais no host.
+                verificados, recovery durável selado sem espera recursiva, request IDs confiáveis e
+                logs redigidos na borda, sem o antigo agente pull ou suas credenciais no host.
               </td>
             </tr>
             <tr>
@@ -121,19 +121,21 @@
             ou reboot. A recuperação de serviços aguarda rede online e Nginx antes de consumir o
             marcador de rollback, autentica o estado antes de alterar o link ativo e só o remove
             após health interno e público. Uma fase persistida antes de liberar as units permite que
-            <code>ExecStopPost</code> restaure o blocker e pare os apps mesmo após
-            <code>SIGKILL</code>; no reboot, o link-only sela essa fase antes do start. O bootstrap
-            só reutiliza diretórios existentes após validar o marcador operacional ou um marcador
-            transitório root-only, abre as raízes de release e o webroot ACME componente a
-            componente sem seguir symlink e mantém boot e deploy bloqueados durante a mutação. Antes
-            de liberar uma release compatível, arma o mesmo recovery de rollback e só o desarma após
-            readiness; falha republica o bloqueio antes de retirar o symlink. O instalador root
-            readquire o lock fechado pelo sudo antes de copiar os inputs, de modo que uploads
-            concorrentes não alteram a release em validação. Um ponteiro pendente é removido antes
-            da próxima validação para permitir reparo por release aprovada. Archives são
-            pré-varridos em streaming com limites próprios para headers PAX/GNU antes da extração. A
-            reutilização de um SHA compara deterministicamente toda a árvore instalada com a
-            candidata e recusa qualquer adulteração, mesmo quando o marcador do artifact não mudou.
+            <code>ExecStopPost</code> de serviços restaure o blocker e pare os apps mesmo após
+            <code>SIGKILL</code>; a instância link não readquire o lock do bootstrap e, no reboot,
+            sela a fase antes do start. O bootstrap só reutiliza diretórios existentes após validar
+            o marcador operacional ou um marcador transitório root-only, abre as raízes de release e
+            o webroot ACME componente a componente sem seguir symlink; a borda também recusa folhas
+            ACME redirecionadas sem persistir o diagnóstico nativo que contém IP/target e mantém
+            boot e deploy bloqueados durante a mutação. Antes de liberar uma release compatível,
+            arma o mesmo recovery de rollback e só o desarma após readiness; falha republica o
+            bloqueio antes de retirar o symlink. O instalador root readquire o lock fechado pelo
+            sudo antes de copiar os inputs, de modo que uploads concorrentes não alteram a release
+            em validação. Um ponteiro pendente é removido antes da próxima validação para permitir
+            reparo por release aprovada. Archives são pré-varridos em streaming com limites próprios
+            para headers PAX/GNU antes da extração. A reutilização de um SHA compara
+            deterministicamente toda a árvore instalada com a candidata e recusa qualquer
+            adulteração, mesmo quando o marcador do artifact não mudou.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum
@@ -146,8 +148,9 @@
             <code>security definer</code> com <code>search_path = ''</code>; membership, ownership
             ou acesso efetivo de <code>app_dal</code> a schema externo fora das allowlists também
             são recusados. A release anterior só é preservada quando seu schema permanece aplicado e
-            compatível. Chaves Supabase privilegiadas ou JWT são recusadas antes dos builds;
-            produção aceita somente o formato <code>sb_publishable_</code>.
+            compatível. Chaves Supabase privilegiadas ou JWT são recusadas antes dos builds; a chave
+            <code>sb_publishable_</code> precisa ser aceita pelo endpoint Auth do project ref de
+            produção antes de migrations e builds.
           </li>
         </ul>
       </section>

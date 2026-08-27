@@ -332,7 +332,11 @@ if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
   exit 0
 fi
 
-if [[ $# -eq 1 && ${1:-} == "--seal-recovery" ]]; then
+if [[ $# -eq 1 && ${1:-} == "--seal-link" ]]; then
+  exit 0
+fi
+
+if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
   flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
     || fail "o lock de deploy permaneceu ocupado durante o selamento da recuperação."
@@ -383,7 +387,7 @@ verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link, --recover-services ou --seal-recovery."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link, --recover-services, --seal-link ou --seal-services."
 fi
 
 release_sha="$1"
