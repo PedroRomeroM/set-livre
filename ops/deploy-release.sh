@@ -6,6 +6,7 @@ readonly CURRENT_LINK="/opt/set-livre/current"
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly HOST_CONFIGURATION_DIGEST="/etc/set-livre/host-config.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"
+readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="/etc/set-livre/bootstrap-recovery-in-progress.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
 readonly UPLOAD_LOCK="${INCOMING_DIRECTORY}/.incoming.lock"
 readonly PRODUCTION_IP="147.15.97.227"
@@ -15,7 +16,7 @@ readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
-bootstrap_recovery_digest=""
+authenticated_bootstrap_recovery_digest=""
 recovered_release=""
 recovered_target=""
 
@@ -173,26 +174,65 @@ read_host_state_digest() {
   printf '%s\n' "${lines[0]}"
 }
 
-publish_bootstrap_recovery_blocker() {
-  local digest="$1"
+publish_host_state_digest() {
+  local destination="$1"
+  local temporary_prefix="$2"
+  local digest="$3"
   local temporary
   [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
-  temporary="$(mktemp /etc/set-livre/.bootstrap-in-progress.XXXXXX)" || return 1
+  temporary="$(mktemp "/etc/set-livre/.${temporary_prefix}.XXXXXX")" || return 1
   if ! printf '%s\n' "$digest" > "$temporary" \
     || ! chown root:root "$temporary" \
     || ! chmod 0600 "$temporary" \
-    || ! mv --force -- "$temporary" "$HOST_BOOTSTRAP_IN_PROGRESS"; then
+    || ! mv --force -- "$temporary" "$destination"; then
     rm -f -- "$temporary"
     return 1
   fi
 }
 
+publish_bootstrap_recovery_blocker() {
+  publish_host_state_digest \
+    "$HOST_BOOTSTRAP_IN_PROGRESS" "bootstrap-in-progress" "$1"
+}
+
+publish_bootstrap_recovery_phase() {
+  publish_host_state_digest \
+    "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" "bootstrap-recovery-in-progress" "$1"
+}
+
+bootstrap_recovery_state_is_present() {
+  [[ -e ${HOST_BOOTSTRAP_IN_PROGRESS} || -L ${HOST_BOOTSTRAP_IN_PROGRESS} \
+    || -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+    || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]
+}
+
+read_bootstrap_recovery_digest() {
+  local blocker_digest=""
+  local recovery_digest=""
+  if [[ -e ${HOST_BOOTSTRAP_IN_PROGRESS} || -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
+    blocker_digest="$(
+      read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"
+    )" || return 1
+  fi
+  if [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+    || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]; then
+    recovery_digest="$(
+      read_host_state_digest "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" "root:root:600"
+    )" || return 1
+  fi
+  [[ -n ${blocker_digest} || -n ${recovery_digest} ]] || return 1
+  [[ -z ${blocker_digest} || -z ${recovery_digest} \
+    || ${blocker_digest} == "$recovery_digest" ]] || return 1
+  printf '%s\n' "${recovery_digest:-$blocker_digest}"
+}
+
 authorize_interrupted_bootstrap_recovery() {
   local recovered_sha="$1"
   local bootstrap_digest installed_digest manifest
+  authenticated_bootstrap_recovery_digest=""
   [[ ${recovered_sha} =~ ^[0-9a-f]{40}$ ]] || return 1
   bootstrap_digest="$(
-    read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"
+    read_bootstrap_recovery_digest
   )" || return 1
   installed_digest="$(
     read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"
@@ -223,21 +263,44 @@ if (
     raise SystemExit("release manifest does not authorize bootstrap recovery")
 PYTHON
 
-  bootstrap_recovery_digest="$bootstrap_digest"
+  authenticated_bootstrap_recovery_digest="$bootstrap_digest"
+}
+
+ensure_bootstrap_recovery_blocker() {
+  local recovery_digest
+  if read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600" >/dev/null 2>&1; then
+    return 0
+  fi
+  recovery_digest="$(
+    read_host_state_digest "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" "root:root:600"
+  )" || recovery_digest="$(printf '0%.0s' {1..64})"
+  publish_bootstrap_recovery_blocker "$recovery_digest"
+}
+
+begin_interrupted_bootstrap_recovery() {
+  local recovered_sha="$1"
+  authorize_interrupted_bootstrap_recovery "$recovered_sha" || return 1
+  publish_bootstrap_recovery_phase "$authenticated_bootstrap_recovery_digest" || return 1
   rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
+}
+
+seal_interrupted_bootstrap_recovery() {
+  bootstrap_recovery_state_is_present || return 0
+  [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+    || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] || return 0
+  ensure_bootstrap_recovery_blocker || return 1
+  systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
+  read_rollback_marker || return 1
+  authorize_interrupted_bootstrap_recovery "$recovered_release"
 }
 
 # Invocada exclusivamente pelo trap do recovery de serviços.
 # shellcheck disable=SC2317,SC2329
-restore_bootstrap_recovery_blocker_on_failure() {
+seal_interrupted_bootstrap_recovery_on_failure() {
   local status=$?
   trap - EXIT
-  if [[ ${status} -ne 0 \
-    && -n ${bootstrap_recovery_digest} \
-    && ( -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ) \
-    && ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} \
-    && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
-    publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest" || status=1
+  if [[ ${status} -ne 0 ]]; then
+    seal_interrupted_bootstrap_recovery || status=1
   fi
   exit "$status"
 }
@@ -253,9 +316,30 @@ if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
-    recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
+    read_rollback_marker || fail "não foi possível ler a ativação interrompida."
+    if [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+      || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]; then
+      ensure_bootstrap_recovery_blocker \
+        || fail "não foi possível selar o recovery intermediário do bootstrap."
+    fi
+    if bootstrap_recovery_state_is_present; then
+      authorize_interrupted_bootstrap_recovery "$recovered_release" \
+        || fail "o estado intermediário do bootstrap não autorizou a recuperação do link."
+    fi
+    activate_recovered_link || fail "não foi possível recuperar a ativação interrompida."
     printf 'Link da ativação interrompida recuperado; estabilização dos serviços permanece armada.\n'
   fi
+  exit 0
+fi
+
+if [[ $# -eq 1 && ${1:-} == "--seal-recovery" ]]; then
+  exec 9>/run/lock/set-livre-deploy.lock
+  flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
+    || fail "o lock de deploy permaneceu ocupado durante o selamento da recuperação."
+  managed_release_directories_are_valid \
+    || fail "raiz de releases não atende ao contrato físico e de permissões."
+  seal_interrupted_bootstrap_recovery \
+    || fail "não foi possível selar a recuperação interrompida do bootstrap."
   exit 0
 fi
 
@@ -265,11 +349,11 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
-  trap restore_bootstrap_recovery_blocker_on_failure EXIT
+  trap seal_interrupted_bootstrap_recovery_on_failure EXIT
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     read_rollback_marker || fail "não foi possível ler a ativação interrompida."
-    if [[ -e ${HOST_BOOTSTRAP_IN_PROGRESS} || -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]]; then
-      authorize_interrupted_bootstrap_recovery "$recovered_release" \
+    if bootstrap_recovery_state_is_present; then
+      begin_interrupted_bootstrap_recovery "$recovered_release" \
         || fail "o estado intermediário do bootstrap não autorizou a recuperação."
     fi
     activate_recovered_link || fail "não foi possível recuperar a ativação interrompida."
@@ -279,29 +363,27 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_health "$recovered_release" \
       || ! wait_for_public_health "$recovered_release"; then
-      if [[ -n ${bootstrap_recovery_digest} ]]; then
-        publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest" \
-          || fail "não foi possível restaurar o bloqueio do bootstrap após falha de readiness."
-        bootstrap_recovery_digest=""
-      fi
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
       fail "a release recuperada não atingiu readiness; serviços interrompidos."
     fi
+    rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
     rm -f -- "$ROLLBACK_MARKER"
-    bootstrap_recovery_digest=""
+    authenticated_bootstrap_recovery_digest=""
     printf 'Ativação interrompida recuperada e serviços estabilizados.\n'
   fi
   exit 0
 fi
 
-[[ ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} ]] \
+[[ ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} \
+  && ! -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+  && ! -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] \
   || fail "o bootstrap do host ainda não atingiu estado terminal."
 
 verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link ou --recover-services."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-link, --recover-services ou --seal-recovery."
 fi
 
 release_sha="$1"

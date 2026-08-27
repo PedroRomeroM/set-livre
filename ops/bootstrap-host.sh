@@ -15,6 +15,7 @@ readonly HOST_STATE_DIRECTORY="/etc/set-livre"
 readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"
 readonly HOST_CONFIGURATION_PREVIOUS_DIGEST="${HOST_STATE_DIRECTORY}/host-config.previous.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
+readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-recovery-in-progress.sha256"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -35,8 +36,10 @@ firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
 bootstrap_marker_source=""
+bootstrap_recovery_marker_source=""
 recovery_marker_source=""
 host_configuration_published=false
+bootstrap_recovery_armed=false
 active_release_sha=""
 active_release_compatible=false
 node_staging_directory=""
@@ -109,6 +112,7 @@ ensure_managed_directory() {
   local group="$3"
   local mode="$4"
   python3 - "$path" "$owner" "$group" "$mode" <<'PYTHON'
+import contextlib
 import grp
 import os
 import pathlib
@@ -124,23 +128,26 @@ owner_id = pwd.getpwnam(sys.argv[2]).pw_uid
 group_id = grp.getgrnam(sys.argv[3]).gr_gid
 mode = int(sys.argv[4], 8)
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
-parent_fd = os.open(path.parent, flags)
-try:
-    try:
-        os.mkdir(path.name, mode, dir_fd=parent_fd)
-    except FileExistsError:
-        pass
-    directory_fd = os.open(path.name, flags, dir_fd=parent_fd)
-    try:
-        metadata = os.fstat(directory_fd)
-        if not stat.S_ISDIR(metadata.st_mode):
-            raise SystemExit("managed path is not a directory")
-        os.fchown(directory_fd, owner_id, group_id)
-        os.fchmod(directory_fd, mode)
-    finally:
-        os.close(directory_fd)
-finally:
-    os.close(parent_fd)
+components = path.parts[1:]
+with contextlib.ExitStack() as descriptors:
+    directory_fd = os.open("/", flags)
+    descriptors.callback(os.close, directory_fd)
+    for index, component in enumerate(components):
+        is_final = index == len(components) - 1
+        if is_final:
+            try:
+                os.mkdir(component, mode, dir_fd=directory_fd)
+            except FileExistsError:
+                pass
+        child_fd = os.open(component, flags, dir_fd=directory_fd)
+        descriptors.callback(os.close, child_fd)
+        directory_fd = child_fd
+        if is_final:
+            metadata = os.fstat(directory_fd)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise SystemExit("managed path is not a directory")
+            os.fchown(directory_fd, owner_id, group_id)
+            os.fchmod(directory_fd, mode)
 PYTHON
 }
 
@@ -193,6 +200,24 @@ publish_bootstrap_in_progress() {
     return 1
   fi
   bootstrap_marker_source=""
+}
+
+publish_bootstrap_recovery_in_progress() {
+  local digest="$1"
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  bootstrap_recovery_marker_source="$(
+    mktemp "${HOST_STATE_DIRECTORY}/.bootstrap-recovery-in-progress.XXXXXX"
+  )" || return 1
+  if ! printf '%s\n' "$digest" > "$bootstrap_recovery_marker_source" \
+    || ! chown root:root "$bootstrap_recovery_marker_source" \
+    || ! chmod 0600 "$bootstrap_recovery_marker_source" \
+    || ! mv --force -- \
+      "$bootstrap_recovery_marker_source" "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"; then
+    rm -f -- "$bootstrap_recovery_marker_source"
+    bootstrap_recovery_marker_source=""
+    return 1
+  fi
+  bootstrap_recovery_marker_source=""
 }
 
 write_bootstrap_recovery_marker() {
@@ -600,11 +625,17 @@ cleanup() {
   [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
   [[ -z ${bootstrap_marker_source} ]] || rm -f -- "$bootstrap_marker_source"
+  [[ -z ${bootstrap_recovery_marker_source} ]] \
+    || rm -f -- "$bootstrap_recovery_marker_source"
   [[ -z ${recovery_marker_source} ]] || rm -f -- "$recovery_marker_source"
   [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
   if [[ ${host_configuration_published} == true ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
-    rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
+    if [[ ${bootstrap_recovery_armed} == true ]]; then
+      publish_bootstrap_in_progress "$host_configuration_digest" || true
+    else
+      rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
+    fi
   fi
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
@@ -694,6 +725,11 @@ if host_state_marker_is_valid \
   "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600" "marcador de bootstrap em andamento"; then
   managed_host_contract=true
 fi
+if host_state_marker_is_valid \
+  "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" "root:root:600" \
+  "marcador de recovery do bootstrap"; then
+  managed_host_contract=true
+fi
 if [[ ${managed_host_contract} == true ]]; then
   existing_release_directories_are_valid \
     || fail "raízes de release existentes não atendem ao contrato físico e de permissões."
@@ -735,6 +771,9 @@ PYTHON
 
 [[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]] \
   || fail "há uma ativação interrompida; recupere-a antes de alterar o host."
+[[ ! -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
+  && ! -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] \
+  || fail "há um recovery de bootstrap interrompido; estabilize-o antes de alterar o host."
 if [[ -e ${HOST_STATE_DIRECTORY} || -L ${HOST_STATE_DIRECTORY} ]]; then
   [[ -d ${HOST_STATE_DIRECTORY} && ! -L ${HOST_STATE_DIRECTORY} \
     && $(stat --format '%U' -- "$HOST_STATE_DIRECTORY") == "root" ]] \
@@ -925,7 +964,14 @@ ensure_managed_directory /opt/set-livre root setlivre 0750 \
   || fail "raiz operacional /opt/set-livre é inválida."
 ensure_managed_directory /opt/set-livre/releases root setlivre 0750 \
   || fail "diretório de releases é inválido."
-install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
+for acme_directory in \
+  /var/www \
+  /var/www/set-livre-acme \
+  /var/www/set-livre-acme/.well-known \
+  /var/www/set-livre-acme/.well-known/acme-challenge; do
+  ensure_managed_directory "$acme_directory" root root 0755 \
+    || fail "webroot ACME contém componente inválido: ${acme_directory}."
+done
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
 ensure_managed_directory /home/deploy-setlivre root deploy-setlivre 0750 \
   || fail "home canônico de deploy-setlivre é inválido."
@@ -1210,6 +1256,9 @@ host_configuration_published=true
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}" \
     || fail "não foi possível armar a recuperação da release durante o bootstrap."
+  publish_bootstrap_recovery_in_progress "$host_configuration_digest" \
+    || fail "não foi possível persistir a fase de recovery do bootstrap."
+  bootstrap_recovery_armed=true
 fi
 rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
 
@@ -1236,7 +1285,11 @@ if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
         || fail "release ativa mudou durante a validação pós-bootstrap."
       publish_bootstrap_in_progress "$host_configuration_digest" \
         || fail "não foi possível bloquear a release após falha de readiness."
-      rm -f -- /opt/set-livre/current "$ROLLBACK_MARKER"
+      rm -f -- \
+        /opt/set-livre/current \
+        "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" \
+        "$ROLLBACK_MARKER"
+      bootstrap_recovery_armed=false
       fail "release compatível não recuperou readiness; reenvie uma release aprovada."
     fi
   else
@@ -1252,10 +1305,12 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
-host_configuration_published=false
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
+  rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
+  bootstrap_recovery_armed=false
   rm -f -- "$ROLLBACK_MARKER"
 fi
+host_configuration_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

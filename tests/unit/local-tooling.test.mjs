@@ -135,6 +135,7 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).toContain("Wants=network-online.target");
     expect(recoveryUnit).toContain("Requires=nginx.service");
     expect(recoveryUnit).toContain("After=network-online.target nginx.service");
+    expect(recoveryUnit).toContain("ExecStopPost=/usr/local/sbin/set-livre-deploy --seal-recovery");
     expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery@services.service");
@@ -150,15 +151,22 @@ describe("local tooling contracts", () => {
     );
     const authorizationStart = deploy.indexOf("authorize_interrupted_bootstrap_recovery() {");
     const authorizationEnd = deploy.indexOf(
-      "\nrestore_bootstrap_recovery_blocker_on_failure() {",
+      "\nensure_bootstrap_recovery_blocker() {",
       authorizationStart,
     );
     const authorization = deploy.slice(authorizationStart, authorizationEnd);
+    const beginStart = deploy.indexOf("begin_interrupted_bootstrap_recovery() {");
+    const beginEnd = deploy.indexOf("\nseal_interrupted_bootstrap_recovery() {", beginStart);
+    const begin = deploy.slice(beginStart, beginEnd);
 
     expect(authorizationStart).toBeGreaterThan(-1);
     expect(authorizationEnd).toBeGreaterThan(authorizationStart);
-    expect(authorization).toContain(
+    expect(authorization).toContain("read_bootstrap_recovery_digest");
+    expect(deploy).toContain(
       'read_host_state_digest "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"',
+    );
+    expect(deploy).toContain(
+      'read_host_state_digest "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS" "root:root:600"',
     );
     expect(authorization).toContain(
       'read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"',
@@ -167,8 +175,13 @@ describe("local tooling contracts", () => {
     expect(authorization).toContain('manifest.get("commit") != expected_release');
     expect(authorization).toContain("not isinstance(host_configuration, dict)");
     expect(authorization).toContain('host_configuration.get("sha256") != expected_digest');
-    expect(authorization).toContain('rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"');
-    expect(deploy).toContain('publish_bootstrap_recovery_blocker "$bootstrap_recovery_digest"');
+    expect(authorization).not.toContain('rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"');
+    expect(beginStart).toBeGreaterThan(-1);
+    expect(beginEnd).toBeGreaterThan(beginStart);
+    expect(begin.indexOf("publish_bootstrap_recovery_phase")).toBeLessThan(
+      begin.indexOf('rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"'),
+    );
+    expect(deploy).toContain("ensure_bootstrap_recovery_blocker");
     for (const recoveryMode of ["--recover-link", "--recover-services"]) {
       const branchStart = deploy.indexOf(`\${1:-} == "${recoveryMode}"`);
       const branchEnd = deploy.indexOf("\n  exit 0\nfi\n", branchStart) + 13;
@@ -183,22 +196,35 @@ describe("local tooling contracts", () => {
         ),
       );
     }
+    const sealStart = deploy.indexOf('\${1:-} == "--seal-recovery"');
+    const sealEnd = deploy.indexOf("\n  exit 0\nfi\n", sealStart);
+    expect(deploy.slice(sealStart, sealEnd)).toContain("managed_release_directories_are_valid");
+    const linkStart = deploy.indexOf('\${1:-} == "--recover-link"');
+    const linkEnd = deploy.indexOf("\n  exit 0\nfi\n", linkStart);
+    const linkRecovery = deploy.slice(linkStart, linkEnd);
+    expect(linkRecovery.indexOf("read_rollback_marker")).toBeLessThan(
+      linkRecovery.indexOf("authorize_interrupted_bootstrap_recovery"),
+    );
+    expect(linkRecovery.indexOf("authorize_interrupted_bootstrap_recovery")).toBeLessThan(
+      linkRecovery.indexOf("activate_recovered_link"),
+    );
     const servicesStart = deploy.indexOf('\${1:-} == "--recover-services"');
     const servicesEnd = deploy.indexOf("\n  exit 0\nfi\n", servicesStart);
     const servicesRecovery = deploy.slice(servicesStart, servicesEnd);
     expect(servicesRecovery.indexOf("read_rollback_marker")).toBeLessThan(
-      servicesRecovery.indexOf("authorize_interrupted_bootstrap_recovery"),
+      servicesRecovery.indexOf("begin_interrupted_bootstrap_recovery"),
     );
-    expect(servicesRecovery.indexOf("authorize_interrupted_bootstrap_recovery")).toBeLessThan(
+    expect(servicesRecovery.indexOf("begin_interrupted_bootstrap_recovery")).toBeLessThan(
       servicesRecovery.indexOf("activate_recovered_link"),
     );
     expect(hostVerification).toContain("privileged_regular_file_exists");
     expect(hostVerification).toContain(
-      "recovery aceitou digests divergentes no estado intermediário do bootstrap",
+      "recovery ${recovery_mode} aceitou digests divergentes no bootstrap",
     );
     expect(hostVerification).toContain(
-      "recovery falho não republicou o bloqueio autenticado de bootstrap",
+      "recovery selado não restaurou o bloqueio autenticado de bootstrap",
     );
+    expect(hostVerification).toContain("SIGKILL consumiu a fase durável do recovery");
     expect(hostVerification).toContain("for recovery_mode in --recover-link --recover-services");
     expect(hostVerification).toContain("recovery ${recovery_mode} aceitou");
   });
@@ -273,6 +299,7 @@ describe("local tooling contracts", () => {
     const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
     const pendingPublish = bootstrap.indexOf(
       'publish_bootstrap_in_progress "$host_configuration_digest"',
+      guardCall,
     );
     const activeReleaseInspection = bootstrap.indexOf(
       "if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then",
@@ -400,13 +427,19 @@ describe("local tooling contracts", () => {
       const serverCount = nginx.match(/^server \{/gmu)?.length ?? 0;
       expect(logFormatStart).toBeGreaterThan(-1);
       expect(logFormatEnd).toBeGreaterThan(logFormatStart);
-      expect(logFormat).toContain("$sent_http_x_request_id");
+      expect(nginx).toContain("map $request_id $set_livre_request_id");
+      expect(logFormat).toContain("$set_livre_request_id");
+      expect(logFormat).not.toContain("$sent_http_x_request_id");
       expect(logFormat).not.toMatch(
         /\$(?:args|binary_remote_addr|http_referer|http_user_agent|remote_addr|request_uri|uri)\b/u,
       );
       expect(
         nginx.match(/access_log \/var\/log\/nginx\/set-livre-access\.log set_livre_redacted;/gu),
       ).toHaveLength(serverCount);
+      expect(nginx.match(/add_header X-Request-Id \$set_livre_request_id always;/gu)).toHaveLength(
+        serverCount,
+      );
+      expect(nginx).toContain("error_log /var/log/nginx/set-livre-error.log warn;");
     }
 
     const http = readFileSync(
@@ -427,13 +460,16 @@ describe("local tooling contracts", () => {
       "limit_req_zone $set_livre_edge_limit_key zone=set_livre_edge:10m rate=1r/s;",
     );
     expect(tls).toContain("limit_req zone=set_livre_edge burst=30 nodelay;");
+    expect(tls).toContain("limit_req_log_level info;");
+    expect(tls).not.toContain("limit_req_log_level warn;");
     expect(tls).toContain("limit_req_status 429;");
     expect(tls).toContain("Disallow: /");
     expect(tls).toContain("return 308 https://147.15.97.227$request_uri;");
     expect(tls).toContain("listen 443 ssl default_server;");
     expect(tls).not.toContain("ssl_reject_handshake");
-    expect(tls).toContain("proxy_set_header X-Request-Id $http_x_request_id;");
-    expect(tls).not.toContain("proxy_set_header X-Request-Id $request_id;");
+    expect(tls).toContain("proxy_set_header X-Request-Id $set_livre_request_id;");
+    expect(tls).toContain("proxy_hide_header X-Request-Id;");
+    expect(tls).not.toContain("proxy_set_header X-Request-Id $http_x_request_id;");
     expect(
       tls.match(/ssl_certificate \/etc\/letsencrypt\/live\/147\.15\.97\.227\/fullchain\.pem;/gu),
     ).toHaveLength(2);
@@ -445,6 +481,8 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain('--resolve "147.15.97.227:443:127.0.0.1"');
     expect(hostVerification).toContain('--cacert "$temporary_directory/ip.crt"');
     expect(hostVerification).toContain("https://147.15.97.227/robots.txt");
+    expect(hostVerification).toContain("rate limiter não retornou 429 no laboratório");
+    expect(hostVerification).toContain("error log expôs diagnóstico do request limitado");
   });
 
   it("validates canonical host identities before publishing the deploy key", () => {
@@ -477,6 +515,8 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("account_password_is_locked() {");
     expect(bootstrap).toContain("ensure_managed_directory() {");
     expect(bootstrap).toContain("os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW");
+    expect(bootstrap).toContain('directory_fd = os.open("/", flags)');
+    expect(bootstrap).toContain("for index, component in enumerate(components):");
     expect(bootstrap).toContain(
       "group_members_are_exact setlivre setlivre-web setlivre-backoffice",
     );
@@ -493,6 +533,11 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("ensure_managed_directory /opt/set-livre root setlivre 0750");
     expect(bootstrap).toContain(
       "ensure_managed_directory /opt/set-livre/releases root setlivre 0750",
+    );
+    expect(bootstrap).toContain("/var/www/set-livre-acme/.well-known/acme-challenge; do");
+    expect(bootstrap).toContain('ensure_managed_directory "$acme_directory" root root 0755');
+    expect(bootstrap).not.toContain(
+      "install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge",
     );
     expect(bootstrap).toContain('chown root:deploy-setlivre "$authorized_keys_source"');
     expect(bootstrap).not.toContain(
@@ -673,6 +718,9 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain(
       'readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"',
     );
+    expect(deploy).toContain(
+      'readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="/etc/set-livre/bootstrap-recovery-in-progress.sha256"',
+    );
     expect(deploy).toContain("o bootstrap do host ainda não atingiu estado terminal");
     const recoveryFunctionStart = deploy.indexOf("recover_link_from_marker() {");
     const recoveryFunctionEnd = deploy.indexOf(
@@ -698,7 +746,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      4,
+      5,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
@@ -740,6 +788,10 @@ describe("local tooling contracts", () => {
     const recoveryArmed = bootstrap.indexOf(
       'write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}"',
     );
+    const recoveryPhaseArmed = bootstrap.indexOf(
+      'publish_bootstrap_recovery_in_progress "$host_configuration_digest"',
+      recoveryArmed,
+    );
     const bootstrapGateReleased = bootstrap.indexOf(
       'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
     );
@@ -748,22 +800,31 @@ describe("local tooling contracts", () => {
       'wait_for_active_public_health "$active_release_sha"',
       bootstrapRestart,
     );
-    const terminalBootstrap = bootstrap.indexOf(
-      "host_configuration_published=false",
+    const recoveryPhaseDisarmed = bootstrap.indexOf(
+      'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
       bootstrapReadiness,
     );
-    const recoveryDisarmed = bootstrap.indexOf('rm -f -- "$ROLLBACK_MARKER"', terminalBootstrap);
+    const recoveryDisarmed = bootstrap.indexOf(
+      'rm -f -- "$ROLLBACK_MARKER"',
+      recoveryPhaseDisarmed,
+    );
+    const terminalBootstrap = bootstrap.indexOf(
+      "host_configuration_published=false",
+      recoveryDisarmed,
+    );
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     ).toBeLessThan(recoveryArmed);
-    expect(recoveryArmed).toBeLessThan(bootstrapGateReleased);
+    expect(recoveryArmed).toBeLessThan(recoveryPhaseArmed);
+    expect(recoveryPhaseArmed).toBeLessThan(bootstrapGateReleased);
     expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
     expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
-    expect(bootstrapReadiness).toBeLessThan(terminalBootstrap);
-    expect(terminalBootstrap).toBeLessThan(recoveryDisarmed);
+    expect(bootstrapReadiness).toBeLessThan(recoveryPhaseDisarmed);
+    expect(recoveryPhaseDisarmed).toBeLessThan(recoveryDisarmed);
+    expect(recoveryDisarmed).toBeLessThan(terminalBootstrap);
     expect(
       bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(bootstrap).toContain(
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );

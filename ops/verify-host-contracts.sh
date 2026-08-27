@@ -9,11 +9,16 @@ readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
 readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"
 nginx_test_active=false
+nginx_backend_process=""
 forced_command_sudoers_installed=false
 
 cleanup() {
   if [[ ${nginx_test_active} == true ]]; then
     sudo nginx -s stop >/dev/null 2>&1 || true
+  fi
+  if [[ -n ${nginx_backend_process} ]]; then
+    kill "$nginx_backend_process" >/dev/null 2>&1 || true
+    wait "$nginx_backend_process" >/dev/null 2>&1 || true
   fi
   if [[ ${forced_command_sudoers_installed} == true ]]; then
     sudo rm -f -- "$FORCED_COMMAND_SUDOERS"
@@ -93,12 +98,25 @@ sudo install -m 0644 "$temporary_directory/ip.crt" /etc/letsencrypt/live/147.15.
 sudo install -m 0600 "$temporary_directory/ip.key" /etc/letsencrypt/live/147.15.97.227/privkey.pem
 sudo install -m 0644 "$REPOSITORY_ROOT/ops/nginx/set-livre-tls.conf" /etc/nginx/sites-available/set-livre
 sudo nginx -t
+python3 -m http.server 3000 --bind 127.0.0.1 --directory "$temporary_directory" \
+  > "$temporary_directory/nginx-backend.log" 2>&1 &
+nginx_backend_process=$!
+for _ in {1..20}; do
+  if curl --silent --output /dev/null --max-time 1 http://127.0.0.1:3000/; then
+    break
+  fi
+  /usr/bin/sleep 0.05
+done
+kill -0 "$nginx_backend_process" 2>/dev/null || fail "backend controlado do teste Nginx não iniciou."
 if [[ -s /run/nginx.pid ]] && sudo kill -0 "$(< /run/nginx.pid)" 2>/dev/null; then
   sudo nginx -s reload
 else
   sudo nginx
 fi
 nginx_test_active=true
+sudo truncate --size 0 \
+  /var/log/nginx/set-livre-access.log \
+  /var/log/nginx/set-livre-error.log
 curl --fail --silent --show-error --max-time 5 --retry 5 --retry-all-errors --retry-delay 1 \
   --noproxy '*' \
   --cacert "$temporary_directory/ip.crt" \
@@ -108,9 +126,54 @@ curl --fail --silent --show-error --max-time 5 --retry 5 --retry-all-errors --re
   https://147.15.97.227/robots.txt
 tr --delete '\r' < "$temporary_directory/ip.headers" | grep --ignore-case --fixed-strings --line-regexp \
   'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet' >/dev/null
+edge_request_id="$(
+  tr --delete '\r' < "$temporary_directory/ip.headers" \
+    | sed --silent 's/^X-Request-Id: //Ip' \
+    | tail --lines 1
+)"
+[[ ${edge_request_id} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+  || fail "edge não publicou request ID UUIDv4 autoritativo."
 grep --fixed-strings --line-regexp 'Disallow: /' "$temporary_directory/ip.robots" >/dev/null
+curl --silent --show-error --max-time 2 \
+  --header 'Host: invalid.example' \
+  --output /dev/null \
+  http://127.0.0.1/ 2>/dev/null || true
+rate_limited=false
+for _ in {1..80}; do
+  edge_status="$(
+    curl --silent --show-error --max-time 2 \
+      --noproxy '*' \
+      --cacert "$temporary_directory/ip.crt" \
+      --resolve "147.15.97.227:443:127.0.0.1" \
+      --output /dev/null \
+      --write-out '%{http_code}' \
+      https://147.15.97.227/api/auth/contract-probe
+  )"
+  [[ ${edge_status} != 429 ]] || rate_limited=true
+done
+[[ ${rate_limited} == true ]] || fail "rate limiter não retornou 429 no laboratório."
+if sudo grep --extended-regexp --quiet \
+  '/api/auth/contract-probe|client: 127[.]0[.]0[.]1' \
+  /var/log/nginx/set-livre-error.log; then
+  fail "error log expôs diagnóstico do request limitado."
+fi
+sudo cp /var/log/nginx/set-livre-access.log "$temporary_directory/set-livre-access.log"
+sudo chown "$(id --user):$(id --group)" "$temporary_directory/set-livre-access.log"
+jq --exit-status --slurp '
+  length > 0 and
+  all(.[]; .requestId | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$"))
+' "$temporary_directory/set-livre-access.log" >/dev/null \
+  || fail "access log contém request ID vazio ou não autoritativo."
+if grep --extended-regexp --quiet \
+  '147[.]15[.]97[.]227|127[.]0[.]0[.]1|/api/auth|contract-probe' \
+  "$temporary_directory/set-livre-access.log"; then
+  fail "access log redigido expôs endereço ou target do request."
+fi
 sudo nginx -s stop
 nginx_test_active=false
+kill "$nginx_backend_process"
+wait "$nginx_backend_process" 2>/dev/null || true
+nginx_backend_process=""
 
 sudo install -d -m 0755 \
   /opt/node/bin \
@@ -298,6 +361,13 @@ fi
 if [[ ${1:-} == "restart" && ${phase} == "signal" && ! -e "$state/signal-once" ]]; then
   touch "$state/signal-once"
   kill -TERM "$PPID"
+  /usr/bin/sleep 0.1
+fi
+if [[ ${1:-} == "restart" \
+  && ${phase} == "bootstrap-sigkill" \
+  && ! -e "$state/bootstrap-sigkill-once" ]]; then
+  touch "$state/bootstrap-sigkill-once"
+  kill -KILL "$PPID"
   /usr/bin/sleep 0.1
 fi
 SYSTEMCTL
@@ -762,22 +832,26 @@ bootstrap_marker_source="$temporary_directory/bootstrap-in-progress.sha256"
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 printf '%s\n' "$(printf '0%.0s' {1..64})" > "$bootstrap_marker_source"
-sudo install -o root -g root -m 0600 \
-  "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
-sudo install -o root -g root -m 0600 \
-  "$rollback_source" /opt/set-livre/.activation-rollback
-if sudo env \
-  PATH="$fake_bin:$PATH" \
-  SET_LIVRE_TEST_PHASE=success \
-  SET_LIVRE_TEST_STATE="$test_state" \
-  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
-  fail "recovery aceitou digests divergentes no estado intermediário do bootstrap."
-fi
-if ! privileged_regular_file_exists /opt/set-livre/.activation-rollback \
-  || ! privileged_regular_file_exists /etc/set-livre/bootstrap-in-progress.sha256; then
-  fail "recovery inválido consumiu o estado intermediário do bootstrap."
-fi
-assert_current_link "$retention_sha"
+for recovery_mode in --recover-link --recover-services; do
+  sudo install -o root -g root -m 0600 \
+    "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
+  sudo install -o root -g root -m 0600 \
+    "$rollback_source" /opt/set-livre/.activation-rollback
+  sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+  sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+  if sudo env \
+    PATH="$fake_bin:$PATH" \
+    SET_LIVRE_TEST_PHASE=success \
+    SET_LIVRE_TEST_STATE="$test_state" \
+    bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$recovery_mode"; then
+    fail "recovery ${recovery_mode} aceitou digests divergentes no bootstrap."
+  fi
+  if ! privileged_regular_file_exists /opt/set-livre/.activation-rollback \
+    || ! privileged_regular_file_exists /etc/set-livre/bootstrap-in-progress.sha256; then
+    fail "recovery ${recovery_mode} inválido consumiu o estado intermediário."
+  fi
+  assert_current_link "$retention_sha"
+done
 
 printf '%s\n' "$host_digest" > "$bootstrap_marker_source"
 sudo install -o root -g root -m 0600 \
@@ -792,10 +866,48 @@ if sudo env \
 fi
 sudo grep --fixed-strings --line-regexp "$host_digest" \
   /etc/set-livre/bootstrap-in-progress.sha256 >/dev/null \
-  || fail "recovery falho não republicou o bloqueio autenticado de bootstrap."
+  || fail "recovery selado não restaurou o bloqueio autenticado de bootstrap."
+privileged_regular_file_exists /etc/set-livre/bootstrap-recovery-in-progress.sha256 \
+  || fail "recovery falho consumiu prematuramente a fase durável do bootstrap."
 privileged_regular_file_exists /opt/set-livre/.activation-rollback \
   || fail "recovery falho consumiu o rollback do bootstrap."
 recover_services_successfully "$release_sha"
+
+sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next
+sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
+sudo install -o root -g root -m 0600 \
+  "$bootstrap_marker_source" /etc/set-livre/bootstrap-in-progress.sha256
+sudo install -o root -g root -m 0600 \
+  "$rollback_source" /opt/set-livre/.activation-rollback
+rm -f -- "$test_state"/*
+if sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=bootstrap-sigkill \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services; then
+  fail "recovery de bootstrap sobreviveu ao SIGKILL injetado."
+fi
+privileged_regular_file_exists /etc/set-livre/bootstrap-recovery-in-progress.sha256 \
+  || fail "SIGKILL consumiu a fase durável do recovery."
+! privileged_path_exists /etc/set-livre/bootstrap-in-progress.sha256 \
+  || fail "SIGKILL executou trap que deveria ter sido inatingível."
+privileged_regular_file_exists /opt/set-livre/.activation-rollback \
+  || fail "SIGKILL consumiu o rollback necessário ao recovery."
+sudo env \
+  PATH="$fake_bin:$PATH" \
+  SET_LIVRE_TEST_PHASE=success \
+  SET_LIVRE_TEST_STATE="$test_state" \
+  bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --seal-recovery
+sudo grep --fixed-strings --line-regexp "$host_digest" \
+  /etc/set-livre/bootstrap-in-progress.sha256 >/dev/null \
+  || fail "recovery selado não restaurou o bloqueio autenticado de bootstrap."
+grep --fixed-strings --line-regexp \
+  'stop set-livre-web.service set-livre-backoffice.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "selamento pós-SIGKILL não interrompeu os serviços."
+recover_services_successfully "$release_sha"
+! privileged_path_exists /etc/set-livre/bootstrap-recovery-in-progress.sha256 \
+  || fail "recovery terminal deixou fase durável residual."
 
 sudo install -o root -g root -m 0600 "$rollback_source" /opt/set-livre/.activation-rollback
 sudo ln --symbolic --force "/opt/set-livre/releases/${retention_sha}" /opt/set-livre/current.next

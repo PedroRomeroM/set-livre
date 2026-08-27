@@ -121,7 +121,11 @@ esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, a instância oneshot `@link`
 dos apps. Em paralelo, uma path unit observa o marcador e dispara a instância `@services`, que aguarda
 o lock do deploy por no máximo cinco minutos e estabiliza serviços e health após `SIGKILL`; essa
 instância depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze
-minutos, suficiente para o lock e para os dois health checks limitados. Recuperar o link nunca consome o marcador; todos os caminhos
+minutos, suficiente para o lock e para os dois health checks limitados. Uma fase root-only adicional é
+publicada em disco antes de remover o blocker do bootstrap e permanece até o readiness terminal. Se o
+processo recebe `SIGKILL`, `ExecStopPost` recompõe o blocker a partir dessa fase e interrompe os apps; se
+o host perde energia, `@link` faz o mesmo antes que as units possam iniciar. O link só é alterado depois
+de autenticar blocker/fase, digest instalado e manifesto da release. Recuperar o link nunca consome o marcador; todos os caminhos
 de rollback, boot e retry só o removem depois de estabilizar os serviços e provar readiness interno e
 HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os serviços. A path unit
 apenas encerra sem trabalho se o deploy normal já removeu o marcador. Rollback incapaz de voltar ao
@@ -184,6 +188,7 @@ Diretórios e identidades:
 /etc/set-livre/host-config.sha256 root:setlivre 0640
 /etc/set-livre/host-config.previous.sha256 root:setlivre 0640, somente durante bootstrap
 /etc/set-livre/bootstrap-in-progress.sha256 root:root 0600, somente durante bootstrap
+/etc/set-livre/bootstrap-recovery-in-progress.sha256 root:root 0600, até readiness terminal
 /etc/set-livre/supabase-root-2021-ca.crt root:root 0644
 ```
 
@@ -197,7 +202,8 @@ inconsistente. Antes de escrever qualquer chave, o bootstrap exige nomes, UIDs n
 primários e suplementares exatos, ausência de membros reversos inesperados, homes, shells e senhas
 bloqueadas para as três identidades; uma conta preexistente divergente falha fechada. Home e `.ssh` do
 deployer são root-owned, cada diretório gerenciado é aberto com `O_NOFOLLOW` antes de qualquer mudança
-de owner ou modo, inclusive `/opt/set-livre` e `releases`; sem marcador válido, uma raiz operacional já
+de owner ou modo, percorrendo cada componente desde `/`, inclusive `/opt/set-livre`, `releases` e toda a
+cadeia `/var/www/set-livre-acme/.well-known/acme-challenge`; sem marcador válido, uma raiz operacional já
 existente é recusada. Em retry gerenciado, a cadeia existente também é validada antes de consultar o
 rollback ou remover um `current` pendente. Somente `incoming` permanece gravável pelo deployer. Em
 seguida, o bootstrap exige
@@ -237,14 +243,16 @@ de `bootstrap-in-progress`; um reboot durante as mutações não reinicia a rele
 integralmente as superfícies estáticas, o bootstrap publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico enquanto ainda mantém o marcador transitório; o
 instalador de release rejeita esse estado. Quando a release é compatível, o bootstrap arma primeiro o
-marcador de rollback para a própria raiz SHA e só então remove o in-progress que bloqueia as units. A
+marcador de rollback para a própria raiz SHA, persiste a fase de recovery e só então remove o in-progress
+que bloqueia as units. A
 recuperação existente permanece responsável pela transição até os dois readiness internos e o HTTPS
-público passarem. Quando os dois marcadores coexistem após uma interrupção, ela só libera os serviços
-se `bootstrap-in-progress`, `host-config.sha256` e o digest do manifesto da release apontada forem
+público passarem. Quando os marcadores coexistem após uma interrupção, ela só libera os serviços se o
+blocker ou a fase durável, `host-config.sha256` e o digest do manifesto da release apontada forem
 idênticos e tiverem tipo, owner e modo exatos. Essa autenticação termina antes de qualquer troca de
 `current`; estado inválido não altera o link ativo. Falha de readiness republica atomicamente o bloqueio de
-bootstrap antes de parar os serviços e preserva o rollback para retry; estado divergente permanece
-intocado e falha fechado. Reboot ou `SIGKILL` nessa janela relê o marcador e estabiliza a mesma release.
+bootstrap antes de parar os serviços e preserva fase e rollback para retry; estado divergente permanece
+intocado e falha fechado. Reboot relê a fase antes do start; `SIGKILL` aciona o selamento do systemd e
+estabiliza a mesma release em uma nova tentativa.
 Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
@@ -298,16 +306,20 @@ mesmos bytes.
 
 Nginx substitui `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` e `X-Forwarded-For`; o último recebe
 somente `$remote_addr`, nunca uma cadeia fornecida pelo cliente. Respostas autenticadas não são
-cacheadas pelo proxy. O `X-Request-Id` recebido é encaminhado sem reformatar para que a validação UUID
-da aplicação o preserve ou substitua. `/api/auth/*` e `/api/commands` também recebem um limiter de borda por IP, com
+cacheadas pelo proxy. A borda transforma o `$request_id` interno em UUIDv4, descarta qualquer
+`X-Request-Id` fornecido pelo cliente, encaminha o valor confiável ao app e o publica em toda resposta
+que possua headers; até conexões `444` sem resposta conservam o mesmo identificador no log.
+`/api/auth/*` e `/api/commands` também recebem um limiter de borda por IP, com
 média de uma request por segundo, burst de 30 sem atraso e resposta `429`. Demais rotas usam chave
-vazia e não consomem essa zona; os limiters específicos do app continuam sendo a segunda camada.
+vazia e não consomem essa zona; os limiters específicos do app continuam sendo a segunda camada. O
+diagnóstico por-request do limiter fica abaixo do threshold do error log para não reintroduzir IP ou
+target fora do access log redigido.
 Hosts desconhecidos são recusados. Nesta fase, somente o Host literal `147.15.97.227` chega ao web; o
 backoffice não possui virtual host público. Todas as respostas públicas recebem `X-Robots-Tag` com
 `noindex`, e `/robots.txt` bloqueia crawling. A validação estrita de origem usa a mesma origem HTTPS.
 Cada bloco `server` substitui o access log `combined` herdado por JSON redigido mantido no repositório.
-O registro conserva horário, método, status, bytes, durações e o `X-Request-Id` efetivamente enviado pela
-aplicação, mas não persiste IP, host, target/query, referer ou user-agent. O IP continua existindo apenas
+O registro conserva horário, método, status, bytes, durações e o request ID confiável gerado pela borda,
+mas não persiste IP, host, target/query, referer ou user-agent. O IP continua existindo apenas
 na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 
 ## Banco de produção
@@ -362,7 +374,7 @@ O domínio permanece sem apontamento nesta fase por decisão explícita do respo
 temporária é o IPv4 reservado em HTTPS. Let's Encrypt oferece certificados de IP de curta duração, e o
 Certbot passou a suportar emissão por webroot para IP a partir da versão 5.4. O bootstrap remove a
 distribuição antiga do Ubuntu, instala a versão oficial estável via Snap, exige no mínimo 5.4, prepara o
-webroot ACME e habilita o timer de renovação. Referências oficiais:
+webroot ACME abrindo cada componente com `O_NOFOLLOW` e habilita o timer de renovação. Referências oficiais:
 [disponibilidade geral de certificados de IP](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability.html)
 e [suporte no Certbot 5.4](https://letsencrypt.org/2026/03/11/shorter-certs-certbot).
 
