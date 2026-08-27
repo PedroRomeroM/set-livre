@@ -466,7 +466,7 @@ verify_privileged_installer_upload_lock() (
   local deploy_process=""
   local upload_status
   # Invocada indiretamente pelo trap local do probe.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   cleanup_lock_probe() {
     touch "$test_state/incoming-lock-release"
     if [[ -n ${deploy_process} ]] && kill -0 "$deploy_process" 2>/dev/null; then
@@ -522,7 +522,7 @@ assert_symlinked_release_component_rejected() (
   fi
   [[ ! -e ${backup} && ! -L ${backup} ]] || fail "backup do probe de symlink já existe."
   # Invocada indiretamente pelo trap local do probe.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   restore_release_component() {
     if [[ -L ${link_path} ]]; then
       sudo rm -f -- "$link_path"

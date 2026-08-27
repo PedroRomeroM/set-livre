@@ -158,10 +158,11 @@
         </p>
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
-          multiengine, acessibilidade, builds standalone e contratos de host. Testes não usam retry,
-          timeout ampliado ou relaxamento de asserção para mascarar falhas; uma falha Playwright
-          retém seus artifacts diagnósticos por sete dias, enquanto resultados de cada execução
-          permanecem no PR e nos checks.
+          multiengine, acessibilidade, builds standalone e contratos de host. Callbacks usados
+          apenas por traps têm compatibilidade estática anotada de forma pontual, sem desativar
+          regra global. Testes não usam retry, timeout ampliado ou relaxamento de asserção para
+          mascarar falhas; uma falha Playwright retém seus artifacts diagnósticos por sete dias,
+          enquanto resultados de cada execução permanecem no PR e nos checks.
         </p>
         <p>
           O bootstrap local fixa o named pipe/socket Docker canônico antes de qualquer operação

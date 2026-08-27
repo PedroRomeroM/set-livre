@@ -96,6 +96,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
   standalone sob as mesmas fronteiras instaladas na VM, e recusa `current` apontado para um filho da
   release em vez de sua raiz SHA exata;
+- callbacks de cleanup invocados exclusivamente por `trap` anotam pontualmente `SC2317`/`SC2329`,
+  preservando o gate no ShellCheck `0.9.0` do runner sem desativar regra global nem ocultar finding real;
 - o instalador privilegiado readquire o lock de upload depois do `sudo` e o laboratório prova que uma
   sessão concorrente não substitui os inputs enquanto eles viram cópias root-only;
 - `/opt/set-livre` e `releases` são abertos por handles `O_NOFOLLOW` com owner, grupo e modo exatos; probes
