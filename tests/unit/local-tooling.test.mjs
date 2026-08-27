@@ -1128,6 +1128,19 @@ describe("local tooling contracts", () => {
     expect(browserDelivery).toContain("retention-days: 7");
   });
 
+  it("keeps the static guard against prohibited Playwright constructs", () => {
+    const docsCheck = readFileSync(
+      new URL("../../scripts/docs-check.mjs", import.meta.url),
+      "utf8",
+    );
+
+    expect(docsCheck).toContain('walk(resolve(repositoryRoot, "tests/e2e"))');
+    expect(docsCheck).toContain("pattern: /\\.only\\s*\\(/u");
+    expect(docsCheck).toContain("pattern: /\\.skip\\s*\\(/u");
+    expect(docsCheck).toContain("pattern: /waitForTimeout\\s*\\(/u");
+    expect(docsCheck).toContain("for (const path of playwrightFiles)");
+  });
+
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const workflow = readFileSync(

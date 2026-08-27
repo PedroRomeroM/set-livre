@@ -69,6 +69,21 @@ for (const path of markdownFiles) {
   }
 }
 
+const playwrightFiles = walk(resolve(repositoryRoot, "tests/e2e")).filter((path) =>
+  [".ts", ".tsx"].includes(extname(path)),
+);
+const prohibitedPlaywrightConstructs = [
+  { label: ".only", pattern: /\.only\s*\(/u },
+  { label: ".skip", pattern: /\.skip\s*\(/u },
+  { label: "waitForTimeout", pattern: /waitForTimeout\s*\(/u },
+];
+for (const path of playwrightFiles) {
+  const contents = readFileSync(path, "utf8");
+  for (const { label, pattern } of prohibitedPlaywrightConstructs) {
+    if (pattern.test(contents)) errors.push(`Spec Playwright contém ${label}: ${path}`);
+  }
+}
+
 const featureDirectory = resolve(repositoryRoot, "docs/features");
 const featureFiles = readdirSync(featureDirectory)
   .filter((name) => /^FEAT-\d{3}-.+\.md$/u.test(name))

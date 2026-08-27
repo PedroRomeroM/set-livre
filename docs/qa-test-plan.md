@@ -74,7 +74,8 @@ dezenas de testes.
 - backoffice separado em `127.0.0.1:3001`.
 
 Os testes são serializados por padrão porque compartilham um banco local destrutivo. Não há retry
-permanente nem `waitForTimeout`.
+permanente nem `waitForTimeout`. O gate `docs:check` varre todos os specs TypeScript/TSX em
+`tests/e2e` e falha se encontrar `waitForTimeout`, `.only` ou `.skip`.
 
 ## Segurança do E2E
 
