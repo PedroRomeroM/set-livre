@@ -88,9 +88,13 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   inclusive que uma publishable key de outro projeto seja combinada com a URL local;
 - o ambiente Supabase local preserva as permissões exigidas pelos serviços oficiais sem ampliar o
   acesso das roles da aplicação;
+- a fronteira de catálogos prova o controle compensatório do ADR-019: leitura gerenciada só é aceita
+  quando inexiste qualquer setting de role/database com nome sensível, e a combinação falha fechada;
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
   standalone sob as mesmas fronteiras instaladas na VM, e recusa `current` apontado para um filho da
   release em vez de sua raiz SHA exata;
+- o bootstrap remove somente o symlink `current` pendente antes de validar a release ativa, permitindo
+  que o próximo artifact aprovado repare um destino perdido sem aceitar ponteiro ambíguo;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
   essas dependências ainda não estiverem disponíveis, aguarda o lock por no máximo cinco minutos dentro
   de uma unit com orçamento de doze minutos e só o consome depois de health interno e público;

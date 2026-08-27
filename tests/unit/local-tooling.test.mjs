@@ -203,7 +203,9 @@ describe("local tooling contracts", () => {
     const pendingPublish = bootstrap.indexOf(
       'mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"',
     );
-    const activeReleaseInspection = bootstrap.indexOf("if [[ -e /opt/set-livre/current ]]; then");
+    const activeReleaseInspection = bootstrap.indexOf(
+      "if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then",
+    );
     const finalDigestPublish = bootstrap.indexOf(
       'mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
     );
@@ -443,6 +445,31 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("[[ ${previous_release} =~ ^${RELEASES_DIRECTORY}/[0-9a-f]{40}$");
     expect(hostVerification).toContain("current aninhado foi aceito como raiz de release anterior");
     expect(hostVerification).toContain("current aninhado publicou marcador de rollback inválido");
+  });
+
+  it("clears a dangling current link before validating an active release", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const cleanupDeclaration = bootstrap.indexOf("clear_dangling_current_link() {");
+    const cleanupInvocation = bootstrap.indexOf(
+      "\nclear_dangling_current_link\n",
+      cleanupDeclaration + 1,
+    );
+    const activeReleaseValidation = bootstrap.indexOf(
+      "if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then",
+      cleanupInvocation,
+    );
+
+    expect(bootstrap).toContain("clear_dangling_current_link() {");
+    expect(bootstrap).toContain("if [[ -L ${current_link} && ! -e ${current_link} ]]; then");
+    expect(bootstrap).toContain('rm -f -- "$current_link"');
+    expect(cleanupDeclaration).toBeGreaterThan(-1);
+    expect(cleanupInvocation).toBeGreaterThan(cleanupDeclaration);
+    expect(activeReleaseValidation).toBeGreaterThan(cleanupInvocation);
+    expect(
+      bootstrap.match(
+        /if \[\[ -e \/opt\/set-livre\/current \|\| -L \/opt\/set-livre\/current \]\]; then/gu,
+      ),
+    ).toHaveLength(2);
   });
 
   it("restricts deployment SSH and fences releases to the installed host contract", () => {

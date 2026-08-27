@@ -1,6 +1,6 @@
 begin;
 
-select plan(40);
+select plan(41);
 
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
@@ -195,6 +195,45 @@ select ok(
 select ok(
   private.managed_runtime_boundaries_are_ready(),
   'fronteiras gerenciadas de catálogo, HTTP e database estão seguras'
+);
+
+select ok(
+  exists (
+    select 1
+    from pg_catalog.pg_db_role_setting as setting
+    cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
+    where pg_catalog.split_part(configuration.value, '=', 1)
+      ~* '(^|[._-])(secret|password|token|credential|key)([._-]|$)'
+  )
+    and not exists (
+      select 1
+      from (
+        values
+          ('anon'::text),
+          ('authenticated'::text),
+          ('service_role'::text),
+          ('app_dal'::text),
+          ('app_runtime_production'::text)
+      ) as managed_role(role_name)
+      cross join (
+        values
+          ('pg_catalog.pg_db_role_setting'::pg_catalog.regclass),
+          ('pg_catalog.pg_roles'::pg_catalog.regclass),
+          ('pg_catalog.pg_user'::pg_catalog.regclass)
+      ) as catalog(relation_oid)
+      where pg_catalog.has_table_privilege(
+          managed_role.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+        or pg_catalog.has_any_column_privilege(
+          managed_role.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+    )
+    and private.managed_runtime_boundaries_are_ready(),
+  'catálogo restrito compensa settings gerenciados do ambiente local'
 );
 
 grant create on database postgres to app_runtime_production;

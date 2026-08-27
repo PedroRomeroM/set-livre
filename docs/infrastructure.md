@@ -235,7 +235,9 @@ host e somente então systemd pode iniciar uma release compatível. Se os digest
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
 os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
-release aprovada. Se Nginx, systemd, CA, bootstrap, comando SSH ou instalador mudarem, o
+release aprovada. Um `current` pendente, cujo destino já não existe, é removido pelo bootstrap antes da
+validação de release para que uma entrega aprovada possa reparar o host. Se Nginx, systemd, CA,
+bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
 Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
@@ -314,10 +316,12 @@ outro membro de `app_runtime_production` também bloqueia o fluxo. Os catálogos
 `pg_roles`, `pg_user` e `pg_db_role_setting` pertencem ao `supabase_admin` do
 serviço, identidade que o `postgres` do projeto não pode assumir. O bootstrap local preserva para
 `supabase_storage_admin` somente a leitura de `pg_roles` necessária às migrations oficiais do Storage,
-sem reabrir esses catálogos às roles da aplicação. Quando a ACL gerenciada conserva
-leitura herdada, o banco precisa ter zero setting de role/database cujo nome denote secret, password,
-token, credential ou key. A role de produção não grava o antigo GUC vazio. No local, onde o bootstrap
-usa o superuser próprio da stack, os três catálogos continuam integralmente negados à DAL.
+sem reabrir esses catálogos às roles da aplicação. Como controle compensatório explícito do ADR-019,
+quando a ACL gerenciada conserva leitura herdada o banco precisa ter zero setting de role/database cujo
+nome denote secret, password, token, credential ou key; exigir simultaneamente a revogação gerenciada
+tornaria o contrato inexequível pela role do projeto. A role de produção não grava o antigo GUC vazio.
+No local, onde o bootstrap usa o superuser próprio da stack, os três catálogos continuam integralmente
+negados à DAL.
 
 A CA pública oficial do Supabase fica versionada em
 `ops/certificates/supabase-root-2021-ca.crt`. CI e serviços Node a adicionam à cadeia confiável por

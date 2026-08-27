@@ -143,6 +143,13 @@ finally:
 PYTHON
 }
 
+clear_dangling_current_link() {
+  local current_link="/opt/set-livre/current"
+  if [[ -L ${current_link} && ! -e ${current_link} ]]; then
+    rm -f -- "$current_link"
+  fi
+}
+
 assert_legacy_surface_absent() {
   local managed_host_contract="$1"
   local path unit setting
@@ -665,7 +672,8 @@ chown root:root "$bootstrap_marker_source"
 chmod 0600 "$bootstrap_marker_source"
 mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"
 bootstrap_marker_source=""
-if [[ -e /opt/set-livre/current ]]; then
+clear_dangling_current_link
+if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current ]] || fail "release ativa não é link simbólico."
   active_release="$(readlink --canonicalize-existing /opt/set-livre/current)"
   [[ ${active_release} =~ ^/opt/set-livre/releases/([0-9a-f]{40})$ \
@@ -1125,7 +1133,7 @@ host_configuration_published=true
 rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
 host_configuration_published=false
 
-if [[ -e /opt/set-livre/current ]]; then
+if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
     && -f /opt/set-livre/current/web/server.js \
     && -f /opt/set-livre/current/backoffice/apps/backoffice/server.js \

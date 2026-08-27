@@ -120,10 +120,12 @@
             transitório root-only, mantém boot e deploy bloqueados durante a mutação e encerra a
             transição estática antes de permitir que systemd reinicie uma release compatível. Os
             serviços exigem digest operacional ativo e ausência do in-progress; falha posterior de
-            health desativa o symlink sem invalidar o host terminal. Archives são pré-varridos em
-            streaming com limites próprios para headers PAX/GNU antes da extração. A reutilização de
-            um SHA compara deterministicamente toda a árvore instalada com a candidata e recusa
-            qualquer adulteração, mesmo quando o marcador do artifact não mudou.
+            health desativa o symlink sem invalidar o host terminal, e um ponteiro pendente é
+            removido antes da próxima validação para permitir reparo por release aprovada. Archives
+            são pré-varridos em streaming com limites próprios para headers PAX/GNU antes da
+            extração. A reutilização de um SHA compara deterministicamente toda a árvore instalada
+            com a candidata e recusa qualquer adulteração, mesmo quando o marcador do artifact não
+            mudou.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum

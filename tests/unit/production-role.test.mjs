@@ -184,6 +184,17 @@ describe("production role provisioning", () => {
       new URL("../../scripts/provision-production-role.mjs", import.meta.url),
       "utf8",
     );
+    const migration = readFileSync(
+      new URL(
+        "../../supabase/migrations/20260824000100_initial_production_baseline.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const cloudDeliveryDecision = readFileSync(
+      new URL("../../docs/adr/ADR-019-controlled-cloud-delivery.md", import.meta.url),
+      "utf8",
+    );
     const boundaryCheck = source.indexOf(
       "select private.managed_runtime_boundaries_are_ready() as ready",
     );
@@ -206,5 +217,12 @@ describe("production role provisioning", () => {
     expect(activationCommit).toBeGreaterThan(ambiguousActivationFence);
     expect(compensation).toBeGreaterThan(activationCommit);
     expect(source).not.toContain("app.settings.jwt_secret");
+    expect(migration).toContain("ADR-019 treats these as compensating safeguards");
+    expect(migration).toContain(
+      "(select ready from sensitive_catalog_access_is_restricted)\n      or (select ready from sensitive_settings_are_absent)",
+    );
+    expect(cloudDeliveryDecision).toContain(
+      "A produção não armazena segredo em GUC de role/database",
+    );
   });
 });

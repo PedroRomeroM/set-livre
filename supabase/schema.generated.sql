@@ -2204,6 +2204,9 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
     join pg_catalog.pg_roles as member on member.oid = membership.member
     where granted.rolname = 'app_runtime_production'
   )
+  -- ADR-019 treats these as compensating safeguards: Supabase Cloud owns the managed catalogs as
+  -- supabase_admin, so the project role cannot remove every provider-managed read ACL. A readable
+  -- catalog is accepted only while no role/database setting has a sensitive name.
   select coalesce(
     (
       (select ready from sensitive_catalog_access_is_restricted)
@@ -2220,7 +2223,7 @@ $_$;
 ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos expõem configuração sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos legíveis contêm setting sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
 
 
 
