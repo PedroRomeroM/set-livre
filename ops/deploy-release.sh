@@ -7,12 +7,14 @@ readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly HOST_CONFIGURATION_DIGEST="/etc/set-livre/host-config.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
+readonly UPLOAD_LOCK="${INCOMING_DIRECTORY}/.incoming.lock"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly PRODUCTION_URL="https://${PRODUCTION_IP}"
 readonly MAX_ARCHIVE_BYTES=$((256 * 1024 * 1024))
 readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
+readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
 
 fail() {
   printf 'deploy: %s\n' "$1" >&2
@@ -82,6 +84,38 @@ wait_for_public_health() {
   return 1
 }
 
+managed_release_directories_are_valid() {
+  python3 <<'PYTHON'
+import grp
+import os
+import stat
+
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+expected_group = grp.getgrnam("setlivre").gr_gid
+directory_fd = -1
+try:
+    directory_fd = os.open("/opt", flags)
+    for component in ("set-livre", "releases"):
+        child_fd = os.open(component, flags, dir_fd=directory_fd)
+        metadata = os.fstat(child_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != expected_group
+            or stat.S_IMODE(metadata.st_mode) != 0o750
+        ):
+            os.close(child_fd)
+            raise SystemExit("managed release directory metadata is invalid")
+        os.close(directory_fd)
+        directory_fd = child_fd
+except (KeyError, OSError) as error:
+    raise SystemExit("managed release directory chain is invalid") from error
+finally:
+    if directory_fd >= 0:
+        os.close(directory_fd)
+PYTHON
+}
+
 recover_link_from_marker() {
   recovered_release=""
   [[ -f ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]] || return 1
@@ -121,7 +155,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-link" ]]; then
     printf 'Deploy ativo; a recuperação pós-lock permanece armada.\n'
     exit 0
   fi
-  if [[ -e ${ROLLBACK_MARKER} ]]; then
+  if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
     printf 'Link da ativação interrompida recuperado; estabilização dos serviços permanece armada.\n'
   fi
@@ -132,7 +166,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   exec 9>/run/lock/set-livre-deploy.lock
   flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
     || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
-  if [[ -e ${ROLLBACK_MARKER} ]]; then
+  if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     recover_link_from_marker || fail "não foi possível recuperar a ativação interrompida."
     if [[ -z ${recovered_release} ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
@@ -163,6 +197,16 @@ release_sha="$1"
 expected_checksum="$2"
 [[ ${release_sha} =~ ^[0-9a-f]{40}$ ]] || fail "SHA de release inválido."
 [[ ${expected_checksum} =~ ^[0-9a-f]{64}$ ]] || fail "checksum inválido."
+managed_release_directories_are_valid \
+  || fail "raiz de releases não atende ao contrato físico e de permissões."
+[[ -d ${INCOMING_DIRECTORY} && ! -L ${INCOMING_DIRECTORY} \
+  && $(stat --format '%U:%G:%a' -- "$INCOMING_DIRECTORY") \
+    == "deploy-setlivre:deploy-setlivre:700" ]] \
+  || fail "diretório de entrada não atende ao contrato."
+[[ -f ${UPLOAD_LOCK} && ! -L ${UPLOAD_LOCK} \
+  && $(stat --format '%U:%G:%a' -- "$UPLOAD_LOCK") \
+    == "deploy-setlivre:deploy-setlivre:600" ]] \
+  || fail "lock de upload não atende ao contrato."
 
 incoming_archive="${INCOMING_DIRECTORY}/set-livre-${release_sha}.tar.gz"
 incoming_web_environment="${INCOMING_DIRECTORY}/web-${release_sha}.env"
@@ -170,6 +214,9 @@ incoming_backoffice_environment="${INCOMING_DIRECTORY}/backoffice-${release_sha}
 
 exec 9>/run/lock/set-livre-deploy.lock
 flock --nonblock 9 || fail "já existe outro deploy em execução."
+exec 8<>"$UPLOAD_LOCK"
+flock --exclusive --timeout "$UPLOAD_LOCK_TIMEOUT_SECONDS" 8 \
+  || fail "o lock de upload permaneceu ocupado durante a instalação."
 
 trusted_archive=""
 trusted_web_environment=""
@@ -270,7 +317,7 @@ trap 'on_signal TERM 143' TERM
 remove_stale_trusted_files \
   || fail "arquivo confiável residual possui identidade ou permissões inválidas."
 
-if [[ -e ${ROLLBACK_MARKER} ]]; then
+if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
   recover_link_from_marker || fail "não foi possível recuperar o deploy anterior."
   if [[ -z ${recovered_release} ]]; then
     systemctl stop set-livre-web.service set-livre-backoffice.service \
@@ -396,7 +443,6 @@ if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON
     fail("runtime", "publishable keys divergentes")
 PYTHON
 
-install -d -o root -g setlivre -m 0750 "$RELEASES_DIRECTORY"
 remove_stale_staging_directories \
   || fail "diretório de staging residual possui identidade ou permissões inválidas."
 staging_directory="$(mktemp --directory "${RELEASES_DIRECTORY}/.staging-${release_sha}.XXXXXX")"

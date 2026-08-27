@@ -5,7 +5,7 @@
 - Windows 11 nativo;
 - Node.js `24.18.0` e npm `11.19.0`;
 - Docker Desktop em Linux containers;
-- Supabase CLI instalada como dependência fixa do projeto;
+- Supabase CLI `2.116.0` instalada como dependência fixa do projeto;
 - navegadores Playwright instalados pelo próprio Playwright.
 
 WSL não é requisito. CI e produção continuam Linux x86_64, portanto build e release também são
@@ -32,6 +32,10 @@ CLI Supabase, o wrapper também exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes, c
 canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux), confirma containers Linux
 e fixa explicitamente esse endpoint no processo filho. Assim, `start`, `reset` e `stop` nunca alcançam
 um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
+
+A versão fixa inclui a correção oficial para colisão do endpoint de controle quando Set Livre e outra
+stack local coexistem. O `config.toml` também fixa `auto_expose_new_tables = false`: novas tabelas,
+views, sequences e funções não recebem acesso implícito das roles da Data API.
 
 ## Comandos cotidianos
 

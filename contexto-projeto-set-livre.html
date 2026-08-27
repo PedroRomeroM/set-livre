@@ -70,7 +70,10 @@
             </tr>
             <tr>
               <td>Desenvolvimento</td>
-              <td>Windows nativo, Node 24.18, npm 11.19 e Supabase local oficial.</td>
+              <td>
+                Windows nativo, Node 24.18, npm 11.19 e Supabase local oficial com exposição
+                implícita de novos objetos desativada.
+              </td>
             </tr>
             <tr>
               <td>Dados de produção</td>
@@ -117,15 +120,16 @@
             ou reboot. A recuperação de serviços aguarda rede online e Nginx antes de consumir o
             marcador de rollback e só o remove após health interno e público. O bootstrap só
             reutiliza diretórios existentes após validar o marcador operacional ou um marcador
-            transitório root-only, mantém boot e deploy bloqueados durante a mutação e encerra a
-            transição estática antes de permitir que systemd reinicie uma release compatível. Os
-            serviços exigem digest operacional ativo e ausência do in-progress; falha posterior de
-            health desativa o symlink sem invalidar o host terminal, e um ponteiro pendente é
-            removido antes da próxima validação para permitir reparo por release aprovada. Archives
-            são pré-varridos em streaming com limites próprios para headers PAX/GNU antes da
-            extração. A reutilização de um SHA compara deterministicamente toda a árvore instalada
-            com a candidata e recusa qualquer adulteração, mesmo quando o marcador do artifact não
-            mudou.
+            transitório root-only, abre as raízes de release sem seguir symlink e mantém boot e
+            deploy bloqueados durante a mutação. Antes de liberar uma release compatível, arma o
+            mesmo recovery de rollback e só o desarma após readiness; falha republica o bloqueio
+            antes de retirar o symlink. O instalador root readquire o lock fechado pelo sudo antes
+            de copiar os inputs, de modo que uploads concorrentes não alteram a release em
+            validação. Um ponteiro pendente é removido antes da próxima validação para permitir
+            reparo por release aprovada. Archives são pré-varridos em streaming com limites próprios
+            para headers PAX/GNU antes da extração. A reutilização de um SHA compara
+            deterministicamente toda a árvore instalada com a candidata e recusa qualquer
+            adulteração, mesmo quando o marcador do artifact não mudou.
           </li>
           <li>
             O login DAL só é habilitado após provar que não alcança <code>pg_net</code> e que nenhum

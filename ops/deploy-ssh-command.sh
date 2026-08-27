@@ -84,6 +84,8 @@ elif [[ ${original_command} =~ ^deploy\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
   expected_checksum="${BASH_REMATCH[2]}"
   cleanup_abandoned_uploads "$release_sha" \
     || fail "entrada abandonada possui contrato inválido."
+  flock --unlock 9
+  exec 9>&-
   exec sudo /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"
 else
   fail "comando remoto não autorizado."

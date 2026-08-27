@@ -196,12 +196,21 @@ describe("local tooling contracts", () => {
   it("permits reused runtime paths only after validating a retryable host state", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const markerValidation = bootstrap.indexOf("host_state_marker_is_valid() {");
-    const installedDetection = bootstrap.indexOf('"$HOST_CONFIGURATION_DIGEST"');
-    const previousDetection = bootstrap.indexOf('"$HOST_CONFIGURATION_PREVIOUS_DIGEST"');
-    const pendingDetection = bootstrap.indexOf('"$HOST_BOOTSTRAP_IN_PROGRESS"');
+    const installedDetection = bootstrap.indexOf(
+      '"$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"',
+      markerValidation,
+    );
+    const previousDetection = bootstrap.indexOf(
+      '"$HOST_CONFIGURATION_PREVIOUS_DIGEST" "root:setlivre:640"',
+      installedDetection,
+    );
+    const pendingDetection = bootstrap.indexOf(
+      '"$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600"',
+      previousDetection,
+    );
     const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');
     const pendingPublish = bootstrap.indexOf(
-      'mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+      'publish_bootstrap_in_progress "$host_configuration_digest"',
     );
     const activeReleaseInspection = bootstrap.indexOf(
       "if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then",
@@ -217,8 +226,19 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("root:setlivre:640");
     expect(bootstrap).toContain("root:root:600");
     expect(bootstrap).toContain("${#marker_lines[@]} -eq 1");
-    expect(bootstrap).toContain("for path in /opt/node-v24.18.0 /opt/setlivre; do");
     expect(bootstrap).toContain("if [[ ${managed_host_contract} == false ]]; then");
+    expect(bootstrap).toContain("for path in /opt/node-v24.18.0 /opt/set-livre /opt/setlivre; do");
+    expect(bootstrap).toContain("existing_release_directories_are_valid() {");
+    expect(bootstrap).toContain("os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW");
+    const existingRootsValidation = bootstrap.indexOf(
+      "existing_release_directories_are_valid",
+      bootstrap.indexOf("managed_host_contract=true"),
+    );
+    expect(existingRootsValidation).toBeGreaterThan(pendingDetection);
+    expect(existingRootsValidation).toBeLessThan(guardCall);
+    expect(existingRootsValidation).toBeLessThan(
+      bootstrap.indexOf("\nclear_dangling_current_link\n", guardCall),
+    );
     expect(installedDetection).toBeGreaterThan(markerValidation);
     expect(previousDetection).toBeGreaterThan(installedDetection);
     expect(pendingDetection).toBeGreaterThan(previousDetection);
@@ -395,6 +415,10 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain(
       "ensure_managed_directory /home/deploy-setlivre/incoming deploy-setlivre deploy-setlivre 0700",
     );
+    expect(bootstrap).toContain("ensure_managed_directory /opt/set-livre root setlivre 0750");
+    expect(bootstrap).toContain(
+      "ensure_managed_directory /opt/set-livre/releases root setlivre 0750",
+    );
     expect(bootstrap).toContain('chown root:deploy-setlivre "$authorized_keys_source"');
     expect(bootstrap).not.toContain(
       "install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/.ssh",
@@ -517,6 +541,12 @@ describe("local tooling contracts", () => {
     expect(deployBranch).toContain(
       'exec sudo /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"',
     );
+    expect(deployBranch.indexOf("flock --unlock 9")).toBeLessThan(
+      deployBranch.indexOf("exec 9>&-"),
+    );
+    expect(deployBranch.indexOf("exec 9>&-")).toBeLessThan(
+      deployBranch.indexOf("exec sudo /usr/local/sbin/set-livre-deploy"),
+    );
     expect(hostVerification).toContain(
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
@@ -545,6 +575,19 @@ describe("local tooling contracts", () => {
       expect(publishableFixture).toMatch(/^sb_publishable_[A-Za-z0-9_-]{12,}$/u);
     }
     expect(deploy).toContain("readiness HTTPS público");
+    expect(deploy).toContain("managed_release_directories_are_valid() {");
+    expect(deploy).toContain("os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW");
+    expect(deploy).toContain('readonly UPLOAD_LOCK="${INCOMING_DIRECTORY}/.incoming.lock"');
+    expect(deploy).toContain('exec 8<>"$UPLOAD_LOCK"');
+    expect(deploy).toContain('flock --exclusive --timeout "$UPLOAD_LOCK_TIMEOUT_SECONDS" 8');
+    expect(deploy.indexOf('exec 8<>"$UPLOAD_LOCK"')).toBeLessThan(
+      deploy.indexOf('trusted_archive="$(trust_incoming_file'),
+    );
+    expect(deploy).not.toContain('install -d -o root -g setlivre -m 0750 "$RELEASES_DIRECTORY"');
+    expect(hostVerification).toContain("verify_privileged_installer_upload_lock");
+    expect(hostVerification).toContain("upload concorrente alterou inputs");
+    expect(hostVerification).toContain("assert_symlinked_release_component_rejected root");
+    expect(hostVerification).toContain("assert_symlinked_release_component_rejected releases");
     expect(deploy).toContain("RETAINED_RELEASES=4");
     expect(deploy).toContain("hostConfiguration.sha256");
     expect(deploy).toContain(".runtime/web.env");
@@ -605,18 +648,47 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
     expect(bootstrap).toContain('wait_for_active_public_health "$active_release_sha"');
+    const bootstrapCleanup = bootstrap.slice(
+      bootstrap.indexOf("cleanup() {"),
+      bootstrap.indexOf("\ntrap cleanup EXIT"),
+    );
+    expect(bootstrapCleanup.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+      bootstrapCleanup.indexOf('rm -f -- "$HOST_CONFIGURATION_DIGEST"'),
+    );
+    expect(bootstrap).toContain("[[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]");
+    expect(
+      deploy.match(/if \[\[ -e \$\{ROLLBACK_MARKER\} \|\| -L \$\{ROLLBACK_MARKER\} \]\]; then/gu),
+    ).toHaveLength(3);
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     ).toBeLessThan(bootstrap.indexOf("systemctl restart set-livre-web.service"));
-    const terminalBootstrap = bootstrap.indexOf(
+    const recoveryArmed = bootstrap.indexOf(
+      'write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}"',
+    );
+    const bootstrapGateReleased = bootstrap.indexOf(
       'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
     );
+    const bootstrapRestart = bootstrap.indexOf("systemctl restart set-livre-web.service");
+    const bootstrapReadiness = bootstrap.indexOf(
+      'wait_for_active_public_health "$active_release_sha"',
+      bootstrapRestart,
+    );
+    const terminalBootstrap = bootstrap.indexOf(
+      "host_configuration_published=false",
+      bootstrapReadiness,
+    );
+    const recoveryDisarmed = bootstrap.indexOf('rm -f -- "$ROLLBACK_MARKER"', terminalBootstrap);
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
-    ).toBeLessThan(terminalBootstrap);
-    expect(terminalBootstrap).toBeLessThan(
-      bootstrap.indexOf("systemctl restart set-livre-web.service"),
-    );
+    ).toBeLessThan(recoveryArmed);
+    expect(recoveryArmed).toBeLessThan(bootstrapGateReleased);
+    expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
+    expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
+    expect(bootstrapReadiness).toBeLessThan(terminalBootstrap);
+    expect(terminalBootstrap).toBeLessThan(recoveryDisarmed);
+    expect(
+      bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
+    ).toHaveLength(2);
     expect(bootstrap).toContain(
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );

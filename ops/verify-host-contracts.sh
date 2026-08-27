@@ -68,7 +68,8 @@ deploy_password_hash="${deploy_password_hash%%:*}"
 sudo install -d -o deploy-setlivre -g deploy-setlivre -m 0700 /home/deploy-setlivre/incoming
 sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null \
   /home/deploy-setlivre/incoming/.incoming.lock
-sudo install -d -o root -g setlivre -m 0750 /etc/set-livre /opt/set-livre/releases
+sudo install -d -o root -g setlivre -m 0750 \
+  /etc/set-livre /opt/set-livre /opt/set-livre/releases
 
 sudo rm --force /etc/nginx/sites-enabled/default
 sudo install -m 0644 "$REPOSITORY_ROOT/ops/nginx/set-livre-http.conf" /etc/nginx/sites-available/set-livre
@@ -322,7 +323,15 @@ cat > "$fake_bin/install" <<'INSTALL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 state="${SET_LIVRE_TEST_STATE:?}"
+source="${@: -2:1}"
 destination="${!#}"
+if [[ ${SET_LIVRE_TEST_PHASE:-} == "incoming-lock" \
+  && ${source} == /home/deploy-setlivre/incoming/* \
+  && ${destination} == /var/tmp/set-livre-trusted.* \
+  && ! -e "$state/incoming-lock-once" ]]; then
+  touch "$state/incoming-lock-once" "$state/incoming-lock-ready"
+  while [[ ! -e "$state/incoming-lock-release" ]]; do /usr/bin/sleep 0.05; done
+fi
 if [[ ${SET_LIVRE_TEST_PHASE:-} == "environment" \
   && ${destination} == */.runtime/web.env \
   && ! -e "$state/environment-once" ]]; then
@@ -442,14 +451,106 @@ invoke_candidate() {
 invoke_candidate_through_forced_command() {
   local candidate_sha="$1"
   local candidate_checksum="$2"
+  local phase="${3:-success}"
   sudo --user deploy-setlivre -- \
     env \
     SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
-    SET_LIVRE_TEST_PHASE=success \
+    SET_LIVRE_TEST_PHASE="$phase" \
     SET_LIVRE_TEST_STATE="$test_state" \
     SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}" \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
+
+verify_privileged_installer_upload_lock() (
+  local candidate_sha="$1"
+  local deploy_process=""
+  local upload_status
+  # Invocada indiretamente pelo trap local do probe.
+  # shellcheck disable=SC2329
+  cleanup_lock_probe() {
+    touch "$test_state/incoming-lock-release"
+    if [[ -n ${deploy_process} ]] && kill -0 "$deploy_process" 2>/dev/null; then
+      kill -TERM "$deploy_process" 2>/dev/null || true
+      wait "$deploy_process" 2>/dev/null || true
+    fi
+  }
+  trap cleanup_lock_probe EXIT
+
+  rm -f -- "$test_state"/*
+  package_candidate "$candidate_sha"
+  upload_candidate "$candidate_sha"
+  invoke_candidate_through_forced_command \
+    "$candidate_sha" "$candidate_checksum" incoming-lock &
+  deploy_process=$!
+  for _ in {1..100}; do
+    [[ ! -e "$test_state/incoming-lock-ready" ]] || break
+    /usr/bin/sleep 0.05
+  done
+  [[ -e "$test_state/incoming-lock-ready" ]] \
+    || fail "instalador privilegiado não alcançou a cópia protegida."
+
+  if timeout --signal=TERM 0.5s \
+    sudo --user deploy-setlivre -- \
+      env SSH_ORIGINAL_COMMAND="upload-web-environment ${candidate_sha}" \
+      "$INSTALLED_DEPLOY_SSH_COMMAND" < "$candidate_web_environment"; then
+    fail "upload concorrente alterou inputs durante a instalação privilegiada."
+  else
+    upload_status=$?
+  fi
+  [[ ${upload_status} -eq 124 ]] \
+    || fail "upload concorrente falhou sem aguardar o lock privilegiado."
+
+  touch "$test_state/incoming-lock-release"
+  wait "$deploy_process"
+  deploy_process=""
+  assert_current_release "$candidate_sha"
+)
+
+assert_symlinked_release_component_rejected() (
+  local component="$1"
+  local backup external link_path metadata_before metadata_after output
+  external="$temporary_directory/release-root-probe-${component}"
+  output="$temporary_directory/release-root-probe-${component}.log"
+  mkdir -m 0711 "$external"
+  metadata_before="$(stat --format '%u:%g:%a' -- "$external")"
+  if [[ ${component} == root ]]; then
+    link_path=/opt/set-livre
+    backup=/opt/set-livre.host-contracts-backup
+  else
+    link_path=/opt/set-livre/releases
+    backup=/opt/set-livre/releases.host-contracts-backup
+  fi
+  [[ ! -e ${backup} && ! -L ${backup} ]] || fail "backup do probe de symlink já existe."
+  # Invocada indiretamente pelo trap local do probe.
+  # shellcheck disable=SC2329
+  restore_release_component() {
+    if [[ -L ${link_path} ]]; then
+      sudo rm -f -- "$link_path"
+    fi
+    if [[ -d ${backup} && ! -L ${backup} ]]; then
+      sudo mv --no-target-directory -- "$backup" "$link_path"
+    fi
+  }
+  trap restore_release_component EXIT
+
+  sudo mv --no-target-directory -- "$link_path" "$backup"
+  sudo ln --symbolic -- "$external" "$link_path"
+  # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
+  # shellcheck disable=SC2024
+  if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
+    "$(printf '0%.0s' {1..40})" "$(printf '0%.0s' {1..64})" --verify-only \
+    > "$output" 2>&1; then
+    fail "componente ${component} em symlink foi aceito como raiz de release."
+  fi
+  grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
+    "$output" >/dev/null \
+    || fail "componente ${component} em symlink falhou por motivo inesperado."
+  metadata_after="$(stat --format '%u:%g:%a' -- "$external")"
+  [[ ${metadata_after} == "$metadata_before" ]] \
+    || fail "probe ${component} alterou owner ou modo do alvo externo."
+  [[ -z $(find "$external" -mindepth 1 -print -quit) ]] \
+    || fail "probe ${component} escreveu no alvo externo."
+)
 
 assert_current_link() {
   local expected="$1"
@@ -521,6 +622,7 @@ assert_current_release "$release_sha"
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \
   == "root:setlivre-backoffice:640" ]] || fail "ambiente backoffice versionado tem permissões inválidas."
+verify_privileged_installer_upload_lock "$release_sha"
 
 nested_current_sha="$(printf 'facefeed%.0s' {1..5})"
 rm -f -- "$test_state"/*
@@ -659,4 +761,7 @@ wait "$lock_holder"
 wait "$recovery_process"
 assert_current_release "$release_sha"
 
-printf 'Uploads, ativação, rollback, interrupção, retenção e recuperação pós-lock verificados.\n'
+assert_symlinked_release_component_rejected root
+assert_symlinked_release_component_rejected releases
+
+printf 'Uploads, lock privilegiado, raízes físicas, ativação, rollback, interrupção, retenção e recuperação pós-lock verificados.\n'

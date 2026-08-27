@@ -84,6 +84,7 @@ describe("local Auth templates", () => {
   it("pins confirmation and recovery templates in the local Auth configuration", () => {
     const configuration = readFileSync(resolve(process.cwd(), "supabase/config.toml"), "utf8");
     expect(configuration).toContain("enable_confirmations = true");
+    expect(configuration).toContain("auto_expose_new_tables = false");
     expect(configuration).toContain("minimum_password_length = 10");
     expect(configuration).toContain('password_requirements = "lower_upper_letters_digits"');
     expect(configuration).toContain("[auth.email.template.confirmation]");

@@ -35,6 +35,7 @@ firewall_transition_active=false
 fail2ban_stopped=false
 digest_source=""
 bootstrap_marker_source=""
+recovery_marker_source=""
 host_configuration_published=false
 active_release_sha=""
 active_release_compatible=false
@@ -143,6 +144,73 @@ finally:
 PYTHON
 }
 
+existing_release_directories_are_valid() {
+  python3 <<'PYTHON'
+import contextlib
+import grp
+import os
+import stat
+
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+try:
+    with contextlib.ExitStack() as descriptors:
+        directory_fd = os.open("/opt", flags)
+        descriptors.callback(os.close, directory_fd)
+        expected_group = None
+        for component in ("set-livre", "releases"):
+            try:
+                child_fd = os.open(component, flags, dir_fd=directory_fd)
+            except FileNotFoundError:
+                break
+            descriptors.callback(os.close, child_fd)
+            if expected_group is None:
+                expected_group = grp.getgrnam("setlivre").gr_gid
+            metadata = os.fstat(child_fd)
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != expected_group
+                or stat.S_IMODE(metadata.st_mode) != 0o750
+            ):
+                raise SystemExit("existing release directory metadata is invalid")
+            directory_fd = child_fd
+except (KeyError, OSError) as error:
+    raise SystemExit("existing release directory chain is invalid") from error
+PYTHON
+}
+
+publish_bootstrap_in_progress() {
+  local digest="$1"
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  bootstrap_marker_source="$(mktemp "${HOST_STATE_DIRECTORY}/.bootstrap-in-progress.XXXXXX")" \
+    || return 1
+  if ! printf '%s\n' "$digest" > "$bootstrap_marker_source" \
+    || ! chown root:root "$bootstrap_marker_source" \
+    || ! chmod 0600 "$bootstrap_marker_source" \
+    || ! mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"; then
+    rm -f -- "$bootstrap_marker_source"
+    bootstrap_marker_source=""
+    return 1
+  fi
+  bootstrap_marker_source=""
+}
+
+write_bootstrap_recovery_marker() {
+  local target="$1"
+  [[ ${target} =~ ^/opt/set-livre/releases/[0-9a-f]{40}$ \
+    && -d ${target} && ! -L ${target} ]] || return 1
+  recovery_marker_source="$(mktemp /opt/set-livre/.activation-rollback.XXXXXX)" || return 1
+  if ! printf '%s\n' "$target" > "$recovery_marker_source" \
+    || ! chown root:root "$recovery_marker_source" \
+    || ! chmod 0600 "$recovery_marker_source" \
+    || ! mv --force -- "$recovery_marker_source" "$ROLLBACK_MARKER"; then
+    rm -f -- "$recovery_marker_source"
+    recovery_marker_source=""
+    return 1
+  fi
+  recovery_marker_source=""
+}
+
 clear_dangling_current_link() {
   local current_link="/opt/set-livre/current"
   if [[ -L ${current_link} && ! -e ${current_link} ]]; then
@@ -197,7 +265,7 @@ assert_legacy_surface_absent() {
       || fail "superfície legada ainda instalada: ${path}."
   done
   if [[ ${managed_host_contract} == false ]]; then
-    for path in /opt/node-v24.18.0 /opt/setlivre; do
+    for path in /opt/node-v24.18.0 /opt/set-livre /opt/setlivre; do
       [[ ! -e ${path} && ! -L ${path} ]] \
         || fail "superfície legada ainda instalada: ${path}."
     done
@@ -532,8 +600,12 @@ cleanup() {
   [[ -z ${previous_persisted_ipv6} ]] || rm -f -- "$previous_persisted_ipv6"
   [[ -z ${digest_source} ]] || rm -f -- "$digest_source"
   [[ -z ${bootstrap_marker_source} ]] || rm -f -- "$bootstrap_marker_source"
+  [[ -z ${recovery_marker_source} ]] || rm -f -- "$recovery_marker_source"
   [[ -z ${authorized_keys_source} ]] || rm -f -- "$authorized_keys_source"
-  [[ ${host_configuration_published} == false ]] || rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
+  if [[ ${host_configuration_published} == true ]]; then
+    systemctl stop set-livre-web.service set-livre-backoffice.service || true
+    rm -f -- "$HOST_CONFIGURATION_DIGEST" || true
+  fi
   [[ ${fail2ban_stopped} == false ]] || systemctl start fail2ban || true
 }
 trap cleanup EXIT
@@ -622,6 +694,10 @@ if host_state_marker_is_valid \
   "$HOST_BOOTSTRAP_IN_PROGRESS" "root:root:600" "marcador de bootstrap em andamento"; then
   managed_host_contract=true
 fi
+if [[ ${managed_host_contract} == true ]]; then
+  existing_release_directories_are_valid \
+    || fail "raízes de release existentes não atendem ao contrato físico e de permissões."
+fi
 assert_legacy_surface_absent "$managed_host_contract"
 
 host_configuration_digest="$(python3 - "$SCRIPT_DIRECTORY" <<'PYTHON'
@@ -657,7 +733,7 @@ PYTHON
 [[ ${host_configuration_digest} =~ ^[0-9a-f]{64}$ ]] \
   || fail "digest operacional inválido."
 
-[[ ! -e ${ROLLBACK_MARKER} ]] \
+[[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]] \
   || fail "há uma ativação interrompida; recupere-a antes de alterar o host."
 if [[ -e ${HOST_STATE_DIRECTORY} || -L ${HOST_STATE_DIRECTORY} ]]; then
   [[ -d ${HOST_STATE_DIRECTORY} && ! -L ${HOST_STATE_DIRECTORY} \
@@ -666,12 +742,8 @@ if [[ -e ${HOST_STATE_DIRECTORY} || -L ${HOST_STATE_DIRECTORY} ]]; then
 else
   install -d -o root -g root -m 0755 "$HOST_STATE_DIRECTORY"
 fi
-bootstrap_marker_source="$(mktemp "${HOST_STATE_DIRECTORY}/.bootstrap-in-progress.XXXXXX")"
-printf '%s\n' "$host_configuration_digest" > "$bootstrap_marker_source"
-chown root:root "$bootstrap_marker_source"
-chmod 0600 "$bootstrap_marker_source"
-mv --force -- "$bootstrap_marker_source" "$HOST_BOOTSTRAP_IN_PROGRESS"
-bootstrap_marker_source=""
+publish_bootstrap_in_progress "$host_configuration_digest" \
+  || fail "não foi possível publicar o marcador de bootstrap."
 clear_dangling_current_link
 if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current ]] || fail "release ativa não é link simbólico."
@@ -847,7 +919,12 @@ if ! account_identity_is_canonical \
   fail "identidade deploy-setlivre não pôde ser restringida."
 fi
 
-install -d -o root -g setlivre -m 0750 "$HOST_STATE_DIRECTORY" /opt/set-livre /opt/set-livre/releases
+ensure_managed_directory "$HOST_STATE_DIRECTORY" root setlivre 0750 \
+  || fail "diretório de estado operacional é inválido."
+ensure_managed_directory /opt/set-livre root setlivre 0750 \
+  || fail "raiz operacional /opt/set-livre é inválida."
+ensure_managed_directory /opt/set-livre/releases root setlivre 0750 \
+  || fail "diretório de releases é inválido."
 install -d -o root -g root -m 0755 /var/www/set-livre-acme/.well-known/acme-challenge
 install -o root -g root -m 0644 "${SUPABASE_CA_SOURCE}" /etc/set-livre/supabase-root-2021-ca.crt
 ensure_managed_directory /home/deploy-setlivre root deploy-setlivre 0750 \
@@ -1130,8 +1207,11 @@ chmod 0640 "$digest_source"
 mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"
 digest_source=""
 host_configuration_published=true
+if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
+  write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}" \
+    || fail "não foi possível armar a recuperação da release durante o bootstrap."
+fi
 rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
-host_configuration_published=false
 
 if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
@@ -1154,7 +1234,9 @@ if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
         && $(readlink --canonicalize-existing /opt/set-livre/current) \
           == "/opt/set-livre/releases/${active_release_sha}" ]] \
         || fail "release ativa mudou durante a validação pós-bootstrap."
-      rm -f -- /opt/set-livre/current
+      publish_bootstrap_in_progress "$host_configuration_digest" \
+        || fail "não foi possível bloquear a release após falha de readiness."
+      rm -f -- /opt/set-livre/current "$ROLLBACK_MARKER"
       fail "release compatível não recuperou readiness; reenvie uma release aprovada."
     fi
   else
@@ -1170,6 +1252,10 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
+host_configuration_published=false
+if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
+  rm -f -- "$ROLLBACK_MARKER"
+fi
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

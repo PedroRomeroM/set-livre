@@ -88,11 +88,19 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   inclusive que uma publishable key de outro projeto seja combinada com a URL local;
 - o ambiente Supabase local preserva as permissões exigidas pelos serviços oficiais sem ampliar o
   acesso das roles da aplicação;
+- a Supabase CLI foi atualizada para `2.116.0`, que corrige a colisão do control endpoint entre stacks
+  locais coexistentes; o novo default de exposição foi neutralizado explicitamente com
+  `auto_expose_new_tables = false` e possui regressão unitária;
 - a fronteira de catálogos prova o controle compensatório do ADR-019: leitura gerenciada só é aceita
   quando inexiste qualquer setting de role/database com nome sensível, e a combinação falha fechada;
 - o laboratório Ubuntu cobre upload, ativação, interrupção, recuperação, rollback e smoke do artifact
   standalone sob as mesmas fronteiras instaladas na VM, e recusa `current` apontado para um filho da
   release em vez de sua raiz SHA exata;
+- o instalador privilegiado readquire o lock de upload depois do `sudo` e o laboratório prova que uma
+  sessão concorrente não substitui os inputs enquanto eles viram cópias root-only;
+- `/opt/set-livre` e `releases` são abertos por handles `O_NOFOLLOW` com owner, grupo e modo exatos; probes
+  nas duas posições recusam symlink sem alterar ou escrever no alvo externo, e o bootstrap valida a
+  cadeia de um retry antes de consultar rollback ou `current`;
 - o bootstrap remove somente o symlink `current` pendente antes de validar a release ativa, permitindo
   que o próximo artifact aprovado repare um destino perdido sem aceitar ponteiro ambíguo;
 - a recuperação de serviços no boot só inicia depois de rede online e Nginx, preservando o marcador se
@@ -101,8 +109,8 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
 - o laboratório encerra cada falha que preserva o marcador com um retry bem-sucedido e prova sua remoção
   antes de iniciar outro cenário, sem compartilhar estado intermediário entre casos;
 - a recuperação anterior a um novo deploy exige o SHA esperado nos health checks internos e no HTTPS
-  público; a reexecução do bootstrap valida o mesmo SHA depois de tornar a configuração estática
-  terminal e desativa o symlink se a release compatível não recuperar readiness;
+  público; a reexecução do bootstrap arma o rollback antes de liberar as units e só o remove depois de
+  validar o mesmo SHA, enquanto falha de health republica o bloqueio antes de desativar o symlink;
 - a reexecução do bootstrap aceita os diretórios reutilizados pela arquitetura atual somente depois de
   validar tipo, owner, modo e conteúdo do marcador operacional ou dos marcadores transitórios de retry;
 - os grupos que protegem ambientes e entrega recusam membros reversos inesperados; home e `.ssh` do
@@ -111,7 +119,7 @@ viewports aplicáveis, safe areas, zoom de 200% e Axe.
   remoção recursiva, preservando alvos externos;
 - o bootstrap publica o in-progress, preserva e invalida o digest ativo e interrompe os serviços antes da
   primeira alteração; as units exigem digest ativo e ausência do marcador, o deploy recusa a transição,
-  e uma release compatível só reinicia depois que a configuração estática chega ao estado terminal;
+  e uma release compatível permanece sob o recovery de rollback até readiness interno e público;
 - a chave de deploy só substitui `authorized_keys` após validação estrutural integral de um único blob
   Ed25519; a extração pré-varre headers em streaming, limita metadata PAX/GNU e interrompe a leitura no
   header lógico 20.001 sem materializar entradas ilimitadas;

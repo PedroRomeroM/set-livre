@@ -197,7 +197,10 @@ inconsistente. Antes de escrever qualquer chave, o bootstrap exige nomes, UIDs n
 primários e suplementares exatos, ausência de membros reversos inesperados, homes, shells e senhas
 bloqueadas para as três identidades; uma conta preexistente divergente falha fechada. Home e `.ssh` do
 deployer são root-owned, cada diretório gerenciado é aberto com `O_NOFOLLOW` antes de qualquer mudança
-de owner ou modo, e somente `incoming` permanece gravável pelo deployer. Em seguida, o bootstrap exige
+de owner ou modo, inclusive `/opt/set-livre` e `releases`; sem marcador válido, uma raiz operacional já
+existente é recusada. Em retry gerenciado, a cadeia existente também é validada antes de consultar o
+rollback ou remover um `current` pendente. Somente `incoming` permanece gravável pelo deployer. Em
+seguida, o bootstrap exige
 exatamente uma chave pública, decodifica o blob SSH, comprova o algoritmo Ed25519 e os 32 bytes de
 material e substitui `authorized_keys` por rename atômico. A chave instalada usa
 `authorized_keys command=` e aceita apenas
@@ -210,7 +213,10 @@ Uploads usam lock próprio e o diretório `incoming` conserva no máximo o SHA e
 cada comando, nomes temporários interrompidos e artifacts de outro SHA são removidos somente após
 validar nome, arquivo regular, owner e modo; entrada divergente bloqueia o fluxo. Assim, cancelamento
 entre upload e deploy não acumula archives de até 256 MiB nem pode apagar caminho arbitrário. Sob o
-lock de deploy, a mesma regra remove cópias confiáveis residuais em `/var/tmp` antes de criar outra.
+lock de deploy, o instalador privilegiado valida novamente o diretório e o arquivo de lock, readquire o
+lock de upload fechado pelo `sudo` e o mantém enquanto copia os três inputs para arquivos root-only. A
+mesma regra remove cópias confiáveis residuais em `/var/tmp` antes de criar outra. Assim, outro upload
+não pode substituir archive ou ambiente entre validação e cópia, nem mesmo em retry do mesmo SHA.
 
 Depois de adquirir o lock exclusivo, o instalador remove somente diretórios residuais que correspondem
 exatamente a `.staging-<sha>.<sufixo-mktemp>`, são diretórios reais dentro de `releases` e pertencem a
@@ -230,25 +236,30 @@ pacotes ou qualquer superfície gerenciada. As units exigem simultaneamente o di
 de `bootstrap-in-progress`; um reboot durante as mutações não reinicia a release. Depois de validar
 integralmente as superfícies estáticas, o bootstrap publica o novo
 `/etc/set-livre/host-config.sha256` por rename atômico enquanto ainda mantém o marcador transitório; o
-instalador de release rejeita esse estado. A remoção dos marcadores encerra atomicamente a transição do
-host e somente então systemd pode iniciar uma release compatível. Se os digests divergirem, o symlink
+instalador de release rejeita esse estado. Quando a release é compatível, o bootstrap arma primeiro o
+marcador de rollback para a própria raiz SHA e só então remove o in-progress que bloqueia as units. A
+recuperação existente permanece responsável pela transição até os dois readiness internos e o HTTPS
+público passarem; reboot ou `SIGKILL` nessa janela relê o marcador e estabiliza a mesma release. Somente
+depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
 os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
-release aprovada. Um `current` pendente, cujo destino já não existe, é removido pelo bootstrap antes da
+release aprovada. Se o health falha, o bootstrap republica o in-progress antes de retirar o symlink e o
+rollback, mantendo boot e deploy bloqueados até uma reexecução segura. Um `current` pendente, cujo
+destino já não existe, é removido pelo bootstrap antes da
 validação de release para que uma entrega aprovada possa reparar o host. Se Nginx, systemd, CA,
 bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
-Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0` e `/opt/setlivre` somente quando
+Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0`, `/opt/set-livre` e
+`/opt/setlivre` somente quando
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,
 esses caminhos continuam tratados como resíduo da arquitetura retirada e o bootstrap falha fechado.
-Quando a release ativa já carrega o mesmo digest candidato, a reaplicação encerra primeiro a transição
-estática e só depois reinicia os dois serviços e prova o mesmo SHA nos endpoints internos e no HTTPS
-público. Falha antes do encerramento mantém `bootstrap-in-progress`, remove qualquer digest candidato e
-bloqueia boot/deploy até a reexecução. Depois do encerramento, a configuração do host já é terminal; uma
-falha de health deixa a release desativada para que o próximo deploy a reinstale sem reabrir a mutação do
-host.
+Quando a release ativa já carrega o mesmo digest candidato, a reaplicação publica a configuração
+estática, arma a recuperação, libera o start controlado e prova o mesmo SHA nos endpoints internos e no
+HTTPS público antes de remover o rollback. Falha anterior mantém `bootstrap-in-progress`, remove o
+digest candidato e bloqueia boot/deploy até a reexecução. Falha de health rearma esse bloqueio antes de
+desativar o symlink; não existe janela em que reboot possa iniciar uma release ainda não validada.
 
 ### Rede e SSH
 
