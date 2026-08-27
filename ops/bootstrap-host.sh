@@ -1326,8 +1326,8 @@ publish_managed_content /etc/fail2ban/jail.d/set-livre-sshd.local root root 0644
 [sshd]
 enabled = true
 backend = systemd
-banaction = nftables
-banaction_allports = nftables[type=allports]
+banaction = nftables[actionstart_on_demand=false]
+banaction_allports = nftables[type=allports, actionstart_on_demand=false]
 bantime = 1h
 findtime = 10m
 maxretry = 5

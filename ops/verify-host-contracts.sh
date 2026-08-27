@@ -247,8 +247,10 @@ fail2ban_config_source="$temporary_directory/set-livre-sshd.local"
 sed -n \
   '/^# BEGIN SET_LIVRE_FAIL2BAN_CONFIGURATION$/,/^# END SET_LIVRE_FAIL2BAN_CONFIGURATION$/p' \
   "$REPOSITORY_ROOT/ops/bootstrap-host.sh" > "$fail2ban_config_source"
-grep --fixed-strings --line-regexp 'banaction = nftables' "$fail2ban_config_source" >/dev/null \
-  || fail "configuração extraída não fixa a ação nftables."
+grep --fixed-strings --line-regexp \
+  'banaction = nftables[actionstart_on_demand=false]' \
+  "$fail2ban_config_source" >/dev/null \
+  || fail "configuração extraída não fixa o cold start da ação nftables."
 fail2ban_runtime="$temporary_directory/fail2ban-contract-runtime.sh"
 {
   printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail'

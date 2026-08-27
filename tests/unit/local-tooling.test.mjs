@@ -260,8 +260,10 @@ describe("local tooling contracts", () => {
     expect(fail2banRestart).toBeLessThan(firewallSnapshot);
     expect(bootstrap).toContain("Fail2ban não ficou pronto antes da transição");
     expect(bootstrap).toContain("fail2ban-client status sshd");
-    expect(bootstrap).toContain("banaction = nftables");
-    expect(bootstrap).toContain("banaction_allports = nftables[type=allports]");
+    expect(bootstrap).toContain("banaction = nftables[actionstart_on_demand=false]");
+    expect(bootstrap).toContain(
+      "banaction_allports = nftables[type=allports, actionstart_on_demand=false]",
+    );
     expect(bootstrap).toContain("fail2ban_contract_is_ready() {");
     expect(bootstrap).toContain("fail2ban-client get sshd action nftables actionban");
     expect(bootstrap).toContain("nft list table inet f2b-table");

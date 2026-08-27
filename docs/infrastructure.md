@@ -336,11 +336,13 @@ aplicação imediata usa `iptables-restore` após o teste; o comando `netfilter-
 usado porque a imagem Oracle configura restore sem flush e uma recarga em runtime duplicaria regras.
 Timestamps e contadores são removidos do arquivo persistido para que reexecuções idênticas produzam os
 mesmos bytes.
-O arquivo do Fail2ban é publicado atomicamente, fixa `banaction = nftables`/allports e o restart fica sob
-responsabilidade do systemd antes do snapshot do firewall. O bootstrap rejeita override local da ação e
-prova os comandos efetivos, a tabela/chain `inet f2b-table`, o daemon e a jail `sshd` antes e depois da
-transição. O daemon permanece ativo durante a construção e as transações de `iptables-restore`; não há
-`stop` manual que possa sobreviver a `SIGKILL` ou OOM nem dependência de um default externo do pacote.
+O arquivo do Fail2ban é publicado atomicamente, fixa `banaction = nftables`/allports com
+`actionstart_on_demand=false` e o restart fica sob responsabilidade do systemd antes do snapshot do
+firewall. Assim, até um cold start sem ban anterior cria imediatamente a tabela de proteção. O bootstrap
+rejeita override local da ação e prova os comandos efetivos, a tabela/chain `inet f2b-table`, o daemon e a
+jail `sshd` antes e depois da transição. O daemon permanece ativo durante a construção e as transações de
+`iptables-restore`; não há `stop` manual que possa sobreviver a `SIGKILL` ou OOM nem dependência de um
+default externo do pacote.
 
 Nginx substitui `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto` e `X-Forwarded-For`; o último recebe
 somente `$remote_addr`, nunca uma cadeia fornecida pelo cliente. Respostas autenticadas não são
