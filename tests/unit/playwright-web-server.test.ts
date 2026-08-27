@@ -1,10 +1,46 @@
-import { delimiter } from "node:path";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createPlaywrightWebServerEnvironmentOverlay } from "../helpers/playwright-web-server";
+import {
+  createPlaywrightNextCommand,
+  createPlaywrightWebServerEnvironmentOverlay,
+} from "../helpers/playwright-web-server";
 
 describe("Playwright webServer process boundary", () => {
+  it("invokes the pinned Next CLI without consulting the user npm configuration", () => {
+    const userHome = mkdtempSync(resolve(tmpdir(), "set-livre-hostile-npm-"));
+    try {
+      writeFileSync(
+        resolve(userHome, ".npmrc"),
+        `script-shell=${resolve(userHome, "must-not-run-shell")}\n`,
+      );
+      const environment: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: userHome,
+        USERPROFILE: userHome,
+      };
+      delete environment.NPM_CONFIG_USERCONFIG;
+      delete environment.npm_config_userconfig;
+      const command = createPlaywrightNextCommand(["--help"]);
+
+      expect(command).not.toMatch(/(^|[\\/ ])npm(?:\.cmd)?([\\/ ]|$)/iu);
+      const result = spawnSync(command, {
+        encoding: "utf8",
+        env: environment,
+        shell: true,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Usage: next");
+    } finally {
+      rmSync(userHome, { force: true, recursive: true });
+    }
+  });
+
   it("neutralizes inherited values and restores only operations plus the validated local app", () => {
     const inherited = {
       APP_ENV: "production",

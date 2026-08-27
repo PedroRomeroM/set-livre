@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
-  existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
@@ -39,22 +38,45 @@ function gitCommit(root) {
 }
 
 function requireDirectory(path, label) {
-  if (!existsSync(path) || !statSync(path).isDirectory()) {
+  const metadata = lstatSync(path, { throwIfNoEntry: false });
+  if (metadata === undefined) {
     throw new Error(`${label} não existe. Execute o build antes de empacotar a release.`);
   }
+  if (metadata.isSymbolicLink()) {
+    throw new Error(`${label} não pode ser link simbólico ou junction.`);
+  }
+  if (!metadata.isDirectory()) {
+    throw new Error(`${label} não existe. Execute o build antes de empacotar a release.`);
+  }
+  return realpathSync(path);
 }
 
-function requireFile(path, label) {
-  if (!existsSync(path) || !statSync(path).isFile() || lstatSync(path).isSymbolicLink()) {
+function requireContainedDirectory(path, label, boundary) {
+  const canonicalPath = requireDirectory(path, label);
+  if (!isWithinDirectory(boundary, canonicalPath)) {
+    throw new Error(`${label} saiu da raiz física do repositório.`);
+  }
+  return canonicalPath;
+}
+
+function requireFile(path, label, boundary) {
+  const metadata = lstatSync(path, { throwIfNoEntry: false });
+  if (metadata === undefined || !metadata.isFile() || metadata.isSymbolicLink()) {
     throw new Error(`${label} não existe. Execute o build antes de empacotar a release.`);
   }
+  const canonicalPath = realpathSync(path);
+  if (boundary !== undefined && !isWithinDirectory(boundary, canonicalPath)) {
+    throw new Error(`${label} saiu da raiz física do repositório.`);
+  }
+  return canonicalPath;
 }
 
 export function hostConfigurationDigest(root = repositoryRoot) {
+  const canonicalRoot = requireDirectory(resolve(root), "raiz do repositório");
   const hash = createHash("sha256");
   for (const path of hostConfigurationFiles) {
-    const absolutePath = resolve(root, path);
-    requireFile(absolutePath, path);
+    const absolutePath = resolve(canonicalRoot, path);
+    requireFile(absolutePath, path, canonicalRoot);
     hash.update(path.slice("ops/".length), "utf8");
     hash.update("\0", "utf8");
     hash.update(readFileSync(absolutePath));
@@ -108,15 +130,21 @@ function copyMaterializedEntry(source, destination, allowedRoots, ancestorDirect
   chmodSync(destination, materializedMetadata.mode & 0o777);
 }
 
-function copyDirectory(source, destination, label, additionalAllowedRoots = []) {
-  requireDirectory(source, label);
-  const sourceRoot = realpathSync(source);
-  const allowedRoots = [sourceRoot, ...additionalAllowedRoots.map((root) => realpathSync(root))];
+function copyDirectory(source, destination, label, boundary, additionalAllowedRoots = []) {
+  const sourceRoot = requireContainedDirectory(source, label, boundary);
+  const allowedRoots = [
+    sourceRoot,
+    ...additionalAllowedRoots.map((root) =>
+      requireContainedDirectory(root, `${label} dependency root`, boundary),
+    ),
+  ];
   copyMaterializedEntry(sourceRoot, destination, allowedRoots, new Set());
 }
 
-function copyOptionalDirectory(source, destination) {
-  if (existsSync(source)) copyDirectory(source, destination, source);
+function copyOptionalDirectory(source, destination, boundary) {
+  if (lstatSync(source, { throwIfNoEntry: false }) !== undefined) {
+    copyDirectory(source, destination, source, boundary);
+  }
 }
 
 function assertReleaseDestination(root, destination) {
@@ -199,48 +227,65 @@ export function packageRelease({
   root = repositoryRoot,
   sensitiveValues = [],
 } = {}) {
-  const releaseCommit = commit ?? gitCommit(root);
+  const sourceRoot = requireDirectory(resolve(root), "raiz do repositório");
+  const releaseCommit = commit ?? gitCommit(sourceRoot);
   if (!/^[a-f0-9]{40}$/u.test(releaseCommit)) {
     throw new Error("A release exige um SHA Git completo.");
   }
 
   const output = resolve(outputDirectory);
-  assertReleaseDestination(root, output);
-  const hostDigest = hostConfigurationDigest(root);
+  assertReleaseDestination(sourceRoot, output);
+  const hostDigest = hostConfigurationDigest(sourceRoot);
 
   const applications = [
     {
-      buildId: resolve(root, ".next/BUILD_ID"),
-      dependencyRoot: resolve(root, "node_modules"),
+      buildId: resolve(sourceRoot, ".next/BUILD_ID"),
+      dependencyRoot: resolve(sourceRoot, "node_modules"),
       entrypoint: "server.js",
       name: "web",
-      publicDirectory: resolve(root, "public"),
-      standalone: resolve(root, ".next/standalone"),
-      staticDirectory: resolve(root, ".next/static"),
+      publicDirectory: resolve(sourceRoot, "public"),
+      standalone: resolve(sourceRoot, ".next/standalone"),
+      staticDirectory: resolve(sourceRoot, ".next/static"),
       staticTarget: ".next/static",
     },
     {
-      buildId: resolve(root, "apps/backoffice/.next/BUILD_ID"),
-      dependencyRoot: resolve(root, "node_modules"),
+      buildId: resolve(sourceRoot, "apps/backoffice/.next/BUILD_ID"),
+      dependencyRoot: resolve(sourceRoot, "node_modules"),
       entrypoint: "apps/backoffice/server.js",
       name: "backoffice",
-      publicDirectory: resolve(root, "apps/backoffice/public"),
-      standalone: resolve(root, "apps/backoffice/.next/standalone"),
-      staticDirectory: resolve(root, "apps/backoffice/.next/static"),
+      publicDirectory: resolve(sourceRoot, "apps/backoffice/public"),
+      standalone: resolve(sourceRoot, "apps/backoffice/.next/standalone"),
+      staticDirectory: resolve(sourceRoot, "apps/backoffice/.next/static"),
       staticTarget: "apps/backoffice/.next/static",
     },
   ];
 
   for (const application of applications) {
-    requireFile(application.buildId, `${application.name} BUILD_ID`);
+    requireFile(application.buildId, `${application.name} BUILD_ID`, sourceRoot);
     const buildId = readFileSync(application.buildId, "utf8").trim();
     if (buildId !== releaseCommit) {
       throw new Error(
         `${application.name} foi construído para ${buildId || "um SHA vazio"}, não ${releaseCommit}.`,
       );
     }
-    requireDirectory(application.standalone, `${application.name} standalone`);
-    requireDirectory(application.staticDirectory, `${application.name} static`);
+    requireContainedDirectory(application.standalone, `${application.name} standalone`, sourceRoot);
+    requireContainedDirectory(
+      application.staticDirectory,
+      `${application.name} static`,
+      sourceRoot,
+    );
+    requireContainedDirectory(
+      application.dependencyRoot,
+      `${application.name} dependency root`,
+      sourceRoot,
+    );
+    if (lstatSync(application.publicDirectory, { throwIfNoEntry: false }) !== undefined) {
+      requireContainedDirectory(
+        application.publicDirectory,
+        `${application.name} public`,
+        sourceRoot,
+      );
+    }
   }
 
   rmSync(output, { force: true, recursive: true });
@@ -249,17 +294,23 @@ export function packageRelease({
   try {
     for (const application of applications) {
       const destination = resolve(output, application.name);
-      copyDirectory(application.standalone, destination, `${application.name} standalone`, [
-        application.dependencyRoot,
-      ]);
+      copyDirectory(
+        application.standalone,
+        destination,
+        `${application.name} standalone`,
+        sourceRoot,
+        [application.dependencyRoot],
+      );
       copyDirectory(
         application.staticDirectory,
         resolve(destination, application.staticTarget),
         `${application.name} static`,
+        sourceRoot,
       );
       copyOptionalDirectory(
         application.publicDirectory,
         resolve(destination, application.name === "web" ? "public" : "apps/backoffice/public"),
+        sourceRoot,
       );
       requireFile(resolve(destination, application.entrypoint), `${application.name} server.js`);
     }

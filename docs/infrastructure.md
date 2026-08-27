@@ -92,6 +92,9 @@ review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
 Antes de remover qualquer artifact anterior, o empacotador exige que `.artifacts` e cada componente
 existente do destino sejam diretórios físicos sob a raiz física do repositório; symlink ou junction em
 qualquer ancestral falha sem tocar seu alvo.
+As raízes de entrada (`standalone`, estáticos, `public` e `node_modules`) também precisam ser diretórios
+físicos contidos na raiz canônica do checkout. Somente links encontrados depois dessa validação, dentro
+das árvores permitidas, podem ser materializados.
 
 No merge, o workflow:
 
@@ -261,6 +264,11 @@ Se a publicação da fase falha ou um sinal capturável chega entre o rollback e
 remove primeiro o rollback ainda não recuperável e somente então o digest instalado; se a fase já existe,
 mantém digest/rollback e recompõe o blocker. Assim, nenhum caminho deixa rollback sem a identidade usada
 para autenticá-lo.
+Sem release compatível, o in-progress permanece até todas as finalizações terminarem; o digest novo é
+marcado como estado gerenciado antes de sua remoção terminal. Depois do readiness aprovado, ou da
+confirmação de que não há app compatível ativo, o bootstrap desarma primeiro o cleanup capaz de parar
+os serviços e somente então consome os marcadores finais. Assim, um sinal ou erro tardio conserva estado
+retryable ou mantém os apps já saudáveis, sem reclassificar a árvore preparada como legado.
 Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
 correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,

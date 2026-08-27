@@ -313,8 +313,13 @@ describe("local tooling contracts", () => {
     const finalDigestPublish = bootstrap.indexOf(
       'mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
     );
-    const retryMarkersRemoved = bootstrap.indexOf(
-      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+    const previousMarkerRemoved = bootstrap.indexOf(
+      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST"',
+      finalDigestPublish,
+    );
+    const compatibleGateReleased = bootstrap.indexOf(
+      'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
+      previousMarkerRemoved,
     );
 
     expect(markerValidation).toBeGreaterThan(-1);
@@ -340,7 +345,8 @@ describe("local tooling contracts", () => {
     expect(guardCall).toBeGreaterThan(pendingDetection);
     expect(pendingPublish).toBeGreaterThan(guardCall);
     expect(pendingPublish).toBeLessThan(activeReleaseInspection);
-    expect(retryMarkersRemoved).toBeGreaterThan(finalDigestPublish);
+    expect(previousMarkerRemoved).toBeGreaterThan(finalDigestPublish);
+    expect(compatibleGateReleased).toBeGreaterThan(previousMarkerRemoved);
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {
@@ -826,36 +832,58 @@ describe("local tooling contracts", () => {
       'publish_bootstrap_recovery_in_progress "$host_configuration_digest"',
       recoveryArmed,
     );
+    const previousDigestRemoved = bootstrap.indexOf(
+      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST"',
+      recoveryPhaseArmed,
+    );
     const bootstrapGateReleased = bootstrap.indexOf(
-      'rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"',
+      'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
+      previousDigestRemoved,
     );
     const bootstrapRestart = bootstrap.indexOf("systemctl restart set-livre-web.service");
     const bootstrapReadiness = bootstrap.indexOf(
       'wait_for_active_public_health "$active_release_sha"',
       bootstrapRestart,
     );
+    const terminalGateCommitted = bootstrap.indexOf(
+      "bootstrap_gate_published=false",
+      bootstrapReadiness,
+    );
+    const terminalBootstrap = bootstrap.indexOf(
+      "host_configuration_published=false",
+      terminalGateCommitted,
+    );
     const recoveryPhaseDisarmed = bootstrap.indexOf(
       'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
-      bootstrapReadiness,
+      terminalBootstrap,
     );
     const recoveryDisarmed = bootstrap.indexOf(
       'rm -f -- "$ROLLBACK_MARKER"',
       recoveryPhaseDisarmed,
     );
-    const terminalBootstrap = bootstrap.indexOf(
-      "host_configuration_published=false",
+    const emptyHostGateReleased = bootstrap.indexOf(
+      'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
       recoveryDisarmed,
     );
     expect(
       bootstrap.indexOf('mv --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"'),
     ).toBeLessThan(recoveryArmed);
     expect(recoveryArmed).toBeLessThan(recoveryPhaseArmed);
-    expect(recoveryPhaseArmed).toBeLessThan(bootstrapGateReleased);
+    expect(recoveryPhaseArmed).toBeLessThan(previousDigestRemoved);
+    expect(previousDigestRemoved).toBeLessThan(bootstrapGateReleased);
     expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
     expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
-    expect(bootstrapReadiness).toBeLessThan(recoveryPhaseDisarmed);
+    expect(bootstrapReadiness).toBeLessThan(terminalGateCommitted);
+    expect(terminalGateCommitted).toBeLessThan(terminalBootstrap);
+    expect(terminalBootstrap).toBeLessThan(recoveryPhaseDisarmed);
     expect(recoveryPhaseDisarmed).toBeLessThan(recoveryDisarmed);
-    expect(recoveryDisarmed).toBeLessThan(terminalBootstrap);
+    expect(recoveryDisarmed).toBeLessThan(emptyHostGateReleased);
+    expect(bootstrapCleanup).toContain(
+      "if [[ ${bootstrap_gate_published} == true ]]; then\n    stop_application_services",
+    );
+    expect(bootstrap.slice(previousDigestRemoved, bootstrapRestart)).toContain(
+      "if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then",
+    );
     expect(
       bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
     ).toHaveLength(4);

@@ -116,9 +116,10 @@
             aplicação pública ainda depende do primeiro deploy.
           </li>
           <li>
-            Releases standalone Linux x86_64 mantêm código e ambientes do mesmo SHA; ativação
-            atômica, readiness e recuperação fail-closed preservam a versão anterior em falha ou
-            reboot. O contrato técnico e os procedimentos ficam na
+            Releases standalone Linux x86_64 mantêm código, ambientes e integridade do pacote sob o
+            mesmo SHA; ativação atômica, readiness e recuperação fail-closed preservam
+            disponibilidade ou estado recuperável em falha, interrupção ou reboot. O contrato
+            técnico e os procedimentos ficam na
             <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>.
           </li>
           <li>

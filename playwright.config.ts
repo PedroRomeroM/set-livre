@@ -1,9 +1,15 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "@playwright/test";
 
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
 import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
-import { createPlaywrightWebServerEnvironmentOverlay } from "./tests/helpers/playwright-web-server";
+import {
+  createPlaywrightNextCommand,
+  createPlaywrightWebServerEnvironmentOverlay,
+} from "./tests/helpers/playwright-web-server";
 
+const repositoryRoot = import.meta.dirname;
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
@@ -171,7 +177,8 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "npm run dev",
+      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3000"]),
+      cwd: repositoryRoot,
       env: publicWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
@@ -181,7 +188,8 @@ export default defineConfig({
       url: `${publicBaseUrl}/api/health/live`,
     },
     {
-      command: "npm run dev:backoffice",
+      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3001"]),
+      cwd: resolve(repositoryRoot, "apps/backoffice"),
       env: backofficeWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,

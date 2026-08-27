@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -46,6 +47,33 @@ function fixture() {
   );
   writeFileSync(resolve(root, "apps/backoffice/.next/static/app.js"), "static-backoffice");
   return root;
+}
+
+function existingRelease(root) {
+  const outputDirectory = resolve(root, ".artifacts/release");
+  const sentinel = resolve(outputDirectory, "must-survive.txt");
+  mkdirSync(outputDirectory, { recursive: true });
+  writeFileSync(sentinel, "preserved");
+  const directoryMetadata = statSync(outputDirectory);
+  const sentinelMetadata = statSync(sentinel);
+  return {
+    directoryMetadata: { mode: directoryMetadata.mode, mtimeMs: directoryMetadata.mtimeMs },
+    outputDirectory,
+    sentinel,
+    sentinelMetadata: { mode: sentinelMetadata.mode, mtimeMs: sentinelMetadata.mtimeMs },
+  };
+}
+
+function expectExistingReleasePreserved(previousRelease) {
+  const directoryMetadata = statSync(previousRelease.outputDirectory);
+  const sentinelMetadata = statSync(previousRelease.sentinel);
+  expect(readFileSync(previousRelease.sentinel, "utf8")).toBe("preserved");
+  expect({ mode: directoryMetadata.mode, mtimeMs: directoryMetadata.mtimeMs }).toEqual(
+    previousRelease.directoryMetadata,
+  );
+  expect({ mode: sentinelMetadata.mode, mtimeMs: sentinelMetadata.mtimeMs }).toEqual(
+    previousRelease.sentinelMetadata,
+  );
 }
 
 afterEach(() => {
@@ -147,6 +175,63 @@ describe("release package", () => {
       "saiu da raiz permitida",
     );
     expect(existsSync(outputDirectory)).toBe(false);
+  });
+
+  it.each([
+    ".next/standalone",
+    ".next/static",
+    "apps/backoffice/.next/standalone",
+    "apps/backoffice/.next/static",
+    "node_modules",
+    "public",
+    "apps/backoffice/public",
+  ])("rejects the linked release source root %s", (relativeSource) => {
+    const root = fixture();
+    const externalRoot = mkdtempSync(resolve(tmpdir(), "set-livre-release-source-"));
+    roots.push(externalRoot);
+    const source = resolve(root, relativeSource);
+    rmSync(source, { force: true, recursive: true });
+    symlinkSync(externalRoot, source, process.platform === "win32" ? "junction" : "dir");
+
+    const previousRelease = existingRelease(root);
+    expect(() =>
+      packageRelease({ commit, outputDirectory: previousRelease.outputDirectory, root }),
+    ).toThrow("não pode ser link simbólico ou junction");
+    expectExistingReleasePreserved(previousRelease);
+  });
+
+  it("rejects a dangling optional public source instead of silently omitting it", () => {
+    const root = fixture();
+    symlinkSync(
+      resolve(root, "missing-public-target"),
+      resolve(root, "public"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const previousRelease = existingRelease(root);
+    expect(() =>
+      packageRelease({ commit, outputDirectory: previousRelease.outputDirectory, root }),
+    ).toThrow("não pode ser link simbólico ou junction");
+    expectExistingReleasePreserved(previousRelease);
+  });
+
+  it("rejects a source whose physical parent leaves the repository", () => {
+    const root = fixture();
+    const externalRoot = mkdtempSync(resolve(tmpdir(), "set-livre-release-parent-"));
+    roots.push(externalRoot);
+    const externalNext = resolve(externalRoot, ".next");
+    renameSync(resolve(root, ".next"), externalNext);
+    symlinkSync(
+      externalNext,
+      resolve(root, ".next"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const previousRelease = existingRelease(root);
+    expect(() =>
+      packageRelease({ commit, outputDirectory: previousRelease.outputDirectory, root }),
+    ).toThrow("saiu da raiz física do repositório");
+    expectExistingReleasePreserved(previousRelease);
   });
 
   it("rejects a linked artifacts ancestor without deleting its external target", () => {

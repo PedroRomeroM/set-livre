@@ -1,4 +1,4 @@
-import { delimiter } from "node:path";
+import { delimiter, resolve } from "node:path";
 
 const operationalEnvironmentNames = [
   "CI",
@@ -35,6 +35,24 @@ const operationalEnvironmentNames = [
 ] as const;
 
 const pathEnvironmentNames = new Set(["PATH", "Path"]);
+const nextCliPath = resolve(import.meta.dirname, "../../node_modules/next/dist/bin/next");
+
+function shellArgument(value: string) {
+  if (value === "" || /[\0\r\n]/u.test(value)) {
+    throw new Error("Argumento inválido para o webServer do Playwright.");
+  }
+  if (process.platform === "win32") {
+    if (/[%!"]/u.test(value)) {
+      throw new Error("Path incompatível com a fronteira cmd.exe do Playwright.");
+    }
+    return `"${value}"`;
+  }
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function createPlaywrightNextCommand(argumentsList: readonly string[]) {
+  return [process.execPath, nextCliPath, ...argumentsList].map(shellArgument).join(" ");
+}
 
 export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
   DATABASE_URL_APP_DAL: string;

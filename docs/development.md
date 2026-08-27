@@ -76,7 +76,9 @@ apps, a chave pública `anon`, a conexão administrativa local e um marcador ale
 esse arquivo existe, seus valores canônicos têm precedência sobre variáveis herdadas do shell; sem ele,
 o guardrail ainda aceita somente o contrato local completo. O webServer do Playwright neutraliza o
 ambiente herdado e repõe explicitamente em cada app somente os valores locais já validados, inclusive a
-URL DAL que as fixtures usam. Ele também fixa `APP_ENV=test`; somente nessa
+URL DAL que as fixtures usam. Os dois servidores chamam o executável Node corrente e o CLI Next fixado
+no lockfile diretamente, com cwd explícito; `.npmrc` e `script-shell` do usuário não participam dessa
+fronteira. Ela também fixa `APP_ENV=test`; somente nessa
 fronteira as fixtures privadas e allowlisted dos adapters locais ficam disponíveis. Nunca copie esses
 arquivos para produção.
 

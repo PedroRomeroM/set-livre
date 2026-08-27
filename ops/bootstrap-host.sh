@@ -1278,7 +1278,10 @@ if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   publish_bootstrap_recovery_in_progress "$host_configuration_digest" \
     || fail "não foi possível persistir a fase de recovery do bootstrap."
 fi
-rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST" "$HOST_BOOTSTRAP_IN_PROGRESS"
+rm -f -- "$HOST_CONFIGURATION_PREVIOUS_DIGEST"
+if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
+  rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
+fi
 
 if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
   [[ -L /opt/set-livre/current \
@@ -1322,12 +1325,14 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
+bootstrap_gate_published=false
+host_configuration_published=false
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
   rm -f -- "$ROLLBACK_MARKER"
+else
+  rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
 fi
-host_configuration_published=false
-bootstrap_gate_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'
