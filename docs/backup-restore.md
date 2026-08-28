@@ -59,8 +59,11 @@ comprovado antes da migration.
 5. reexecutar o mesmo bootstrap para que ele valide SAN/validade, ative o template TLS e instale o hook
    de renovação; confirmar `sudo nginx -t` e executar, sem `-k`,
    `curl --fail --show-error https://147.15.97.227/robots.txt`;
-6. confirmar as variáveis e secrets do environment `production`, publicar novamente um SHA já aprovado
-   e validar os dois readiness internos, o HTTPS público e o SHA em `current`;
+6. confirmar as variáveis e secrets do environment `production`; abrir **Actions → CI and production
+   delivery → Run workflow**, selecionar `main`, marcar `deploy_production`, copiar o SHA completo atual
+   de `main` para `release_sha` e executar. O workflow só publica quando input, `github.sha`, branch,
+   flag de deploy e gates completos convergem; validar então os dois readiness internos, o HTTPS público
+   e o SHA em `current`;
 7. reapontar DNS somente quando houver uma mudança de go-live aprovada. Na fase atual o domínio continua
    deliberadamente sem apontamento.
 

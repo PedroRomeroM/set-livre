@@ -1053,7 +1053,24 @@ describe("local tooling contracts", () => {
     );
     expect(deploy).toContain('if [[ $# -eq 1 && ${1:-} == "--preflight" ]]');
     expect(deploy).toContain('== "root:root:755:1"');
-    expect(deploy).toContain("set-livre-deploy-ready-v2");
+    expect(deploy).toContain("bootstrap_is_terminal() {");
+    const privilegedPreflightStart = deploy.indexOf('if [[ $# -eq 1 && ${1:-} == "--preflight" ]]');
+    const privilegedPreflightEnd = deploy.indexOf(
+      'if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]',
+      privilegedPreflightStart,
+    );
+    const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
+    expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
+    expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v3"),
+    );
+    const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
+    const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
+    const prerequisites = deploy.slice(prerequisiteStart, prerequisiteEnd);
+    expect(prerequisites).toContain("bootstrap_is_terminal");
+    expect(prerequisites).toContain("managed_release_directories_are_valid");
+    expect(prerequisites).toContain("INCOMING_DIRECTORY");
+    expect(prerequisites).toContain("UPLOAD_LOCK");
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
@@ -1078,7 +1095,11 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v2");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v3");
+    expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
+    expect(hostVerification).toContain(
+      "preflight SSH recusou blocker de bootstrap por motivo inesperado",
+    );
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
@@ -1323,18 +1344,32 @@ describe("local tooling contracts", () => {
     );
   });
 
-  it("allows a manual CI retry without authorizing a manual production deploy", () => {
+  it("allows manual CI and only redeploys the exact current main SHA by explicit request", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
     );
     const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
 
-    expect(workflow).toContain("  workflow_dispatch:\n");
-    expect(deployJob).toContain(
-      "if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRD_DEPLOY_ENABLED == 'true'",
+    expect(workflow).toContain("      deploy_production:\n");
+    expect(workflow).toContain("        default: false\n");
+    expect(workflow).toContain("      release_sha:\n");
+    expect(workflow).toContain("- name: Validate manual production recovery request");
+    expect(workflow).toContain(
+      "if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true",
     );
-    expect(deployJob).not.toContain("github.event_name == 'workflow_dispatch'");
+    expect(workflow).toContain('[[ "$DEPLOY_ENABLED" == "true" ]]');
+    expect(workflow).toContain('[[ "$REQUESTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]');
+    expect(workflow).toContain('[[ "$REQUESTED_RELEASE_SHA" == "$GITHUB_SHA" ]]');
+    expect(deployJob).toContain("vars.PRD_DEPLOY_ENABLED == 'true'");
+    expect(deployJob).toContain("github.event_name == 'push'");
+    expect(deployJob).toContain("github.event_name == 'workflow_dispatch'");
+    expect(deployJob).toContain("github.ref == 'refs/heads/main'");
+    expect(deployJob).toContain("inputs.deploy_production == true");
+    expect(deployJob).toContain("inputs.release_sha == github.sha");
+    expect(deployJob).toContain("environment: production");
+    expect(deployJob).toContain("ref: ${{ github.sha }}");
+    expect(deployJob).not.toContain("ref: ${{ inputs.release_sha }}");
   });
 
   it("retains Playwright traces and reports only when the browser gate fails", () => {

@@ -63,12 +63,15 @@ O workflow `.github/workflows/ci.yml` contém três jobs:
    Playwright completa, build, pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação,
    falhas e recuperação do instalador, além do smoke standalone Linux x86_64;
 2. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
-3. **Deploy production**: somente em push de `main`, depois dos dois jobs verdes e quando
-   `PRD_DEPLOY_ENABLED=true`.
+3. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
+   de `main`, sempre depois dos dois jobs verdes e quando `PRD_DEPLOY_ENABLED=true`.
 
 `workflow_dispatch` permite repetir manualmente os dois gates sem fabricar commit quando o evento do
-GitHub não cria uma check suite. Esse evento nunca satisfaz a condição do job de produção, que continua
-restrito ao `push` de `main` com a flag explícita.
+GitHub não cria uma check suite. Por padrão ele não publica produção. O único opt-in de recuperação
+exige selecionar a própria branch `main`, marcar `deploy_production` e informar em `release_sha` o SHA
+completo que o evento resolveu como `github.sha`; valor ausente, branch diferente ou SHA arbitrário
+reprova a execução antes dos gates e mantém o job de produção omitido. O checkout continua preso a
+`github.sha`, passa novamente pelos dois gates e pelo environment `production`, além da flag explícita.
 
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
@@ -101,7 +104,8 @@ No merge, o workflow:
 1. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
 2. exige uma única host key Ed25519 para o IP de produção e autentica chave privada, host exato e o
    comando SSH forçado antes de qualquer migration; esse preflight atravessa o `sudo` não interativo,
-   o entrypoint root instalado e o mesmo lock do deploy, sem alterar release ou serviços;
+   o entrypoint root instalado e o mesmo lock do deploy, e recusa raízes, locks de upload ou marcadores
+   de bootstrap/recovery divergentes sem alterar release ou serviços;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
 4. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto

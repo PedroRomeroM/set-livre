@@ -219,6 +219,25 @@ bootstrap_recovery_state_is_present() {
     || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]]
 }
 
+bootstrap_is_terminal() {
+  ! bootstrap_recovery_state_is_present
+}
+
+validate_deployment_host_prerequisites() {
+  bootstrap_is_terminal \
+    || fail "o bootstrap do host ainda não atingiu estado terminal."
+  managed_release_directories_are_valid \
+    || fail "raiz de releases não atende ao contrato físico e de permissões."
+  [[ -d ${INCOMING_DIRECTORY} && ! -L ${INCOMING_DIRECTORY} \
+    && $(stat --format '%U:%G:%a' -- "$INCOMING_DIRECTORY") \
+      == "deploy-setlivre:deploy-setlivre:700" ]] \
+    || fail "diretório de entrada não atende ao contrato."
+  [[ -f ${UPLOAD_LOCK} && ! -L ${UPLOAD_LOCK} \
+    && $(stat --format '%U:%G:%a' -- "$UPLOAD_LOCK") \
+      == "deploy-setlivre:deploy-setlivre:600" ]] \
+    || fail "lock de upload não atende ao contrato."
+}
+
 read_bootstrap_recovery_digest() {
   local blocker_digest=""
   local recovery_digest=""
@@ -353,7 +372,8 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
   [[ -f ${DEPLOY_LOCK_HELPER} && ! -L ${DEPLOY_LOCK_HELPER} \
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
-  printf 'set-livre-deploy-ready-v2\n'
+  validate_deployment_host_prerequisites
+  printf 'set-livre-deploy-ready-v3\n'
   exit 0
 fi
 
@@ -393,10 +413,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   exit 0
 fi
 
-[[ ! -e ${HOST_BOOTSTRAP_IN_PROGRESS} && ! -L ${HOST_BOOTSTRAP_IN_PROGRESS} \
-  && ! -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
-  && ! -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] \
-  || fail "o bootstrap do host ainda não atingiu estado terminal."
+validate_deployment_host_prerequisites
 
 verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
@@ -409,17 +426,6 @@ release_sha="$1"
 expected_checksum="$2"
 [[ ${release_sha} =~ ^[0-9a-f]{40}$ ]] || fail "SHA de release inválido."
 [[ ${expected_checksum} =~ ^[0-9a-f]{64}$ ]] || fail "checksum inválido."
-managed_release_directories_are_valid \
-  || fail "raiz de releases não atende ao contrato físico e de permissões."
-[[ -d ${INCOMING_DIRECTORY} && ! -L ${INCOMING_DIRECTORY} \
-  && $(stat --format '%U:%G:%a' -- "$INCOMING_DIRECTORY") \
-    == "deploy-setlivre:deploy-setlivre:700" ]] \
-  || fail "diretório de entrada não atende ao contrato."
-[[ -f ${UPLOAD_LOCK} && ! -L ${UPLOAD_LOCK} \
-  && $(stat --format '%U:%G:%a' -- "$UPLOAD_LOCK") \
-    == "deploy-setlivre:deploy-setlivre:600" ]] \
-  || fail "lock de upload não atende ao contrato."
-
 incoming_archive="${INCOMING_DIRECTORY}/set-livre-${release_sha}.tar.gz"
 incoming_web_environment="${INCOMING_DIRECTORY}/web-${release_sha}.env"
 incoming_backoffice_environment="${INCOMING_DIRECTORY}/backoffice-${release_sha}.env"

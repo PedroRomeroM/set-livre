@@ -859,11 +859,51 @@ sudo visudo --check --file "$sudoers_source"
 sudo install -o root -g root -m 0440 "$sudoers_source" "$FORCED_COMMAND_SUDOERS"
 forced_command_sudoers_installed=true
 
+for bootstrap_blocker in \
+  /etc/set-livre/bootstrap-in-progress.sha256 \
+  /etc/set-livre/bootstrap-recovery-in-progress.sha256; do
+  sudo install -o root -g root -m 0600 /dev/null "$bootstrap_blocker"
+  if preflight_blocked_output="$(
+    sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+      "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+  )"; then
+    fail "preflight SSH aceitou blocker de bootstrap ativo."
+  fi
+  grep --fixed-strings 'o bootstrap do host ainda não atingiu estado terminal' \
+    <<< "$preflight_blocked_output" >/dev/null \
+    || fail "preflight SSH recusou blocker de bootstrap por motivo inesperado."
+  sudo rm -f -- "$bootstrap_blocker"
+done
+
+sudo chmod 0755 /opt/set-livre/releases
+if preflight_release_root_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou raiz de releases divergente."
+fi
+grep --fixed-strings 'raiz de releases não atende ao contrato físico e de permissões' \
+  <<< "$preflight_release_root_output" >/dev/null \
+  || fail "preflight SSH recusou raiz de releases por motivo inesperado."
+sudo chmod 0750 /opt/set-livre/releases
+
+sudo chmod 0644 /home/deploy-setlivre/incoming/.incoming.lock
+if preflight_upload_lock_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou lock de upload divergente."
+fi
+grep --fixed-strings 'lock de upload não atende ao contrato' \
+  <<< "$preflight_upload_lock_output" >/dev/null \
+  || fail "preflight SSH recusou lock de upload por motivo inesperado."
+sudo chmod 0600 /home/deploy-setlivre/incoming/.incoming.lock
+
 preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v2 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v3 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {

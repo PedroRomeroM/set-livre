@@ -6,6 +6,16 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Redeploy do SHA atual de main após recuperação da VM
+        required: false
+        default: false
+        type: boolean
+      release_sha:
+        description: SHA completo atual de main; obrigatório quando deploy_production=true
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -29,6 +39,17 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Validate manual production recovery request
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true
+        env:
+          DEPLOY_ENABLED: ${{ vars.PRD_DEPLOY_ENABLED }}
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          [[ "$DEPLOY_ENABLED" == "true" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$REQUESTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REQUESTED_RELEASE_SHA" == "$GITHUB_SHA" ]]
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -234,7 +255,17 @@ jobs:
 
   deploy:
     name: Deploy production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRD_DEPLOY_ENABLED == 'true'
+    if: >-
+      vars.PRD_DEPLOY_ENABLED == 'true' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          inputs.deploy_production == true &&
+          inputs.release_sha == github.sha
+        )
+      )
     needs:
       - quality
       - windows
@@ -303,7 +334,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v2" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v3" ]]
 
       - name: Apply forward-only Supabase migrations
         env:

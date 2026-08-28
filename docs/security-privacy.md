@@ -92,7 +92,7 @@ nunca coordena mutações múltiplas para simular atomicidade.
   includes fora da superfície global canônica são recusados antes do reload;
 - antes de migrations forward-only, o deploy exige uma única host key Ed25519 para o IP canônico e
   autentica a chave privada contra o comando SSH forçado; o preflight atravessa `sudo` não interativo,
-  o instalador root e seu lock sem alterar a release;
+  o instalador root e seu lock, recusa estado de bootstrap/recovery pendente e não altera a release;
 - a mesma fronteira relê as duas roles e seus memberships; se já existem, o readiness do head atualmente
   implantado precisa aprovar grants, ownership, RLS e superfícies DAL antes de qualquer alteração de
   schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito;
@@ -106,6 +106,10 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - serviços Node rodam sem root, em loopback e com hardening systemd;
 - release é imutável, ativada por symlink e revertida por readiness;
 - migrations são forward-only e não usam seed em produção.
+
+Recuperação manual usa o mesmo workflow, gates, environment e secrets do push. Ela só é autorizada por
+opt-in quando o evento foi disparado sobre `main` e o SHA digitado coincide exatamente com o
+`github.sha` já protegido; o input nunca escolhe o checkout nem permite branch ou commit arbitrário.
 
 Secrets ficam no environment do GitHub ou nos arquivos imutáveis da release ativa:
 `/opt/set-livre/current/.runtime/web.env` como `root:setlivre-web 0640` e
