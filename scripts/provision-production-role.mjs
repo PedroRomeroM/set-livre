@@ -383,17 +383,78 @@ async function assertPristineDatabaseBeforeBootstrap(admin) {
   ) {
     throw new Error("O ledger de migrations de produção não pôde ser identificado.");
   }
-  if (migrationTable === null) return;
+  if (migrationTable !== null) {
+    const history = await admin.query(`
+      select
+        pg_catalog.count(*)::integer as "migrationCount",
+        pg_catalog.max(migration.version)::text as "currentMigrationHead"
+      from supabase_migrations.schema_migrations as migration
+    `);
+    const row = history.rows[0];
+    if (history.rowCount !== 1 || row?.migrationCount !== 0 || row?.currentMigrationHead !== null) {
+      throw new Error("Roles ausentes só são permitidas antes da primeira migration de produção.");
+    }
+  }
 
-  const history = await admin.query(`
-    select
-      pg_catalog.count(*)::integer as "migrationCount",
-      pg_catalog.max(migration.version)::text as "currentMigrationHead"
-    from supabase_migrations.schema_migrations as migration
+  const applicationObjects = await admin.query(`
+    with extension_objects as (
+      select dependency.classid, dependency.objid
+      from pg_catalog.pg_depend as dependency
+      where dependency.deptype = 'e'
+    ),
+    application_objects as (
+      select namespace.oid
+      from pg_catalog.pg_namespace as namespace
+      where namespace.nspname in ('audit', 'private')
+
+      union all
+
+      select relation.oid
+      from pg_catalog.pg_class as relation
+      join pg_catalog.pg_namespace as namespace
+        on namespace.oid = relation.relnamespace
+      left join extension_objects as extension
+        on extension.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+       and extension.objid = relation.oid
+      where namespace.nspname = 'public'
+        and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
+        and extension.objid is null
+
+      union all
+
+      select routine.oid
+      from pg_catalog.pg_proc as routine
+      join pg_catalog.pg_namespace as namespace
+        on namespace.oid = routine.pronamespace
+      left join extension_objects as extension
+        on extension.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+       and extension.objid = routine.oid
+      where namespace.nspname = 'public'
+        and extension.objid is null
+
+      union all
+
+      select data_type.oid
+      from pg_catalog.pg_type as data_type
+      join pg_catalog.pg_namespace as namespace
+        on namespace.oid = data_type.typnamespace
+      left join extension_objects as extension
+        on extension.classid = 'pg_catalog.pg_type'::pg_catalog.regclass
+       and extension.objid = data_type.oid
+      where namespace.nspname = 'public'
+        and data_type.typtype in ('d', 'e', 'm', 'r')
+        and extension.objid is null
+    )
+    select pg_catalog.count(*)::integer as "applicationObjectCount"
+    from application_objects
   `);
-  const row = history.rows[0];
-  if (history.rowCount !== 1 || row?.migrationCount !== 0 || row?.currentMigrationHead !== null) {
-    throw new Error("Roles ausentes só são permitidas antes da primeira migration de produção.");
+  if (
+    applicationObjects.rowCount !== 1 ||
+    applicationObjects.rows[0]?.applicationObjectCount !== 0
+  ) {
+    throw new Error(
+      "Roles ausentes exigem banco sem schemas ou objetos de aplicação antes do bootstrap.",
+    );
   }
 }
 

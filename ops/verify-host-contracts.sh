@@ -1011,7 +1011,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v6 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v7 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {
@@ -1080,6 +1080,17 @@ invoke_candidate_through_forced_command() {
     SET_LIVRE_TEST_PHASE="$phase" \
     SET_LIVRE_TEST_STATE="$test_state" \
     SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}" \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
+}
+
+inspect_candidate_through_forced_command() {
+  local candidate_sha="$1"
+  sudo --user deploy-setlivre -- \
+    env \
+    SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
+    SET_LIVRE_TEST_PHASE=success \
+    SET_LIVRE_TEST_STATE="$test_state" \
+    SSH_ORIGINAL_COMMAND="inspect ${candidate_sha}" \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
 
@@ -1246,12 +1257,18 @@ sudo install -o root -g setlivre -m 0640 /dev/null "$stale_staging_directory/int
 
 rm -f -- "$test_state"/*
 package_candidate "$release_sha"
+inspection_output="$(inspect_candidate_through_forced_command "$release_sha")"
+[[ ${inspection_output} == "Release ${release_sha} absent." ]] \
+  || fail "inspeção remota não distinguiu release ainda ausente."
 upload_candidate "$release_sha"
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"
 privileged_directory_exists "/opt/set-livre/releases/${release_sha}" \
   || fail "staging remoto não preservou a release verificada."
 ! privileged_path_exists /opt/set-livre/current \
   || fail "staging remoto ativou a release antes da migration."
+inspection_output="$(inspect_candidate_through_forced_command "$release_sha")"
+[[ ${inspection_output} == "Release ${release_sha} staged checksum ${candidate_checksum}." ]] \
+  || fail "inspeção remota não reutilizou a release staged exata."
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
 ! privileged_path_exists "$stale_staging_directory" \
@@ -1263,6 +1280,27 @@ assert_current_release "$release_sha"
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \
   == "root:setlivre-backoffice:640" ]] || fail "ambiente backoffice versionado tem permissões inválidas."
+[[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/staged-tree.sha256) \
+  == "root:setlivre:640" ]] || fail "digest da árvore staged tem permissões inválidas."
+
+staged_tamper_sha="$(printf 'abcdef12%.0s' {1..5})"
+rm -f -- "$test_state"/*
+package_candidate "$staged_tamper_sha"
+upload_candidate "$staged_tamper_sha"
+invoke_candidate_through_forced_command "$staged_tamper_sha" "$candidate_checksum"
+printf 'adulteração entre stage e activate\n' \
+  | sudo tee "/opt/set-livre/releases/${staged_tamper_sha}/web/server.js" >/dev/null
+if staged_tamper_output="$(
+  invoke_candidate_through_forced_command \
+    "$staged_tamper_sha" "$candidate_checksum" success activate 2>&1
+)"; then
+  fail "release adulterada entre stage e activate foi ativada."
+fi
+grep --fixed-strings 'bytes da árvore staged divergiram depois da verificação inicial' \
+  <<< "$staged_tamper_output" >/dev/null \
+  || fail "release adulterada entre stage e activate falhou por motivo inesperado."
+assert_current_release "$release_sha"
+sudo rm -rf --one-file-system -- "/opt/set-livre/releases/${staged_tamper_sha}"
 verify_privileged_installer_upload_lock "$release_sha"
 
 nested_current_sha="$(printf 'facefeed%.0s' {1..5})"

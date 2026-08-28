@@ -48,6 +48,7 @@ const expectedRuntimeMember = Object.freeze({
 });
 
 function productionPreflightAdminQuery({
+  applicationObjectCount = 0,
   currentBoundary = {
     currentMigrationHead: "20260824000100",
     managedBoundariesReady: true,
@@ -77,6 +78,9 @@ function productionPreflightAdminQuery({
           },
         ],
       };
+    }
+    if (sql.includes('pg_catalog.count(*)::integer as "applicationObjectCount"')) {
+      return { rowCount: 1, rows: [{ applicationObjectCount }] };
     }
     if (sql.includes("where member.rolname = 'app_runtime_production'")) {
       return { rowCount: memberships.length, rows: memberships };
@@ -288,8 +292,49 @@ describe("production role provisioning", () => {
         verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
       ).resolves.toBeUndefined();
       expect(createClient).toHaveBeenCalledOnce();
-      expect(query).toHaveBeenCalledTimes(migrationTable === null ? 2 : 3);
+      expect(query).toHaveBeenCalledTimes(migrationTable === null ? 3 : 4);
     }
+  });
+
+  it("rejects an absent migration ledger when application objects remain", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const query = productionPreflightAdminQuery({
+      applicationObjectCount: 1,
+      migrationTable: null,
+      roles: [],
+    });
+    const createClient = vi.fn(() => ({
+      connect: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      query,
+    }));
+
+    let failure;
+    try {
+      await verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toEqual(
+      expect.objectContaining({
+        message: "Não foi possível validar a role de produção antes das migrations.",
+        cause: expect.objectContaining({
+          message:
+            "Roles ausentes exigem banco sem schemas ou objetos de aplicação antes do bootstrap.",
+        }),
+      }),
+    );
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("pg_catalog.pg_depend"))).toBe(
+      true,
+    );
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("dependency.deptype = 'e'"))).toBe(
+      true,
+    );
   });
 
   it("rejects absent production roles after any migration was recorded", async () => {
@@ -581,11 +626,13 @@ describe("production role provisioning", () => {
       "- name: Validate fixed production contract",
       "- name: Authenticate Oracle deployment path",
       "- name: Verify public HTTPS entrypoint",
+      "- name: Inspect exact immutable release on Oracle VM",
       "- name: Build web release",
       "- name: Build backoffice release",
       "- name: Package immutable release",
       "- name: Prepare ephemeral runtime environments",
       "- name: Stage and verify release on Oracle VM",
+      "- name: Select exact verified release",
       "- name: Apply forward-only Supabase migrations",
       "- name: Activate and verify the restricted production role",
       "- name: Activate staged release on Oracle VM",
@@ -595,11 +642,13 @@ describe("production role provisioning", () => {
     const preflight = positions[0];
     const sshAuthentication = positions[1];
     const publicHttps = positions[2];
-    const webBuild = positions[3];
-    const staging = positions[7];
-    const migrations = positions[8];
-    const activation = positions[10];
-    const publicHealth = positions[11];
+    const releaseInspection = positions[3];
+    const webBuild = positions[4];
+    const staging = positions[8];
+    const releaseSelection = positions[9];
+    const migrations = positions[10];
+    const activation = positions[12];
+    const publicHealth = positions[13];
 
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
@@ -610,13 +659,21 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]');
-    const httpsProbe = deployJob.slice(publicHttps, webBuild);
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v7" ]]');
+    const httpsProbe = deployJob.slice(publicHttps, releaseInspection);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
     expect(httpsProbe).toContain('"$status" == 200');
     expect(httpsProbe).toContain("User-agent: *\\nDisallow: /");
     expect(httpsProbe).toContain("X-Robots-Tag: noindex, nofollow, noarchive, nosnippet");
+    const inspectionStep = deployJob.slice(releaseInspection, webBuild);
+    expect(inspectionStep).toContain('"inspect ${GITHUB_SHA}"');
+    expect(inspectionStep).toContain('echo "reuse=true" >> "$GITHUB_OUTPUT"');
+    expect(inspectionStep).toContain('echo "reuse=false" >> "$GITHUB_OUTPUT"');
+    const buildAndStage = deployJob.slice(webBuild, releaseSelection);
+    expect(
+      buildAndStage.match(/if: steps\.existing_release\.outputs\.reuse != 'true'/gu),
+    ).toHaveLength(5);
     expect(deployJob.indexOf("npm run build:web")).toBeLessThan(migrations);
     expect(deployJob.indexOf("npm run build:backoffice")).toBeLessThan(migrations);
     expect(deployJob.indexOf("npm run release")).toBeLessThan(migrations);
@@ -627,8 +684,12 @@ describe("production role provisioning", () => {
     expect(stagingStep).toContain('"upload-web-environment ${GITHUB_SHA}"');
     expect(stagingStep).toContain('"upload-backoffice-environment ${GITHUB_SHA}"');
     expect(stagingStep).toContain('"stage ${GITHUB_SHA} ${CHECKSUM}"');
+    const selectionStep = deployJob.slice(releaseSelection, migrations);
+    expect(selectionStep).toContain('checksum="$EXISTING_CHECKSUM"');
+    expect(selectionStep).toContain('checksum="$BUILT_CHECKSUM"');
     const activationStep = deployJob.slice(activation, publicHealth);
     expect(activationStep).toContain('"activate ${GITHUB_SHA} ${CHECKSUM}"');
+    expect(activationStep).toContain("CHECKSUM: ${{ steps.selected_release.outputs.checksum }}");
     expect(activationStep).not.toContain("upload-release");
   });
 

@@ -19,6 +19,7 @@ readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
 readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"
+readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"
 SCRIPT_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
 readonly SCRIPT_PATH
 authenticated_bootstrap_recovery_digest=""
@@ -44,6 +45,7 @@ release_tree_digest() {
     --create \
     --file=- \
     --directory="$directory" \
+    --exclude="./${STAGED_TREE_DIGEST_RELATIVE_PATH}" \
     --sort=name \
     --format=gnu \
     --mtime='@0' \
@@ -408,7 +410,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v6\n'
+  printf 'set-livre-deploy-ready-v7\n'
   exit 0
 fi
 
@@ -452,18 +454,30 @@ validate_deployment_host_prerequisites
 
 stage_only=false
 activation_only=false
-if [[ $# -eq 3 && ${3:-} == "--stage-only" ]]; then
+inspection_only=false
+if [[ $# -eq 2 && ${1:-} == "--inspect-staged" ]]; then
+  inspection_only=true
+  release_sha="$2"
+  expected_checksum=""
+elif [[ $# -eq 3 && ${3:-} == "--stage-only" ]]; then
   stage_only=true
+  release_sha="$1"
+  expected_checksum="$2"
 elif [[ $# -eq 3 && ${3:-} == "--activate-staged" ]]; then
   activation_only=true
+  release_sha="$1"
+  expected_checksum="$2"
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--stage-only|--activate-staged], --preflight, --recover-services ou --seal-services."
+  fail "uso: set-livre-deploy <sha> <sha256> [--stage-only|--activate-staged], --inspect-staged <sha>, --preflight, --recover-services ou --seal-services."
+else
+  release_sha="$1"
+  expected_checksum="$2"
 fi
 
-release_sha="$1"
-expected_checksum="$2"
 [[ ${release_sha} =~ ^[0-9a-f]{40}$ ]] || fail "SHA de release inválido."
-[[ ${expected_checksum} =~ ^[0-9a-f]{64}$ ]] || fail "checksum inválido."
+if [[ ${inspection_only} == false ]]; then
+  [[ ${expected_checksum} =~ ^[0-9a-f]{64}$ ]] || fail "checksum inválido."
+fi
 incoming_archive="${INCOMING_DIRECTORY}/set-livre-${release_sha}.tar.gz"
 incoming_web_environment="${INCOMING_DIRECTORY}/web-${release_sha}.env"
 incoming_backoffice_environment="${INCOMING_DIRECTORY}/backoffice-${release_sha}.env"
@@ -508,6 +522,9 @@ remove_stale_trusted_files() {
 }
 
 cleanup_files() {
+  if [[ ${inspection_only} == true ]]; then
+    return
+  fi
   rm -f -- \
     "$incoming_archive" \
     "$incoming_web_environment" \
@@ -572,9 +589,10 @@ validate_staged_release() {
   local directory="$1"
   local expected_release="$2"
   local expected_archive_checksum="$3"
-  local installed_host_digest manifest_host_digest
+  local installed_host_digest manifest_host_digest actual_tree_digest
   local -a artifact_checksum=()
   local -a release_identity=()
+  local -a persisted_tree_digest=()
   local -a top_level=()
 
   [[ ${directory} == "${RELEASES_DIRECTORY}/${expected_release}" \
@@ -613,12 +631,22 @@ validate_staged_release() {
     && $(stat --format '%U:%G:%a' -- "${directory}/.runtime/backoffice.env") \
       == "root:setlivre-backoffice:640" \
     && $(stat --format '%U:%G:%a' -- "${directory}/.runtime/release.env") \
+      == "root:setlivre:640" \
+    && $(stat --format '%U:%G:%a' -- "${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}") \
       == "root:setlivre:640" ]] \
     || fail "ambientes da release staged possuem metadados inválidos."
   mapfile -t release_identity < "${directory}/.runtime/release.env"
   [[ ${#release_identity[@]} -eq 1 \
     && ${release_identity[0]} == "APP_RELEASE_SHA=${expected_release}" ]] \
     || fail "identidade da release staged diverge do candidato."
+  mapfile -t persisted_tree_digest < "${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
+  [[ ${#persisted_tree_digest[@]} -eq 1 \
+    && ${persisted_tree_digest[0]} =~ ^[0-9a-f]{64}$ ]] \
+    || fail "digest persistido da árvore staged é inválido."
+  actual_tree_digest="$(release_tree_digest "$directory")" \
+    || fail "árvore staged não pôde ser relida."
+  [[ ${actual_tree_digest} == "${persisted_tree_digest[0]}" ]] \
+    || fail "bytes da árvore staged divergiram depois da verificação inicial."
   jq --exit-status --arg sha "$expected_release" '
     .version == 2 and
     .commit == $sha and
@@ -638,6 +666,25 @@ validate_staged_release() {
   [[ ${manifest_host_digest} == "$installed_host_digest" ]] \
     || fail "configuração do host divergiu da release staged."
 }
+
+if [[ ${inspection_only} == true ]]; then
+  release_directory="${RELEASES_DIRECTORY}/${release_sha}"
+  if [[ ! -e ${release_directory} && ! -L ${release_directory} ]]; then
+    printf 'Release %s absent.\n' "$release_sha"
+    exit 0
+  fi
+  [[ -f "${release_directory}/.artifact.sha256" \
+    && ! -L "${release_directory}/.artifact.sha256" \
+    && $(stat --format '%U:%G:%a' -- "${release_directory}/.artifact.sha256") \
+      == "root:setlivre:640" ]] \
+    || fail "checksum da release existente possui metadados inválidos."
+  mapfile -t existing_checksum < "${release_directory}/.artifact.sha256"
+  [[ ${#existing_checksum[@]} -eq 1 && ${existing_checksum[0]} =~ ^[0-9a-f]{64}$ ]] \
+    || fail "checksum da release existente é inválido."
+  validate_staged_release "$release_directory" "$release_sha" "${existing_checksum[0]}"
+  printf 'Release %s staged checksum %s.\n' "$release_sha" "${existing_checksum[0]}"
+  exit 0
+fi
 
 if [[ ${activation_only} == false ]]; then
   remove_stale_trusted_files \
@@ -953,6 +1000,14 @@ find "$staging_directory" -type d -exec chmod 0750 {} +
 find "$staging_directory" -type f -exec chmod 0640 {} +
 chown root:setlivre-web "${staging_directory}/.runtime/web.env"
 chown root:setlivre-backoffice "${staging_directory}/.runtime/backoffice.env"
+candidate_tree_digest="$(release_tree_digest "$staging_directory")" \
+  || fail "árvore preparada da release não pôde ser autenticada."
+[[ ${candidate_tree_digest} =~ ^[0-9a-f]{64}$ ]] \
+  || fail "digest da árvore preparada é inválido."
+printf '%s\n' "$candidate_tree_digest" \
+  > "${staging_directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
+chown root:setlivre "${staging_directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
+chmod 0640 "${staging_directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
 
 release_directory="${RELEASES_DIRECTORY}/${release_sha}"
 if [[ -e ${release_directory} ]]; then
@@ -1039,6 +1094,7 @@ if [[ ${stage_only} == true ]]; then
   printf 'Release %s preparada e verificada sem ativação.\n' "$release_sha"
   exit 0
 fi
+validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
 write_rollback_marker "$previous_release" || fail "não foi possível preparar a recuperação atômica."
 
 activation_started=true

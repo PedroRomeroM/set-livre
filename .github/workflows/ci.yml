@@ -334,7 +334,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v7" ]]
 
       - name: Verify public HTTPS entrypoint
         env:
@@ -354,7 +354,36 @@ jobs:
             | grep --ignore-case --fixed-strings --line-regexp \
               'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet'
 
+      - name: Inspect exact immutable release on Oracle VM
+        id: existing_release
+        run: |
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # shellcheck disable=SC2029
+          inspection="$(
+            ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+              "inspect ${GITHUB_SHA}"
+          )"
+          if [[ "$inspection" == "Release ${GITHUB_SHA} absent." ]]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$inspection" =~ ^Release\ ${GITHUB_SHA}\ staged\ checksum\ ([0-9a-f]{64})\.$ ]]; then
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+            echo "checksum=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Resposta de inspeção inválida.\n' >&2
+            exit 1
+          fi
+
       - name: Build web release
+        if: steps.existing_release.outputs.reuse != 'true'
         env:
           APP_ENV: production
           APP_RELEASE_SHA: ${{ github.sha }}
@@ -365,6 +394,7 @@ jobs:
         run: npm run build:web
 
       - name: Build backoffice release
+        if: steps.existing_release.outputs.reuse != 'true'
         env:
           APP_ENV: production
           APP_RELEASE_SHA: ${{ github.sha }}
@@ -376,6 +406,7 @@ jobs:
 
       - name: Package immutable release
         id: release
+        if: steps.existing_release.outputs.reuse != 'true'
         env:
           DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -402,6 +433,7 @@ jobs:
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       - name: Prepare ephemeral runtime environments
+        if: steps.existing_release.outputs.reuse != 'true'
         env:
           PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
           PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
@@ -429,6 +461,7 @@ jobs:
           write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
 
       - name: Stage and verify release on Oracle VM
+        if: steps.existing_release.outputs.reuse != 'true'
         env:
           ARCHIVE: ${{ steps.release.outputs.archive }}
           CHECKSUM: ${{ steps.release.outputs.checksum }}
@@ -462,6 +495,22 @@ jobs:
           )"
           [[ "$staged_release" == "Release ${GITHUB_SHA} preparada e verificada sem ativação." ]]
 
+      - name: Select exact verified release
+        id: selected_release
+        env:
+          BUILT_CHECKSUM: ${{ steps.release.outputs.checksum }}
+          EXISTING_CHECKSUM: ${{ steps.existing_release.outputs.checksum }}
+          REUSE_EXISTING: ${{ steps.existing_release.outputs.reuse }}
+        run: |
+          if [[ "$REUSE_EXISTING" == "true" ]]; then
+            checksum="$EXISTING_CHECKSUM"
+          else
+            [[ "$REUSE_EXISTING" == "false" ]]
+            checksum="$BUILT_CHECKSUM"
+          fi
+          [[ "$checksum" =~ ^[0-9a-f]{64}$ ]]
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
       - name: Apply forward-only Supabase migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -481,7 +530,7 @@ jobs:
 
       - name: Activate staged release on Oracle VM
         env:
-          CHECKSUM: ${{ steps.release.outputs.checksum }}
+          CHECKSUM: ${{ steps.selected_release.outputs.checksum }}
         run: |
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]

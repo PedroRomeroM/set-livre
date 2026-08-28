@@ -938,6 +938,9 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("--sort=name");
     expect(deploy).toContain("--mtime='@0'");
     expect(deploy).toContain("--numeric-owner");
+    expect(deploy).toContain('--exclude="./${STAGED_TREE_DIGEST_RELATIVE_PATH}"');
+    expect(deploy).toContain(".runtime/staged-tree.sha256");
+    expect(deploy).toContain("bytes da árvore staged divergiram depois da verificação inicial");
     expect(deploy).toContain("SHA já existe com árvore instalada divergente");
     expect(installedDigest).toBeGreaterThan(existingReleaseBranch);
     expect(stagingDiscard).toBeGreaterThan(installedDigest);
@@ -1069,7 +1072,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v6"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v7"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1093,6 +1096,8 @@ describe("local tooling contracts", () => {
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
+    expect(command).toContain("elif [[ ${original_command} =~ ^inspect\\ ([0-9a-f]{40})$ ]]; then");
+    expect(command).toContain('--inspect-staged "$release_sha"');
     const stageBranchStart = command.indexOf(
       "elif [[ ${original_command} =~ ^stage\\ ([0-9a-f]{40})\\ ([0-9a-f]{64})$ ]]; then",
     );
@@ -1116,7 +1121,9 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v6");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v7");
+    expect(hostVerification).toContain('SSH_ORIGINAL_COMMAND="inspect ${candidate_sha}"');
+    expect(hostVerification).toContain("release adulterada entre stage e activate foi ativada");
     expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
     expect(hostVerification).toContain(
       "preflight SSH recusou blocker de bootstrap por motivo inesperado",
@@ -1131,7 +1138,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v7" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

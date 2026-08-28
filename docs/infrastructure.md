@@ -112,9 +112,11 @@ No merge, o workflow:
    precisam passar sem desabilitar a validação TLS;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
-4. constrói web e backoffice para o SHA aprovado, recusa segredo no artifact, cria duas vezes o tar
-   normalizado, exige bytes idênticos e prepara os dois ambientes efêmeros;
-5. envia o archive e os dois ambientes pelo comando SSH forçado, valida-os no host e preserva a release
+4. inspeciona no host uma release root-owned do mesmo SHA: quando ela já existe e passa novamente em
+   checksum, manifesto, digest de árvore e digest do host, reutiliza exatamente seus bytes; quando está
+   ausente, constrói web e backoffice, recusa segredo no artifact, cria duas vezes o tar normalizado,
+   exige bytes idênticos e prepara os dois ambientes efêmeros;
+5. no caminho novo, envia o archive e os dois ambientes pelo comando SSH forçado, valida-os no host e preserva a release
    root-owned completa sem trocar o symlink ou iniciar serviços;
 6. somente depois de existir essa release exata e já verificada no destino aplica migrations pendentes com
    `supabase db push --linked`, sem seed, e exige que o maior head remoto seja exatamente o head
@@ -128,12 +130,12 @@ No merge, o workflow:
    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
-ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
+ambientes, o digest persistido da árvore completa e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
 interrompe a leitura no primeiro header além das 20.000 entradas permitidas, sem materializar uma lista
 não limitada; aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
 SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. O staging
-termina antes da primeira migration e a ativação posterior relê checksum, manifesto, metadados e digest
-do host dessa mesma árvore root-owned, sem aceitar novos uploads. O link
+termina antes da primeira migration e a ativação posterior recalcula os bytes da árvore, relê checksum,
+manifesto, metadados e digest do host dessa mesma raiz root-owned, sem aceitar novos uploads. O link
 `/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
 só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
@@ -153,13 +155,13 @@ readiness interno e HTTPS público. Uma falha mantém o marcador para nova tenta
 serviços. Um marcador anterior bloqueia preflight e deploy; somente a recovery unit dedicada o consome.
 A recovery unit encerra sem trabalho se o deploy normal já removeu seu próprio marcador. Rollback
 incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode
-ser reutilizado
-quando artifact, ambientes e o digest determinístico da árvore instalada completa correspondem à
-árvore recém-preparada; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes de
-descartar o staging. A retenção ocorre antes da ativação e mantém no máximo quatro releases, incluindo
-candidata e anterior.
-Ordem, timestamps, owner e gzip são normalizados pelo timestamp do commit para que retry do mesmo SHA
-produza o mesmo checksum.
+ser reutilizado quando checksum, artifact, ambientes e o digest determinístico persistido correspondem
+à árvore instalada completa; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes da
+ativação. O workflow consulta essa raiz antes de buildar e, em retry do mesmo SHA, usa o checksum relido
+da release já verificada em vez de produzir novos bytes Next. A retenção ocorre antes da ativação e
+mantém no máximo quatro releases, incluindo candidata e anterior. Ordem, timestamps, owner e gzip ainda
+são normalizados para tornar o archive estável dentro da mesma build, sem tratá-lo como prova de
+reprodutibilidade entre builds independentes.
 O empacotador percorre o standalone sem preservar referências de filesystem: links simbólicos cujos
 alvos permanecem na própria árvore ou no `node_modules` instalado pelo lockfile, além de hard links, são
 materializados como arquivos ou diretórios independentes. Links que escapam dessas raízes, ciclos e
@@ -244,8 +246,8 @@ rollback ou remover um `current` pendente. Somente `incoming` permanece graváve
 seguida, o bootstrap exige
 exatamente uma chave pública, decodifica o blob SSH, comprova o algoritmo Ed25519 e os 32 bytes de
 material e substitui `authorized_keys` por rename atômico. A chave instalada usa
-`authorized_keys command=` e aceita apenas uploads limitados, `stage <sha> <checksum>` e
-`activate <sha> <checksum>`; não abre
+`authorized_keys command=` e aceita apenas uploads limitados, `inspect <sha>`,
+`stage <sha> <checksum>` e `activate <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
@@ -401,8 +403,10 @@ A VM IPv4 usa o Supavisor em **session mode** na coordenada fixa
 abre uma sessão administrativa curta e relê as duas roles, seus atributos restritos e os dois sentidos
 dos memberships. Se ambas já existem, o readiness versionado do head atualmente implantado precisa
 reprovar qualquer drift de grants, ownership, RLS ou superfície DAL antes de qualquer migration. A
-ausência simultânea das duas roles é aceita somente no primeiro bootstrap; estado parcial é ambíguo e
-falha fechado. Uma runtime ainda `NOLOGIN` só dispensa a autenticação, não o readiness do banco atual.
+ausência simultânea das duas roles é aceita somente com ledger ausente/vazio e sem schemas `audit` ou
+`private`, relações, rotinas ou tipos de aplicação não pertencentes a extensões no schema `public`;
+estado parcial ou banco não vazio é ambíguo e falha fechado. Uma runtime ainda `NOLOGIN` só dispensa a
+autenticação, não o readiness do banco atual.
 Quando já possui `LOGIN`, uma conexão real com a URL DAL também precisa assumir `app_dal` e passar
 `check_runtime_readiness`. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser

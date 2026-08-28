@@ -71,6 +71,12 @@ if [[ ${original_command} == "preflight" ]]; then
   flock --unlock 9
   exec 9>&-
   exec sudo --non-interactive /usr/local/sbin/set-livre-deploy --preflight
+elif [[ ${original_command} =~ ^inspect\ ([0-9a-f]{40})$ ]]; then
+  release_sha="${BASH_REMATCH[1]}"
+  flock --unlock 9
+  exec 9>&-
+  exec sudo --non-interactive /usr/local/sbin/set-livre-deploy \
+    --inspect-staged "$release_sha"
 elif [[ ${original_command} =~ ^upload-release\ ([0-9a-f]{40})$ ]]; then
   release_sha="${BASH_REMATCH[1]}"
   cleanup_abandoned_uploads "$release_sha" || fail "entrada abandonada possui contrato inválido."

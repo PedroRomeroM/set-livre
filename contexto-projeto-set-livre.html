@@ -155,10 +155,11 @@
         </p>
         <p>
           Merge em <code>main</code> só inicia escritas irreversíveis depois de concluir toda
-          evidência reversível da release, inclusive no ambiente de destino. Então aplica migrations
-          forward-only e publica uma release imutável na VM, com health interno e público, rollback
-          e recuperação após interrupção. Timeout ou serviço indisponível é inconclusivo; falha
-          pós-merge abre nova branch e repete o ciclo.
+          evidência reversível da release, inclusive no ambiente de destino. O staging persiste e
+          relê o digest integral da árvore; retries do mesmo SHA reutilizam esses bytes verificados.
+          Então aplica migrations forward-only e publica a release imutável na VM, com health
+          interno e público, rollback e recuperação após interrupção. Timeout ou serviço
+          indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
         </p>
       </section>
 

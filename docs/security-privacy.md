@@ -99,7 +99,8 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - a mesma fronteira relê as duas roles e seus memberships; se já existem, o readiness do head atualmente
   implantado precisa aprovar grants, ownership, RLS e superfícies DAL antes de qualquer alteração de
   schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito; se ambas
-  as roles estão ausentes, o ledger de migrations precisa estar ausente ou vazio;
+  as roles estão ausentes, o ledger de migrations precisa estar ausente ou vazio e a superfície de
+  aplicação precisa estar comprovadamente vazia, sem aceitar objetos órfãos como primeiro bootstrap;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa

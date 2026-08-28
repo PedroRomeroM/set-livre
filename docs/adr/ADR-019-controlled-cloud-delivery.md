@@ -31,6 +31,8 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - a publicação reúne artifact, ambientes e identidade do SHA em uma release imutável, cercada pelo
   digest do host; um único symlink, health interno/público, retenção limitada e marcador recuperável
   controlam ativação e rollback;
+- a árvore staged persiste um digest de todos os seus demais bytes e o recalcula imediatamente antes da
+  ativação; retries do mesmo SHA inspecionam e reutilizam essa release verificada em vez de recompilar;
 - uploads ficam serializados e limitados aos três arquivos de um SHA; cancelamento remove o candidato
   anterior na próxima conexão, sem retenção indefinida no disco;
 - uma path unit aguarda o lock e recupera `SIGKILL`; bootstrap incompatível interrompe a release antiga
