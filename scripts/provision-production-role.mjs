@@ -9,6 +9,8 @@ import {
 } from "../packages/contracts/src/database-contract.ts";
 
 const productionRole = "app_runtime_production";
+const productionRoleNames = "app_dal,app_runtime_production";
+const migrationVersionPattern = /^[0-9]{14}$/u;
 export const productionCoordinates = Object.freeze({
   backofficeUrl: "https://ops.setlivre.com",
   databaseHost: "aws-0-sa-east-1.pooler.supabase.com",
@@ -210,6 +212,71 @@ function assertSingleExpectedRuntimeMember(rows) {
   }
 }
 
+async function readProductionRoles(admin) {
+  const roles = await admin.query(`
+    select
+      role.rolname as "roleName",
+      role.rolcanlogin as "canLogin",
+      role.rolinherit as "inherit",
+      role.rolconnlimit as "connectionLimit",
+      role.rolsuper as "superuser",
+      role.rolcreatedb as "createDatabase",
+      role.rolcreaterole as "createRole",
+      role.rolreplication as "replication",
+      role.rolbypassrls as "bypassRls",
+      role.rolvaliduntil = 'infinity'::timestamptz as "validUntilIsInfinite",
+      role.rolconfig is null as "settingsAreEmpty"
+    from pg_catalog.pg_roles as role
+    where role.rolname in ('app_dal', 'app_runtime_production')
+    order by role.rolname
+  `);
+  return roles.rows;
+}
+
+function hasExactRestrictedAttributes(role) {
+  return (
+    role !== null &&
+    typeof role === "object" &&
+    !Array.isArray(role) &&
+    role.inherit === false &&
+    role.superuser === false &&
+    role.createDatabase === false &&
+    role.createRole === false &&
+    role.replication === false &&
+    role.bypassRls === false &&
+    role.validUntilIsInfinite === true &&
+    role.settingsAreEmpty === true
+  );
+}
+
+function assertProductionRoleSet(rows, { allowAbsent }) {
+  if (!Array.isArray(rows)) {
+    throw new Error("As roles de produção retornaram um contrato inválido.");
+  }
+  if (rows.length === 0 && allowAbsent) return null;
+  if (rows.map((row) => row?.roleName).join(",") !== productionRoleNames) {
+    throw new Error(
+      allowAbsent
+        ? "As roles de produção existentes possuem estado parcial ou ambíguo."
+        : "As migrations ainda não criaram as roles de produção.",
+    );
+  }
+
+  const appDalRole = rows[0];
+  if (
+    !hasExactRestrictedAttributes(appDalRole) ||
+    appDalRole.canLogin !== false ||
+    appDalRole.connectionLimit !== -1
+  ) {
+    throw new Error("A role DAL diverge do contrato restrito NOLOGIN/NOINHERIT.");
+  }
+
+  const runtimeRole = rows[1];
+  return {
+    activationMode: productionRoleActivationMode(runtimeRole),
+  };
+}
+
 async function readProductionRuntimeMemberships(admin) {
   const memberships = await admin.query(`
     select
@@ -244,21 +311,63 @@ async function readProductionRuntimeMembers(admin) {
 
 export function productionRoleActivationMode(role) {
   if (
-    role === null ||
-    typeof role !== "object" ||
-    Array.isArray(role) ||
+    !hasExactRestrictedAttributes(role) ||
+    role.roleName !== productionRole ||
     typeof role.canLogin !== "boolean" ||
-    role.inherit !== false ||
-    role.connectionLimit !== 10 ||
-    role.superuser !== false ||
-    role.createDatabase !== false ||
-    role.createRole !== false ||
-    role.replication !== false ||
-    role.bypassRls !== false
+    role.connectionLimit !== 10
   ) {
     throw new Error("A role de runtime diverge dos atributos restritos esperados.");
   }
   return role.canLogin === true ? "validate" : "initialize";
+}
+
+async function assertProductionMemberships(admin) {
+  assertSingleExpectedMembership(await readProductionRuntimeMemberships(admin));
+  assertSingleExpectedRuntimeMember(await readProductionRuntimeMembers(admin));
+}
+
+async function verifyCurrentDatabaseBoundaryBeforeMigrations(admin) {
+  const boundary = await admin.query(`
+    with current_head as (
+      select pg_catalog.max(migration.version)::text as version
+      from supabase_migrations.schema_migrations as migration
+    )
+    select
+      current_head.version as "currentMigrationHead",
+      private.managed_runtime_boundaries_are_ready() as "managedBoundariesReady",
+      private.check_readiness(current_head.version) as ready
+    from current_head
+  `);
+  const row = boundary.rows[0];
+  if (
+    boundary.rowCount !== 1 ||
+    !migrationVersionPattern.test(row?.currentMigrationHead ?? "") ||
+    row?.managedBoundariesReady !== true ||
+    row?.ready !== true
+  ) {
+    throw new Error("A fronteira DAL implantada diverge do seu migration head atual.");
+  }
+}
+
+async function verifyRuntimeReadiness(runtime) {
+  const readiness = await runtime.query(
+    `
+      select
+        current_user as "currentRole",
+        session_user as "sessionRole",
+        private.check_runtime_readiness($1) as ready
+    `,
+    [productionRole],
+  );
+  const row = readiness.rows[0];
+  if (
+    readiness.rowCount !== 1 ||
+    row?.currentRole !== "app_dal" ||
+    row?.sessionRole !== productionRole ||
+    row?.ready !== true
+  ) {
+    throw new Error("A role de produção não passou no readiness restrito.");
+  }
 }
 
 function createPostgresClient(configuration) {
@@ -273,26 +382,13 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
   let runtimeIsActive = false;
   try {
     await admin.connect();
-    const role = await admin.query(`
-      select
-        runtime.rolcanlogin as "canLogin",
-        runtime.rolinherit as "inherit",
-        runtime.rolconnlimit as "connectionLimit",
-        runtime.rolsuper as "superuser",
-        runtime.rolcreatedb as "createDatabase",
-        runtime.rolcreaterole as "createRole",
-        runtime.rolreplication as "replication",
-        runtime.rolbypassrls as "bypassRls"
-      from pg_catalog.pg_roles as runtime
-      where runtime.rolname = 'app_runtime_production'
-    `);
-    if (role.rowCount === 0) return;
-    if (role.rowCount !== 1) {
-      throw new Error("A role runtime existente possui estado ambíguo.");
-    }
-    runtimeIsActive = productionRoleActivationMode(role.rows[0]) === "validate";
-    assertSingleExpectedMembership(await readProductionRuntimeMemberships(admin));
-    assertSingleExpectedRuntimeMember(await readProductionRuntimeMembers(admin));
+    const roleSet = assertProductionRoleSet(await readProductionRoles(admin), {
+      allowAbsent: true,
+    });
+    if (roleSet === null) return;
+    runtimeIsActive = roleSet.activationMode === "validate";
+    await assertProductionMemberships(admin);
+    await verifyCurrentDatabaseBoundaryBeforeMigrations(admin);
   } catch (error) {
     throw new Error("Não foi possível validar a role de produção antes das migrations.", {
       cause: error,
@@ -306,10 +402,7 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
   const runtime = createClient(connections.runtime);
   try {
     await runtime.connect();
-    const proof = await runtime.query("select true as authenticated");
-    if (proof.rowCount !== 1 || proof.rows[0]?.authenticated !== true) {
-      throw new Error("A conexão runtime não retornou a prova esperada.");
-    }
+    await verifyRuntimeReadiness(runtime);
   } catch (error) {
     throw new Error("A credencial runtime ativa não autenticou antes das migrations.", {
       cause: error,
@@ -391,44 +484,11 @@ export async function provisionProductionRole(
     await admin.query("set local statement_timeout = '15s'");
     await admin.query("set local lock_timeout = '5s'");
 
-    const roles = await admin.query(`
-      select
-        role.rolname as "roleName",
-        role.rolcanlogin as "canLogin",
-        role.rolinherit as "inherit",
-        role.rolconnlimit as "connectionLimit",
-        role.rolsuper as "superuser",
-        role.rolcreatedb as "createDatabase",
-        role.rolcreaterole as "createRole",
-        role.rolreplication as "replication",
-        role.rolbypassrls as "bypassRls"
-      from pg_catalog.pg_roles as role
-      where role.rolname in ('app_dal', 'app_runtime_production')
-      order by role.rolname
-    `);
-    if (roles.rows.map((row) => row.roleName).join(",") !== "app_dal,app_runtime_production") {
-      throw new Error("As migrations ainda não criaram as roles de produção.");
-    }
-    if (
-      roles.rows.some(
-        (role) =>
-          role.superuser ||
-          role.createDatabase ||
-          role.createRole ||
-          role.replication ||
-          role.bypassRls,
-      )
-    ) {
-      throw new Error("Uma role de produção possui atributo privilegiado.");
-    }
-    const appDalRole = roles.rows.find((role) => role.roleName === "app_dal");
-    if (appDalRole?.canLogin !== false || appDalRole.inherit !== false) {
-      throw new Error("A role DAL sem identidade própria diverge do contrato NOLOGIN/NOINHERIT.");
-    }
-    const runtimeRole = roles.rows.find((role) => role.roleName === productionRole);
+    const { activationMode } = assertProductionRoleSet(await readProductionRoles(admin), {
+      allowAbsent: false,
+    });
 
-    assertSingleExpectedMembership(await readProductionRuntimeMemberships(admin));
-    assertSingleExpectedRuntimeMember(await readProductionRuntimeMembers(admin));
+    await assertProductionMemberships(admin);
 
     const managedBoundaries = await admin.query(
       "select private.managed_runtime_boundaries_are_ready() as ready",
@@ -456,8 +516,6 @@ export async function provisionProductionRole(
       throw new Error("A migration head de produção ou a fronteira DAL diverge do candidato.");
     }
 
-    const activationMode = productionRoleActivationMode(runtimeRole);
-
     if (activationMode === "initialize") {
       const passwordStatement = await admin.query(
         "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as statement",
@@ -470,24 +528,7 @@ export async function provisionProductionRole(
 
     runtime = createClient(connections.runtime);
     await runtime.connect();
-    const readiness = await runtime.query(
-      `
-        select
-          current_user as "currentRole",
-          session_user as "sessionRole",
-          private.check_runtime_readiness($1) as ready
-      `,
-      [productionRole],
-    );
-    const row = readiness.rows[0];
-    if (
-      readiness.rowCount !== 1 ||
-      row?.currentRole !== "app_dal" ||
-      row?.sessionRole !== productionRole ||
-      row?.ready !== true
-    ) {
-      throw new Error("A role de produção não passou no readiness restrito.");
-    }
+    await verifyRuntimeReadiness(runtime);
     activationMayHaveCommitted = false;
   } catch (error) {
     await admin.query("rollback").catch(() => undefined);

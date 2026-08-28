@@ -102,18 +102,20 @@ No merge, o workflow:
 2. exige uma única host key Ed25519 para o IP de produção e autentica chave privada, host exato e o
    comando SSH forçado antes de qualquer migration; esse preflight atravessa o `sudo` não interativo,
    o entrypoint root instalado e o mesmo lock do deploy, sem alterar release ou serviços;
-3. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto
+3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
+   ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
+4. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto
    seja exatamente o head compilado pelo candidato;
-4. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
+5. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
    resultado ambíguo do commit abre conexões administrativas novas, força `NOLOGIN` de forma
    idempotente e exige releitura positiva antes de falhar; nos deploys seguintes apenas valida a
    credencial existente, sem rotacioná-la ou imprimi-la;
-5. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
-6. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
-7. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
-8. executa o instalador root allowlisted;
-9. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
-   público a partir do runner.
+6. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
+7. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
+8. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
+9. executa o instalador root allowlisted;
+10. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
+    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
 ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
@@ -382,12 +384,13 @@ na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 
 A VM IPv4 usa o Supavisor em **session mode** na coordenada fixa
 `aws-0-sa-east-1.pooler.supabase.com:5432`. O preflight valida host, porta, projeto, banco e identidade,
-abre uma sessão administrativa curta e relê atributos restritos e os dois sentidos dos memberships da
-role existente. Quando a role runtime já possui `LOGIN`, também exige autenticação real com a URL DAL
-antes de qualquer migration. Role ausente ou ainda `NOLOGIN` é aceita somente para o bootstrap inicial
-ou sua recuperação, mas uma role `NOLOGIN` já existente também precisa preservar atributos e
-memberships; a ativação posterior permanece responsável por criar e provar a credencial. O usuário de
-conexão segue o formato oficial
+abre uma sessão administrativa curta e relê as duas roles, seus atributos restritos e os dois sentidos
+dos memberships. Se ambas já existem, o readiness versionado do head atualmente implantado precisa
+reprovar qualquer drift de grants, ownership, RLS ou superfície DAL antes de qualquer migration. A
+ausência simultânea das duas roles é aceita somente no primeiro bootstrap; estado parcial é ambíguo e
+falha fechado. Uma runtime ainda `NOLOGIN` só dispensa a autenticação, não o readiness do banco atual.
+Quando já possui `LOGIN`, uma conexão real com a URL DAL também precisa assumir `app_dal` e passar
+`check_runtime_readiness`. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser
 `app_runtime_production` e assumir `app_dal` por `options=-c role=app_dal`.
 
@@ -487,10 +490,11 @@ URL ou abrir qualquer conexão; esses caracteres precisam estar percent-encoded.
 contrato antes de aceitar os arquivos como `EnvironmentFile` do systemd. O preflight consulta
 `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
 header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
-chave. Em seguida, a sessão administrativa relê todos os atributos restritos e os memberships de entrada
-e saída da role; se ela já estiver ativa, uma conexão runtime separada precisa autenticar e concluir uma
-query constante. Senha obsoleta, privilégio excedente, identidade ambígua ou indisponibilidade bloqueia
-o workflow antes de alterar o schema. O instalador da VM também
+chave. Em seguida, a sessão administrativa relê as duas roles e seus memberships, descobre o maior head
+remoto em uma única consulta e exige que o `check_readiness` já implantado aprove exatamente esse head.
+Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `app_dal` e passar no
+`check_runtime_readiness`. Senha obsoleta, privilégio ou grant excedente, identidade ambígua ou
+indisponibilidade bloqueia o workflow antes de alterar o schema. O instalador da VM também
 aceita exclusivamente o formato moderno
 `sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
 alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,

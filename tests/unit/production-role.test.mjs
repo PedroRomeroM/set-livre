@@ -23,7 +23,16 @@ const restrictedRuntimeRole = Object.freeze({
   createRole: false,
   inherit: false,
   replication: false,
+  roleName: "app_runtime_production",
+  settingsAreEmpty: true,
   superuser: false,
+  validUntilIsInfinite: true,
+});
+const restrictedAppDalRole = Object.freeze({
+  ...restrictedRuntimeRole,
+  canLogin: false,
+  connectionLimit: -1,
+  roleName: "app_dal",
 });
 const expectedRuntimeMembership = Object.freeze({
   adminOption: false,
@@ -39,20 +48,28 @@ const expectedRuntimeMember = Object.freeze({
 });
 
 function productionPreflightAdminQuery({
+  currentBoundary = {
+    currentMigrationHead: "20260824000100",
+    managedBoundariesReady: true,
+    ready: true,
+  },
   memberships = [expectedRuntimeMembership],
-  role = restrictedRuntimeRole,
+  roles = [restrictedAppDalRole, restrictedRuntimeRole],
   runtimeMembers = [expectedRuntimeMember],
 } = {}) {
   return vi.fn(async (statement) => {
     const sql = String(statement);
-    if (sql.includes("from pg_catalog.pg_roles as runtime")) {
-      return role === null ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [role] };
+    if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
+      return { rowCount: roles.length, rows: roles };
     }
     if (sql.includes("where member.rolname = 'app_runtime_production'")) {
       return { rowCount: memberships.length, rows: memberships };
     }
     if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
       return { rowCount: runtimeMembers.length, rows: runtimeMembers };
+    }
+    if (sql.includes("with current_head as")) {
+      return { rowCount: 1, rows: [currentBoundary] };
     }
     throw new Error("consulta administrativa inesperada no preflight de teste");
   });
@@ -172,7 +189,16 @@ describe("production role provisioning", () => {
         end: vi.fn(async () => undefined),
         query: admin
           ? productionPreflightAdminQuery()
-          : vi.fn(async () => ({ rowCount: 1, rows: [{ authenticated: true }] })),
+          : vi.fn(async () => ({
+              rowCount: 1,
+              rows: [
+                {
+                  currentRole: "app_dal",
+                  ready: true,
+                  sessionRole: "app_runtime_production",
+                },
+              ],
+            })),
       };
       clients.push(client);
       return client;
@@ -199,7 +225,10 @@ describe("production role provisioning", () => {
       password: "runtime#secret",
       user: `app_runtime_production.${projectRef}`,
     });
-    expect(clients[1].query).toHaveBeenCalledWith("select true as authenticated");
+    expect(clients[1].query).toHaveBeenCalledWith(
+      expect.stringContaining("private.check_runtime_readiness($1)"),
+      ["app_runtime_production"],
+    );
   });
 
   it("rejects unsafe raw URL characters before production network or database access", async () => {
@@ -225,24 +254,49 @@ describe("production role provisioning", () => {
     }
   });
 
-  it("allows first initialization states without attempting a runtime login", async () => {
+  it("allows only a pristine first bootstrap without querying absent database contracts", async () => {
     const connections = productionRoleConnections({
       PRD_DATABASE_URL_APP_DAL: runtimeUrl,
       SUPABASE_DB_PASSWORD: "admin-secret",
       SUPABASE_PROJECT_REF: projectRef,
     });
+    const query = productionPreflightAdminQuery({ roles: [] });
+    const createClient = vi.fn(() => ({
+      connect: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      query,
+    }));
 
-    for (const role of [null, { ...restrictedRuntimeRole, canLogin: false }]) {
-      const createClient = vi.fn(() => ({
-        connect: vi.fn(async () => undefined),
-        end: vi.fn(async () => undefined),
-        query: productionPreflightAdminQuery({ role }),
-      }));
-      await expect(
-        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
-      ).resolves.toBeUndefined();
-      expect(createClient).toHaveBeenCalledOnce();
-    }
+    await expect(
+      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+    ).resolves.toBeUndefined();
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledOnce();
+  });
+
+  it("validates the deployed DAL boundary while the runtime role is still NOLOGIN", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const query = productionPreflightAdminQuery({
+      roles: [restrictedAppDalRole, { ...restrictedRuntimeRole, canLogin: false }],
+    });
+    const createClient = vi.fn(() => ({
+      connect: vi.fn(async () => undefined),
+      end: vi.fn(async () => undefined),
+      query,
+    }));
+
+    await expect(
+      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+    ).resolves.toBeUndefined();
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("with current_head as"));
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("private.check_readiness(current_head.version)"),
+    );
   });
 
   it("rejects a stale credential for an already active runtime before migrations", async () => {
@@ -262,7 +316,16 @@ describe("production role provisioning", () => {
         query:
           clientIndex === 0
             ? productionPreflightAdminQuery()
-            : vi.fn(async () => ({ rowCount: 1, rows: [{ authenticated: true }] })),
+            : vi.fn(async () => ({
+                rowCount: 1,
+                rows: [
+                  {
+                    currentRole: "app_dal",
+                    ready: true,
+                    sessionRole: "app_runtime_production",
+                  },
+                ],
+              })),
       };
       clients.push(client);
       return client;
@@ -276,6 +339,46 @@ describe("production role provisioning", () => {
     expect(clients[1].end).toHaveBeenCalledOnce();
   });
 
+  it("rejects an active credential that cannot prove the exact restricted runtime", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const clients = [];
+    const createClient = vi.fn(() => {
+      const clientIndex = clients.length;
+      const client = {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query:
+          clientIndex === 0
+            ? productionPreflightAdminQuery()
+            : vi.fn(async () => ({
+                rowCount: 1,
+                rows: [
+                  {
+                    currentRole: "app_dal",
+                    ready: false,
+                    sessionRole: "app_runtime_production",
+                  },
+                ],
+              })),
+      };
+      clients.push(client);
+      return client;
+    });
+
+    await expect(
+      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+    ).rejects.toThrow("credencial runtime ativa não autenticou antes das migrations");
+    expect(clients).toHaveLength(2);
+    expect(clients[1].query).toHaveBeenCalledWith(
+      expect.stringContaining("private.check_runtime_readiness($1)"),
+      ["app_runtime_production"],
+    );
+  });
+
   it("rejects active runtime privilege or membership drift before migrations", async () => {
     const connections = productionRoleConnections({
       PRD_DATABASE_URL_APP_DAL: runtimeUrl,
@@ -284,12 +387,32 @@ describe("production role provisioning", () => {
     });
     const cases = [
       {
-        options: { role: { ...restrictedRuntimeRole, createDatabase: true } },
+        options: {
+          roles: [restrictedAppDalRole, { ...restrictedRuntimeRole, createDatabase: true }],
+        },
         cause: "atributos restritos",
       },
       {
-        options: { role: { ...restrictedRuntimeRole, superuser: undefined } },
+        options: {
+          roles: [restrictedAppDalRole, { ...restrictedRuntimeRole, superuser: undefined }],
+        },
         cause: "atributos restritos",
+      },
+      {
+        options: {
+          roles: [{ ...restrictedAppDalRole, canLogin: true }, restrictedRuntimeRole],
+        },
+        cause: "role DAL",
+      },
+      {
+        options: {
+          roles: [{ ...restrictedAppDalRole, createRole: true }, restrictedRuntimeRole],
+        },
+        cause: "role DAL",
+      },
+      {
+        options: { roles: [restrictedRuntimeRole] },
+        cause: "parcial ou ambíguo",
       },
       {
         options: {
@@ -308,6 +431,36 @@ describe("production role provisioning", () => {
           ],
         },
         cause: "identidade inesperada",
+      },
+      {
+        options: {
+          currentBoundary: {
+            currentMigrationHead: "20260824000100",
+            managedBoundariesReady: false,
+            ready: true,
+          },
+        },
+        cause: "fronteira DAL implantada",
+      },
+      {
+        options: {
+          currentBoundary: {
+            currentMigrationHead: "20260824000100",
+            managedBoundariesReady: true,
+            ready: false,
+          },
+        },
+        cause: "fronteira DAL implantada",
+      },
+      {
+        options: {
+          currentBoundary: {
+            currentMigrationHead: "invalid-head",
+            managedBoundariesReady: true,
+            ready: true,
+          },
+        },
+        cause: "fronteira DAL implantada",
       },
     ];
 

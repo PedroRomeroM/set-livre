@@ -93,8 +93,9 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - antes de migrations forward-only, o deploy exige uma única host key Ed25519 para o IP canônico e
   autentica a chave privada contra o comando SSH forçado; o preflight atravessa `sudo` não interativo,
   o instalador root e seu lock sem alterar a release;
-- a mesma fronteira relê atributos e memberships da role runtime existente e, se ativa, comprova sua
-  autenticação antes de permitir qualquer alteração de schema;
+- a mesma fronteira relê as duas roles e seus memberships; se já existem, o readiness do head atualmente
+  implantado precisa aprovar grants, ownership, RLS e superfícies DAL antes de qualquer alteração de
+  schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
