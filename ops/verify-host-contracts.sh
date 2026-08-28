@@ -555,6 +555,7 @@ sudo rm -f -- /run/lock/set-livre-deploy.lock
 sudo ln --symbolic -- "$temporary_directory/deploy-lock-target" /run/lock/set-livre-deploy.lock
 for protected_entrypoint in \
   "$REPOSITORY_ROOT/ops/bootstrap-host.sh" \
+  "$REPOSITORY_ROOT/ops/deploy-release.sh --preflight" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --seal-services" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --recover-services" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) --verify-only"; do
@@ -614,13 +615,6 @@ for abandoned in \
   "/home/deploy-setlivre/incoming/.upload.Ab12Cd"; do
   sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$abandoned"
 done
-
-preflight_output="$(
-  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
-    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
-)"
-[[ ${preflight_output} == set-livre-deploy-ready-v1 ]] \
-  || fail "preflight SSH não comprovou o comando forçado instalado."
 
 if sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND='not-authorized' \
   "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null; then
@@ -864,6 +858,13 @@ sudoers_source="$temporary_directory/set-livre-host-contracts.sudoers"
 sudo visudo --check --file "$sudoers_source"
 sudo install -o root -g root -m 0440 "$sudoers_source" "$FORCED_COMMAND_SUDOERS"
 forced_command_sudoers_installed=true
+
+preflight_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
+)"
+[[ ${preflight_output} == set-livre-deploy-ready-v2 ]] \
+  || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {
   local candidate_sha="$1"

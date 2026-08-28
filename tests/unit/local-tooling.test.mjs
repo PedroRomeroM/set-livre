@@ -1029,7 +1029,31 @@ describe("local tooling contracts", () => {
     );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
     expect(command).toContain('if [[ ${original_command} == "preflight" ]]');
-    expect(command).toContain("set-livre-deploy-ready-v1");
+    const preflightBranchStart = command.indexOf('if [[ ${original_command} == "preflight" ]]');
+    const uploadBranchStart = command.indexOf(
+      "elif [[ ${original_command} =~ ^upload-release\\ ([0-9a-f]{40})$ ]]; then",
+      preflightBranchStart,
+    );
+    const preflightBranch = command.slice(preflightBranchStart, uploadBranchStart);
+    expect(preflightBranchStart).toBeGreaterThan(-1);
+    expect(uploadBranchStart).toBeGreaterThan(preflightBranchStart);
+    expect(preflightBranch).toContain("flock --unlock 9");
+    expect(preflightBranch).toContain("exec 9>&-");
+    expect(preflightBranch).toContain(
+      "exec sudo --non-interactive /usr/local/sbin/set-livre-deploy --preflight",
+    );
+    expect(preflightBranch.indexOf("flock --unlock 9")).toBeLessThan(
+      preflightBranch.indexOf("exec 9>&-"),
+    );
+    expect(preflightBranch.indexOf("exec 9>&-")).toBeLessThan(
+      preflightBranch.indexOf("exec sudo --non-interactive"),
+    );
+    expect(deploy).toContain(
+      'readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"',
+    );
+    expect(deploy).toContain('if [[ $# -eq 1 && ${1:-} == "--preflight" ]]');
+    expect(deploy).toContain('== "root:root:755:1"');
+    expect(deploy).toContain("set-livre-deploy-ready-v2");
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
@@ -1042,18 +1066,19 @@ describe("local tooling contracts", () => {
       deployBranch.indexOf('cleanup_abandoned_uploads "$release_sha"'),
     );
     expect(deployBranch).toContain(
-      'exec sudo /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"',
+      'exec sudo --non-interactive /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"',
     );
     expect(deployBranch.indexOf("flock --unlock 9")).toBeLessThan(
       deployBranch.indexOf("exec 9>&-"),
     );
     expect(deployBranch.indexOf("exec 9>&-")).toBeLessThan(
-      deployBranch.indexOf("exec sudo /usr/local/sbin/set-livre-deploy"),
+      deployBranch.indexOf("exec sudo --non-interactive /usr/local/sbin/set-livre-deploy"),
     );
     expect(hostVerification).toContain(
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v2");
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

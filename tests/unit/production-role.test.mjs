@@ -15,6 +15,48 @@ import {
 const projectRef = "oirvvnojgkzdppkdvhej";
 const runtimeUrl =
   "postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:runtime%23secret@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal";
+const restrictedRuntimeRole = Object.freeze({
+  bypassRls: false,
+  canLogin: true,
+  connectionLimit: 10,
+  createDatabase: false,
+  createRole: false,
+  inherit: false,
+  replication: false,
+  superuser: false,
+});
+const expectedRuntimeMembership = Object.freeze({
+  adminOption: false,
+  inheritOption: false,
+  roleName: "app_dal",
+  setOption: true,
+});
+const expectedRuntimeMember = Object.freeze({
+  adminOption: true,
+  inheritOption: false,
+  roleName: "postgres",
+  setOption: false,
+});
+
+function productionPreflightAdminQuery({
+  memberships = [expectedRuntimeMembership],
+  role = restrictedRuntimeRole,
+  runtimeMembers = [expectedRuntimeMember],
+} = {}) {
+  return vi.fn(async (statement) => {
+    const sql = String(statement);
+    if (sql.includes("from pg_catalog.pg_roles as runtime")) {
+      return role === null ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [role] };
+    }
+    if (sql.includes("where member.rolname = 'app_runtime_production'")) {
+      return { rowCount: memberships.length, rows: memberships };
+    }
+    if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
+      return { rowCount: runtimeMembers.length, rows: runtimeMembers };
+    }
+    throw new Error("consulta administrativa inesperada no preflight de teste");
+  });
+}
 
 describe("production role provisioning", () => {
   const fixedCoordinates = {
@@ -128,11 +170,9 @@ describe("production role provisioning", () => {
       const client = {
         connect: vi.fn(async () => undefined),
         end: vi.fn(async () => undefined),
-        query: vi.fn(async () =>
-          admin
-            ? { rowCount: 1, rows: [{ canLogin: true }] }
-            : { rowCount: 1, rows: [{ authenticated: true }] },
-        ),
+        query: admin
+          ? productionPreflightAdminQuery()
+          : vi.fn(async () => ({ rowCount: 1, rows: [{ authenticated: true }] })),
       };
       clients.push(client);
       return client;
@@ -192,14 +232,11 @@ describe("production role provisioning", () => {
       SUPABASE_PROJECT_REF: projectRef,
     });
 
-    for (const role of [
-      { rowCount: 0, rows: [] },
-      { rowCount: 1, rows: [{ canLogin: false }] },
-    ]) {
+    for (const role of [null, { ...restrictedRuntimeRole, canLogin: false }]) {
       const createClient = vi.fn(() => ({
         connect: vi.fn(async () => undefined),
         end: vi.fn(async () => undefined),
-        query: vi.fn(async () => role),
+        query: productionPreflightAdminQuery({ role }),
       }));
       await expect(
         verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
@@ -222,7 +259,10 @@ describe("production role provisioning", () => {
           if (clientIndex === 1) throw new Error("password authentication failed");
         }),
         end: vi.fn(async () => undefined),
-        query: vi.fn(async () => ({ rowCount: 1, rows: [{ canLogin: true }] })),
+        query:
+          clientIndex === 0
+            ? productionPreflightAdminQuery()
+            : vi.fn(async () => ({ rowCount: 1, rows: [{ authenticated: true }] })),
       };
       clients.push(client);
       return client;
@@ -234,6 +274,61 @@ describe("production role provisioning", () => {
     expect(clients).toHaveLength(2);
     expect(clients[0].end).toHaveBeenCalledOnce();
     expect(clients[1].end).toHaveBeenCalledOnce();
+  });
+
+  it("rejects active runtime privilege or membership drift before migrations", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const cases = [
+      {
+        options: { role: { ...restrictedRuntimeRole, createDatabase: true } },
+        cause: "atributos restritos",
+      },
+      {
+        options: { role: { ...restrictedRuntimeRole, superuser: undefined } },
+        cause: "atributos restritos",
+      },
+      {
+        options: {
+          memberships: [
+            expectedRuntimeMembership,
+            { ...expectedRuntimeMembership, roleName: "unexpected_role" },
+          ],
+        },
+        cause: "membership inesperado",
+      },
+      {
+        options: {
+          runtimeMembers: [
+            expectedRuntimeMember,
+            { ...expectedRuntimeMember, adminOption: false, roleName: "unexpected_member" },
+          ],
+        },
+        cause: "identidade inesperada",
+      },
+    ];
+
+    for (const scenario of cases) {
+      const createClient = vi.fn(() => ({
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: productionPreflightAdminQuery(scenario.options),
+      }));
+      let failure;
+      try {
+        await verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect(failure?.message).toContain("antes das migrations");
+      expect(failure?.cause).toBeInstanceOf(Error);
+      expect(failure?.cause?.message).toContain(scenario.cause);
+      expect(createClient).toHaveBeenCalledOnce();
+    }
   });
 
   it("fails closed for a foreign key, invalid payload, redirect, or network failure", async () => {
@@ -293,21 +388,15 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v1" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v2" ]]');
     expect(migrations).toBeLessThan(webBuild);
     expect(webBuild).toBeLessThan(packaging);
   });
 
   it("initializes credentials only for the migration-created NOLOGIN role", () => {
     const restrictedRole = {
-      bypassRls: false,
+      ...restrictedRuntimeRole,
       canLogin: false,
-      connectionLimit: 10,
-      createDatabase: false,
-      createRole: false,
-      inherit: false,
-      replication: false,
-      superuser: false,
     };
 
     expect(productionRoleActivationMode(restrictedRole)).toBe("initialize");

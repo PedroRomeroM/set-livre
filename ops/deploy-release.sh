@@ -17,6 +17,7 @@ readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
+readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"
 SCRIPT_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
 readonly SCRIPT_PATH
 authenticated_bootstrap_recovery_digest=""
@@ -343,6 +344,19 @@ else
   exec python3 "$DEPLOY_LOCK_HELPER" run "$lock_policy" "$SCRIPT_PATH" "$@"
 fi
 
+if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
+  [[ ${SCRIPT_PATH} == "$INSTALLED_DEPLOY_ENTRYPOINT" \
+    && -f ${INSTALLED_DEPLOY_ENTRYPOINT} && ! -L ${INSTALLED_DEPLOY_ENTRYPOINT} \
+    && $(stat --format '%U:%G:%a:%h' -- "$INSTALLED_DEPLOY_ENTRYPOINT") \
+      == "root:root:755:1" ]] \
+    || fail "entrypoint privilegiado instalado diverge do contrato."
+  [[ -f ${DEPLOY_LOCK_HELPER} && ! -L ${DEPLOY_LOCK_HELPER} \
+    && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
+    || fail "primitive instalada do lock de deploy diverge do contrato."
+  printf 'set-livre-deploy-ready-v2\n'
+  exit 0
+fi
+
 if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
@@ -388,7 +402,7 @@ verify_only=false
 if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
   verify_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --recover-services ou --seal-services."
+  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --preflight, --recover-services ou --seal-services."
 fi
 
 release_sha="$1"

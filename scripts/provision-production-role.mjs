@@ -198,17 +198,63 @@ function assertSingleExpectedMembership(rows) {
   }
 }
 
+function assertSingleExpectedRuntimeMember(rows) {
+  if (
+    rows.length !== 1 ||
+    rows[0]?.roleName !== "postgres" ||
+    rows[0]?.adminOption !== true ||
+    rows[0]?.inheritOption !== false ||
+    rows[0]?.setOption !== false
+  ) {
+    throw new Error("A role de produção foi concedida a uma identidade inesperada.");
+  }
+}
+
+async function readProductionRuntimeMemberships(admin) {
+  const memberships = await admin.query(`
+    select
+      granted.rolname as "roleName",
+      membership.admin_option as "adminOption",
+      membership.inherit_option as "inheritOption",
+      membership.set_option as "setOption"
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where member.rolname = 'app_runtime_production'
+    order by granted.rolname
+  `);
+  return memberships.rows;
+}
+
+async function readProductionRuntimeMembers(admin) {
+  const runtimeMembers = await admin.query(`
+    select
+      member.rolname as "roleName",
+      membership.admin_option as "adminOption",
+      membership.inherit_option as "inheritOption",
+      membership.set_option as "setOption"
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where granted.rolname = 'app_runtime_production'
+    order by member.rolname
+  `);
+  return runtimeMembers.rows;
+}
+
 export function productionRoleActivationMode(role) {
   if (
-    role === undefined ||
+    role === null ||
+    typeof role !== "object" ||
+    Array.isArray(role) ||
     typeof role.canLogin !== "boolean" ||
     role.inherit !== false ||
     role.connectionLimit !== 10 ||
-    role.superuser ||
-    role.createDatabase ||
-    role.createRole ||
-    role.replication ||
-    role.bypassRls
+    role.superuser !== false ||
+    role.createDatabase !== false ||
+    role.createRole !== false ||
+    role.replication !== false ||
+    role.bypassRls !== false
   ) {
     throw new Error("A role de runtime diverge dos atributos restritos esperados.");
   }
@@ -224,19 +270,29 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
   { createClient = createPostgresClient } = {},
 ) {
   const admin = createClient(connections.admin);
-  let canLogin;
+  let runtimeIsActive = false;
   try {
     await admin.connect();
     const role = await admin.query(`
-      select runtime.rolcanlogin as "canLogin"
+      select
+        runtime.rolcanlogin as "canLogin",
+        runtime.rolinherit as "inherit",
+        runtime.rolconnlimit as "connectionLimit",
+        runtime.rolsuper as "superuser",
+        runtime.rolcreatedb as "createDatabase",
+        runtime.rolcreaterole as "createRole",
+        runtime.rolreplication as "replication",
+        runtime.rolbypassrls as "bypassRls"
       from pg_catalog.pg_roles as runtime
       where runtime.rolname = 'app_runtime_production'
     `);
     if (role.rowCount === 0) return;
-    if (role.rowCount !== 1 || typeof role.rows[0]?.canLogin !== "boolean") {
+    if (role.rowCount !== 1) {
       throw new Error("A role runtime existente possui estado ambíguo.");
     }
-    canLogin = role.rows[0].canLogin;
+    runtimeIsActive = productionRoleActivationMode(role.rows[0]) === "validate";
+    assertSingleExpectedMembership(await readProductionRuntimeMemberships(admin));
+    assertSingleExpectedRuntimeMember(await readProductionRuntimeMembers(admin));
   } catch (error) {
     throw new Error("Não foi possível validar a role de produção antes das migrations.", {
       cause: error,
@@ -245,7 +301,7 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
     await admin.end().catch(() => undefined);
   }
 
-  if (!canLogin) return;
+  if (!runtimeIsActive) return;
 
   const runtime = createClient(connections.runtime);
   try {
@@ -371,41 +427,8 @@ export async function provisionProductionRole(
     }
     const runtimeRole = roles.rows.find((role) => role.roleName === productionRole);
 
-    const memberships = await admin.query(`
-      select
-        granted.rolname as "roleName",
-        membership.admin_option as "adminOption",
-        membership.inherit_option as "inheritOption",
-        membership.set_option as "setOption"
-      from pg_catalog.pg_auth_members as membership
-      join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-      join pg_catalog.pg_roles as member on member.oid = membership.member
-      where member.rolname = 'app_runtime_production'
-      order by granted.rolname
-    `);
-    assertSingleExpectedMembership(memberships.rows);
-
-    const runtimeMembers = await admin.query(`
-      select
-        member.rolname as "roleName",
-        membership.admin_option as "adminOption",
-        membership.inherit_option as "inheritOption",
-        membership.set_option as "setOption"
-      from pg_catalog.pg_auth_members as membership
-      join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-      join pg_catalog.pg_roles as member on member.oid = membership.member
-      where granted.rolname = 'app_runtime_production'
-      order by member.rolname
-    `);
-    if (
-      runtimeMembers.rows.length !== 1 ||
-      runtimeMembers.rows[0]?.roleName !== "postgres" ||
-      runtimeMembers.rows[0]?.adminOption !== true ||
-      runtimeMembers.rows[0]?.inheritOption !== false ||
-      runtimeMembers.rows[0]?.setOption !== false
-    ) {
-      throw new Error("A role de produção foi concedida a uma identidade inesperada.");
-    }
+    assertSingleExpectedMembership(await readProductionRuntimeMemberships(admin));
+    assertSingleExpectedRuntimeMember(await readProductionRuntimeMembers(admin));
 
     const managedBoundaries = await admin.query(
       "select private.managed_runtime_boundaries_are_ready() as ready",

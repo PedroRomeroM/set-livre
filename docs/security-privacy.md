@@ -91,7 +91,10 @@ nunca coordena mutações múltiplas para simular atomicidade.
   configuração exigem ownership root sem escrita não privilegiada, e políticas condicionais `Match` ou
   includes fora da superfície global canônica são recusados antes do reload;
 - antes de migrations forward-only, o deploy exige uma única host key Ed25519 para o IP canônico e
-  autentica a chave privada contra um preflight não mutante do comando SSH forçado;
+  autentica a chave privada contra o comando SSH forçado; o preflight atravessa `sudo` não interativo,
+  o instalador root e seu lock sem alterar a release;
+- a mesma fronteira relê atributos e memberships da role runtime existente e, se ativa, comprova sua
+  autenticação antes de permitir qualquer alteração de schema;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
