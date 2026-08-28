@@ -27,11 +27,16 @@ assume `app_dal` e grava três arquivos ignorados:
 - `.env.e2e.local` para testes destrutivos.
 
 Os dados são descartáveis. O guardrail relevante não é um firewall especial: Playwright e helpers de
-QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. Antes de qualquer chamada à
-CLI Supabase, o wrapper também exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes, comprova o contexto local
-canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux), confirma containers Linux
-e fixa explicitamente esse endpoint no processo filho. Assim, `start`, `reset` e `stop` nunca alcançam
-um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
+QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. A stack usa a bridge local
+suportada pela CLI e, depois de cada `start`, `reset` ou `status`, o wrapper comprova a bridge, todos os
+containers e exatamente as quatro portas publicadas. No Windows também exige o modo nativo
+`local-only-port-binding` do Docker Desktop; no Linux, cada binding precisa ser `127.0.0.1`. Estado
+divergente é parado e falha fechado.
+
+Antes de qualquer chamada à CLI Supabase, o wrapper exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes,
+comprova o contexto local canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux),
+confirma containers Linux e fixa explicitamente esse endpoint no processo filho. Assim, nenhum comando
+alcança um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
 
 A versão fixa inclui a correção oficial para colisão do endpoint de controle quando Set Livre e outra
 stack local coexistem. O `config.toml` também fixa `auto_expose_new_tables = false`: novas tabelas,
@@ -105,7 +110,7 @@ pgTAP e regenera candidatos temporários; qualquer diferença falha com orienta�
 ## Diagnóstico
 
 1. `docker desktop status` deve indicar `running`.
-2. `npm run supabase:status` deve confirmar `127.0.0.1:54321`.
+2. `npm run supabase:status` deve confirmar endpoints, bridge e bindings locais.
 3. Se a API do Docker mantiver operações presas, use `docker desktop diagnose` e reinicie o engine com
    `docker desktop restart`; não crie uma rede paralela permanente para mascarar o runtime.
 4. Reset, timeout ou serviço interrompido é inconclusivo até uma nova execução terminar com sucesso.

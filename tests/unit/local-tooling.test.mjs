@@ -1,5 +1,5 @@
 import { X509Certificate } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -7,15 +7,49 @@ import {
   normalizeSchemaSnapshot,
   validateGeneratedDatabaseTypes,
   validateSchemaSnapshot,
+  verifyDatabaseArtifacts,
 } from "../../scripts/database-artifacts.mjs";
 import {
+  assertLoopbackContainerInspections,
+  assertLoopbackNetworkInspection,
   parseSupabaseCliError,
   parseSupabaseStatus,
+  supabaseLocalNetworkName,
   validateLocalDockerContext,
+  validateDockerDesktopPortBindingPolicy,
+  withSupabaseLocalNetwork,
 } from "../../scripts/local-setup.mjs";
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
+  it("cleans a completed schema dump before propagating a later type-generation failure", async () => {
+    const supabaseDirectory = new URL("../../supabase/", import.meta.url);
+    const temporarySchemaPattern = /^\.schema\.generated\.sql\..+\.tmp$/u;
+    const temporarySchemas = () =>
+      readdirSync(supabaseDirectory)
+        .filter((name) => temporarySchemaPattern.test(name))
+        .sort();
+    const before = temporarySchemas();
+    const trackedSchema = readFileSync(
+      new URL("../../supabase/schema.generated.sql", import.meta.url),
+      "utf8",
+    );
+    const runSupabase = (argumentsList) => {
+      if (argumentsList[0] === "db" && argumentsList[1] === "dump") {
+        const destination = argumentsList[argumentsList.indexOf("--file") + 1];
+        writeFileSync(destination, trackedSchema, "utf8");
+        return "";
+      }
+      if (argumentsList[0] === "gen" && argumentsList[1] === "types") {
+        throw new Error("falha de geração simulada");
+      }
+      throw new Error("comando Supabase inesperado no teste");
+    };
+
+    await expect(verifyDatabaseArtifacts(runSupabase)).rejects.toThrow("falha de geração simulada");
+    expect(temporarySchemas()).toEqual(before);
+  });
+
   it("keeps Knip independent from the destructive E2E runtime environment", () => {
     const configuration = JSON.parse(
       readFileSync(new URL("../../knip.json", import.meta.url), "utf8"),
@@ -202,7 +236,9 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain("ensure_bootstrap_recovery_blocker");
     expect(deploy).not.toContain("--recover-link");
     expect(deploy).not.toContain("--seal-link");
-    const recoveryBranchStart = deploy.indexOf('\${1:-} == "--recover-services"');
+    const recoveryBranchStart = deploy.indexOf(
+      'if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]',
+    );
     const recoveryBranchEnd = deploy.indexOf("\n  exit 0\nfi\n", recoveryBranchStart) + 13;
     const recoveryBranch = deploy.slice(recoveryBranchStart, recoveryBranchEnd);
     expect(recoveryBranchStart).toBeGreaterThan(-1);
@@ -211,10 +247,10 @@ describe("local tooling contracts", () => {
     expect(recoveryBranch.indexOf("managed_release_directories_are_valid")).toBeLessThan(
       recoveryBranch.indexOf("read_rollback_marker"),
     );
-    const sealStart = deploy.indexOf('\${1:-} == "--seal-services"');
+    const sealStart = deploy.indexOf('if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]');
     const sealEnd = deploy.indexOf("\n  exit 0\nfi\n", sealStart);
     expect(deploy.slice(sealStart, sealEnd)).toContain("managed_release_directories_are_valid");
-    const servicesStart = deploy.indexOf('\${1:-} == "--recover-services"');
+    const servicesStart = deploy.indexOf('if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]');
     const servicesEnd = deploy.indexOf("\n  exit 0\nfi\n", servicesStart);
     const servicesRecovery = deploy.slice(servicesStart, servicesEnd);
     expect(servicesRecovery.indexOf("read_rollback_marker")).toBeLessThan(
@@ -330,7 +366,9 @@ describe("local tooling contracts", () => {
   it("permits reused runtime paths only after validating a retryable host state", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const markerValidation = bootstrap.indexOf("host_state_marker_is_valid() {");
-    const lockAcquired = bootstrap.indexOf("exec 9>/run/lock/set-livre-deploy.lock");
+    const lockAcquired = bootstrap.indexOf(
+      'exec python3 "$DEPLOY_LOCK_SOURCE" run blocking "${SCRIPT_DIRECTORY}/bootstrap-host.sh"',
+    );
     const stateDirectoryPrepared = bootstrap.indexOf(
       'ensure_bootstrap_state_directory "$HOST_STATE_DIRECTORY" \\',
       lockAcquired,
@@ -803,6 +841,7 @@ describe("local tooling contracts", () => {
       new URL("../../ops/deploy-ssh-command.sh", import.meta.url),
       "utf8",
     );
+    const deployLock = readFileSync(new URL("../../ops/deploy-lock.py", import.meta.url), "utf8");
 
     expect(bootstrap).toContain('restrict,command="/usr/local/sbin/set-livre-deploy-ssh"');
     expect(bootstrap).toContain("base64.b64decode(match.group(1), validate=True)");
@@ -815,6 +854,12 @@ describe("local tooling contracts", () => {
     for (const path of hostConfigurationFiles) {
       expect(bootstrap).toContain(path.slice("ops/".length));
     }
+    expect(deployLock).toContain("os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | no_follow");
+    expect(deployLock).toContain("os.fstat(file_descriptor)");
+    expect(deployLock).toContain("os.lstat(LOCK_PATH)");
+    expect(deployLock).toContain("descriptor.st_nlink != 1");
+    expect(deploy).not.toContain("exec 9>/run/lock/set-livre-deploy.lock");
+    expect(hostVerification).toContain("entrypoint protegido seguiu o symlink do lock de deploy");
     expect(bootstrap.indexOf("systemctl enable --now snap.certbot.renew.timer")).toBeLessThan(
       bootstrap.indexOf(
         'mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
@@ -912,9 +957,8 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
     );
-    expect(serviceRecovery).toContain(
-      'flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9',
-    );
+    expect(deploy).toContain('lock_policy="timeout=${RECOVERY_LOCK_TIMEOUT_SECONDS}"');
+    expect(serviceRecovery).not.toContain("set-livre-deploy.lock");
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
       6,
@@ -1139,6 +1183,20 @@ describe("local tooling contracts", () => {
     expect(docsCheck).toContain("pattern: /\\.skip\\s*\\(/u");
     expect(docsCheck).toContain("pattern: /waitForTimeout\\s*\\(/u");
     expect(docsCheck).toContain("for (const path of playwrightFiles)");
+    for (const root of [
+      ".github",
+      "apps",
+      "ops",
+      "packages",
+      "scripts",
+      "src",
+      "supabase",
+      "tests",
+    ]) {
+      expect(docsCheck).toContain(`"${root}"`);
+    }
+    expect(docsCheck).toContain('${"TO" + "DO"}|${"FIX" + "ME"}');
+    expect(docsCheck).toContain("for (const path of implementationFiles)");
   });
 
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {
@@ -1175,6 +1233,60 @@ describe("local tooling contracts", () => {
         }),
       ),
     ).toMatchObject({ API_URL: "http://127.0.0.1:54321" });
+  });
+
+  it("requires the dedicated loopback network and exact published Supabase ports", () => {
+    expect(withSupabaseLocalNetwork(["test", "db", "--local"])).toEqual([
+      "test",
+      "db",
+      "--local",
+      "--network-id",
+      supabaseLocalNetworkName,
+    ]);
+    assertLoopbackNetworkInspection([
+      {
+        Driver: "bridge",
+        Internal: false,
+        Name: supabaseLocalNetworkName,
+        Options: { "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1" },
+        Scope: "local",
+      },
+    ]);
+    const inspections = [
+      ["kong", "54321"],
+      ["db", "54322"],
+      ["studio", "54323"],
+      ["inbucket", "54324"],
+    ].map(([name, port]) => ({
+      Name: `supabase_${name}_set-livre`,
+      NetworkSettings: {
+        Networks: { [supabaseLocalNetworkName]: {} },
+        Ports: { "service/tcp": [{ HostIp: "127.0.0.1", HostPort: port }] },
+      },
+    }));
+
+    expect(() => assertLoopbackContainerInspections(inspections)).not.toThrow();
+    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "0.0.0.0";
+    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
+      "fora da fronteira local",
+    );
+    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "127.0.0.1";
+    inspections[0].NetworkSettings.Ports["service/tcp"].push({ HostIp: "::", HostPort: "54321" });
+    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
+      "fora da fronteira local",
+    );
+    expect(() =>
+      assertLoopbackContainerInspections(inspections, { dockerDesktopLocalOnly: true }),
+    ).not.toThrow();
+  });
+
+  it("accepts Docker Desktop IPv6 forwarding only under its native local-only policy", () => {
+    expect(() =>
+      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "local-only-port-binding" }),
+    ).not.toThrow();
+    expect(() =>
+      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "default-port-binding" }),
+    ).toThrow("Local only");
   });
 
   it("accepts only the canonical local Docker contexts", () => {

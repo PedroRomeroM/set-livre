@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
@@ -31,6 +31,14 @@ const localDockerContracts = {
     ["desktop-linux", "npipe:////./pipe/dockerDesktopLinuxEngine"],
   ]),
 };
+export const supabaseLocalNetworkName = "set-livre-loopback";
+const supabaseLocalProjectId = "set-livre";
+const loopbackBindingOption = "com.docker.network.bridge.host_binding_ipv4";
+const expectedPublishedPorts = new Set(["54321", "54322", "54323", "54324"]);
+
+export function withSupabaseLocalNetwork(argumentsList) {
+  return [...argumentsList, "--network-id", supabaseLocalNetworkName];
+}
 
 function runDocker(argumentsList, environment = process.env) {
   const result = spawnSync("docker", argumentsList, {
@@ -52,6 +60,153 @@ function assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride) 
   ) {
     throw new Error("DOCKER_HOST e DOCKER_CONTEXT precisam estar ausentes para operações locais.");
   }
+}
+
+export function validateDockerDesktopPortBindingPolicy(settings) {
+  if (settings?.PortBindingBehavior !== "local-only-port-binding") {
+    throw new Error(
+      "Docker Desktop precisa usar Port binding behavior = Local only para o Supabase local.",
+    );
+  }
+}
+
+function assertDockerDesktopPortBindingPolicy(environment, platform) {
+  if (platform !== "win32") return false;
+  const appData = environment.APPDATA;
+  if (typeof appData !== "string" || !isAbsolute(appData)) {
+    throw new Error("APPDATA não permite validar a política local do Docker Desktop.");
+  }
+  try {
+    validateDockerDesktopPortBindingPolicy(
+      JSON.parse(readFileSync(resolve(appData, "Docker", "settings-store.json"), "utf8")),
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Port binding behavior")) throw error;
+    throw new Error("Não foi possível validar a política local do Docker Desktop.");
+  }
+  return true;
+}
+
+export function assertLoopbackNetworkInspection(inspections) {
+  const inspection =
+    Array.isArray(inspections) && inspections.length === 1 ? inspections[0] : undefined;
+  if (
+    inspection?.Name !== supabaseLocalNetworkName ||
+    inspection.Driver !== "bridge" ||
+    inspection.Scope !== "local" ||
+    inspection.Internal !== false ||
+    inspection.Options?.[loopbackBindingOption] !== "127.0.0.1"
+  ) {
+    throw new Error(`A rede Docker ${supabaseLocalNetworkName} não está restrita ao loopback.`);
+  }
+}
+
+export function assertLoopbackContainerInspections(
+  inspections,
+  { dockerDesktopLocalOnly = false } = {},
+) {
+  if (!Array.isArray(inspections) || inspections.length === 0) {
+    throw new Error("Nenhum container Supabase local em execução foi encontrado.");
+  }
+
+  const publishedPorts = new Map();
+  for (const inspection of inspections) {
+    if (inspection?.NetworkSettings?.Networks?.[supabaseLocalNetworkName] === undefined) {
+      throw new Error("Um container Supabase não pertence à rede local restrita.");
+    }
+    for (const bindings of Object.values(inspection.NetworkSettings.Ports ?? {})) {
+      if (bindings === null) continue;
+      if (!Array.isArray(bindings)) throw new Error("O Docker retornou portas locais inválidas.");
+      for (const binding of bindings) {
+        const hostIp = binding?.HostIp;
+        const hostPort = binding?.HostPort;
+        if (
+          typeof hostPort !== "string" ||
+          (hostIp !== "127.0.0.1" && !(dockerDesktopLocalOnly && hostIp === "::"))
+        ) {
+          throw new Error("Um container Supabase publicou porta fora da fronteira local.");
+        }
+        const addresses = publishedPorts.get(hostPort) ?? new Set();
+        if (addresses.has(hostIp)) throw new Error(`A porta local ${hostPort} foi duplicada.`);
+        addresses.add(hostIp);
+        publishedPorts.set(hostPort, addresses);
+      }
+    }
+  }
+
+  if (
+    publishedPorts.size !== expectedPublishedPorts.size ||
+    [...expectedPublishedPorts].some(
+      (port) => !publishedPorts.has(port) || !publishedPorts.get(port).has("127.0.0.1"),
+    )
+  ) {
+    throw new Error("A stack Supabase não publicou exatamente as portas locais esperadas.");
+  }
+}
+
+function ensureSupabaseLoopbackNetwork(environment) {
+  const existingNames = runDocker(
+    ["network", "ls", "--filter", `name=^${supabaseLocalNetworkName}$`, "--format", "{{.Name}}"],
+    environment,
+  )
+    .split("\n")
+    .filter(Boolean);
+  if (existingNames.length === 0) {
+    runDocker(
+      [
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--opt",
+        `${loopbackBindingOption}=127.0.0.1`,
+        supabaseLocalNetworkName,
+      ],
+      environment,
+    );
+  } else if (existingNames.length !== 1 || existingNames[0] !== supabaseLocalNetworkName) {
+    throw new Error(`A rede Docker ${supabaseLocalNetworkName} não pôde ser identificada.`);
+  }
+  assertLoopbackNetworkInspection(
+    JSON.parse(runDocker(["network", "inspect", supabaseLocalNetworkName], environment)),
+  );
+}
+
+function supabaseProjectContainerIds(environment) {
+  return runDocker(
+    [
+      "ps",
+      "--filter",
+      `label=com.supabase.cli.project=${supabaseLocalProjectId}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    environment,
+  )
+    .split("\n")
+    .filter(Boolean);
+}
+
+function supabaseProjectContainersAreRunning(environment) {
+  return supabaseProjectContainerIds(environment).length > 0;
+}
+
+function assertSupabaseProjectStopped(environment) {
+  if (supabaseProjectContainersAreRunning(environment)) {
+    throw new Error("A stack Supabase fora do contrato não pôde ser encerrada.");
+  }
+}
+
+function assertSupabaseLoopbackBindings(environment, platform = process.platform) {
+  const containerIds = supabaseProjectContainerIds(environment);
+  const dockerDesktopLocalOnly = assertDockerDesktopPortBindingPolicy(environment, platform);
+  assertLoopbackNetworkInspection(
+    JSON.parse(runDocker(["network", "inspect", supabaseLocalNetworkName], environment)),
+  );
+  assertLoopbackContainerInspections(
+    JSON.parse(runDocker(["inspect", ...containerIds], environment)),
+    { dockerDesktopLocalOnly },
+  );
 }
 
 export function validateLocalDockerContext({
@@ -127,9 +282,10 @@ export function assertLocalDockerDaemon(environment = process.env, platform = pr
   return localEnvironment;
 }
 
-export function runSupabase(argumentsList, { capture = false } = {}) {
+export function runSupabase(argumentsList, { capture = false, network = false } = {}) {
   const localDockerEnvironment = assertLocalDockerDaemon();
-  const result = spawnSync(process.execPath, [supabaseCliPath, ...argumentsList], {
+  const commandArguments = network ? withSupabaseLocalNetwork(argumentsList) : argumentsList;
+  const result = spawnSync(process.execPath, [supabaseCliPath, ...commandArguments], {
     cwd: repositoryRoot,
     encoding: "utf8",
     env: localDockerEnvironment,
@@ -209,7 +365,11 @@ export function parseSupabaseStatus(rawStatus) {
 }
 
 function localStatus() {
-  return parseSupabaseStatus(runSupabase(["status", "--output", "json"], { capture: true }));
+  const values = parseSupabaseStatus(
+    runSupabase(["status", "--output", "json"], { capture: true, network: true }),
+  );
+  assertSupabaseLoopbackBindings(assertLocalDockerDaemon());
+  return values;
 }
 
 async function writePrivateEnvironment(destination, contents) {
@@ -428,9 +588,9 @@ function applicationEnvironment(values, dalDatabaseUrl, appUrl) {
 
 async function resetLocalEnvironment() {
   process.stdout.write("Iniciando a stack Supabase local...\n");
-  runSupabase(["start"], { capture: true });
+  startLocalSupabase();
   process.stdout.write("Reaplicando migrations e seed...\n");
-  runSupabase(["db", "reset", "--local"], { capture: true });
+  runSupabase(["db", "reset", "--local"], { capture: true, network: true });
   const values = localStatus();
   process.stdout.write("Provisionando a role DAL local...\n");
   const { dalDatabaseUrl, databaseMarker } = await provisionLocalRuntime(values);
@@ -462,15 +622,40 @@ async function resetLocalEnvironment() {
   process.stdout.write("Supabase local reiniciado e ambientes de desenvolvimento atualizados.\n");
 }
 
+function stopScopedSupabaseStack(environment = assertLocalDockerDaemon()) {
+  runSupabase(["stop", "--project-id", supabaseLocalProjectId], { capture: true });
+  assertSupabaseProjectStopped(environment);
+}
+
+function startLocalSupabase() {
+  const environment = assertLocalDockerDaemon();
+  assertDockerDesktopPortBindingPolicy(environment, process.platform);
+  if (supabaseProjectContainersAreRunning(environment)) {
+    try {
+      assertSupabaseLoopbackBindings(environment);
+    } catch {
+      stopScopedSupabaseStack(environment);
+    }
+  }
+  ensureSupabaseLoopbackNetwork(environment);
+  try {
+    runSupabase(["start"], { capture: true, network: true });
+    assertSupabaseLoopbackBindings(environment);
+  } catch (error) {
+    if (supabaseProjectContainersAreRunning(environment)) stopScopedSupabaseStack(environment);
+    throw error;
+  }
+}
+
 export async function main(command = "reset") {
   if (command === "start") {
-    runSupabase(["start"], { capture: true });
+    startLocalSupabase();
     localStatus();
     process.stdout.write("Supabase local ativo em 127.0.0.1:54321.\n");
     return;
   }
   if (command === "stop") {
-    runSupabase(["stop"]);
+    stopScopedSupabaseStack();
     return;
   }
   if (command === "status") {
@@ -491,7 +676,7 @@ export async function main(command = "reset") {
   } else if (command === "generate") {
     await generateDatabaseArtifacts(runSupabase);
   } else if (command === "test") {
-    runSupabase(["test", "db", "--local"]);
+    runSupabase(["test", "db", "--local"], { network: true });
     await verifyDatabaseArtifacts(runSupabase);
     process.stdout.write("Testes SQL e artefatos gerados estão consistentes.\n");
   } else {

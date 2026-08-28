@@ -51,9 +51,9 @@ o segundo mecanismo de deploy.
 ignorados: `.env.local`, `apps/backoffice/.env.local` e `.env.e2e.local`. O login DAL local é exclusivo,
 assume `app_dal` e não aceita host diferente de `127.0.0.1`.
 
-O banco local contém somente dados QA descartáveis. Não há benefício proporcional em adicionar uma
-segunda camada de firewall local; a segurança essencial é nunca reutilizar credencial ou dado de
-produção. Consulte [development.md](development.md).
+O banco local contém somente dados QA descartáveis. Não há firewall customizado: a própria fronteira
+Docker é validada como local antes e depois de iniciar a stack, além de nunca reutilizar credencial ou
+dado de produção. Consulte [development.md](development.md).
 
 ## CI e proteção de branch
 
@@ -123,7 +123,8 @@ HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do 
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units estáticas, sem vínculo
 direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
 `set-livre-release-recovery.service` termine com sucesso antes de iniciá-las. A mesma recovery unit é
-disparada pela path unit quando existe marcador, aguarda o lock do deploy por no máximo cinco minutos,
+disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
+links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
 depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
 pode iniciar os apps internamente para provar health sem depender do gate e, portanto, sem ciclo de
 units. Uma fase root-only adicional é publicada antes de remover o blocker do bootstrap e permanece até

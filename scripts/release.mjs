@@ -21,6 +21,7 @@ export const hostConfigurationFiles = Object.freeze([
   "ops/certificates/supabase-root-2021-ca.crt",
   "ops/deploy-release.sh",
   "ops/deploy-ssh-command.sh",
+  "ops/deploy-lock.py",
   "ops/nginx/set-livre-http.conf",
   "ops/nginx/set-livre-tls.conf",
   "ops/systemd/set-livre-application-start.service",

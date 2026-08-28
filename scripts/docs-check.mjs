@@ -84,6 +84,43 @@ for (const path of playwrightFiles) {
   }
 }
 
+const implementationExtensions = new Set([
+  ".cjs",
+  ".css",
+  ".html",
+  ".js",
+  ".jsx",
+  ".json",
+  ".mjs",
+  ".sh",
+  ".sql",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".yaml",
+  ".yml",
+]);
+const implementationFiles = [
+  ".github",
+  "apps",
+  "ops",
+  "packages",
+  "scripts",
+  "src",
+  "supabase",
+  "tests",
+]
+  .map((directory) => resolve(repositoryRoot, directory))
+  .filter(existsSync)
+  .flatMap(walk)
+  .filter((path) => implementationExtensions.has(extname(path)));
+const undocumentedDebtPattern = new RegExp(`\\b(?:${"TO" + "DO"}|${"FIX" + "ME"})\\b`, "u");
+for (const path of implementationFiles) {
+  if (undocumentedDebtPattern.test(readFileSync(path, "utf8"))) {
+    errors.push(`Implementação contém marcador de dívida sem registro formal: ${path}`);
+  }
+}
+
 const featureDirectory = resolve(repositoryRoot, "docs/features");
 const featureFiles = readdirSync(featureDirectory)
   .filter((name) => /^FEAT-\d{3}-.+\.md$/u.test(name))

@@ -121,9 +121,10 @@ limitado, Storage RLS e cleanup. SVG e nomes de usuário nunca chegam a processa
 
 ## Ambiente local
 
-Supabase local e E2E usam somente `127.0.0.1`, dados QA descartáveis e credenciais próprias geradas a
-cada reset. O preflight recusa banco/URL não local antes de abrir navegador. Docker Desktop não é uma
-fronteira de produção e não recebe firewall customizado sem risco demonstrado; o controle decisivo é não
+Supabase local e E2E usam somente a fronteira local validada, dados QA descartáveis e credenciais próprias
+geradas a cada reset. O preflight recusa banco/URL não local antes de abrir navegador; o wrapper também
+recusa daemon, bridge, política do Docker Desktop, container ou binding divergente. Docker Desktop não é
+uma fronteira de produção e não recebe firewall customizado; o controle decisivo continua sendo não
 reutilizar dado ou credencial real.
 
 Arquivos `.env.local` são ignorados e escritos com permissão privada quando a plataforma oferece essa

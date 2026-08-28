@@ -9,6 +9,7 @@ readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256
 readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="/etc/set-livre/bootstrap-recovery-in-progress.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
 readonly UPLOAD_LOCK="${INCOMING_DIRECTORY}/.incoming.lock"
+readonly DEPLOY_LOCK_HELPER="/usr/local/sbin/set-livre-deploy-lock"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly PRODUCTION_URL="https://${PRODUCTION_IP}"
 readonly MAX_ARCHIVE_BYTES=$((256 * 1024 * 1024))
@@ -16,6 +17,8 @@ readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
 readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
+SCRIPT_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
+readonly SCRIPT_PATH
 authenticated_bootstrap_recovery_digest=""
 recovered_release=""
 recovered_target=""
@@ -23,6 +26,13 @@ recovered_target=""
 fail() {
   printf 'deploy: %s\n' "$1" >&2
   exit 1
+}
+
+adopt_deploy_lock() {
+  local file_descriptor="$1"
+  [[ ${file_descriptor} =~ ^[0-9]+$ ]] || fail "descritor do lock de deploy inválido."
+  python3 "$DEPLOY_LOCK_HELPER" verify "$file_descriptor" \
+    || fail "lock de deploy herdado não pôde ser autenticado."
 }
 
 release_tree_digest() {
@@ -317,10 +327,21 @@ seal_interrupted_release_recovery_on_failure() {
 
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
 
+if [[ ${1:-} == "--set-livre-deploy-lock-fd" ]]; then
+  [[ $# -ge 2 ]] || fail "invocação interna do lock de deploy inválida."
+  adopt_deploy_lock "$2"
+  shift 2
+else
+  [[ -f ${DEPLOY_LOCK_HELPER} && ! -L ${DEPLOY_LOCK_HELPER} ]] \
+    || fail "primitive instalada do lock de deploy é inválida."
+  lock_policy=nonblocking
+  if [[ $# -eq 1 && (${1:-} == "--seal-services" || ${1:-} == "--recover-services") ]]; then
+    lock_policy="timeout=${RECOVERY_LOCK_TIMEOUT_SECONDS}"
+  fi
+  exec python3 "$DEPLOY_LOCK_HELPER" run "$lock_policy" "$SCRIPT_PATH" "$@"
+fi
+
 if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
-  exec 9>/run/lock/set-livre-deploy.lock
-  flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
-    || fail "o lock de deploy permaneceu ocupado durante o selamento da recuperação."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   seal_interrupted_release_recovery \
@@ -329,9 +350,6 @@ if [[ $# -eq 1 && ${1:-} == "--seal-services" ]]; then
 fi
 
 if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
-  exec 9>/run/lock/set-livre-deploy.lock
-  flock --exclusive --timeout "$RECOVERY_LOCK_TIMEOUT_SECONDS" 9 \
-    || fail "o lock de deploy permaneceu ocupado durante a janela de recuperação."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   trap seal_interrupted_release_recovery_on_failure EXIT
@@ -390,8 +408,6 @@ incoming_archive="${INCOMING_DIRECTORY}/set-livre-${release_sha}.tar.gz"
 incoming_web_environment="${INCOMING_DIRECTORY}/web-${release_sha}.env"
 incoming_backoffice_environment="${INCOMING_DIRECTORY}/backoffice-${release_sha}.env"
 
-exec 9>/run/lock/set-livre-deploy.lock
-flock --nonblock 9 || fail "já existe outro deploy em execução."
 exec 8<>"$UPLOAD_LOCK"
 flock --exclusive --timeout "$UPLOAD_LOCK_TIMEOUT_SECONDS" 8 \
   || fail "o lock de upload permaneceu ocupado durante a instalação."

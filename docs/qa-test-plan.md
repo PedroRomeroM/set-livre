@@ -58,7 +58,8 @@ dezenas de testes.
 - TypeScript estrito;
 - Knip;
 - `npm audit --audit-level=high`;
-- build standalone das duas aplicações.
+- build standalone das duas aplicações;
+- `docs:check` sem marcadores de dívida soltos na implementação nem construções Playwright proibidas.
 
 ## Matriz Playwright
 

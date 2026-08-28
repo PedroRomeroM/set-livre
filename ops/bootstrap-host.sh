@@ -22,6 +22,8 @@ readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
 readonly DEPLOY_INSTALLER_SOURCE="${SCRIPT_DIRECTORY}/deploy-release.sh"
 readonly DEPLOY_SSH_COMMAND_SOURCE="${SCRIPT_DIRECTORY}/deploy-ssh-command.sh"
+readonly DEPLOY_LOCK_SOURCE="${SCRIPT_DIRECTORY}/deploy-lock.py"
+readonly DEPLOY_LOCK_DESTINATION="/usr/local/sbin/set-livre-deploy-lock"
 readonly NGINX_HTTP_SOURCE="${SCRIPT_DIRECTORY}/nginx/set-livre-http.conf"
 readonly NGINX_TLS_SOURCE="${SCRIPT_DIRECTORY}/nginx/set-livre-tls.conf"
 temporary_directory=""
@@ -53,6 +55,13 @@ managed_file_staging=""
 fail() {
   printf 'bootstrap: %s\n' "$1" >&2
   exit 1
+}
+
+adopt_deploy_lock() {
+  local file_descriptor="$1"
+  [[ ${file_descriptor} =~ ^[0-9]+$ ]] || fail "descritor do lock de deploy inválido."
+  python3 "$DEPLOY_LOCK_SOURCE" verify "$file_descriptor" \
+    || fail "lock de deploy herdado não pôde ser autenticado."
 }
 
 account_identity_is_canonical() {
@@ -876,11 +885,21 @@ cleanup() {
 trap cleanup EXIT
 
 [[ ${EUID} -eq 0 ]] || fail "execute como root."
+if [[ ${1:-} == "--set-livre-deploy-lock-fd" ]]; then
+  [[ $# -ge 3 ]] || fail "invocação interna do lock de deploy inválida."
+  adopt_deploy_lock "$2"
+  shift 2
+else
+  [[ -f ${DEPLOY_LOCK_SOURCE} && ! -L ${DEPLOY_LOCK_SOURCE} ]] \
+    || fail "primitive do lock de deploy ausente ou inválida."
+  exec python3 "$DEPLOY_LOCK_SOURCE" run blocking "${SCRIPT_DIRECTORY}/bootstrap-host.sh" "$@"
+fi
 [[ $# -eq 1 ]] || fail "informe o arquivo que contém a chave pública de deploy."
 for required_source in \
   "$SUPABASE_CA_SOURCE" \
   "$DEPLOY_INSTALLER_SOURCE" \
   "$DEPLOY_SSH_COMMAND_SOURCE" \
+  "$DEPLOY_LOCK_SOURCE" \
   "$NGINX_HTTP_SOURCE" \
   "$NGINX_TLS_SOURCE" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" \
@@ -943,8 +962,6 @@ PYTHON
   fail "a chave de deploy não contém exatamente uma chave pública Ed25519 válida."
 fi
 
-exec 9>/run/lock/set-livre-deploy.lock
-flock --exclusive 9
 ensure_bootstrap_state_directory "$HOST_STATE_DIRECTORY" \
   || fail "diretório de estado operacional não é um estado inicial ou gerenciado válido."
 managed_host_contract=false
@@ -984,6 +1001,7 @@ files = [
     "certificates/supabase-root-2021-ca.crt",
     "deploy-release.sh",
     "deploy-ssh-command.sh",
+    "deploy-lock.py",
     "nginx/set-livre-http.conf",
     "nginx/set-livre-tls.conf",
     "systemd/set-livre-application-start.service",
@@ -1235,6 +1253,9 @@ publish_managed_file \
 rm -f -- "$authorized_keys_source"
 authorized_keys_source=""
 
+publish_managed_file \
+  "$DEPLOY_LOCK_SOURCE" "$DEPLOY_LOCK_DESTINATION" root root 0755 \
+  || fail "primitive do lock de deploy não pôde ser publicada atomicamente."
 publish_managed_file \
   "$DEPLOY_INSTALLER_SOURCE" /usr/local/sbin/set-livre-deploy root root 0755 \
   || fail "instalador de release não pôde ser publicado atomicamente."

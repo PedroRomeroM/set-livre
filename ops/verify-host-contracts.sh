@@ -7,6 +7,7 @@ readonly PRODUCTION_SUPABASE_URL="https://oirvvnojgkzdppkdvhej.supabase.co"
 readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
 readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
+readonly INSTALLED_DEPLOY_LOCK="/usr/local/sbin/set-livre-deploy-lock"
 readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"
 readonly FAIL2BAN_TEST_CONFIG="/etc/fail2ban/jail.d/set-livre-sshd.local"
 readonly FAIL2BAN_TEST_OVERRIDE="/etc/fail2ban/action.d/nftables-host-contracts.local"
@@ -431,7 +432,29 @@ sudo install -o root -g setlivre -m 0640 "$temporary_directory/release.env" \
   /opt/set-livre/current/.runtime/release.env
 sudo install -m 0755 "$REPOSITORY_ROOT/ops/deploy-release.sh" /usr/local/sbin/set-livre-deploy
 sudo install -o root -g root -m 0755 \
+  "$REPOSITORY_ROOT/ops/deploy-lock.py" "$INSTALLED_DEPLOY_LOCK"
+sudo install -o root -g root -m 0755 \
   "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" "$INSTALLED_DEPLOY_SSH_COMMAND"
+
+printf 'deploy-lock-target\n' > "$temporary_directory/deploy-lock-target"
+sudo rm -f -- /run/lock/set-livre-deploy.lock
+sudo ln --symbolic -- "$temporary_directory/deploy-lock-target" /run/lock/set-livre-deploy.lock
+for protected_entrypoint in \
+  "$REPOSITORY_ROOT/ops/bootstrap-host.sh" \
+  "$REPOSITORY_ROOT/ops/deploy-release.sh --seal-services" \
+  "$REPOSITORY_ROOT/ops/deploy-release.sh --recover-services" \
+  "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) --verify-only"; do
+  read -r -a protected_command <<< "$protected_entrypoint"
+  if deploy_lock_probe_output=$(sudo bash "${protected_command[@]}" 2>&1); then
+    fail "entrypoint protegido seguiu o symlink do lock de deploy."
+  fi
+  grep --fixed-strings 'o lock não pôde ser aberto sem seguir links' \
+    <<< "$deploy_lock_probe_output" >/dev/null \
+    || fail "entrypoint protegido recusou o symlink por motivo inesperado."
+  [[ $(< "$temporary_directory/deploy-lock-target") == deploy-lock-target ]] \
+    || fail "alvo externo do symlink de lock foi alterado."
+done
+sudo rm -f -- /run/lock/set-livre-deploy.lock
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
@@ -1176,7 +1199,7 @@ recovery_lock_ready="$temporary_directory/recovery-lock-ready"
 recovery_lock_release="$temporary_directory/recovery-lock-release"
 # A expansão de $1/$2 pertence ao bash filho, não ao runner do teste.
 # shellcheck disable=SC2016
-flock --exclusive /run/lock/set-livre-deploy.lock bash -c '
+sudo flock --exclusive /run/lock/set-livre-deploy.lock bash -c '
   touch "$1"
   while [[ ! -e $2 ]]; do /usr/bin/sleep 0.05; done
 ' _ "$recovery_lock_ready" "$recovery_lock_release" &
@@ -1205,4 +1228,4 @@ assert_current_release "$release_sha"
 assert_symlinked_release_component_rejected root
 assert_symlinked_release_component_rejected releases
 
-printf 'Uploads, lock privilegiado, raízes físicas, ativação, rollback, interrupção, retenção e recuperação pós-lock verificados.\n'
+printf 'Uploads, lock no-follow, raízes físicas, ativação, rollback, interrupção, retenção e recuperação pós-lock verificados.\n'

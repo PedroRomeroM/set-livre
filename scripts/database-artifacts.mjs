@@ -86,6 +86,7 @@ async function generateSchemaContents(runSupabase) {
 async function generateTypesContents(runSupabase) {
   const generated = runSupabase(["gen", "types", "typescript", "--local", "--schema", "public"], {
     capture: true,
+    network: true,
   });
   validateGeneratedDatabaseTypes(generated);
   const configuration = (await resolveConfig(databaseArtifactPaths.types, {
@@ -112,12 +113,12 @@ export async function generateDatabaseArtifacts(runSupabase, { schema = true, ty
 }
 
 export async function verifyDatabaseArtifacts(runSupabase) {
-  const [trackedSchema, trackedTypes, generatedSchema, generatedTypes] = await Promise.all([
+  const [trackedSchema, trackedTypes] = await Promise.all([
     readFile(databaseArtifactPaths.schema, "utf8"),
     readFile(databaseArtifactPaths.types, "utf8"),
-    generateSchemaContents(runSupabase),
-    generateTypesContents(runSupabase),
   ]);
+  const generatedSchema = await generateSchemaContents(runSupabase);
+  const generatedTypes = await generateTypesContents(runSupabase);
   const stale = [];
   if (trackedSchema !== generatedSchema) stale.push("supabase/schema.generated.sql");
   if (trackedTypes !== generatedTypes) {

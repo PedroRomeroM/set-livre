@@ -30,6 +30,8 @@ O contrato técnico completo está em [`AGENTS.md`](AGENTS.md).
 ## Desenvolvimento local
 
 Requisitos: Windows 11, Node `24.18.0`, npm `11.19.0` e Docker Desktop em Linux containers.
+O Docker Desktop usa port binding `Local only`; os comandos Supabase validam essa política, a bridge e
+as portas publicadas antes de liberar o ambiente destrutivo.
 
 ```powershell
 npm ci
