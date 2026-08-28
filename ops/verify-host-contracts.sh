@@ -108,6 +108,8 @@ bootstrap_primitive_markers=(
   "END SET_LIVRE_FAIL2BAN_CONFIGURATION"
   "BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES"
   "END SET_LIVRE_SSH_POLICY_PRIMITIVES"
+  "BEGIN SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES"
+  "END SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES"
 )
 for marker in "${bootstrap_primitive_markers[@]}"; do
   [[ $(grep --fixed-strings --count "$marker" "$REPOSITORY_ROOT/ops/bootstrap-host.sh") -eq 1 ]] \
@@ -288,6 +290,7 @@ AllowTcpForwarding no
 GatewayPorts no
 PermitTunnel no
 PermitUserEnvironment no
+ForceCommand none
 AcceptEnv LANG LC_*
 AllowUsers ubuntu deploy-setlivre
 SSHD_CONFIGURATION
@@ -341,6 +344,14 @@ if assert_effective_sshd_policy "$configuration"; then
   fail "variável de inicialização do shell foi aceita pela política SSH efetiva."
 fi
 rm -- "${drop_in_directory}/10-dangerous-environment.conf"
+
+cat > "${drop_in_directory}/10-force-command.conf" <<'FORCE_COMMAND_CONFIGURATION'
+ForceCommand /bin/bash
+FORCE_COMMAND_CONFIGURATION
+if assert_effective_sshd_policy "$configuration"; then
+  fail "ForceCommand global substituiu o comando restrito da chave de deploy."
+fi
+rm -- "${drop_in_directory}/10-force-command.conf"
 
 cat > "${drop_in_directory}/10-conditional.conf" <<'CONDITIONAL_CONFIGURATION'
 Match Address 198.51.100.0/24
@@ -404,6 +415,43 @@ if ! sudo test -d /run/sshd \
 fi
 sudo bash "$ssh_policy_runtime" "$temporary_directory/ssh-policy"
 sudo chown -R "$(id --user):$(id --group)" "$temporary_directory/ssh-policy"
+
+release_integrity_runtime="$temporary_directory/release-integrity-runtime.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail' \
+    'readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"'
+  sed -n \
+    '/^# BEGIN SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES$/,/^# END SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES$/p' \
+    "$REPOSITORY_ROOT/ops/bootstrap-host.sh"
+  cat <<'RELEASE_INTEGRITY_RUNTIME'
+fail() {
+  printf 'release-integrity: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || fail "raiz de teste ausente."
+release_root="$1"
+install -d -o root -g setlivre -m 0750 "$release_root" "$release_root/.runtime"
+printf 'conteúdo autenticado\n' > "$release_root/server.js"
+chown root:setlivre "$release_root/server.js"
+chmod 0640 "$release_root/server.js"
+tree_digest="$(release_tree_digest "$release_root")"
+printf '%s\n' "$tree_digest" > "$release_root/$STAGED_TREE_DIGEST_RELATIVE_PATH"
+chown root:setlivre "$release_root/$STAGED_TREE_DIGEST_RELATIVE_PATH"
+chmod 0640 "$release_root/$STAGED_TREE_DIGEST_RELATIVE_PATH"
+active_release_tree_is_authentic "$release_root" \
+  || fail "árvore ativa íntegra foi recusada."
+printf 'adulteração\n' >> "$release_root/server.js"
+if active_release_tree_is_authentic "$release_root"; then
+  fail "árvore ativa adulterada foi reutilizada."
+fi
+printf 'Active release integrity runtime contracts OK\n'
+RELEASE_INTEGRITY_RUNTIME
+} > "$release_integrity_runtime"
+chmod 0700 "$release_integrity_runtime"
+release_integrity_root="$temporary_directory/release-integrity"
+sudo bash "$release_integrity_runtime" "$release_integrity_root"
+sudo rm -rf --one-file-system -- "$release_integrity_root"
 
 ! privileged_path_exists "$FAIL2BAN_TEST_CONFIG" \
   || fail "configuração Fail2ban do contrato já existe no runner."
@@ -621,6 +669,9 @@ for systemd_unit in \
     "$REPOSITORY_ROOT/ops/systemd/${systemd_unit}" "/etc/systemd/system/${systemd_unit}"
 done
 sudo systemctl daemon-reload
+sudo systemctl enable \
+  set-livre-application-start.service \
+  set-livre-release-recovery.path
 
 printf 'deploy-lock-target\n' > "$temporary_directory/deploy-lock-target"
 sudo rm -f -- /run/lock/set-livre-deploy.lock
@@ -630,7 +681,7 @@ for protected_entrypoint in \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --preflight" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --seal-services" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --recover-services" \
-  "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) --stage-only"; do
+  "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) $(printf '0%.0s' {1..64}) --stage-only"; do
   read -r -a protected_command <<< "$protected_entrypoint"
   if deploy_lock_probe_output=$(sudo bash "${protected_command[@]}" 2>&1); then
     fail "entrypoint protegido seguiu o symlink do lock de deploy."
@@ -676,8 +727,24 @@ write_fixture_environment() {
     printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
   } > "$destination"
 }
+
+fixture_runtime_environment_digest() {
+  local web_environment="$1"
+  local backoffice_environment="$2"
+  {
+    printf 'web.env\0'
+    cat -- "$web_environment"
+    printf '\0backoffice.env\0'
+    cat -- "$backoffice_environment"
+    printf '\0'
+  } | sha256sum | cut --delimiter=' ' --fields=1
+}
 write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL"
 write_fixture_environment "$temporary_directory/backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+runtime_environment_digest="$(
+  fixture_runtime_environment_digest \
+    "$temporary_directory/web.env" "$temporary_directory/backoffice.env"
+)"
 
 abandoned_sha="$(printf 'f%.0s' {1..40})"
 for abandoned in \
@@ -719,7 +786,7 @@ sudo --user deploy-setlivre -- \
   "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 if entry_limit_output="$(
   sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$entry_limit_sha" "$entry_limit_checksum" --stage-only 2>&1
+    "$entry_limit_sha" "$entry_limit_checksum" "$runtime_environment_digest" --stage-only 2>&1
 )"; then
   fail "archive com mais de 20.000 entradas foi aceito."
 fi
@@ -760,7 +827,7 @@ sudo --user deploy-setlivre -- \
   "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 if metadata_limit_output="$(
   sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$metadata_limit_sha" "$metadata_limit_checksum" --stage-only 2>&1
+    "$metadata_limit_sha" "$metadata_limit_checksum" "$runtime_environment_digest" --stage-only 2>&1
 )"; then
   fail "archive com metadata PAX excessiva foi aceito."
 fi
@@ -797,7 +864,8 @@ sudo install -o root -g root -m 0600 /dev/null "$stale_trusted"
 # O contrato real aceita current ausente ou um symlink íntegro para uma release versionada.
 sudo rm -rf -- /opt/set-livre/current
 staging_probe_output="$(
-  sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --stage-only
+  sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
+    "$release_sha" "$checksum" "$runtime_environment_digest" --stage-only
 )"
 [[ ${staging_probe_output} == "Release ${release_sha} preparada e verificada sem ativação." ]] \
   || fail "staging privilegiado não confirmou a release exata."
@@ -815,7 +883,7 @@ cat > "$fake_bin/systemctl" <<'SYSTEMCTL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 phase="${SET_LIVRE_TEST_PHASE:-success}"
-if [[ ${1:-} == "show" ]]; then
+if [[ ${1:-} == "show" || ${1:-} == "is-enabled" ]]; then
   exec /usr/bin/systemctl "$@"
 fi
 if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" ]]; then
@@ -1058,8 +1126,45 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v8 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v9 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
+
+sudo cp /etc/nginx/sites-available/set-livre "$temporary_directory/effective-nginx-site"
+sudo chown "$(id --user):$(id --group)" "$temporary_directory/effective-nginx-site"
+{
+  printf '# drift válido, mas não aprovado\n'
+  cat "$temporary_directory/effective-nginx-site"
+} > "$temporary_directory/effective-nginx-site-drift"
+sudo install -o root -g root -m 0644 "$temporary_directory/effective-nginx-site-drift" \
+  /etc/nginx/sites-available/set-livre
+if preflight_nginx_site_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou site Nginx efetivo divergente."
+fi
+grep --fixed-strings 'site Nginx efetivo divergiu do contrato TLS instalado' \
+  <<< "$preflight_nginx_site_output" >/dev/null \
+  || fail "preflight SSH recusou site Nginx efetivo por motivo inesperado."
+sudo install -o root -g root -m 0644 "$temporary_directory/effective-nginx-site" \
+  /etc/nginx/sites-available/set-livre
+
+sudo install -o root -g root -m 0644 "$temporary_directory/effective-nginx-site" \
+  /etc/nginx/sites-available/set-livre-alternate
+sudo ln --symbolic --force --no-dereference --no-target-directory \
+  /etc/nginx/sites-available/set-livre-alternate /etc/nginx/sites-enabled/set-livre
+if preflight_nginx_link_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou link Nginx efetivo divergente."
+fi
+grep --fixed-strings 'site Nginx efetivo divergiu do contrato TLS instalado' \
+  <<< "$preflight_nginx_link_output" >/dev/null \
+  || fail "preflight SSH recusou link Nginx efetivo por motivo inesperado."
+sudo ln --symbolic --force --no-dereference --no-target-directory \
+  /etc/nginx/sites-available/set-livre /etc/nginx/sites-enabled/set-livre
+sudo rm -f -- /etc/nginx/sites-available/set-livre-alternate
 
 printf 'drift\n' | sudo tee --append /opt/node-v24.18.0-linux-x64/bin/node >/dev/null
 if preflight_node_drift_output="$(
@@ -1093,11 +1198,23 @@ sudo rm -f -- /run/systemd/system/set-livre-web.service.d/runtime-drift.conf
 sudo rmdir -- /run/systemd/system/set-livre-web.service.d
 sudo systemctl daemon-reload
 
+sudo systemctl disable set-livre-application-start.service
+if preflight_systemd_enablement_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou unit systemd obrigatória desabilitada."
+fi
+grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacionais instalados' \
+  <<< "$preflight_systemd_enablement_output" >/dev/null \
+  || fail "preflight SSH recusou enablement systemd por motivo inesperado."
+sudo systemctl enable set-livre-application-start.service
+
 preflight_recovered_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_recovered_output} == set-livre-deploy-ready-v8 ]] \
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v9 ]] \
   || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {
@@ -1128,6 +1245,10 @@ package_candidate() {
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
   write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
   write_fixture_environment "$candidate_backoffice_environment" "$PRODUCTION_BACKOFFICE_APP_URL"
+  candidate_runtime_environment_digest="$(
+    fixture_runtime_environment_digest \
+      "$candidate_web_environment" "$candidate_backoffice_environment"
+  )"
 }
 
 upload_candidate() {
@@ -1152,7 +1273,8 @@ invoke_candidate() {
     SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
     SET_LIVRE_TEST_PHASE="$phase" \
     SET_LIVRE_TEST_STATE="$test_state" \
-    bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$candidate_sha" "$candidate_checksum"
+    bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
+      "$candidate_sha" "$candidate_checksum" "$candidate_runtime_environment_digest"
 }
 
 invoke_candidate_through_forced_command() {
@@ -1160,23 +1282,25 @@ invoke_candidate_through_forced_command() {
   local candidate_checksum="$2"
   local phase="${3:-success}"
   local operation="${4:-stage}"
+  local runtime_digest="${5:-$candidate_runtime_environment_digest}"
   sudo --user deploy-setlivre -- \
     env \
     SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
     SET_LIVRE_TEST_PHASE="$phase" \
     SET_LIVRE_TEST_STATE="$test_state" \
-    SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}" \
+    SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum} ${runtime_digest}" \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
 
 inspect_candidate_through_forced_command() {
   local candidate_sha="$1"
+  local runtime_digest="${2:-$candidate_runtime_environment_digest}"
   sudo --user deploy-setlivre -- \
     env \
     SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
     SET_LIVRE_TEST_PHASE=success \
     SET_LIVRE_TEST_STATE="$test_state" \
-    SSH_ORIGINAL_COMMAND="inspect ${candidate_sha}" \
+    SSH_ORIGINAL_COMMAND="inspect ${candidate_sha} ${runtime_digest}" \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
 
@@ -1257,7 +1381,8 @@ assert_symlinked_release_component_rejected() (
   # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
   # shellcheck disable=SC2024
   if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$(printf '0%.0s' {1..40})" "$(printf '0%.0s' {1..64})" --stage-only \
+    "$(printf '0%.0s' {1..40})" "$(printf '0%.0s' {1..64})" \
+    "$(printf '0%.0s' {1..64})" --stage-only \
     > "$output" 2>&1; then
     fail "componente ${component} em symlink foi aceito como raiz de release."
   fi
@@ -1355,6 +1480,22 @@ privileged_directory_exists "/opt/set-livre/releases/${release_sha}" \
 inspection_output="$(inspect_candidate_through_forced_command "$release_sha")"
 [[ ${inspection_output} == "Release ${release_sha} staged checksum ${candidate_checksum}." ]] \
   || fail "inspeção remota não reutilizou a release staged exata."
+sed 's/sb_publishable_ci_contract_key/sb_publishable_ci_rotated_key/g' \
+  "$candidate_web_environment" > "$temporary_directory/rotated-web.env"
+sed 's/sb_publishable_ci_contract_key/sb_publishable_ci_rotated_key/g' \
+  "$candidate_backoffice_environment" > "$temporary_directory/rotated-backoffice.env"
+rotated_runtime_digest="$(
+  fixture_runtime_environment_digest \
+    "$temporary_directory/rotated-web.env" "$temporary_directory/rotated-backoffice.env"
+)"
+if runtime_mismatch_output="$(
+  inspect_candidate_through_forced_command "$release_sha" "$rotated_runtime_digest" 2>&1
+)"; then
+  fail "release do mesmo SHA foi reutilizada com contrato de runtime diferente."
+fi
+grep --fixed-strings 'contrato atual dos ambientes divergiu da release staged' \
+  <<< "$runtime_mismatch_output" >/dev/null \
+  || fail "reuso com contrato de runtime divergente falhou por motivo inesperado."
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
 ! privileged_path_exists "$stale_staging_directory" \
@@ -1366,6 +1507,9 @@ assert_current_release "$release_sha"
   == "root:setlivre-web:640" ]] || fail "ambiente web versionado tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/backoffice.env) \
   == "root:setlivre-backoffice:640" ]] || fail "ambiente backoffice versionado tem permissões inválidas."
+[[ $(sudo stat --format '%U:%G:%a' \
+  /opt/set-livre/current/.runtime/environment-contract.sha256) \
+  == "root:setlivre:640" ]] || fail "digest dos ambientes versionados tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/staged-tree.sha256) \
   == "root:setlivre:640" ]] || fail "digest da árvore staged tem permissões inválidas."
 

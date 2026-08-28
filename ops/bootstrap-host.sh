@@ -18,6 +18,7 @@ readonly NODE_BINARY_DIGEST="${HOST_STATE_DIRECTORY}/node-binary.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
 readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-recovery-in-progress.sha256"
 readonly MANAGED_FILE_STAGING_DIRECTORY="${HOST_STATE_DIRECTORY}/.managed-file-staging"
+readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIRECTORY
 readonly SUPABASE_CA_SOURCE="${SCRIPT_DIRECTORY}/certificates/supabase-root-2021-ca.crt"
@@ -57,6 +58,42 @@ fail() {
   printf 'bootstrap: %s\n' "$1" >&2
   exit 1
 }
+
+# BEGIN SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES
+release_tree_digest() {
+  local directory="$1"
+  [[ -d ${directory} && ! -L ${directory} ]] || return 1
+  LC_ALL=C tar \
+    --create \
+    --file=- \
+    --directory="$directory" \
+    --exclude="./${STAGED_TREE_DIGEST_RELATIVE_PATH}" \
+    --sort=name \
+    --format=gnu \
+    --mtime='@0' \
+    --numeric-owner \
+    . \
+    | sha256sum \
+    | cut --delimiter=' ' --fields=1
+}
+
+active_release_tree_is_authentic() {
+  local directory="$1"
+  local actual_tree_digest persisted_digest_path
+  local -a persisted_tree_digest=()
+  persisted_digest_path="${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
+  [[ -f ${persisted_digest_path} && ! -L ${persisted_digest_path} \
+    && $(stat --format '%U:%G:%a:%h' -- "$persisted_digest_path") \
+      == "root:setlivre:640:1" ]] \
+    || return 1
+  mapfile -t persisted_tree_digest < "$persisted_digest_path"
+  [[ ${#persisted_tree_digest[@]} -eq 1 \
+    && ${persisted_tree_digest[0]} =~ ^[0-9a-f]{64}$ ]] \
+    || return 1
+  actual_tree_digest="$(release_tree_digest "$directory")" || return 1
+  [[ ${actual_tree_digest} == "${persisted_tree_digest[0]}" ]]
+}
+# END SET_LIVRE_RELEASE_INTEGRITY_PRIMITIVES
 
 adopt_deploy_lock() {
   local file_descriptor="$1"
@@ -537,6 +574,7 @@ assert_effective_sshd_policy() {
     "authorizedkeyscommand none"
     "authorizedkeysfile .ssh/authorized_keys"
     "gatewayports no"
+    "forcecommand none"
     "kbdinteractiveauthentication no"
     "logingracetime 30"
     "maxauthtries 3"
@@ -1214,6 +1252,8 @@ PYTHON
   )"; then
     fail "manifesto da release ativa é inválido."
   fi
+  active_release_tree_is_authentic "$active_release" \
+    || fail "árvore completa da release ativa divergiu do digest persistido."
   if [[ ${active_host_digest} == "$host_configuration_digest" ]]; then
     active_release_compatible=true
   fi
@@ -1496,6 +1536,7 @@ AllowTcpForwarding no
 GatewayPorts no
 PermitTunnel no
 PermitUserEnvironment no
+ForceCommand none
 AcceptEnv LANG LC_*
 AllowUsers ubuntu deploy-setlivre
 SSHD
@@ -1712,6 +1753,8 @@ mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST
 digest_source=""
 host_configuration_published=true
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
+  active_release_tree_is_authentic "/opt/set-livre/releases/${active_release_sha}" \
+    || fail "release ativa mudou durante a atualização do host."
   write_bootstrap_recovery_marker "/opt/set-livre/releases/${active_release_sha}" \
     || fail "não foi possível armar a recuperação da release durante o bootstrap."
   publish_bootstrap_recovery_in_progress "$host_configuration_digest" \

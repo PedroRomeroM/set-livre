@@ -21,6 +21,7 @@ readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
 readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"
 readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"
+readonly RUNTIME_ENVIRONMENT_DIGEST_RELATIVE_PATH=".runtime/environment-contract.sha256"
 readonly NODE_VERSION="24.18.0"
 readonly NODE_INSTALLATION_DIRECTORY="/opt/node-v${NODE_VERSION}-linux-x64"
 readonly NODE_ALIAS_PATH="/opt/node"
@@ -57,6 +58,21 @@ release_tree_digest() {
     . \
     | sha256sum \
     | cut --delimiter=' ' --fields=1
+}
+
+runtime_environment_digest() {
+  local web_environment="$1"
+  local backoffice_environment="$2"
+  [[ -f ${web_environment} && ! -L ${web_environment} \
+    && -f ${backoffice_environment} && ! -L ${backoffice_environment} ]] \
+    || return 1
+  {
+    printf 'web.env\0'
+    cat -- "$web_environment"
+    printf '\0backoffice.env\0'
+    cat -- "$backoffice_environment"
+    printf '\0'
+  } | sha256sum | cut --delimiter=' ' --fields=1
 }
 
 installed_host_configuration_digest() {
@@ -122,8 +138,23 @@ node_runtime_is_valid() {
     && "$("${NODE_INSTALLATION_DIRECTORY}/bin/node" --version)" == "v${NODE_VERSION}" ]]
 }
 
+effective_nginx_site_is_current() {
+  local enabled_site="/etc/nginx/sites-enabled/set-livre"
+  local expected_site="/etc/nginx/sites-available/set-livre"
+  local expected_template="/usr/local/share/set-livre/nginx-tls.conf"
+  [[ -f ${expected_site} && ! -L ${expected_site} \
+    && $(stat --format '%U:%G:%a:%h' -- "$expected_site") == "root:root:644:1" \
+    && -L ${enabled_site} \
+    && $(readlink -- "$enabled_site") == "$expected_site" \
+    && $(readlink --canonicalize-existing -- "$enabled_site") == "$expected_site" \
+    && ! -e /etc/nginx/sites-enabled/default \
+    && ! -L /etc/nginx/sites-enabled/default ]] \
+    || return 1
+  cmp --silent -- "$expected_template" "$expected_site"
+}
+
 loaded_systemd_units_are_current() {
-  local unit expected_fragment
+  local unit expected_fragment expected_state actual_state
   for unit in \
     set-livre-web.service \
     set-livre-backoffice.service \
@@ -131,10 +162,20 @@ loaded_systemd_units_are_current() {
     set-livre-release-recovery.service \
     set-livre-release-recovery.path; do
     expected_fragment="/etc/systemd/system/${unit}"
+    case "$unit" in
+      set-livre-application-start.service | set-livre-release-recovery.path)
+        expected_state="enabled"
+        ;;
+      *)
+        expected_state="static"
+        ;;
+    esac
+    actual_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
     [[ $(systemctl show --property=LoadState --value "$unit") == "loaded" \
       && $(systemctl show --property=FragmentPath --value "$unit") == "$expected_fragment" \
       && -z $(systemctl show --property=DropInPaths --value "$unit") \
-      && $(systemctl show --property=NeedDaemonReload --value "$unit") == "no" ]] \
+      && $(systemctl show --property=NeedDaemonReload --value "$unit") == "no" \
+      && ${actual_state} == "$expected_state" ]] \
       || return 1
   done
 }
@@ -365,6 +406,8 @@ validate_deployment_host_prerequisites() {
     || fail "arquivos operacionais efetivos divergiram do bootstrap registrado."
   node_runtime_is_valid \
     || fail "runtime Node efetivo divergiu do binário verificado no bootstrap."
+  effective_nginx_site_is_current \
+    || fail "site Nginx efetivo divergiu do contrato TLS instalado."
   loaded_systemd_units_are_current \
     || fail "units efetivas do systemd divergiram dos arquivos operacionais instalados."
   production_https_contract_is_ready \
@@ -506,7 +549,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v8\n'
+  printf 'set-livre-deploy-ready-v9\n'
   exit 0
 fi
 
@@ -551,26 +594,32 @@ validate_deployment_host_prerequisites
 stage_only=false
 activation_only=false
 inspection_only=false
-if [[ $# -eq 2 && ${1:-} == "--inspect-staged" ]]; then
+if [[ $# -eq 3 && ${1:-} == "--inspect-staged" ]]; then
   inspection_only=true
   release_sha="$2"
+  expected_runtime_environment_digest="$3"
   expected_checksum=""
-elif [[ $# -eq 3 && ${3:-} == "--stage-only" ]]; then
+elif [[ $# -eq 4 && ${4:-} == "--stage-only" ]]; then
   stage_only=true
   release_sha="$1"
   expected_checksum="$2"
-elif [[ $# -eq 3 && ${3:-} == "--activate-staged" ]]; then
+  expected_runtime_environment_digest="$3"
+elif [[ $# -eq 4 && ${4:-} == "--activate-staged" ]]; then
   activation_only=true
   release_sha="$1"
   expected_checksum="$2"
-elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--stage-only|--activate-staged], --inspect-staged <sha>, --preflight, --recover-services ou --seal-services."
+  expected_runtime_environment_digest="$3"
+elif [[ $# -ne 3 ]]; then
+  fail "uso: set-livre-deploy <sha> <sha256> <runtime-sha256> [--stage-only|--activate-staged], --inspect-staged <sha> <runtime-sha256>, --preflight, --recover-services ou --seal-services."
 else
   release_sha="$1"
   expected_checksum="$2"
+  expected_runtime_environment_digest="$3"
 fi
 
 [[ ${release_sha} =~ ^[0-9a-f]{40}$ ]] || fail "SHA de release inválido."
+[[ ${expected_runtime_environment_digest} =~ ^[0-9a-f]{64}$ ]] \
+  || fail "digest esperado dos ambientes de runtime é inválido."
 if [[ ${inspection_only} == false ]]; then
   [[ ${expected_checksum} =~ ^[0-9a-f]{64}$ ]] || fail "checksum inválido."
 fi
@@ -685,8 +734,10 @@ validate_staged_release() {
   local directory="$1"
   local expected_release="$2"
   local expected_archive_checksum="$3"
-  local installed_host_digest manifest_host_digest actual_tree_digest
+  local expected_runtime_digest="$4"
+  local actual_runtime_digest installed_host_digest manifest_host_digest actual_tree_digest
   local -a artifact_checksum=()
+  local -a persisted_runtime_digest=()
   local -a release_identity=()
   local -a persisted_tree_digest=()
   local -a top_level=()
@@ -728,6 +779,9 @@ validate_staged_release() {
       == "root:setlivre-backoffice:640" \
     && $(stat --format '%U:%G:%a' -- "${directory}/.runtime/release.env") \
       == "root:setlivre:640" \
+    && $(stat --format '%U:%G:%a' -- \
+      "${directory}/${RUNTIME_ENVIRONMENT_DIGEST_RELATIVE_PATH}") \
+      == "root:setlivre:640" \
     && $(stat --format '%U:%G:%a' -- "${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}") \
       == "root:setlivre:640" ]] \
     || fail "ambientes da release staged possuem metadados inválidos."
@@ -735,6 +789,18 @@ validate_staged_release() {
   [[ ${#release_identity[@]} -eq 1 \
     && ${release_identity[0]} == "APP_RELEASE_SHA=${expected_release}" ]] \
     || fail "identidade da release staged diverge do candidato."
+  mapfile -t persisted_runtime_digest \
+    < "${directory}/${RUNTIME_ENVIRONMENT_DIGEST_RELATIVE_PATH}"
+  [[ ${#persisted_runtime_digest[@]} -eq 1 \
+    && ${persisted_runtime_digest[0]} =~ ^[0-9a-f]{64}$ ]] \
+    || fail "digest persistido dos ambientes de runtime é inválido."
+  actual_runtime_digest="$(
+    runtime_environment_digest \
+      "${directory}/.runtime/web.env" "${directory}/.runtime/backoffice.env"
+  )" || fail "ambientes de runtime staged não puderam ser autenticados."
+  [[ ${actual_runtime_digest} == "${persisted_runtime_digest[0]}" \
+    && ${actual_runtime_digest} == "$expected_runtime_digest" ]] \
+    || fail "contrato atual dos ambientes divergiu da release staged."
   mapfile -t persisted_tree_digest < "${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}"
   [[ ${#persisted_tree_digest[@]} -eq 1 \
     && ${persisted_tree_digest[0]} =~ ^[0-9a-f]{64}$ ]] \
@@ -777,7 +843,9 @@ if [[ ${inspection_only} == true ]]; then
   mapfile -t existing_checksum < "${release_directory}/.artifact.sha256"
   [[ ${#existing_checksum[@]} -eq 1 && ${existing_checksum[0]} =~ ^[0-9a-f]{64}$ ]] \
     || fail "checksum da release existente é inválido."
-  validate_staged_release "$release_directory" "$release_sha" "${existing_checksum[0]}"
+  validate_staged_release \
+    "$release_directory" "$release_sha" "${existing_checksum[0]}" \
+    "$expected_runtime_environment_digest"
   printf 'Release %s staged checksum %s.\n' "$release_sha" "${existing_checksum[0]}"
   exit 0
 fi
@@ -903,6 +971,12 @@ if web["DATABASE_URL_APP_DAL"] != backoffice["DATABASE_URL_APP_DAL"]:
 if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON_KEY"]:
     fail("runtime", "publishable keys divergentes")
 PYTHON
+
+actual_runtime_environment_digest="$(
+  runtime_environment_digest "$trusted_web_environment" "$trusted_backoffice_environment"
+)" || fail "ambientes recebidos não puderam ser autenticados."
+[[ ${actual_runtime_environment_digest} == "$expected_runtime_environment_digest" ]] \
+  || fail "ambientes recebidos divergem do contrato aprovado pelo workflow."
 
 remove_stale_staging_directories \
   || fail "diretório de staging residual possui identidade ou permissões inválidas."
@@ -1091,6 +1165,8 @@ install -o root -g setlivre-web -m 0640 \
 install -o root -g setlivre-backoffice -m 0640 \
   "$trusted_backoffice_environment" "${staging_directory}/.runtime/backoffice.env"
 printf 'APP_RELEASE_SHA=%s\n' "$release_sha" > "${staging_directory}/.runtime/release.env"
+printf '%s\n' "$actual_runtime_environment_digest" \
+  > "${staging_directory}/${RUNTIME_ENVIRONMENT_DIGEST_RELATIVE_PATH}"
 chown -R root:setlivre "$staging_directory"
 find "$staging_directory" -type d -exec chmod 0750 {} +
 find "$staging_directory" -type f -exec chmod 0640 {} +
@@ -1133,7 +1209,9 @@ else
 fi
 else
   release_directory="${RELEASES_DIRECTORY}/${release_sha}"
-  validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
+  validate_staged_release \
+    "$release_directory" "$release_sha" "$expected_checksum" \
+    "$expected_runtime_environment_digest"
 fi
 
 if [[ -L ${CURRENT_LINK} ]]; then
@@ -1186,11 +1264,15 @@ prune_releases() {
 prune_releases "$release_directory" "$previous_release" \
   || fail "não foi possível aplicar a retenção antes da ativação."
 if [[ ${stage_only} == true ]]; then
-  validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
+  validate_staged_release \
+    "$release_directory" "$release_sha" "$expected_checksum" \
+    "$expected_runtime_environment_digest"
   printf 'Release %s preparada e verificada sem ativação.\n' "$release_sha"
   exit 0
 fi
-validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
+validate_staged_release \
+  "$release_directory" "$release_sha" "$expected_checksum" \
+  "$expected_runtime_environment_digest"
 write_rollback_marker "$previous_release" || fail "não foi possível preparar a recuperação atômica."
 
 activation_started=true

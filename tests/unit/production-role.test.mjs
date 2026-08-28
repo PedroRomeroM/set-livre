@@ -626,11 +626,11 @@ describe("production role provisioning", () => {
       "- name: Validate fixed production contract",
       "- name: Authenticate Oracle deployment path",
       "- name: Verify public HTTPS entrypoint",
+      "- name: Prepare and identify ephemeral runtime environments",
       "- name: Inspect exact immutable release on Oracle VM",
       "- name: Build web release",
       "- name: Build backoffice release",
       "- name: Package immutable release",
-      "- name: Prepare ephemeral runtime environments",
       "- name: Stage and verify release on Oracle VM",
       "- name: Select exact verified release",
       "- name: Apply forward-only Supabase migrations",
@@ -642,8 +642,9 @@ describe("production role provisioning", () => {
     const preflight = positions[0];
     const sshAuthentication = positions[1];
     const publicHttps = positions[2];
-    const releaseInspection = positions[3];
-    const webBuild = positions[4];
+    const runtimeEnvironment = positions[3];
+    const releaseInspection = positions[4];
+    const webBuild = positions[5];
     const staging = positions[8];
     const releaseSelection = positions[9];
     const migrations = positions[10];
@@ -659,36 +660,44 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v8" ]]');
-    const httpsProbe = deployJob.slice(publicHttps, releaseInspection);
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]');
+    const httpsProbe = deployJob.slice(publicHttps, runtimeEnvironment);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
     expect(httpsProbe).toContain('"$status" == 200');
     expect(httpsProbe).toContain("User-agent: *\\nDisallow: /");
     expect(httpsProbe).toContain("X-Robots-Tag: noindex, nofollow, noarchive, nosnippet");
+    const runtimeStep = deployJob.slice(runtimeEnvironment, releaseInspection);
+    expect(runtimeStep).toContain("runtime_digest");
+    expect(runtimeStep).toContain("sha256sum");
+    expect(runtimeStep).toContain('echo "digest=$runtime_digest" >> "$GITHUB_OUTPUT"');
     const inspectionStep = deployJob.slice(releaseInspection, webBuild);
-    expect(inspectionStep).toContain('"inspect ${GITHUB_SHA}"');
+    expect(inspectionStep).toContain('"inspect ${GITHUB_SHA} ${RUNTIME_ENVIRONMENT_DIGEST}"');
     expect(inspectionStep).toContain('echo "reuse=true" >> "$GITHUB_OUTPUT"');
     expect(inspectionStep).toContain('echo "reuse=false" >> "$GITHUB_OUTPUT"');
     const buildAndStage = deployJob.slice(webBuild, releaseSelection);
     expect(
       buildAndStage.match(/if: steps\.existing_release\.outputs\.reuse != 'true'/gu),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
     expect(deployJob.indexOf("npm run build:web")).toBeLessThan(migrations);
     expect(deployJob.indexOf("npm run build:backoffice")).toBeLessThan(migrations);
     expect(deployJob.indexOf("npm run release")).toBeLessThan(migrations);
     expect(deployJob.indexOf("cmp --silent")).toBeLessThan(migrations);
-    expect(deployJob.indexOf("write_environment")).toBeLessThan(migrations);
+    expect(deployJob.indexOf("write_environment")).toBeLessThan(releaseInspection);
     const stagingStep = deployJob.slice(staging, migrations);
     expect(stagingStep).toContain('"upload-release ${GITHUB_SHA}"');
     expect(stagingStep).toContain('"upload-web-environment ${GITHUB_SHA}"');
     expect(stagingStep).toContain('"upload-backoffice-environment ${GITHUB_SHA}"');
-    expect(stagingStep).toContain('"stage ${GITHUB_SHA} ${CHECKSUM}"');
+    expect(stagingStep).toContain(
+      '"stage ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"',
+    );
     const selectionStep = deployJob.slice(releaseSelection, migrations);
     expect(selectionStep).toContain('checksum="$EXISTING_CHECKSUM"');
     expect(selectionStep).toContain('checksum="$BUILT_CHECKSUM"');
     const activationStep = deployJob.slice(activation, publicHealth);
-    expect(activationStep).toContain('"activate ${GITHUB_SHA} ${CHECKSUM}"');
+    expect(activationStep).toContain(
+      '"activate ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"',
+    );
     expect(activationStep).toContain("CHECKSUM: ${{ steps.selected_release.outputs.checksum }}");
     expect(activationStep).not.toContain("upload-release");
   });

@@ -334,7 +334,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v8" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]
 
       - name: Verify public HTTPS entrypoint
         env:
@@ -354,9 +354,49 @@ jobs:
             | grep --ignore-case --fixed-strings --line-regexp \
               'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet'
 
+      - name: Prepare and identify ephemeral runtime environments
+        id: runtime_environment
+        env:
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          reject_line_breaks() {
+            local value="$1"
+            [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]]
+          }
+          reject_line_breaks "$PRD_DATABASE_URL_APP_DAL"
+          reject_line_breaks "$PRD_SUPABASE_PUBLISHABLE_KEY"
+          umask 077
+          write_environment() {
+            local destination="$1"
+            local app_url="$2"
+            {
+              printf 'APP_ENV=production\n'
+              printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
+              printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
+              printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_PUBLISHABLE_KEY"
+              printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
+            } > "$destination"
+            chmod 0600 "$destination"
+          }
+          write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
+          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+          runtime_digest="$({
+            printf 'web.env\0'
+            cat -- "$RUNNER_TEMP/set-livre-web.env"
+            printf '\0backoffice.env\0'
+            cat -- "$RUNNER_TEMP/set-livre-backoffice.env"
+            printf '\0'
+          } | sha256sum | cut --delimiter=' ' --fields=1)"
+          [[ "$runtime_digest" =~ ^[0-9a-f]{64}$ ]]
+          echo "digest=$runtime_digest" >> "$GITHUB_OUTPUT"
+
       - name: Inspect exact immutable release on Oracle VM
         id: existing_release
+        env:
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
         run: |
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
           ssh_options=(
             -i "$HOME/.ssh/set-livre-deploy"
             -o BatchMode=yes
@@ -370,7 +410,7 @@ jobs:
           # shellcheck disable=SC2029
           inspection="$(
             ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
-              "inspect ${GITHUB_SHA}"
+              "inspect ${GITHUB_SHA} ${RUNTIME_ENVIRONMENT_DIGEST}"
           )"
           if [[ "$inspection" == "Release ${GITHUB_SHA} absent." ]]; then
             echo "reuse=false" >> "$GITHUB_OUTPUT"
@@ -432,42 +472,16 @@ jobs:
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare ephemeral runtime environments
-        if: steps.existing_release.outputs.reuse != 'true'
-        env:
-          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
-          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
-        run: |
-          reject_line_breaks() {
-            local value="$1"
-            [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]]
-          }
-          reject_line_breaks "$PRD_DATABASE_URL_APP_DAL"
-          reject_line_breaks "$PRD_SUPABASE_PUBLISHABLE_KEY"
-          umask 077
-          write_environment() {
-            local destination="$1"
-            local app_url="$2"
-            {
-              printf 'APP_ENV=production\n'
-              printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
-              printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
-              printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_PUBLISHABLE_KEY"
-              printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
-            } > "$destination"
-            chmod 0600 "$destination"
-          }
-          write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
-          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
-
       - name: Stage and verify release on Oracle VM
         if: steps.existing_release.outputs.reuse != 'true'
         env:
           ARCHIVE: ${{ steps.release.outputs.archive }}
           CHECKSUM: ${{ steps.release.outputs.checksum }}
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
         run: |
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
           ssh_options=(
             -i "$HOME/.ssh/set-livre-deploy"
             -o BatchMode=yes
@@ -491,7 +505,7 @@ jobs:
           # shellcheck disable=SC2029
           staged_release="$(
             ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
-              "stage ${GITHUB_SHA} ${CHECKSUM}"
+              "stage ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"
           )"
           [[ "$staged_release" == "Release ${GITHUB_SHA} preparada e verificada sem ativação." ]]
 
@@ -531,9 +545,11 @@ jobs:
       - name: Activate staged release on Oracle VM
         env:
           CHECKSUM: ${{ steps.selected_release.outputs.checksum }}
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
         run: |
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
           ssh_options=(
             -i "$HOME/.ssh/set-livre-deploy"
             -o BatchMode=yes
@@ -546,7 +562,7 @@ jobs:
           )
           # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
-            "activate ${GITHUB_SHA} ${CHECKSUM}"
+            "activate ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"
 
       - name: Verify public web health
         env:

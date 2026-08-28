@@ -103,7 +103,8 @@ nunca coordena mutações múltiplas para simular atomicidade.
   aplicação precisa estar comprovadamente vazia, sem aceitar objetos órfãos como primeiro bootstrap;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - a política SSH efetiva impede ambiente persistente do usuário e aceita do cliente somente locale
-  (`LANG`/`LC_*`), recusando `BASH_ENV` e qualquer padrão adicional antes do reload;
+  (`LANG`/`LC_*`), recusando `BASH_ENV`, qualquer padrão adicional e qualquer `ForceCommand` global que
+  pudesse substituir o comando restrito da chave antes do reload;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
   retirar o acesso dos serviços ao CA;
@@ -111,8 +112,9 @@ nunca coordena mutações múltiplas para simular atomicidade.
   durante a transição atômica do firewall, com ação/tabela/chain/daemon/jail comprovados antes e depois
   dela;
 - serviços Node rodam sem root, em loopback e com hardening systemd;
-- antes das migrations, o preflight relê os arquivos operacionais instalados, o hash do Node e as units
-  efetivamente carregadas, sem confiar isoladamente no digest persistido;
+- antes das migrations, o preflight relê os arquivos operacionais instalados, o hash do Node, o site e
+  link Nginx efetivos e as units carregadas com seus estados de enablement, sem confiar isoladamente no
+  digest persistido;
 - release é imutável, ativada por symlink e revertida por readiness;
 - migrations são forward-only e não usam seed em produção.
 
@@ -123,7 +125,8 @@ opt-in quando o evento foi disparado sobre `main` e o SHA digitado coincide exat
 Secrets ficam no environment do GitHub ou nos arquivos imutáveis da release ativa:
 `/opt/set-livre/current/.runtime/web.env` como `root:setlivre-web 0640` e
 `/opt/set-livre/current/.runtime/backoffice.env` como `root:setlivre-backoffice 0640`. Os antigos
-`/etc/set-livre/*.env` não são uma superfície de runtime e são removidos pelo bootstrap. Nenhum secret
+`/etc/set-livre/*.env` não são uma superfície de runtime e são removidos pelo bootstrap. A release guarda
+somente um SHA-256 não secreto do par de ambientes para impedir reuso do mesmo SHA depois de rotação. Nenhum secret
 entra em variável `NEXT_PUBLIC`, artifact, log, screenshot ou documentação. Publishable key e host key
 SSH não são secrets; URL DAL, senhas, access token e chave privada são.
 Ferramentas Supabase executadas pelo wrapper nunca herdam stderr: em erro, apenas a mensagem JSON

@@ -32,13 +32,16 @@ customizados. A complexidade não era proporcional ao estágio do produto.
   digest do host; um único symlink, health interno/público, retenção limitada e marcador recuperável
   controlam ativação e rollback;
 - a árvore staged persiste um digest de todos os seus demais bytes e o recalcula imediatamente antes da
-  ativação; retries do mesmo SHA inspecionam e reutilizam essa release verificada em vez de recompilar;
+  ativação; um digest separado e não secreto vincula os dois ambientes ao contrato corrente. Retry do
+  mesmo SHA só reutiliza a release quando ambos continuam idênticos, em vez de recompilar;
 - o preflight anterior às migrations recalcula o digest dos arquivos operacionais instalados, autentica
-  o binário Node e rejeita units carregadas com fragmento/drop-in divergente ou reload pendente;
+  o binário Node, o site/link Nginx ativo e as units carregadas, rejeitando fragmento, drop-in, reload ou
+  enablement divergente;
 - uploads ficam serializados e limitados aos três arquivos de um SHA; cancelamento remove o candidato
   anterior na próxima conexão, sem retenção indefinida no disco;
-- uma path unit aguarda o lock e recupera `SIGKILL`; bootstrap incompatível interrompe a release antiga
-  antes de mutar o host e só a release do novo digest volta a iniciar os apps;
+- uma path unit aguarda o lock e recupera `SIGKILL`; o bootstrap recalcula a árvore completa antes de
+  reutilizar a release ativa, interrompe release incompatível antes de mutar o host e só a release do
+  novo digest volta a iniciar os apps;
 - o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
   valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
 - objetos internos do Supabase permanecem sob a identidade gerenciada `supabase_admin`, que não pode

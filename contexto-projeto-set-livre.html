@@ -156,9 +156,11 @@
         <p>
           Merge em <code>main</code> só inicia escritas irreversíveis depois de concluir toda
           evidência reversível da release, inclusive no ambiente de destino. O staging persiste e
-          relê o digest integral da árvore; retries do mesmo SHA reutilizam esses bytes verificados.
-          Então aplica migrations forward-only e publica a release imutável na VM, com health
-          interno e público, rollback e recuperação após interrupção. Timeout ou serviço
+          relê o digest integral da árvore e vincula os ambientes à configuração corrente; retries
+          do mesmo SHA reutilizam esses bytes somente quando ambos continuam idênticos. O host
+          também comprova a árvore ativa, o comando SSH, o Nginx e o systemd efetivamente
+          carregados. Então aplica migrations forward-only e publica a release imutável na VM, com
+          health interno e público, rollback e recuperação após interrupção. Timeout ou serviço
           indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
         </p>
       </section>

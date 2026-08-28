@@ -112,10 +112,11 @@ No merge, o workflow:
    precisam passar sem desabilitar a validação TLS;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
-4. inspeciona no host uma release root-owned do mesmo SHA: quando ela já existe e passa novamente em
-   checksum, manifesto, digest de árvore e digest do host, reutiliza exatamente seus bytes; quando está
-   ausente, constrói web e backoffice, recusa segredo no artifact, cria duas vezes o tar normalizado,
-   exige bytes idênticos e prepara os dois ambientes efêmeros;
+4. prepara os dois ambientes efêmeros e seu SHA-256 combinado, então inspeciona no host uma release
+   root-owned do mesmo SHA: quando ela já existe e passa novamente em checksum, manifesto, digest de
+   árvore, digest do host e contrato de ambiente corrente, reutiliza exatamente seus bytes; quando está
+   ausente, constrói web e backoffice, recusa segredo no artifact, cria duas vezes o tar normalizado e
+   exige bytes idênticos;
 5. no caminho novo, envia o archive e os dois ambientes pelo comando SSH forçado, valida-os no host e preserva a release
    root-owned completa sem trocar o symlink ou iniciar serviços;
 6. somente depois de existir essa release exata e já verificada no destino aplica migrations pendentes com
@@ -130,7 +131,8 @@ No merge, o workflow:
    público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
-ambientes, o digest persistido da árvore completa e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
+ambientes, o digest não secreto do par de ambientes, o digest persistido da árvore completa e o digest
+da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
 interrompe a leitura no primeiro header além das 20.000 entradas permitidas, sem materializar uma lista
 não limitada; aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
 SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. O staging
@@ -155,8 +157,8 @@ readiness interno e HTTPS público. Uma falha mantém o marcador para nova tenta
 serviços. Um marcador anterior bloqueia preflight e deploy; somente a recovery unit dedicada o consome.
 A recovery unit encerra sem trabalho se o deploy normal já removeu seu próprio marcador. Rollback
 incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode
-ser reutilizado quando checksum, artifact, ambientes e o digest determinístico persistido correspondem
-à árvore instalada completa; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes da
+ser reutilizado quando checksum, artifact, ambientes, contrato corrente e o digest determinístico
+persistido correspondem à árvore instalada completa; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes da
 ativação. O workflow consulta essa raiz antes de buildar e, em retry do mesmo SHA, usa o checksum relido
 da release já verificada em vez de produzir novos bytes Next. A retenção ocorre antes da ativação e
 mantém no máximo quatro releases, incluindo candidata e anterior. Ordem, timestamps, owner e gzip ainda
@@ -197,7 +199,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   root antes do reload, interpretando semanticamente a lista `AllowUsers`; `PermitUserEnvironment`
   permanece desativado e `AcceptEnv` só admite `LANG`/`LC_*`, recusando variáveis de inicialização de
   shell ou loader como `BASH_ENV`; a autorização aceita apenas `.ssh/authorized_keys`, sem comando
-  alternativo nem CA de usuários;
+  alternativo nem CA de usuários, e exige `ForceCommand none` global para que nada substitua o comando
+  restrito da própria chave;
   no runner sem daemon, o laboratório cria e valida `/run/sshd` somente como fixture efêmera e o remove
   ao terminar;
 - `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
@@ -275,7 +278,8 @@ headers e bytes descompactados. Só então a extração valida as até 20.000 en
 um gzip pequeno não consegue provocar alocação de metadata proporcional ao tamanho declarado.
 
 O manifesto contém o SHA-256 determinístico dos arquivos versionados que definem o host. Antes de
-qualquer mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa e publica
+qualquer mutação gerenciada, o bootstrap compara esse digest com o manifesto da release ativa, recalcula
+e compara o digest persistido da árvore completa dessa release e publica
 atomicamente um marcador `bootstrap-in-progress` root-only. Imediatamente depois, interrompe toda unit
 de app carregada e prova que ambas estão inativas antes de inspecionar ou reparar `current`, validar a
 release e alterar pacotes ou qualquer superfície gerenciada. Quando existe contrato ativo válido,
@@ -315,8 +319,9 @@ validação de release para que uma entrega aprovada possa reparar o host. Se Ng
 bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
 O preflight não confia apenas no marcador: recalcula o mesmo digest sobre os arquivos efetivamente
-instalados, verifica o hash do Node e exige que cada unit carregada venha do fragmento canônico, sem
-drop-in nem `NeedDaemonReload`, tudo antes de qualquer migration forward-only.
+instalados, verifica o hash do Node, exige que o site Nginx seja byte a byte o template TLS e que seu link
+aponte ao destino canônico, e confere cada unit carregada, seu estado `enabled`/`static`, fragmento,
+ausência de drop-in e `NeedDaemonReload=no`, tudo antes de qualquer migration forward-only.
 Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0-linux-x64`, `/opt/set-livre` e
 `/opt/setlivre` somente quando
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
