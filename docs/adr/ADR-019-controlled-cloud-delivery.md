@@ -42,7 +42,8 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - uma path unit aguarda o lock e recupera `SIGKILL`; o bootstrap recalcula a árvore completa antes de
   reutilizar a release ativa, interrompe release incompatível antes de mutar o host e só a release do
   novo digest volta a iniciar os apps;
-- o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
+- o runtime de banco recebe senha apenas na transição inicial sem verificador. Falha posterior impõe
+  `NOLOGIN`, preserva o verificador e encerra sessões; retry retoma `LOGIN` sem rotação. Deploy normal
   valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
 - o startup packet do cliente não é autoridade para a role efetiva porque o Supavisor pode não
   encaminhar opções arbitrárias. Uma migration append-only fixa o setting não secreto `role=app_dal`

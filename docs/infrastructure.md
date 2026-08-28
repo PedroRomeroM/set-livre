@@ -430,16 +430,21 @@ readiness valida setting, `session_user`, role efetiva e membership antes da ati
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é
 `CONNECT` sem grant option; qualquer outro grant direto bloqueia readiness. A migration cria a role
-como `NOLOGIN`; `scripts/provision-production-role.mjs` define a senha e habilita `LOGIN` uma única vez,
-somente nesse estado inicial, e então prova uma conexão real que assume `app_dal`. Da alteração até o
-readiness, qualquer erro trata o commit como potencialmente aplicado: uma conexão administrativa nova
-repete `NOLOGIN PASSWORD NULL` e outra relê `rolcanlogin=false`; erro de commit da compensação não conta
-como falha se essa releitura independente comprovar o estado seguro. Quando a role já tem
-`LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM sem alterar a
-credencial que sustenta a release vigente. Rotação futura exige mudança operacional própria com duas
-credenciais/identidades durante a transição, comprovação e retirada da anterior; não faz parte do deploy
-normal. O script não imprime credenciais. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps, deixando
-quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
+como `NOLOGIN` sem senha. `scripts/provision-production-role.mjs` distingue três estados sem inferência:
+inicializa senha e `LOGIN` apenas quando não existe verificador, retoma `LOGIN` sem trocar a senha quando
+uma compensação anterior preservou o verificador e somente valida quando a role já está ativa. `LOGIN`
+sem verificador é inválido. Cada ativação termina provando uma conexão real que assume `app_dal`.
+
+Da alteração até o readiness, qualquer erro trata o commit como potencialmente aplicado. Uma conexão
+administrativa nova impõe somente `NOLOGIN`, sem apagar ou rotacionar o verificador, encerra todas as
+sessões runtime e outra conexão relê apenas os fatos `rolcanlogin=false`, verificador presente e zero
+sessões. Uma nova execução retoma a mesma credencial, evitando invalidar o cache de autenticação do
+Supavisor. Quando a role já tem `LOGIN`, o caminho normal é estritamente de validação: secret divergente
+falha antes da VM sem alterar a credencial que sustenta a release vigente. Rotação futura exige mudança
+operacional própria com duas credenciais/identidades durante a transição, comprovação e retirada da
+anterior; não faz parte do deploy normal. O script não lê nem imprime o valor do verificador. Os pools
+usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps, deixando quatro slots do limite dez para
+verificação de deploy, recuperação e variação operacional.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de

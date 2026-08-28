@@ -35,6 +35,11 @@ A baseline implementada inclui:
   catálogos internos do Cloud, nenhum `CREATE/TEMP` direto para DAL/runtime no database e nenhum
   `USAGE/CREATE` efetivo de `app_dal` fora de `private` e dos schemas internos do PostgreSQL.
 
+O provisionador diferencia `NOLOGIN` sem verificador, `NOLOGIN` com verificador preservado e `LOGIN`.
+Somente o primeiro estado recebe a senha inicial; o segundo retoma a mesma credencial sem rotação. Uma
+compensação impõe `NOLOGIN`, termina sessões runtime e comprova em conexão independente verificador
+presente e zero sessões, sem expor o hash.
+
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
 expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, comandos allowlisted preservados
 como `security definer` com a configuração exata `search_path = ''`, ACL do schema `private` restrita
