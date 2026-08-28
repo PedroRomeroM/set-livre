@@ -102,6 +102,8 @@ nunca coordena mutações múltiplas para simular atomicidade.
   as roles estão ausentes, o ledger de migrations precisa estar ausente ou vazio e a superfície de
   aplicação precisa estar comprovadamente vazia, sem aceitar objetos órfãos como primeiro bootstrap;
 - usuário de deploy possui apenas um comando sudo allowlisted;
+- a política SSH efetiva impede ambiente persistente do usuário e aceita do cliente somente locale
+  (`LANG`/`LC_*`), recusando `BASH_ENV` e qualquer padrão adicional antes do reload;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
   retirar o acesso dos serviços ao CA;
@@ -109,6 +111,8 @@ nunca coordena mutações múltiplas para simular atomicidade.
   durante a transição atômica do firewall, com ação/tabela/chain/daemon/jail comprovados antes e depois
   dela;
 - serviços Node rodam sem root, em loopback e com hardening systemd;
+- antes das migrations, o preflight relê os arquivos operacionais instalados, o hash do Node e as units
+  efetivamente carregadas, sem confiar isoladamente no digest persistido;
 - release é imutável, ativada por symlink e revertida por readiness;
 - migrations são forward-only e não usam seed em produção.
 

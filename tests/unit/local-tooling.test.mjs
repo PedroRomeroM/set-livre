@@ -449,6 +449,7 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('keyword == "match"');
     expect(bootstrap).toContain('expected_include="${drop_in_directory}/*.conf"');
     expect(bootstrap).toContain('effective_allow_users_are_exact "$effective"');
+    expect(bootstrap).toContain('effective_accept_env_is_safe "$effective"');
     expect(bootstrap).toContain('root_owned_without_unprivileged_write "$configuration"');
     expect(bootstrap).toContain('root_owned_without_unprivileged_write "$drop_in_directory"');
     expect(bootstrap).toContain(
@@ -462,18 +463,24 @@ describe("local tooling contracts", () => {
       "kbdinteractiveauthentication no",
       "passwordauthentication no",
       "permitrootlogin no",
+      "permituserenvironment no",
       "pubkeyauthentication yes",
       "trustedusercakeys none",
     ]) {
       expect(bootstrap).toContain(expected);
     }
     expect(bootstrap).toContain("AllowUsers ubuntu deploy-setlivre");
+    expect(bootstrap).toContain("AcceptEnv LANG LC_*");
     expect(hostVerification).toContain("$'allowusers ubuntu\\nallowusers deploy-setlivre'");
     expect(hostVerification).toContain("'allowusers ubuntu deploy-setlivre'");
     expect(hostVerification).toContain("política Match condicional foi aceita");
     expect(hostVerification).toContain("arquivo alternativo de chaves SSH foi aceito");
     expect(hostVerification).toContain("comando alternativo de autorização SSH foi aceito");
     expect(hostVerification).toContain("CA alternativa de usuários SSH foi aceita");
+    expect(hostVerification).toContain("BASH_ENV foi aceito na política SSH efetiva");
+    expect(hostVerification).toContain(
+      "variável de inicialização do shell foi aceita pela política SSH efetiva",
+    );
     expect(hostVerification).toContain(
       "drop-in SSH gravável por identidade não privilegiada foi aceito",
     );
@@ -697,8 +704,9 @@ describe("local tooling contracts", () => {
     );
 
     expect(bootstrap).toContain(
-      'if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY"; then',
+      'if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY" \\\n  || ! node_binary_digest_is_valid; then',
     );
+    expect(bootstrap).toContain('"$NODE_BINARY_DIGEST" root setlivre 0640');
     expect(bootstrap).not.toContain('if [[ ! -x "/opt/${NODE_DIRECTORY}/bin/node" ]]');
     expect(bootstrap).toContain('mktemp --directory "/opt/.${NODE_DIRECTORY}.staging.XXXXXX"');
     expect(bootstrap).toContain("--strip-components=1");
@@ -1025,7 +1033,11 @@ describe("local tooling contracts", () => {
     );
     for (const path of hostConfigurationFiles) {
       expect(bootstrap).toContain(path.slice("ops/".length));
+      expect(deploy).toContain(path.slice("ops/".length));
     }
+    expect(bootstrap).toContain(
+      '"${SCRIPT_DIRECTORY}/bootstrap-host.sh" /usr/local/share/set-livre/bootstrap-host.sh',
+    );
     expect(deployLock).toContain("os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | no_follow");
     expect(deployLock).toContain("os.fstat(file_descriptor)");
     expect(deployLock).toContain("os.lstat(LOCK_PATH)");
@@ -1072,7 +1084,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v7"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v8"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1088,6 +1100,9 @@ describe("local tooling contracts", () => {
     expect(prerequisites).toContain("managed_release_directories_are_valid");
     expect(prerequisites).toContain("INCOMING_DIRECTORY");
     expect(prerequisites).toContain("UPLOAD_LOCK");
+    expect(prerequisites).toContain("installed_host_configuration_digest");
+    expect(prerequisites).toContain("node_runtime_is_valid");
+    expect(prerequisites).toContain("loaded_systemd_units_are_current");
     expect(prerequisites).toContain("production_https_contract_is_ready");
     expect(deploy).toContain('openssl x509 -checkend "$CERTIFICATE_MINIMUM_VALIDITY_SECONDS"');
     expect(deploy).toContain('openssl x509 -checkip "$PRODUCTION_IP"');
@@ -1121,7 +1136,9 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v7");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v8");
+    expect(hostVerification).toContain("preflight SSH aceitou drift no binário Node efetivo");
+    expect(hostVerification).toContain("preflight SSH aceitou unit systemd efetiva divergente");
     expect(hostVerification).toContain('SSH_ORIGINAL_COMMAND="inspect ${candidate_sha}"');
     expect(hostVerification).toContain("release adulterada entre stage e activate foi ativada");
     expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
@@ -1138,7 +1155,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v7" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v8" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

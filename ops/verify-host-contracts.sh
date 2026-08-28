@@ -287,6 +287,8 @@ AllowAgentForwarding no
 AllowTcpForwarding no
 GatewayPorts no
 PermitTunnel no
+PermitUserEnvironment no
+AcceptEnv LANG LC_*
 AllowUsers ubuntu deploy-setlivre
 SSHD_CONFIGURATION
 
@@ -296,6 +298,11 @@ effective_allow_users_are_exact $'allowusers ubuntu\nallowusers deploy-setlivre'
   || fail "representação por linhas do OpenSSH foi recusada."
 effective_allow_users_are_exact 'allowusers ubuntu deploy-setlivre' \
   || fail "representação agrupada do OpenSSH foi recusada."
+effective_accept_env_is_safe $'acceptenv LANG\nacceptenv LC_*' \
+  || fail "allowlist segura de ambiente SSH foi recusada."
+if effective_accept_env_is_safe $'acceptenv LANG\nacceptenv BASH_ENV'; then
+  fail "BASH_ENV foi aceito na política SSH efetiva."
+fi
 if effective_allow_users_are_exact $'allowusers ubuntu deploy-setlivre\nallowusers ubuntu'; then
   fail "AllowUsers duplicado foi aceito."
 fi
@@ -326,6 +333,14 @@ if assert_effective_sshd_policy "$configuration"; then
   fail "CA alternativa de usuários SSH foi aceita."
 fi
 rm -- "${drop_in_directory}/10-trusted-user-ca.conf"
+
+cat > "${drop_in_directory}/10-dangerous-environment.conf" <<'DANGEROUS_ENVIRONMENT_CONFIGURATION'
+AcceptEnv BASH_ENV
+DANGEROUS_ENVIRONMENT_CONFIGURATION
+if assert_effective_sshd_policy "$configuration"; then
+  fail "variável de inicialização do shell foi aceita pela política SSH efetiva."
+fi
+rm -- "${drop_in_directory}/10-dangerous-environment.conf"
 
 cat > "${drop_in_directory}/10-conditional.conf" <<'CONDITIONAL_CONFIGURATION'
 Match Address 198.51.100.0/24
@@ -559,11 +574,18 @@ if grep --extended-regexp --quiet \
   fail "access log redigido expôs endereço ou target do request."
 fi
 sudo install -d -m 0755 \
-  /opt/node/bin \
+  /opt/node-v24.18.0-linux-x64/bin \
   /opt/set-livre/current/web \
   /opt/set-livre/current/backoffice/apps/backoffice \
   /opt/set-livre/current/.runtime
-sudo ln --symbolic --force "$(command -v node)" /opt/node/bin/node
+sudo install -o root -g root -m 0755 "$(command -v node)" \
+  /opt/node-v24.18.0-linux-x64/bin/node
+sudo ln --symbolic --force --no-dereference --no-target-directory \
+  /opt/node-v24.18.0-linux-x64 /opt/node
+node_binary_digest="$(sha256sum /opt/node-v24.18.0-linux-x64/bin/node | cut -d ' ' -f 1)"
+printf '%s\n' "$node_binary_digest" > "$temporary_directory/node-binary.sha256"
+sudo install -o root -g setlivre -m 0640 "$temporary_directory/node-binary.sha256" \
+  /etc/set-livre/node-binary.sha256
 sudo install -m 0644 /dev/null /opt/set-livre/current/web/server.js
 sudo install -m 0644 /dev/null /opt/set-livre/current/backoffice/apps/backoffice/server.js
 sudo install -o root -g setlivre-web -m 0640 /dev/null /opt/set-livre/current/.runtime/web.env
@@ -577,6 +599,28 @@ sudo install -o root -g root -m 0755 \
   "$REPOSITORY_ROOT/ops/deploy-lock.py" "$INSTALLED_DEPLOY_LOCK"
 sudo install -o root -g root -m 0755 \
   "$REPOSITORY_ROOT/ops/deploy-ssh-command.sh" "$INSTALLED_DEPLOY_SSH_COMMAND"
+sudo install -d -o root -g root -m 0755 /usr/local/share/set-livre
+sudo install -o root -g root -m 0755 \
+  "$REPOSITORY_ROOT/ops/bootstrap-host.sh" /usr/local/share/set-livre/bootstrap-host.sh
+sudo install -o root -g root -m 0644 \
+  "$REPOSITORY_ROOT/ops/certificates/supabase-root-2021-ca.crt" \
+  /etc/set-livre/supabase-root-2021-ca.crt
+sudo install -o root -g root -m 0644 \
+  "$REPOSITORY_ROOT/ops/nginx/set-livre-http.conf" \
+  /usr/local/share/set-livre/nginx-http.conf
+sudo install -o root -g root -m 0644 \
+  "$REPOSITORY_ROOT/ops/nginx/set-livre-tls.conf" \
+  /usr/local/share/set-livre/nginx-tls.conf
+for systemd_unit in \
+  set-livre-web.service \
+  set-livre-backoffice.service \
+  set-livre-application-start.service \
+  set-livre-release-recovery.service \
+  set-livre-release-recovery.path; do
+  sudo install -o root -g root -m 0644 \
+    "$REPOSITORY_ROOT/ops/systemd/${systemd_unit}" "/etc/systemd/system/${systemd_unit}"
+done
+sudo systemctl daemon-reload
 
 printf 'deploy-lock-target\n' > "$temporary_directory/deploy-lock-target"
 sudo rm -f -- /run/lock/set-livre-deploy.lock
@@ -771,6 +815,9 @@ cat > "$fake_bin/systemctl" <<'SYSTEMCTL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 phase="${SET_LIVRE_TEST_PHASE:-success}"
+if [[ ${1:-} == "show" ]]; then
+  exec /usr/bin/systemctl "$@"
+fi
 if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" ]]; then
   [[ ${phase} != "nginx-inactive" ]]
   exit
@@ -1011,8 +1058,47 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v7 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v8 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
+
+printf 'drift\n' | sudo tee --append /opt/node-v24.18.0-linux-x64/bin/node >/dev/null
+if preflight_node_drift_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou drift no binário Node efetivo."
+fi
+grep --fixed-strings 'runtime Node efetivo divergiu do binário verificado no bootstrap' \
+  <<< "$preflight_node_drift_output" >/dev/null \
+  || fail "preflight SSH recusou drift do Node por motivo inesperado."
+sudo install -o root -g root -m 0755 "$(command -v node)" \
+  /opt/node-v24.18.0-linux-x64/bin/node
+
+sudo install -d -o root -g root -m 0755 \
+  /run/systemd/system/set-livre-web.service.d
+printf '[Service]\nRestartSec=7s\n' > "$temporary_directory/runtime-drift.conf"
+sudo install -o root -g root -m 0644 "$temporary_directory/runtime-drift.conf" \
+  /run/systemd/system/set-livre-web.service.d/runtime-drift.conf
+sudo systemctl daemon-reload
+if preflight_systemd_drift_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou unit systemd efetiva divergente."
+fi
+grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacionais instalados' \
+  <<< "$preflight_systemd_drift_output" >/dev/null \
+  || fail "preflight SSH recusou drift systemd por motivo inesperado."
+sudo rm -f -- /run/systemd/system/set-livre-web.service.d/runtime-drift.conf
+sudo rmdir -- /run/systemd/system/set-livre-web.service.d
+sudo systemctl daemon-reload
+
+preflight_recovered_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
+)"
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v8 ]] \
+  || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {
   local candidate_sha="$1"

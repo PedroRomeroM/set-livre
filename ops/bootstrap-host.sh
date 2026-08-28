@@ -14,6 +14,7 @@ readonly SWAPFILE_PATH="/swapfile"
 readonly HOST_STATE_DIRECTORY="/etc/set-livre"
 readonly HOST_CONFIGURATION_DIGEST="${HOST_STATE_DIRECTORY}/host-config.sha256"
 readonly HOST_CONFIGURATION_PREVIOUS_DIGEST="${HOST_STATE_DIRECTORY}/host-config.previous.sha256"
+readonly NODE_BINARY_DIGEST="${HOST_STATE_DIRECTORY}/node-binary.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-in-progress.sha256"
 readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="${HOST_STATE_DIRECTORY}/bootstrap-recovery-in-progress.sha256"
 readonly MANAGED_FILE_STAGING_DIRECTORY="${HOST_STATE_DIRECTORY}/.managed-file-staging"
@@ -511,6 +512,21 @@ effective_allow_users_are_exact() {
   [[ ${#users[@]} -eq 2 && ${users[0]} == "ubuntu" && ${users[1]} == "deploy-setlivre" ]]
 }
 
+effective_accept_env_is_safe() {
+  local effective="$1"
+  local line pattern
+  local -a fields=()
+  while IFS= read -r line; do
+    [[ ${line} == "acceptenv "* ]] || continue
+    fields=()
+    read -r -a fields <<< "$line"
+    [[ ${#fields[@]} -gt 1 && ${fields[0]} == "acceptenv" ]] || return 1
+    for pattern in "${fields[@]:1}"; do
+      [[ ${pattern} == "LANG" || ${pattern} == "LC_*" ]] || return 1
+    done
+  done <<< "$effective"
+}
+
 assert_effective_sshd_policy() {
   local configuration="$1"
   local context_user effective expected
@@ -528,6 +544,7 @@ assert_effective_sshd_policy() {
     "permitemptypasswords no"
     "permitrootlogin no"
     "permittunnel no"
+    "permituserenvironment no"
     "pubkeyauthentication yes"
     "trustedusercakeys none"
     "x11forwarding no"
@@ -543,6 +560,7 @@ assert_effective_sshd_policy() {
         || return 1
     done
     effective_allow_users_are_exact "$effective" || return 1
+    effective_accept_env_is_safe "$effective" || return 1
   done
 }
 # END SET_LIVRE_SSH_POLICY_PRIMITIVES
@@ -637,6 +655,17 @@ host_state_marker_is_valid() {
   mapfile -t marker_lines < "$marker"
   [[ ${#marker_lines[@]} -eq 1 && ${marker_lines[0]} =~ ^[0-9a-f]{64}$ ]] \
     || fail "${label} tem conteúdo inválido."
+}
+
+node_binary_digest_is_valid() {
+  local actual_digest expected_digest
+  host_state_marker_is_valid \
+    "$NODE_BINARY_DIGEST" "root:setlivre:640" "digest do binário Node" \
+    || return 1
+  expected_digest="$(< "$NODE_BINARY_DIGEST")"
+  actual_digest="$(sha256sum "${NODE_INSTALLATION_DIRECTORY}/bin/node" | cut -d ' ' -f 1)" \
+    || return 1
+  [[ ${actual_digest} == "$expected_digest" ]]
 }
 
 node_transient_path_is_managed() {
@@ -1233,7 +1262,8 @@ certbot_version="$(/snap/bin/certbot --version | awk '{ print $2 }')"
 dpkg --compare-versions "$certbot_version" ge "$CERTBOT_MINIMUM_VERSION" \
   || fail "Certbot ${CERTBOT_MINIMUM_VERSION} ou superior é obrigatório para certificado de IP via webroot."
 
-if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY"; then
+if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY" \
+  || ! node_binary_digest_is_valid; then
   temporary_directory="$(mktemp -d)"
   archive="${NODE_DIRECTORY}.tar.xz"
   curl --disable --noproxy '*' --fail --location --proto '=https' --tlsv1.2 \
@@ -1285,6 +1315,14 @@ for service_group in setlivre setlivre-web setlivre-backoffice; do
     groupadd --system "$service_group"
   fi
 done
+node_binary_digest="$(
+  sha256sum "${NODE_INSTALLATION_DIRECTORY}/bin/node" | cut -d ' ' -f 1
+)"
+[[ ${node_binary_digest} =~ ^[0-9a-f]{64}$ ]] \
+  || fail "digest do binário Node instalado é inválido."
+printf '%s\n' "$node_binary_digest" \
+  | publish_managed_content "$NODE_BINARY_DIGEST" root setlivre 0640 \
+  || fail "digest do binário Node não pôde ser publicado atomicamente."
 if ! getent group deploy-setlivre >/dev/null; then
   groupadd deploy-setlivre
 fi
@@ -1391,6 +1429,10 @@ rm -f -- /etc/systemd/system/set-livre-release-recovery@.service
 ensure_managed_directory /usr/local/share/set-livre root root 0755 \
   || fail "diretório de templates Nginx é inválido."
 publish_managed_file \
+  "${SCRIPT_DIRECTORY}/bootstrap-host.sh" /usr/local/share/set-livre/bootstrap-host.sh \
+  root root 0755 \
+  || fail "fonte canônica do bootstrap não pôde ser publicada atomicamente."
+publish_managed_file \
   "$NGINX_HTTP_SOURCE" /usr/local/share/set-livre/nginx-http.conf root root 0644 \
   || fail "template HTTP do Nginx não pôde ser publicado atomicamente."
 publish_managed_file \
@@ -1453,6 +1495,8 @@ AllowAgentForwarding no
 AllowTcpForwarding no
 GatewayPorts no
 PermitTunnel no
+PermitUserEnvironment no
+AcceptEnv LANG LC_*
 AllowUsers ubuntu deploy-setlivre
 SSHD
 sshd -t

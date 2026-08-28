@@ -189,12 +189,15 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   `SHASUMS256` oficiais, extraído em staging, validado como árvore
   root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
   `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
-  recuperável e só então é publicado;
+  recuperável e só então é publicado; o SHA-256 do binário efetivo fica em marcador protegido e é
+  recalculado em todo preflight de deploy;
 - Nginx, systemd e OpenSSH; a superfície SSH exige owner/grupo root e ausência de escrita por identidades
   não privilegiadas, recusa qualquer `Match`, include aninhado ou drop-in simbólico, aceita somente o
   include global canônico e então valida por `sshd -T` a política efetiva para usuário comum, deployer e
-  root antes do reload, interpretando semanticamente a lista `AllowUsers`; a autorização aceita apenas
-  `.ssh/authorized_keys`, sem comando alternativo nem CA de usuários;
+  root antes do reload, interpretando semanticamente a lista `AllowUsers`; `PermitUserEnvironment`
+  permanece desativado e `AcceptEnv` só admite `LANG`/`LC_*`, recusando variáveis de inicialização de
+  shell ou loader como `BASH_ENV`; a autorização aceita apenas `.ssh/authorized_keys`, sem comando
+  alternativo nem CA de usuários;
   no runner sem daemon, o laboratório cria e valida `/run/sshd` somente como fixture efêmera e o remove
   ao terminar;
 - `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
@@ -311,7 +314,10 @@ destino já não existe, é removido pelo bootstrap somente depois de parar e ve
 validação de release para que uma entrega aprovada possa reparar o host. Se Nginx, systemd, CA,
 bootstrap, comando SSH ou instalador mudarem, o
 deploy falha antes da ativação até que o agente reaplique o bootstrap pela conta administrativa.
-Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0`, `/opt/set-livre` e
+O preflight não confia apenas no marcador: recalcula o mesmo digest sobre os arquivos efetivamente
+instalados, verifica o hash do Node e exige que cada unit carregada venha do fragmento canônico, sem
+drop-in nem `NeedDaemonReload`, tudo antes de qualquer migration forward-only.
+Uma reexecução reconhece os caminhos reutilizados `/opt/node-v24.18.0-linux-x64`, `/opt/set-livre` e
 `/opt/setlivre` somente quando
 ao menos um marcador de estado válido é arquivo regular, root-owned, tem modo exato e contém um único
 SHA-256: o ativo/anterior usa `root:setlivre 0640` e o in-progress usa `root:root 0600`. Sem essa prova,

@@ -5,6 +5,7 @@ readonly RELEASES_DIRECTORY="/opt/set-livre/releases"
 readonly CURRENT_LINK="/opt/set-livre/current"
 readonly ROLLBACK_MARKER="/opt/set-livre/.activation-rollback"
 readonly HOST_CONFIGURATION_DIGEST="/etc/set-livre/host-config.sha256"
+readonly NODE_BINARY_DIGEST="/etc/set-livre/node-binary.sha256"
 readonly HOST_BOOTSTRAP_IN_PROGRESS="/etc/set-livre/bootstrap-in-progress.sha256"
 readonly HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS="/etc/set-livre/bootstrap-recovery-in-progress.sha256"
 readonly INCOMING_DIRECTORY="/home/deploy-setlivre/incoming"
@@ -20,6 +21,9 @@ readonly RECOVERY_LOCK_TIMEOUT_SECONDS=300
 readonly UPLOAD_LOCK_TIMEOUT_SECONDS=300
 readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"
 readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"
+readonly NODE_VERSION="24.18.0"
+readonly NODE_INSTALLATION_DIRECTORY="/opt/node-v${NODE_VERSION}-linux-x64"
+readonly NODE_ALIAS_PATH="/opt/node"
 SCRIPT_PATH="$(realpath -e -- "${BASH_SOURCE[0]}")"
 readonly SCRIPT_PATH
 authenticated_bootstrap_recovery_digest=""
@@ -53,6 +57,86 @@ release_tree_digest() {
     . \
     | sha256sum \
     | cut --delimiter=' ' --fields=1
+}
+
+installed_host_configuration_digest() {
+  python3 <<'PYTHON'
+import hashlib
+import os
+import pathlib
+import stat
+
+files = (
+    ("bootstrap-host.sh", "/usr/local/share/set-livre/bootstrap-host.sh", 0o755),
+    ("certificates/supabase-root-2021-ca.crt", "/etc/set-livre/supabase-root-2021-ca.crt", 0o644),
+    ("deploy-release.sh", "/usr/local/sbin/set-livre-deploy", 0o755),
+    ("deploy-ssh-command.sh", "/usr/local/sbin/set-livre-deploy-ssh", 0o755),
+    ("deploy-lock.py", "/usr/local/sbin/set-livre-deploy-lock", 0o755),
+    ("nginx/set-livre-http.conf", "/usr/local/share/set-livre/nginx-http.conf", 0o644),
+    ("nginx/set-livre-tls.conf", "/usr/local/share/set-livre/nginx-tls.conf", 0o644),
+    ("systemd/set-livre-application-start.service", "/etc/systemd/system/set-livre-application-start.service", 0o644),
+    ("systemd/set-livre-backoffice.service", "/etc/systemd/system/set-livre-backoffice.service", 0o644),
+    ("systemd/set-livre-release-recovery.path", "/etc/systemd/system/set-livre-release-recovery.path", 0o644),
+    ("systemd/set-livre-release-recovery.service", "/etc/systemd/system/set-livre-release-recovery.service", 0o644),
+    ("systemd/set-livre-web.service", "/etc/systemd/system/set-livre-web.service", 0o644),
+)
+digest = hashlib.sha256()
+for label, absolute, expected_mode in files:
+    path = pathlib.Path(absolute)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != expected_mode
+        or metadata.st_nlink != 1
+    ):
+        raise SystemExit(f"arquivo operacional instalado inválido: {absolute}")
+    digest.update(label.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PYTHON
+}
+
+node_runtime_is_valid() {
+  local actual_digest expected_digest
+  [[ -d ${NODE_INSTALLATION_DIRECTORY} && ! -L ${NODE_INSTALLATION_DIRECTORY} \
+    && $(stat --format '%U:%G:%a' -- "$NODE_INSTALLATION_DIRECTORY") == "root:root:755" \
+    && -L ${NODE_ALIAS_PATH} \
+    && $(readlink -- "$NODE_ALIAS_PATH") == "$NODE_INSTALLATION_DIRECTORY" \
+    && $(readlink --canonicalize-existing -- "$NODE_ALIAS_PATH") \
+      == "$NODE_INSTALLATION_DIRECTORY" \
+    && -f "${NODE_INSTALLATION_DIRECTORY}/bin/node" \
+    && ! -L "${NODE_INSTALLATION_DIRECTORY}/bin/node" \
+    && $(stat --format '%U:%G:%a:%h' -- "${NODE_INSTALLATION_DIRECTORY}/bin/node") \
+      == "root:root:755:1" ]] || return 1
+  expected_digest="$(
+    read_host_state_digest "$NODE_BINARY_DIGEST" "root:setlivre:640"
+  )" || return 1
+  actual_digest="$(sha256sum "${NODE_INSTALLATION_DIRECTORY}/bin/node" | cut -d ' ' -f 1)" \
+    || return 1
+  [[ ${actual_digest} == "$expected_digest" \
+    && "$("${NODE_INSTALLATION_DIRECTORY}/bin/node" --version)" == "v${NODE_VERSION}" ]]
+}
+
+loaded_systemd_units_are_current() {
+  local unit expected_fragment
+  for unit in \
+    set-livre-web.service \
+    set-livre-backoffice.service \
+    set-livre-application-start.service \
+    set-livre-release-recovery.service \
+    set-livre-release-recovery.path; do
+    expected_fragment="/etc/systemd/system/${unit}"
+    [[ $(systemctl show --property=LoadState --value "$unit") == "loaded" \
+      && $(systemctl show --property=FragmentPath --value "$unit") == "$expected_fragment" \
+      && -z $(systemctl show --property=DropInPaths --value "$unit") \
+      && $(systemctl show --property=NeedDaemonReload --value "$unit") == "no" ]] \
+      || return 1
+  done
 }
 
 activate_link() {
@@ -257,6 +341,7 @@ production_https_contract_is_ready() {
 }
 
 validate_deployment_host_prerequisites() {
+  local installed_host_digest recorded_host_digest
   bootstrap_is_terminal \
     || fail "o bootstrap do host ainda não atingiu estado terminal."
   activation_is_terminal \
@@ -271,6 +356,17 @@ validate_deployment_host_prerequisites() {
     && $(stat --format '%U:%G:%a' -- "$UPLOAD_LOCK") \
       == "deploy-setlivre:deploy-setlivre:600" ]] \
     || fail "lock de upload não atende ao contrato."
+  recorded_host_digest="$(
+    read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"
+  )" || fail "digest registrado da configuração do host é inválido."
+  installed_host_digest="$(installed_host_configuration_digest)" \
+    || fail "arquivos operacionais efetivos do host são inválidos."
+  [[ ${installed_host_digest} == "$recorded_host_digest" ]] \
+    || fail "arquivos operacionais efetivos divergiram do bootstrap registrado."
+  node_runtime_is_valid \
+    || fail "runtime Node efetivo divergiu do binário verificado no bootstrap."
+  loaded_systemd_units_are_current \
+    || fail "units efetivas do systemd divergiram dos arquivos operacionais instalados."
   production_https_contract_is_ready \
     || fail "entrada HTTPS do host não atende ao contrato pré-migration."
 }
@@ -410,7 +506,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v7\n'
+  printf 'set-livre-deploy-ready-v8\n'
   exit 0
 fi
 
