@@ -273,6 +273,84 @@ async function runLocalApplication(application, mode) {
   });
 }
 
+async function removeNextBuildCache(applicationRoot, removeCache = rm) {
+  const nextDirectory = resolve(applicationRoot, ".next");
+  const cacheDirectory = resolve(nextDirectory, "cache");
+  const nextEntry = lstatSync(nextDirectory, { throwIfNoEntry: false });
+  if (nextEntry === undefined) return;
+  if (!nextEntry.isDirectory() || nextEntry.isSymbolicLink()) {
+    throw new Error("O diretório de build Next precisa ser uma árvore física.");
+  }
+  const cacheEntry = lstatSync(cacheDirectory, { throwIfNoEntry: false });
+  if (cacheEntry === undefined) return;
+  if (!cacheEntry.isDirectory() || cacheEntry.isSymbolicLink()) {
+    throw new Error("O cache transitório do build Next precisa ser um diretório físico.");
+  }
+
+  const retiredCache = resolve(
+    nextDirectory,
+    `.cache.build-retired-${process.pid}-${randomUUID()}`,
+  );
+  if (lstatSync(retiredCache, { throwIfNoEntry: false }) !== undefined) {
+    throw new Error("O staging da limpeza de cache Next já existe.");
+  }
+  await rename(cacheDirectory, retiredCache);
+  const retiredEntry = lstatSync(retiredCache, { throwIfNoEntry: false });
+  if (retiredEntry === undefined || !retiredEntry.isDirectory() || retiredEntry.isSymbolicLink()) {
+    throw new Error("O cache Next retirado não preservou uma árvore física.");
+  }
+  await removeCache(retiredCache, { force: false, recursive: true });
+  if (lstatSync(retiredCache, { throwIfNoEntry: false }) !== undefined) {
+    throw new Error("O cache transitório do build Next permaneceu após a limpeza.");
+  }
+}
+
+export async function runNextBuildWithCacheCleanup({
+  application,
+  executeBuild = spawnSync,
+  inheritedEnvironment = process.env,
+  removeCache = removeNextBuildCache,
+  root = repositoryRoot,
+} = {}) {
+  const contract = localApplicationContracts[application];
+  if (contract === undefined) throw new Error("A aplicação solicitada para build é inválida.");
+  const workingDirectory = resolve(root, contract.workingDirectory);
+  let buildFailure;
+  try {
+    const result = executeBuild(process.execPath, [nextCliPath, "build"], {
+      cwd: workingDirectory,
+      env: inheritedEnvironment,
+      shell: false,
+      stdio: "inherit",
+    });
+    if (result?.error !== undefined) {
+      throw new Error("A CLI Next não pôde ser iniciada para o build.", { cause: result.error });
+    }
+    if (result?.status !== 0) {
+      throw new Error(
+        `A CLI Next encerrou o build sem sucesso (${result?.status ?? result?.signal ?? "sem código"}).`,
+      );
+    }
+  } catch (error) {
+    buildFailure = error;
+  }
+
+  let cleanupFailure;
+  try {
+    await removeCache(workingDirectory);
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  if (buildFailure !== undefined && cleanupFailure !== undefined) {
+    throw new AggregateError(
+      [buildFailure, cleanupFailure],
+      "O build Next falhou e o cache transitório também não pôde ser removido.",
+    );
+  }
+  if (cleanupFailure !== undefined) throw cleanupFailure;
+  if (buildFailure !== undefined) throw buildFailure;
+}
+
 const localDockerContracts = {
   linux: new Map([["default", "unix:///var/run/docker.sock"]]),
   win32: new Map([
@@ -542,15 +620,23 @@ export function assertLocalDockerDaemon(environment = process.env, platform = pr
   return localEnvironment;
 }
 
-export function runSupabase(argumentsList, { capture = false, network = false } = {}) {
-  const localDockerEnvironment = assertLocalDockerDaemon();
+export function runSupabase(
+  argumentsList,
+  {
+    capture = false,
+    execute = spawnSync,
+    network = false,
+    resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+  } = {},
+) {
+  const localDockerEnvironment = resolveLocalDockerEnvironment();
   const commandArguments = network ? withSupabaseLocalNetwork(argumentsList) : argumentsList;
-  const result = spawnSync(process.execPath, [supabaseCliPath, ...commandArguments], {
+  const result = execute(process.execPath, [supabaseCliPath, ...commandArguments], {
     cwd: repositoryRoot,
     encoding: "utf8",
     env: localDockerEnvironment,
     maxBuffer: 128 * 1024 * 1024,
-    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    stdio: ["ignore", capture ? "pipe" : "inherit", "pipe"],
   });
   if (result.error !== undefined || result.status !== 0) {
     const status = result.status === null ? "sem código" : `código ${result.status}`;
@@ -934,6 +1020,11 @@ function startLocalSupabase() {
 }
 
 export async function main(command = "reset") {
+  const nextBuildCommand = /^build-(web|backoffice)$/u.exec(command);
+  if (nextBuildCommand !== null) {
+    await runNextBuildWithCacheCleanup({ application: nextBuildCommand[1] });
+    return;
+  }
   const localApplicationCommand = /^(dev|start)-(web|backoffice)$/u.exec(command);
   if (localApplicationCommand !== null) {
     await runLocalApplication(localApplicationCommand[2], localApplicationCommand[1]);

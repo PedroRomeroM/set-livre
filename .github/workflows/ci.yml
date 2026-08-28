@@ -55,7 +55,7 @@ jobs:
       - name: Validate POSIX operations
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends curl fail2ban nftables nginx shellcheck
+          sudo apt-get install --yes --no-install-recommends curl fail2ban nftables nginx openssh-server shellcheck
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -shellcheck shellcheck
           bash -n ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \

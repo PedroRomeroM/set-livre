@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node ../../scripts/local-setup.mjs dev-backoffice",
-    "build": "next build",
+    "build": "node ../../scripts/local-setup.mjs build-backoffice",
     "start": "node ../../scripts/local-setup.mjs start-backoffice",
     "typecheck": "next typegen && tsc --noEmit"
   },

@@ -32,6 +32,11 @@ ambiente que o Next carregaria, valida as origens e a identidade DAL em `127.0.0
 variáveis runtime ou credenciais herdadas do shell. A CLI Next fixada continua sendo chamada
 diretamente, sem shell intermediário.
 
+`build:web` e `build:backoffice` reutilizam esse wrapper somente para uma regra adicional: após sucesso
+ou falha do Next, `.next/cache` precisa ser uma árvore física, é retirada por rename único e removida.
+Assim, valores runtime usados durante a compilação não permanecem no cache e uma falha de limpeza
+também invalida o build, sem criar um script adicional.
+
 Os dados são descartáveis. O guardrail relevante não é um firewall especial: Playwright e helpers de
 QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. A stack usa a bridge local
 suportada pela CLI e, depois de cada `start`, `reset` ou `status`, o wrapper comprova a bridge, todos os
@@ -46,6 +51,8 @@ Antes de qualquer chamada à CLI Supabase, o wrapper exige `DOCKER_HOST`/`DOCKER
 comprova o contexto local canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux),
 confirma containers Linux e fixa explicitamente esse endpoint no processo filho. Assim, nenhum comando
 alcança um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
+O stdout dos comandos interativos permanece visível, mas stderr é sempre capturado; em falha, somente o
+diagnóstico JSON reconhecido e com credenciais de conexão redigidas pode voltar ao terminal ou ao CI.
 
 A versão fixa inclui a correção oficial para colisão do endpoint de controle quando Set Livre e outra
 stack local coexistem. O `config.toml` também fixa `auto_expose_new_tables = false`: novas tabelas,
@@ -70,7 +77,8 @@ views, sequences e funções não recebem acesso implícito das roles da Data AP
 
 Os comandos usam diretamente Playwright e Prettier. O wrapper único chama as CLIs Next e Supabase
 diretamente somente quando precisa coordenar uma regra do Set Livre que essas ferramentas não oferecem:
-fronteira local, bootstrap da role DAL e publicação atômica dos contratos gerados.
+fronteira local, limpeza garantida do cache de build, bootstrap da role DAL e publicação atômica dos
+contratos gerados.
 
 ## Variáveis locais
 

@@ -85,8 +85,10 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - PRs não recebem secrets de produção;
 - `npm ci`, lockfile, audit e actions oficiais fixadas por SHA;
 - builds ocorrem em runner Linux x86_64, nunca na VM;
+- caches transitórios do Next são removidos após sucesso ou falha; erro de limpeza invalida o build;
 - archive é identificado por SHA-256 e manifesto com o commit completo;
-- VM aceita SSH somente por chave; senha e root login ficam desabilitados;
+- VM aceita SSH somente por chave; senha e root login ficam desabilitados, e políticas condicionais
+  `Match` ou includes SSH fora da superfície global canônica são recusados antes do reload;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa
@@ -104,6 +106,8 @@ Secrets ficam no environment do GitHub ou nos arquivos imutáveis da release ati
 `/etc/set-livre/*.env` não são uma superfície de runtime e são removidos pelo bootstrap. Nenhum secret
 entra em variável `NEXT_PUBLIC`, artifact, log, screenshot ou documentação. Publishable key e host key
 SSH não são secrets; URL DAL, senhas, access token e chave privada são.
+Ferramentas Supabase executadas pelo wrapper nunca herdam stderr: em erro, apenas a mensagem JSON
+reconhecida e com URL de banco redigida é emitida.
 
 ## Borda e headers
 

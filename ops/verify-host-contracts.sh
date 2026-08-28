@@ -97,6 +97,8 @@ bootstrap_primitive_markers=(
   "END SET_LIVRE_FAIL2BAN_PRIMITIVE"
   "BEGIN SET_LIVRE_FAIL2BAN_CONFIGURATION"
   "END SET_LIVRE_FAIL2BAN_CONFIGURATION"
+  "BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES"
+  "END SET_LIVRE_SSH_POLICY_PRIMITIVES"
 )
 for marker in "${bootstrap_primitive_markers[@]}"; do
   [[ $(grep --fixed-strings --count "$marker" "$REPOSITORY_ROOT/ops/bootstrap-host.sh") -eq 1 ]] \
@@ -239,6 +241,84 @@ bootstrap_primitive_root="$temporary_directory/bootstrap-primitives"
 mkdir -- "$bootstrap_primitive_root"
 sudo bash "$bootstrap_primitive_runtime" "$bootstrap_primitive_root"
 sudo chown -R "$(id --user):$(id --group)" "$bootstrap_primitive_root"
+
+ssh_policy_runtime="$temporary_directory/ssh-policy-runtime.sh"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail' \
+    'PRODUCTION_IP="147.15.97.227"'
+  sed -n \
+    '/^# BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES$/,/^# END SET_LIVRE_SSH_POLICY_PRIMITIVES$/p' \
+    "$REPOSITORY_ROOT/ops/bootstrap-host.sh"
+  cat <<'SSH_POLICY_RUNTIME'
+fail() {
+  printf 'ssh-policy: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || fail "diretório de teste ausente."
+test_root="$1"
+drop_in_directory="${test_root}/sshd_config.d"
+configuration="${test_root}/sshd_config"
+mkdir -- "$test_root" "$drop_in_directory"
+printf 'Include %s/*.conf\n' "$drop_in_directory" > "$configuration"
+cat > "${drop_in_directory}/60-set-livre.conf" <<'SSHD_CONFIGURATION'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+PermitEmptyPasswords no
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+AllowAgentForwarding no
+AllowTcpForwarding no
+GatewayPorts no
+PermitTunnel no
+AllowUsers ubuntu deploy-setlivre
+SSHD_CONFIGURATION
+
+assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory" \
+  || fail "configuração global canônica foi recusada."
+effective_allow_users_are_exact $'allowusers ubuntu\nallowusers deploy-setlivre' \
+  || fail "representação por linhas do OpenSSH foi recusada."
+effective_allow_users_are_exact 'allowusers ubuntu deploy-setlivre' \
+  || fail "representação agrupada do OpenSSH foi recusada."
+if effective_allow_users_are_exact $'allowusers ubuntu deploy-setlivre\nallowusers ubuntu'; then
+  fail "AllowUsers duplicado foi aceito."
+fi
+assert_effective_sshd_policy "$configuration" \
+  || fail "configuração efetiva canônica foi recusada."
+
+cat > "${drop_in_directory}/10-conditional.conf" <<'CONDITIONAL_CONFIGURATION'
+Match Address 198.51.100.0/24
+PasswordAuthentication yes
+Match all
+CONDITIONAL_CONFIGURATION
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "política Match condicional foi aceita."
+fi
+rm -- "${drop_in_directory}/10-conditional.conf"
+
+printf 'Include %s/foreign/*.conf\n' "$test_root" \
+  > "${drop_in_directory}/10-extra-include.conf"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "Include não canônico foi aceito."
+fi
+rm -- "${drop_in_directory}/10-extra-include.conf"
+
+ln --symbolic /dev/null "${drop_in_directory}/10-linked.conf"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "drop-in SSH simbólico foi aceito."
+fi
+rm -- "${drop_in_directory}/10-linked.conf"
+
+printf 'SSH policy runtime contracts OK\n'
+SSH_POLICY_RUNTIME
+} > "$ssh_policy_runtime"
+chmod 0700 "$ssh_policy_runtime"
+sudo bash "$ssh_policy_runtime" "$temporary_directory/ssh-policy"
+sudo chown -R "$(id --user):$(id --group)" "$temporary_directory/ssh-policy"
 
 ! privileged_path_exists "$FAIL2BAN_TEST_CONFIG" \
   || fail "configuração Fail2ban do contrato já existe no runner."

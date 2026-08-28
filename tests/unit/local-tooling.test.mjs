@@ -1,5 +1,5 @@
 import { X509Certificate } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -20,6 +20,8 @@ import {
   createLocalApplicationEnvironment,
   parseSupabaseCliError,
   parseSupabaseStatus,
+  runNextBuildWithCacheCleanup,
+  runSupabase,
   supabaseLocalNetworkName,
   validateLocalDockerContext,
   validateDockerDesktopPortBindingPolicy,
@@ -84,11 +86,15 @@ describe("local tooling contracts", () => {
     expect(rootManifest.scripts["start:backoffice"]).toBe(
       "node scripts/local-setup.mjs start-backoffice",
     );
+    expect(rootManifest.scripts["build:web"]).toBe("node scripts/local-setup.mjs build-web");
     expect(backofficeManifest.scripts.dev).toBe(
       "node ../../scripts/local-setup.mjs dev-backoffice",
     );
     expect(backofficeManifest.scripts.start).toBe(
       "node ../../scripts/local-setup.mjs start-backoffice",
+    );
+    expect(backofficeManifest.scripts.build).toBe(
+      "node ../../scripts/local-setup.mjs build-backoffice",
     );
 
     const directory = mkdtempSync(resolve(tmpdir(), "set-livre-next-env-"));
@@ -100,6 +106,34 @@ describe("local tooling contracts", () => {
       );
     } finally {
       rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("removes secret-bearing Next caches after successful and failed builds", async () => {
+    for (const status of [0, 1]) {
+      const directory = mkdtempSync(resolve(tmpdir(), "set-livre-next-build-"));
+      const nextDirectory = resolve(directory, ".next");
+      const cacheDirectory = resolve(nextDirectory, "cache");
+      const secret = resolve(cacheDirectory, "compiler-secret.txt");
+      const executeBuild = () => {
+        mkdirSync(cacheDirectory, { recursive: true });
+        writeFileSync(secret, "postgresql://runtime:secret@database.example/postgres", "utf8");
+        return { status };
+      };
+
+      try {
+        const build = runNextBuildWithCacheCleanup({
+          application: "web",
+          executeBuild,
+          root: directory,
+        });
+        if (status === 0) await expect(build).resolves.toBeUndefined();
+        else await expect(build).rejects.toThrow("encerrou o build sem sucesso");
+        expect(readdirSync(nextDirectory)).toEqual([]);
+        expect(() => readFileSync(secret, "utf8")).toThrow();
+      } finally {
+        rmSync(directory, { force: true, recursive: true });
+      }
     }
   });
 
@@ -400,10 +434,20 @@ describe("local tooling contracts", () => {
 
   it("verifies the effective SSH policy before reloading the daemon", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const unconditional = bootstrap.indexOf(
+      "assert_unconditional_sshd_policy_surface /etc/ssh/sshd_config",
+    );
     const validation = bootstrap.indexOf("assert_effective_sshd_policy /etc/ssh/sshd_config");
     const reload = bootstrap.indexOf("systemctl reload ssh", validation);
 
     expect(bootstrap).toContain('sshd -T -f "$configuration"');
+    expect(bootstrap).toContain('keyword == "match"');
+    expect(bootstrap).toContain('expected_include="${drop_in_directory}/*.conf"');
+    expect(bootstrap).toContain('effective_allow_users_are_exact "$effective"');
     expect(bootstrap).toContain(
       '-C "user=${context_user},host=set-livre,addr=203.0.113.1,laddr=${PRODUCTION_IP},lport=22"',
     );
@@ -414,12 +458,16 @@ describe("local tooling contracts", () => {
       "passwordauthentication no",
       "permitrootlogin no",
       "pubkeyauthentication yes",
-      "allowusers ubuntu",
-      "allowusers deploy-setlivre",
     ]) {
       expect(bootstrap).toContain(expected);
     }
+    expect(bootstrap).toContain("AllowUsers ubuntu deploy-setlivre");
+    expect(hostVerification).toContain("$'allowusers ubuntu\\nallowusers deploy-setlivre'");
+    expect(hostVerification).toContain("'allowusers ubuntu deploy-setlivre'");
+    expect(hostVerification).toContain("política Match condicional foi aceita");
+    expect(unconditional).toBeGreaterThan(-1);
     expect(validation).toBeGreaterThan(-1);
+    expect(validation).toBeGreaterThan(unconditional);
     expect(reload).toBeGreaterThan(validation);
   });
 
@@ -621,7 +669,7 @@ describe("local tooling contracts", () => {
       "ação nftables efetiva do Fail2ban não ficou pronta no laboratório",
     );
     expect(hostVerification).toContain("override local da ação nftables foi aceito no laboratório");
-    expect(workflow).toContain("curl fail2ban nftables nginx shellcheck");
+    expect(workflow).toContain("curl fail2ban nftables nginx openssh-server shellcheck");
   });
 
   it("publishes only a fully validated Node runtime through an atomic rename", () => {
@@ -1545,6 +1593,31 @@ describe("local tooling contracts", () => {
       ),
     ).toBe("failed at postgresql://[REDACTED]@127.0.0.1/postgres");
     expect(parseSupabaseCliError("unstructured failure")).toBeUndefined();
+  });
+
+  it("pipes Supabase stderr and emits only its redacted structured failure", () => {
+    let invocationOptions;
+    let thrown;
+    try {
+      runSupabase(["test", "db", "--local"], {
+        execute: (_command, _argumentsList, options) => {
+          invocationOptions = options;
+          return {
+            status: 1,
+            stderr:
+              "raw postgresql://postgres:raw-secret@127.0.0.1/postgres\n" +
+              '{"error":{"message":"failed at postgresql://postgres:raw-secret@127.0.0.1/postgres"}}\n',
+            stdout: "",
+          };
+        },
+        resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+      });
+    } catch (error) {
+      thrown = String(error);
+    }
+    expect(invocationOptions?.stdio).toEqual(["ignore", "inherit", "pipe"]);
+    expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
+    expect(thrown).not.toContain("raw-secret");
   });
 
   it("normalizes and validates the tracked schema dump", () => {

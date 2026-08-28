@@ -433,10 +433,72 @@ stop_application_services() {
   done
 }
 
+# BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES
+assert_unconditional_sshd_policy_surface() {
+  local configuration="$1"
+  local drop_in_directory="$2"
+  local candidate
+  local -a configuration_files=("$configuration")
+  local -a drop_in_candidates=()
+  [[ ${configuration} == /* && -f ${configuration} && ! -L ${configuration} ]] || return 1
+  [[ ${drop_in_directory} == /* && -d ${drop_in_directory} && ! -L ${drop_in_directory} ]] \
+    || return 1
+  mapfile -d '' -t drop_in_candidates < <(
+    find -P "$drop_in_directory" -mindepth 1 -maxdepth 1 -name '*.conf' -print0 \
+      | LC_ALL=C sort -z
+  )
+  for candidate in "${drop_in_candidates[@]}"; do
+    [[ -f ${candidate} && ! -L ${candidate} ]] || return 1
+    configuration_files+=("$candidate")
+  done
+  awk \
+    -v main_configuration="$configuration" \
+    -v expected_include="${drop_in_directory}/*.conf" '
+      BEGIN {
+        include_count = 0
+        invalid = 0
+      }
+      {
+        line = $0
+        sub(/^[[:space:]]+/, "", line)
+        if (line == "" || substr(line, 1, 1) == "#") next
+        field_count = split(line, fields, /[[:space:]]+/)
+        keyword = tolower(fields[1])
+        if (keyword == "match") invalid = 1
+        if (keyword == "include") {
+          if (FILENAME != main_configuration \
+              || field_count != 2 \
+              || fields[2] != expected_include) {
+            invalid = 1
+          } else {
+            include_count++
+          }
+        }
+      }
+      END {
+        if (invalid || include_count != 1) exit 1
+      }
+    ' "${configuration_files[@]}"
+}
+
+effective_allow_users_are_exact() {
+  local effective="$1"
+  local line
+  local -a fields=()
+  local -a users=()
+  while IFS= read -r line; do
+    [[ ${line} == "allowusers "* ]] || continue
+    fields=()
+    read -r -a fields <<< "$line"
+    [[ ${#fields[@]} -gt 1 && ${fields[0]} == "allowusers" ]] || return 1
+    users+=("${fields[@]:1}")
+  done <<< "$effective"
+  [[ ${#users[@]} -eq 2 && ${users[0]} == "ubuntu" && ${users[1]} == "deploy-setlivre" ]]
+}
+
 assert_effective_sshd_policy() {
   local configuration="$1"
   local context_user effective expected
-  local -a allow_users=()
   local -a expected_values=(
     "authenticationmethods publickey"
     "allowagentforwarding no"
@@ -462,13 +524,10 @@ assert_effective_sshd_policy() {
       [[ $(grep --fixed-strings --line-regexp --count -- "$expected" <<< "$effective" || true) -eq 1 ]] \
         || return 1
     done
-    allow_users=()
-    mapfile -t allow_users < <(grep '^allowusers ' <<< "$effective" || true)
-    [[ ${#allow_users[@]} -eq 2 \
-      && ${allow_users[0]} == "allowusers ubuntu" \
-      && ${allow_users[1]} == "allowusers deploy-setlivre" ]] || return 1
+    effective_allow_users_are_exact "$effective" || return 1
   done
 }
+# END SET_LIVRE_SSH_POLICY_PRIMITIVES
 
 assert_legacy_surface_absent() {
   local managed_host_contract="$1"
@@ -1376,6 +1435,8 @@ PermitTunnel no
 AllowUsers ubuntu deploy-setlivre
 SSHD
 sshd -t
+assert_unconditional_sshd_policy_surface /etc/ssh/sshd_config /etc/ssh/sshd_config.d \
+  || fail "superfície SSH contém Include ou Match fora do contrato global."
 assert_effective_sshd_policy /etc/ssh/sshd_config \
   || fail "política SSH efetiva diverge do contrato public-key-only."
 systemctl reload ssh

@@ -141,8 +141,10 @@
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
           multiengine, acessibilidade, builds standalone e fronteiras de segurança da entrega e do
-          host. Testes não usam retry, timeout ampliado ou relaxamento de asserção para mascarar
-          falhas; os resultados permanecem no PR e nos checks.
+          host. Stderr da CLI Supabase é sanitizado antes de chegar aos logs, caches transitórios do
+          Next são removidos mesmo quando o build falha e a política SSH global recusa regras
+          condicionais antes do reload. Testes não usam retry, timeout ampliado ou relaxamento de
+          asserção para mascarar falhas; os resultados permanecem no PR e nos checks.
         </p>
         <p>
           Ambiente local e banco recusam exposição de rede, configuração insegura ou divergente.

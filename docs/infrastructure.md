@@ -150,6 +150,9 @@ permanece estrito e rejeita links simbólicos, hard links e qualquer tipo de ent
 regular ou diretório.
 Antes da compactação, o empacotador também recusa `.env` e ocorrências exatas das credenciais de banco
 disponíveis ao processo; o artifact parcial é removido em caso de falha.
+Cada build Next, bem-sucedido ou não, retira `.next/cache` por rename e remove a árvore física antes de
+retornar. Uma limpeza incompleta falha o gate, impedindo que credenciais expandidas permaneçam no
+workspace ou sejam alcançadas por uma coleta ampla de artifacts.
 
 Migrations não sofrem rollback automático. Mudanças usam expand/contract em PRs separados: o health
 aceita o head compilado de uma release enquanto ele existir no histórico aplicado, preservando a
@@ -167,7 +170,9 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
   `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
   recuperável e só então é publicado;
-- Nginx, systemd, OpenSSH com política efetiva validada por `sshd -T` antes de reload,
+- Nginx, systemd e OpenSSH; a superfície SSH recusa qualquer `Match`, include aninhado ou drop-in
+  simbólico, aceita somente o include global canônico e então valida por `sshd -T` a política efetiva
+  para usuário comum, deployer e root antes do reload, interpretando semanticamente a lista `AllowUsers`,
   `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
 - gate de boot e recovery habilitados; as units dos apps são estáticas, exigem seu entrypoint imutável e
