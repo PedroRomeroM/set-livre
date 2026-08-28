@@ -12,6 +12,7 @@ readonly UPLOAD_LOCK="${INCOMING_DIRECTORY}/.incoming.lock"
 readonly DEPLOY_LOCK_HELPER="/usr/local/sbin/set-livre-deploy-lock"
 readonly PRODUCTION_IP="147.15.97.227"
 readonly PRODUCTION_URL="https://${PRODUCTION_IP}"
+readonly CERTIFICATE_MINIMUM_VALIDITY_SECONDS=86400
 readonly MAX_ARCHIVE_BYTES=$((256 * 1024 * 1024))
 readonly MAX_ENVIRONMENT_BYTES=$((64 * 1024))
 readonly RETAINED_RELEASES=4
@@ -227,6 +228,32 @@ activation_is_terminal() {
   [[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]
 }
 
+production_https_contract_is_ready() {
+  local certificate="/etc/letsencrypt/live/${PRODUCTION_IP}/fullchain.pem"
+  local private_key="/etc/letsencrypt/live/${PRODUCTION_IP}/privkey.pem"
+  [[ -f ${certificate} && -f ${private_key} ]] || {
+    printf 'deploy: certificado TLS de IP está ausente ou incompleto.\n' >&2
+    return 1
+  }
+  openssl x509 -checkend "$CERTIFICATE_MINIMUM_VALIDITY_SECONDS" -noout \
+    -in "$certificate" >/dev/null 2>&1 || {
+    printf 'deploy: certificado TLS de IP expira em menos de 24 horas.\n' >&2
+    return 1
+  }
+  openssl x509 -checkip "$PRODUCTION_IP" -noout -in "$certificate" >/dev/null 2>&1 || {
+    printf 'deploy: certificado TLS não cobre o IP de produção.\n' >&2
+    return 1
+  }
+  nginx -t >/dev/null 2>&1 || {
+    printf 'deploy: configuração efetiva do Nginx é inválida.\n' >&2
+    return 1
+  }
+  systemctl is-active --quiet nginx.service || {
+    printf 'deploy: serviço Nginx não está ativo.\n' >&2
+    return 1
+  }
+}
+
 validate_deployment_host_prerequisites() {
   bootstrap_is_terminal \
     || fail "o bootstrap do host ainda não atingiu estado terminal."
@@ -242,6 +269,8 @@ validate_deployment_host_prerequisites() {
     && $(stat --format '%U:%G:%a' -- "$UPLOAD_LOCK") \
       == "deploy-setlivre:deploy-setlivre:600" ]] \
     || fail "lock de upload não atende ao contrato."
+  production_https_contract_is_ready \
+    || fail "entrada HTTPS do host não atende ao contrato pré-migration."
 }
 
 read_bootstrap_recovery_digest() {
@@ -379,7 +408,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v4\n'
+  printf 'set-livre-deploy-ready-v5\n'
   exit 0
 fi
 

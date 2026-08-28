@@ -1068,7 +1068,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v4"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v5"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1084,6 +1084,11 @@ describe("local tooling contracts", () => {
     expect(prerequisites).toContain("managed_release_directories_are_valid");
     expect(prerequisites).toContain("INCOMING_DIRECTORY");
     expect(prerequisites).toContain("UPLOAD_LOCK");
+    expect(prerequisites).toContain("production_https_contract_is_ready");
+    expect(deploy).toContain('openssl x509 -checkend "$CERTIFICATE_MINIMUM_VALIDITY_SECONDS"');
+    expect(deploy).toContain('openssl x509 -checkip "$PRODUCTION_IP"');
+    expect(deploy).toContain("nginx -t");
+    expect(deploy).toContain("systemctl is-active --quiet nginx.service");
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
@@ -1108,7 +1113,7 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v4");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v5");
     expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
     expect(hostVerification).toContain(
       "preflight SSH recusou blocker de bootstrap por motivo inesperado",
@@ -1121,6 +1126,9 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain(
       "preflight privilegiado recusou lock de upload por motivo inesperado",
     );
+    expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
+    expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

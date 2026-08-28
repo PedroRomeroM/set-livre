@@ -154,9 +154,11 @@
           <a href="docs/development.md">desenvolvimento</a> e <a href="docs/database.md">banco</a>.
         </p>
         <p>
-          Merge em <code>main</code> aplica migrations forward-only e publica uma release imutável
-          na VM, com health interno e público, rollback e recuperação após interrupção. Timeout ou
-          serviço indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
+          Merge em <code>main</code> só inicia escritas irreversíveis depois de concluir toda
+          evidência reversível da release. Então aplica migrations forward-only e publica uma
+          release imutável na VM, com health interno e público, rollback e recuperação após
+          interrupção. Timeout ou serviço indisponível é inconclusivo; falha pós-merge abre nova
+          branch e repete o ciclo.
         </p>
       </section>
 

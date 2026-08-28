@@ -439,7 +439,7 @@ sudo rm --force /etc/nginx/sites-enabled/default
 sudo install -m 0644 "$REPOSITORY_ROOT/ops/nginx/set-livre-http.conf" /etc/nginx/sites-available/set-livre
 sudo ln --symbolic --force /etc/nginx/sites-available/set-livre /etc/nginx/sites-enabled/set-livre
 sudo nginx -t
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
   -subj '/CN=147.15.97.227' -addext 'subjectAltName=IP:147.15.97.227' \
   -keyout "$temporary_directory/ip.key" -out "$temporary_directory/ip.crt" >/dev/null 2>&1
 sudo install -d -m 0755 /etc/letsencrypt/live/147.15.97.227
@@ -465,11 +465,9 @@ for _ in {1..20}; do
   /usr/bin/sleep 0.05
 done
 kill -0 "$nginx_backend_process" 2>/dev/null || fail "backend controlado do teste Nginx não iniciou."
-if [[ -s /run/nginx.pid ]] && sudo kill -0 "$(< /run/nginx.pid)" 2>/dev/null; then
-  sudo nginx -s reload
-else
-  sudo nginx
-fi
+sudo systemctl restart nginx
+sudo systemctl is-active --quiet nginx.service \
+  || fail "serviço Nginx do laboratório não ficou ativo."
 nginx_test_active=true
 sudo truncate --size 0 \
   /var/log/nginx/set-livre-access.log \
@@ -555,9 +553,6 @@ if grep --extended-regexp --quiet \
   "$temporary_directory/set-livre-access.log"; then
   fail "access log redigido expôs endereço ou target do request."
 fi
-sudo nginx -s stop
-nginx_test_active=false
-
 sudo install -d -m 0755 \
   /opt/node/bin \
   /opt/set-livre/current/web \
@@ -679,8 +674,11 @@ if entry_limit_output="$(
 )"; then
   fail "archive com mais de 20.000 entradas foi aceito."
 fi
-grep --fixed-strings 'quantidade de entradas inválida' <<< "$entry_limit_output" >/dev/null \
-  || fail "archive excessivo falhou por motivo inesperado."
+if ! grep --fixed-strings 'quantidade de entradas inválida' \
+  <<< "$entry_limit_output" >/dev/null; then
+  printf '%s\n' "$entry_limit_output" >&2
+  fail "archive excessivo falhou por motivo inesperado."
+fi
 for residual in \
   "/home/deploy-setlivre/incoming/set-livre-${entry_limit_sha}.tar.gz" \
   "/home/deploy-setlivre/incoming/web-${entry_limit_sha}.env" \
@@ -758,8 +756,12 @@ mkdir -p "$fake_bin" "$test_state"
 cat > "$fake_bin/systemctl" <<'SYSTEMCTL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
-state="${SET_LIVRE_TEST_STATE:?}"
 phase="${SET_LIVRE_TEST_PHASE:-success}"
+if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" ]]; then
+  [[ ${phase} != "nginx-inactive" ]]
+  exit
+fi
+state="${SET_LIVRE_TEST_STATE:?}"
 printf '%s\n' "$*" >> "$state/systemctl.log"
 if [[ ${1:-} == "restart" && ${phase} == "services" && ! -e "$state/services-once" ]]; then
   touch "$state/services-once"
@@ -779,6 +781,15 @@ if [[ ${1:-} == "restart" \
   /usr/bin/sleep 0.1
 fi
 SYSTEMCTL
+
+cat > "$fake_bin/nginx" <<'NGINX'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ ${SET_LIVRE_TEST_PHASE:-success} == "nginx-invalid" && ${1:-} == "-t" ]]; then
+  exit 1
+fi
+exec /usr/sbin/nginx "$@"
+NGINX
 
 cat > "$fake_bin/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -947,11 +958,46 @@ grep --fixed-strings 'lock de upload não atende ao contrato' \
   || fail "preflight privilegiado recusou lock de upload por motivo inesperado."
 sudo chmod 0600 /home/deploy-setlivre/incoming/.incoming.lock
 
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj '/CN=147.15.97.227' -addext 'subjectAltName=IP:147.15.97.227' \
+  -keyout "$temporary_directory/ip-expiring.key" \
+  -out "$temporary_directory/ip-expiring.crt" >/dev/null 2>&1
+sudo install -m 0644 "$temporary_directory/ip-expiring.crt" \
+  /etc/letsencrypt/live/147.15.97.227/fullchain.pem
+sudo install -m 0600 "$temporary_directory/ip-expiring.key" \
+  /etc/letsencrypt/live/147.15.97.227/privkey.pem
+if preflight_certificate_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou certificado prestes a expirar."
+fi
+grep --fixed-strings 'entrada HTTPS do host não atende ao contrato pré-migration' \
+  <<< "$preflight_certificate_output" >/dev/null \
+  || fail "preflight SSH recusou certificado por motivo inesperado."
+sudo install -m 0644 "$temporary_directory/ip.crt" \
+  /etc/letsencrypt/live/147.15.97.227/fullchain.pem
+sudo install -m 0600 "$temporary_directory/ip.key" \
+  /etc/letsencrypt/live/147.15.97.227/privkey.pem
+
+for invalid_https_phase in nginx-inactive nginx-invalid; do
+  if preflight_https_output="$(
+    sudo --user deploy-setlivre -- env \
+      SET_LIVRE_TEST_PHASE="$invalid_https_phase" SSH_ORIGINAL_COMMAND=preflight \
+      "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+  )"; then
+    fail "preflight SSH aceitou HTTPS inválido: ${invalid_https_phase}."
+  fi
+  grep --fixed-strings 'entrada HTTPS do host não atende ao contrato pré-migration' \
+    <<< "$preflight_https_output" >/dev/null \
+    || fail "preflight SSH recusou HTTPS por motivo inesperado: ${invalid_https_phase}."
+done
+
 preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v4 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v5 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {

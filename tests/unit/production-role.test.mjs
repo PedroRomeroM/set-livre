@@ -520,30 +520,53 @@ describe("production role provisioning", () => {
     ).rejects.not.toThrow(publishableKey);
   });
 
-  it("runs database and SSH probes before migrations, builds, and packaging", () => {
+  it("proves the host, public HTTPS path, and exact release before migrations", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
     );
-    const preflight = workflow.indexOf("- name: Validate fixed production contract");
-    const sshAuthentication = workflow.indexOf("- name: Authenticate Oracle deployment path");
-    const migrations = workflow.indexOf("- name: Apply forward-only Supabase migrations");
-    const webBuild = workflow.indexOf("- name: Build web release");
-    const packaging = workflow.indexOf("- name: Package immutable release");
+    const deployJob = workflow.slice(workflow.indexOf("  deploy:"));
+    const orderedSteps = [
+      "- name: Validate fixed production contract",
+      "- name: Authenticate Oracle deployment path",
+      "- name: Verify public HTTPS entrypoint",
+      "- name: Build web release",
+      "- name: Build backoffice release",
+      "- name: Package immutable release",
+      "- name: Prepare ephemeral runtime environments",
+      "- name: Apply forward-only Supabase migrations",
+      "- name: Activate and verify the restricted production role",
+      "- name: Activate release on Oracle VM",
+      "- name: Verify public web health",
+    ];
+    const positions = orderedSteps.map((step) => deployJob.indexOf(step));
+    const preflight = positions[0];
+    const sshAuthentication = positions[1];
+    const publicHttps = positions[2];
+    const webBuild = positions[3];
+    const migrations = positions[7];
 
-    expect(preflight).toBeGreaterThan(-1);
-    expect(sshAuthentication).toBeGreaterThan(preflight);
-    expect(sshAuthentication).toBeLessThan(migrations);
-    expect(workflow.slice(preflight, sshAuthentication)).toContain(
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(deployJob.slice(preflight, sshAuthentication)).toContain(
       "NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt",
     );
-    const sshProbe = workflow.slice(sshAuthentication, migrations);
+    const sshProbe = deployJob.slice(sshAuthentication, publicHttps);
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v4" ]]');
-    expect(migrations).toBeLessThan(webBuild);
-    expect(webBuild).toBeLessThan(packaging);
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]');
+    const httpsProbe = deployJob.slice(publicHttps, webBuild);
+    expect(httpsProbe).toContain("--proto '=https'");
+    expect(httpsProbe).toContain("--tlsv1.2");
+    expect(httpsProbe).toContain('"$status" == 200');
+    expect(httpsProbe).toContain("User-agent: *\\nDisallow: /");
+    expect(httpsProbe).toContain("X-Robots-Tag: noindex, nofollow, noarchive, nosnippet");
+    expect(deployJob.indexOf("npm run build:web")).toBeLessThan(migrations);
+    expect(deployJob.indexOf("npm run build:backoffice")).toBeLessThan(migrations);
+    expect(deployJob.indexOf("npm run release")).toBeLessThan(migrations);
+    expect(deployJob.indexOf("cmp --silent")).toBeLessThan(migrations);
+    expect(deployJob.indexOf("write_environment")).toBeLessThan(migrations);
   });
 
   it("initializes credentials only for the migration-created NOLOGIN role", () => {

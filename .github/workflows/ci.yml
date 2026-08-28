@@ -334,24 +334,25 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v4" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]
 
-      - name: Apply forward-only Supabase migrations
+      - name: Verify public HTTPS entrypoint
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PUBLIC_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
         run: |
-          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
-          npx supabase db push --linked --dry-run
-          npx supabase db push --linked
-
-      - name: Activate and verify the restricted production role
-        env:
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
-          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
-        run: npm run production:role
+          response="$RUNNER_TEMP/set-livre-preflight-robots.txt"
+          headers="$RUNNER_TEMP/set-livre-preflight-headers.txt"
+          status="$(
+            curl --disable --noproxy '*' --silent --show-error \
+              --retry 3 --retry-all-errors --retry-delay 2 --max-time 10 \
+              --proto '=https' --tlsv1.2 --dump-header "$headers" --output "$response" \
+              --write-out '%{http_code}' "${PUBLIC_URL}/robots.txt"
+          )"
+          [[ "$status" == 200 ]]
+          [[ "$(< "$response")" == $'User-agent: *\nDisallow: /' ]]
+          tr --delete '\r' < "$headers" \
+            | grep --ignore-case --fixed-strings --line-regexp \
+              'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet'
 
       - name: Build web release
         env:
@@ -426,6 +427,23 @@ jobs:
           }
           write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
           write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+
+      - name: Apply forward-only Supabase migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
+          npx supabase db push --linked --dry-run
+          npx supabase db push --linked
+
+      - name: Activate and verify the restricted production role
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: npm run production:role
 
       - name: Activate release on Oracle VM
         env:

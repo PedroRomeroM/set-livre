@@ -93,7 +93,9 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - antes de migrations forward-only, o deploy exige uma única host key Ed25519 para o IP canônico e
   autentica a chave privada contra o comando SSH forçado; o preflight atravessa `sudo` não interativo,
   o instalador root e seu lock, recusa estado de bootstrap, recovery ou ativação pendente e não altera
-  a release;
+  a release; certificado, Nginx e rota HTTPS pública também precisam estar íntegros;
+- build de produção, scan, archive determinístico e ambientes efêmeros terminam antes da primeira
+  migration, para que uma falha reversível de empacotamento não deixe o schema avançado sem release;
 - a mesma fronteira relê as duas roles e seus memberships; se já existem, o readiness do head atualmente
   implantado precisa aprovar grants, ownership, RLS e superfícies DAL antes de qualquer alteração de
   schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito;

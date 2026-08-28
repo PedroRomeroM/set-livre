@@ -24,9 +24,9 @@ flowchart LR
     DEV[Windows + Supabase local] --> PR[Pull request]
     PR --> CI[GitHub Actions Linux + Windows]
     CI --> MAIN[main aprovada]
-    MAIN --> MIG[Supabase CLI db push]
     MAIN --> ART[Standalone Linux x86_64 por SHA]
-    ART --> SSH[SSH de deploy com chave exclusiva]
+    ART --> MIG[Supabase CLI db push]
+    MIG --> SSH[SSH de deploy com chave exclusiva]
     SSH --> VM[Oracle E2 Micro]
     IP[IPv4 reservado 147.15.97.227] --> NG[Nginx 80/443]
     NG --> WEB[web 127.0.0.1:3000]
@@ -106,21 +106,24 @@ No merge, o workflow:
    comando SSH forçado antes de qualquer migration; esse preflight atravessa o `sudo` não interativo,
    o entrypoint root instalado e o mesmo lock do deploy. A camada SSH e a privilegiada validam suas
    próprias precondições, e o laboratório prova que recusam raízes, locks de upload ou marcadores de
-   bootstrap, recovery ou ativação interrompida sem alterar release ou serviços;
+   bootstrap, recovery ou ativação interrompida sem alterar release ou serviços. Certificado de IP com
+   pelo menos 24 horas, SAN, `nginx -t`, serviço ativo e `/robots.txt` pela rota HTTPS pública também
+   precisam passar sem desabilitar a validação TLS;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
-4. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto
-   seja exatamente o head compilado pelo candidato;
-5. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
+4. constrói web e backoffice para o SHA aprovado, recusa segredo no artifact, cria duas vezes o tar
+   normalizado, exige bytes idênticos e prepara os dois ambientes efêmeros;
+5. somente depois de existir uma release exata e verificável aplica migrations pendentes com
+   `supabase db push --linked`, sem seed, e exige que o maior head remoto seja exatamente o head
+   compilado pelo candidato;
+6. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
    resultado ambíguo do commit abre conexões administrativas novas, força `NOLOGIN` de forma
    idempotente e exige releitura positiva antes de falhar; nos deploys seguintes apenas valida a
    credencial existente, sem rotacioná-la ou imprimi-la;
-6. constrói web e backoffice para o SHA aprovado com URL DAL estrutural não secreta;
-7. recusa segredo no artifact, cria duas vezes o tar normalizado e exige bytes idênticos;
-8. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
-9. executa o instalador root allowlisted;
-10. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
-    público a partir do runner.
+7. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
+8. executa o instalador root allowlisted;
+9. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
+   público a partir do runner.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
 ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
@@ -491,7 +494,7 @@ Secrets do environment `production`:
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
 
-O publishable key e a host key SSH são públicos por natureza. Antes de migrations e builds, o preflight
+O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a
 URL ou abrir qualquer conexão; esses caracteres precisam estar percent-encoded. O instalador repete o
 contrato antes de aceitar os arquivos como `EnvironmentFile` do systemd. O preflight consulta
@@ -501,7 +504,9 @@ chave. Em seguida, a sessão administrativa relê as duas roles e seus membershi
 remoto em uma única consulta e exige que o `check_readiness` já implantado aprove exatamente esse head.
 Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `app_dal` e passar no
 `check_runtime_readiness`. Senha obsoleta, privilégio ou grant excedente, identidade ambígua ou
-indisponibilidade bloqueia o workflow antes de alterar o schema. O instalador da VM também
+indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige o HTTPS
+público operacional, e build, scan, archive determinístico e ambientes precisam terminar antes do
+primeiro `db push`. O instalador da VM também
 aceita exclusivamente o formato moderno
 `sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
 alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
