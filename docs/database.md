@@ -15,7 +15,8 @@
 
 ### 1.1 Estado implementado até a FEAT-004
 
-A árvore possui uma baseline inicial com head `20260824000100`. Antes do primeiro deploy, enquanto o
+A árvore possui a baseline inicial `20260824000100` e a migration append-only
+`20260828174500_default_production_dal_role`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
@@ -44,11 +45,14 @@ quando herdado por `PUBLIC`, ownership nulo, memberships reversas conhecidas, RL
 negação de `CREATE/TEMP`.
 O check do runtime prova login restrito, membership única com `SET app_dal` e allowlist
 reversa exata: somente `postgres` pode administrar `app_runtime_production`, sem `SET` ou `INHERIT`;
-qualquer identidade assumível é rejeitada. O runtime mantém zero GUC próprio em produção, somente
-`CONNECT` como ACL direta e ausência de ownership. No Supabase local, o bootstrap administrativo nega leitura
-efetiva de `pg_roles`, `pg_user` e `pg_db_role_setting` às roles da aplicação, preservando em `pg_roles`
-somente o acesso exigido pelo `supabase_storage_admin`; no Cloud, esses objetos continuam gerenciados
-por `supabase_admin`, então a alternativa suportada exige ausência global de settings com nome de
+qualquer identidade assumível é rejeitada. O runtime mantém exatamente um setting próprio em
+produção: `role=app_dal`, limitado ao database `postgres`, não secreto e validado byte a byte. Essa é
+a autoridade que aplica privilégio mínimo em toda conexão, inclusive quando o Supavisor não encaminha
+parâmetros arbitrários do startup packet. A role conserva somente `CONNECT` como ACL direta e ausência
+de ownership. No Supabase local, o bootstrap administrativo nega leitura efetiva de `pg_roles`,
+`pg_user` e `pg_db_role_setting` às roles da aplicação, preservando em `pg_roles` somente o acesso
+exigido pelo `supabase_storage_admin`; no Cloud, esses objetos continuam gerenciados por
+`supabase_admin`, então a alternativa suportada também exige ausência global de settings com nome de
 segredo enquanto houver leitura herdada. Drift retorna apenas `false`.
 
 O health da aplicação aceita seu head enquanto ele constar no histórico aplicado. Essa semântica é

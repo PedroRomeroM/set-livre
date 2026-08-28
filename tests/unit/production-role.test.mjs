@@ -50,7 +50,7 @@ const expectedRuntimeMember = Object.freeze({
 function productionPreflightAdminQuery({
   applicationObjectCount = 0,
   currentBoundary = {
-    currentMigrationHead: "20260824000100",
+    currentMigrationHead: "20260828174500",
     managedBoundariesReady: true,
     ready: true,
   },
@@ -73,7 +73,7 @@ function productionPreflightAdminQuery({
         rowCount: 1,
         rows: [
           {
-            currentMigrationHead: migrationCount === 0 ? null : "20260824000100",
+            currentMigrationHead: migrationCount === 0 ? null : "20260828174500",
             migrationCount,
           },
         ],
@@ -531,7 +531,7 @@ describe("production role provisioning", () => {
       {
         options: {
           currentBoundary: {
-            currentMigrationHead: "20260824000100",
+            currentMigrationHead: "20260828174500",
             managedBoundariesReady: false,
             ready: true,
           },
@@ -541,7 +541,7 @@ describe("production role provisioning", () => {
       {
         options: {
           currentBoundary: {
-            currentMigrationHead: "20260824000100",
+            currentMigrationHead: "20260828174500",
             managedBoundariesReady: true,
             ready: false,
           },
@@ -790,6 +790,13 @@ describe("production role provisioning", () => {
       ),
       "utf8",
     );
+    const roleAssumptionMigration = readFileSync(
+      new URL(
+        "../../supabase/migrations/20260828174500_default_production_dal_role.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
     const cloudDeliveryDecision = readFileSync(
       new URL("../../docs/adr/ADR-019-controlled-cloud-delivery.md", import.meta.url),
       "utf8",
@@ -820,6 +827,10 @@ describe("production role provisioning", () => {
     expect(migration).toContain(
       "(select ready from sensitive_catalog_access_is_restricted)\n      or (select ready from sensitive_settings_are_absent)",
     );
+    expect(roleAssumptionMigration).toContain(
+      'ALTER ROLE "app_runtime_production" IN DATABASE "postgres" SET "role" TO \'app_dal\';',
+    );
+    expect(roleAssumptionMigration).toContain("setting.setconfig = array['role=app_dal']::text[]");
     expect(cloudDeliveryDecision).toContain(
       "A produção não armazena segredo em GUC de role/database",
     );

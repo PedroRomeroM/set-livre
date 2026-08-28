@@ -941,6 +941,65 @@ async function provisionLocalRuntime(values) {
   return { dalDatabaseUrl: dalDatabaseUrl.toString(), databaseMarker };
 }
 
+async function verifyProductionRoleStartupAssumption(values) {
+  const runtimePassword = randomBytes(32).toString("base64url");
+  const administratorUrl = new URL(values.DB_URL);
+  administratorUrl.username = "supabase_admin";
+  const administrator = new Client({ connectionString: administratorUrl.toString() });
+  const runtimeUrl = new URL(values.DB_URL);
+  runtimeUrl.username = "app_runtime_production";
+  runtimeUrl.password = runtimePassword;
+  runtimeUrl.search = "";
+  runtimeUrl.hash = "";
+
+  await administrator.connect();
+  let credentialChangeAttempted = false;
+  let runtime;
+  try {
+    const passwordCommandResult = await administrator.query(
+      "select pg_catalog.format('alter role app_runtime_production login password %L', $1::text) as command",
+      [runtimePassword],
+    );
+    const passwordCommand = passwordCommandResult.rows[0]?.command;
+    if (typeof passwordCommand !== "string" || passwordCommand === "") {
+      throw new Error("O PostgreSQL não produziu o comando seguro para a credencial temporária.");
+    }
+    credentialChangeAttempted = true;
+    await administrator.query(passwordCommand);
+    runtime = new Client({ connectionString: runtimeUrl.toString() });
+    await runtime.connect();
+    const result = await runtime.query(
+      `select current_user, session_user,
+        pg_catalog.current_setting('role', true) as role_setting,
+        private.check_runtime_readiness($1::text) as runtime_ready`,
+      ["app_runtime_production"],
+    );
+    const identity = result.rows[0];
+    if (
+      identity?.current_user !== "app_dal" ||
+      identity?.session_user !== "app_runtime_production" ||
+      identity?.role_setting !== "app_dal" ||
+      identity?.runtime_ready !== true
+    ) {
+      throw new Error(
+        `A configuração canônica não assumiu a role DAL em uma conexão nova (role=${identity?.current_user}, session=${identity?.session_user}, setting=${identity?.role_setting}, runtime=${String(identity?.runtime_ready)}).`,
+      );
+    }
+  } finally {
+    try {
+      if (runtime !== undefined) await runtime.end();
+    } finally {
+      try {
+        if (credentialChangeAttempted) {
+          await administrator.query("alter role app_runtime_production nologin password null");
+        }
+      } finally {
+        await administrator.end();
+      }
+    }
+  }
+}
+
 function applicationEnvironment(values, dalDatabaseUrl, appUrl) {
   return [
     "APP_ENV=local",
@@ -1063,6 +1122,7 @@ export async function main(command = "reset") {
     });
   } else if (command === "test") {
     runSupabase(["test", "db", "--local"], { network: true });
+    await verifyProductionRoleStartupAssumption(localStatus());
     await verifyDatabaseArtifacts(runSupabase);
     process.stdout.write("Testes SQL e artefatos gerados estão consistentes.\n");
   } else {

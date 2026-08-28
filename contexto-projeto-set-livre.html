@@ -97,8 +97,8 @@
                 Host, credenciais privadas, proteção de branch e HTTPS por IP configurados; os
                 contratos do rollout ficam na
                 <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. CI pode ser
-                repetido manualmente sem autorizar produção. PR limpo e primeiro deploy ainda
-                bloqueiam a aplicação na URL de desenvolvimento. DNS foi adiado até o go-live.
+                repetido manualmente sem autorizar produção. Merge aprovado publica Supabase e VM,
+                com validação terminal e recuperação fail-closed. DNS foi adiado até o go-live.
               </td>
             </tr>
           </tbody>
@@ -115,7 +115,7 @@
           </li>
           <li>
             Produção usa HTTPS na VM Oracle; aplicação pública e backoffice permanecem superfícies
-            separadas. A aplicação pública ainda depende do primeiro deploy.
+            separadas.
           </li>
           <li>
             A entrega usa releases imutáveis, ativação atômica e recuperação fail-closed. Os
@@ -124,7 +124,9 @@
           </li>
           <li>
             Banco e credenciais de produção seguem privilégio mínimo e falham fechado diante de
-            configuração ambígua. Os contratos duráveis ficam nas fontes canônicas de
+            configuração ambígua. A role DAL efetiva é imposta pelo PostgreSQL, sem depender de
+            parâmetros arbitrários encaminhados pelo pooler. Os contratos duráveis ficam nas fontes
+            canônicas de
             <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
           </li>
         </ul>

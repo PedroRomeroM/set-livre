@@ -176,20 +176,28 @@ grant app_runtime_production to runtime_membership_intruder
   with admin false, inherit false, set true;
 select ok(
   not private.managed_runtime_boundaries_are_ready()
-    and not private.check_readiness('20260824000100'),
+    and not private.check_readiness('20260828174500'),
   'runtime de produção não pode ser concedido a outra identidade'
 );
 revoke app_runtime_production from runtime_membership_intruder;
 drop role runtime_membership_intruder;
 
 select ok(
-  not exists (
-    select 1
+  (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        setting.setdatabase = (
+          select database.oid
+          from pg_catalog.pg_database as database
+          where database.datname = pg_catalog.current_database()
+        )
+        and setting.setconfig = array['role=app_dal']::text[]
+      )
     from pg_catalog.pg_db_role_setting as setting
     join pg_catalog.pg_roles as role on role.oid = setting.setrole
     where role.rolname = 'app_runtime_production'
   ),
-  'runtime de produção não armazena segredo ou configuração em GUC'
+  'runtime de produção assume app_dal pela configuração canônica do database'
 );
 
 select ok(
@@ -271,7 +279,7 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260824000100'),
+  private.check_readiness('20260828174500'),
   'readiness aceita a migration head atual'
 );
 
@@ -296,7 +304,7 @@ begin
 end;
 $$;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita owner não canônico no schema private'
 );
 rollback to savepoint private_schema_owner_drift;
@@ -309,7 +317,7 @@ alter function private.complete_profile(uuid, bigint, text, text, text, text, te
   owner to readiness_owner_intruder;
 revoke create on schema private from readiness_owner_intruder;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita owner não canônico em comando private'
 );
 rollback to savepoint private_routine_owner_drift;
@@ -318,7 +326,7 @@ savepoint authorized_dal_security_mode_drift;
 alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
   security invoker;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita comando DAL sem security definer'
 );
 rollback to savepoint authorized_dal_security_mode_drift;
@@ -327,7 +335,7 @@ savepoint authorized_dal_search_path_drift;
 alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
   reset search_path;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita comando DAL sem search_path vazio fixado'
 );
 rollback to savepoint authorized_dal_search_path_drift;
@@ -347,14 +355,14 @@ select ok(
 
 grant execute on function private.profile_command_result(uuid) to app_dal;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita rotina privada fora da allowlist DAL'
 );
 revoke execute on function private.profile_command_result(uuid) from app_dal;
 
 grant usage on schema private to public;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita acesso ao schema privado herdado por PUBLIC'
 );
 revoke usage on schema private from public;
@@ -362,7 +370,7 @@ revoke usage on schema private from public;
 grant execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
   to public;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita comando privado herdado por PUBLIC'
 );
 revoke execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
@@ -370,7 +378,7 @@ revoke execute on function private.complete_profile(uuid, bigint, text, text, te
 
 grant select on table private.identity_recovery_grants to public;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita acesso a dados herdado por PUBLIC'
 );
 revoke select on table private.identity_recovery_grants from public;
@@ -381,7 +389,7 @@ create table readiness_external.public_probe (id bigint primary key);
 grant usage on schema readiness_external to public;
 grant select on table readiness_external.public_probe to public;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita acesso efetivo da DAL a schema externo herdado por PUBLIC'
 );
 rollback to savepoint managed_schema_drift;
@@ -389,7 +397,7 @@ rollback to savepoint managed_schema_drift;
 create role readiness_intruder nologin noinherit;
 grant app_dal to readiness_intruder with admin false, inherit false, set true;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita membro inesperado de app_dal'
 );
 revoke app_dal from readiness_intruder;
@@ -415,7 +423,7 @@ select extensions.dblink_exec(
     || 'alter table private.readiness_owner_probe owner to app_dal'
 );
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita qualquer objeto pertencente a app_dal'
 );
 select extensions.dblink_exec(
@@ -472,14 +480,14 @@ revoke usage on schema audit from app_runtime_local;
 
 alter role app_dal login;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita elevação da role DAL'
 );
 alter role app_dal nologin;
 
 grant create on schema public to public;
 select ok(
-  not private.check_readiness('20260824000100'),
+  not private.check_readiness('20260828174500'),
   'readiness rejeita CREATE público'
 );
 revoke create on schema public from public;
