@@ -143,8 +143,10 @@
           multiengine, acessibilidade, builds standalone e fronteiras de segurança da entrega e do
           host. Stderr da CLI Supabase é sanitizado antes de chegar aos logs, caches transitórios do
           Next são removidos mesmo quando o build falha e a política SSH global recusa regras
-          condicionais antes do reload. Testes não usam retry, timeout ampliado ou relaxamento de
-          asserção para mascarar falhas; os resultados permanecem no PR e nos checks.
+          condicionais antes do reload; o laboratório cria e remove o runtime efêmero exigido por
+          <code>sshd -T</code> quando o runner não iniciou o daemon. Testes não usam retry, timeout
+          ampliado ou relaxamento de asserção para mascarar falhas; os resultados permanecem no PR e
+          nos checks.
         </p>
         <p>
           Ambiente local e banco recusam exposição de rede, configuração insegura ou divergente.

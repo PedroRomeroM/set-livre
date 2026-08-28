@@ -15,6 +15,7 @@ nginx_test_active=false
 nginx_backend_process=""
 forced_command_sudoers_installed=false
 fail2ban_test_active=false
+sshd_runtime_directory_created=false
 
 cleanup() {
   if [[ ${nginx_test_active} == true ]]; then
@@ -30,6 +31,9 @@ cleanup() {
   if [[ ${fail2ban_test_active} == true ]]; then
     sudo rm -f -- "$FAIL2BAN_TEST_OVERRIDE" "$FAIL2BAN_TEST_CONFIG"
     sudo systemctl stop fail2ban >/dev/null 2>&1 || true
+  fi
+  if [[ ${sshd_runtime_directory_created} == true ]]; then
+    sudo rmdir -- /run/sshd >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -317,6 +321,15 @@ printf 'SSH policy runtime contracts OK\n'
 SSH_POLICY_RUNTIME
 } > "$ssh_policy_runtime"
 chmod 0700 "$ssh_policy_runtime"
+if ! privileged_path_exists /run/sshd; then
+  sudo install -d -o root -g root -m 0755 /run/sshd
+  sshd_runtime_directory_created=true
+fi
+if ! sudo test -d /run/sshd \
+  || sudo test -L /run/sshd \
+  || [[ $(sudo stat --format '%U:%G:%a' -- /run/sshd) != root:root:755 ]]; then
+  fail "runtime de privilege separation do OpenSSH não é canônico."
+fi
 sudo bash "$ssh_policy_runtime" "$temporary_directory/ssh-policy"
 sudo chown -R "$(id --user):$(id --group)" "$temporary_directory/ssh-policy"
 

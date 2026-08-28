@@ -172,8 +172,10 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   recuperável e só então é publicado;
 - Nginx, systemd e OpenSSH; a superfície SSH recusa qualquer `Match`, include aninhado ou drop-in
   simbólico, aceita somente o include global canônico e então valida por `sshd -T` a política efetiva
-  para usuário comum, deployer e root antes do reload, interpretando semanticamente a lista `AllowUsers`,
-  `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
+  para usuário comum, deployer e root antes do reload, interpretando semanticamente a lista `AllowUsers`;
+  no runner sem daemon, o laboratório cria e valida `/run/sshd` somente como fixture efêmera e o remove
+  ao terminar;
+- `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
 - gate de boot e recovery habilitados; as units dos apps são estáticas, exigem seu entrypoint imutável e
   limitam tentativas de restart para não criar loop em host vazio ou artefato inválido;
