@@ -894,9 +894,17 @@ if preflight_upload_lock_output="$(
 )"; then
   fail "preflight SSH aceitou lock de upload divergente."
 fi
-grep --fixed-strings 'lock de upload não atende ao contrato' \
+grep --fixed-strings 'lock de upload tem identidade ou modo inválido' \
   <<< "$preflight_upload_lock_output" >/dev/null \
   || fail "preflight SSH recusou lock de upload por motivo inesperado."
+if privileged_preflight_upload_lock_output="$(
+  sudo /usr/local/sbin/set-livre-deploy --preflight </dev/null 2>&1
+)"; then
+  fail "preflight privilegiado aceitou lock de upload divergente."
+fi
+grep --fixed-strings 'lock de upload não atende ao contrato' \
+  <<< "$privileged_preflight_upload_lock_output" >/dev/null \
+  || fail "preflight privilegiado recusou lock de upload por motivo inesperado."
 sudo chmod 0600 /home/deploy-setlivre/incoming/.incoming.lock
 
 preflight_output="$(

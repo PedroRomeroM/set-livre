@@ -1100,6 +1100,10 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain(
       "preflight SSH recusou blocker de bootstrap por motivo inesperado",
     );
+    expect(hostVerification).toContain("lock de upload tem identidade ou modo inválido");
+    expect(hostVerification).toContain(
+      "preflight privilegiado recusou lock de upload por motivo inesperado",
+    );
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
