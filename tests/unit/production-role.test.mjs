@@ -9,6 +9,7 @@ import {
   productionRoleActivationMode,
   productionRoleConnections,
   verifyProductionDeploymentContract,
+  verifyProductionRuntimeCredentialBeforeMigrations,
 } from "../../scripts/provision-production-role.mjs";
 
 const projectRef = "oirvvnojgkzdppkdvhej";
@@ -121,9 +122,24 @@ describe("production role provisioning", () => {
     const fetchImplementation = vi.fn(async () =>
       Response.json({ disable_signup: false, external: {} }, { status: 200 }),
     );
+    const clients = [];
+    const createClient = vi.fn((configuration) => {
+      const admin = configuration.user === `postgres.${projectRef}`;
+      const client = {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () =>
+          admin
+            ? { rowCount: 1, rows: [{ canLogin: true }] }
+            : { rowCount: 1, rows: [{ authenticated: true }] },
+        ),
+      };
+      clients.push(client);
+      return client;
+    });
 
     await expect(
-      verifyProductionDeploymentContract(environment, { fetchImplementation }),
+      verifyProductionDeploymentContract(environment, { createClient, fetchImplementation }),
     ).resolves.toBeDefined();
     expect(fetchImplementation).toHaveBeenCalledOnce();
     const [url, options] = fetchImplementation.mock.calls[0];
@@ -138,6 +154,63 @@ describe("production role provisioning", () => {
       redirect: "error",
     });
     expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(createClient.mock.calls[1][0]).toMatchObject({
+      password: "runtime#secret",
+      user: `app_runtime_production.${projectRef}`,
+    });
+    expect(clients[1].query).toHaveBeenCalledWith("select true as authenticated");
+  });
+
+  it("allows first initialization states without attempting a runtime login", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+
+    for (const role of [
+      { rowCount: 0, rows: [] },
+      { rowCount: 1, rows: [{ canLogin: false }] },
+    ]) {
+      const createClient = vi.fn(() => ({
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => role),
+      }));
+      await expect(
+        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+      ).resolves.toBeUndefined();
+      expect(createClient).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("rejects a stale credential for an already active runtime before migrations", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const clients = [];
+    const createClient = vi.fn(() => {
+      const clientIndex = clients.length;
+      const client = {
+        connect: vi.fn(async () => {
+          if (clientIndex === 1) throw new Error("password authentication failed");
+        }),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async () => ({ rowCount: 1, rows: [{ canLogin: true }] })),
+      };
+      clients.push(client);
+      return client;
+    });
+
+    await expect(
+      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+    ).rejects.toThrow("credencial runtime ativa não autenticou antes das migrations");
+    expect(clients).toHaveLength(2);
+    expect(clients[0].end).toHaveBeenCalledOnce();
+    expect(clients[1].end).toHaveBeenCalledOnce();
   });
 
   it("fails closed for a foreign key, invalid payload, redirect, or network failure", async () => {
@@ -188,6 +261,9 @@ describe("production role provisioning", () => {
 
     expect(preflight).toBeGreaterThan(-1);
     expect(preflight).toBeLessThan(migrations);
+    expect(workflow.slice(preflight, migrations)).toContain(
+      "NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt",
+    );
     expect(migrations).toBeLessThan(webBuild);
     expect(webBuild).toBeLessThan(packaging);
   });

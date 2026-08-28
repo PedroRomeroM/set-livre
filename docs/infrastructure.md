@@ -368,8 +368,11 @@ na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 ## Banco de produção
 
 A VM IPv4 usa o Supavisor em **session mode** na coordenada fixa
-`aws-0-sa-east-1.pooler.supabase.com:5432`. O preflight valida host, porta, projeto, banco e identidade
-antes de qualquer migration. O usuário de conexão segue o formato oficial
+`aws-0-sa-east-1.pooler.supabase.com:5432`. O preflight valida host, porta, projeto, banco e identidade,
+abre uma sessão administrativa curta e, quando a role runtime já possui `LOGIN`, exige autenticação
+real com a URL DAL antes de qualquer migration. Role ausente ou ainda `NOLOGIN` é aceita somente para
+o bootstrap inicial ou sua recuperação; a ativação posterior permanece responsável por criar e provar
+a credencial. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser
 `app_runtime_production` e assumir `app_dal` por `options=-c role=app_dal`.
 
@@ -466,7 +469,10 @@ Secrets do environment `production`:
 O publishable key e a host key SSH são públicos por natureza. Antes de migrations e builds, o preflight
 consulta `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
 header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
-chave. O instalador da VM também aceita exclusivamente o formato moderno
+chave. Em seguida, a sessão administrativa lê somente `rolcanlogin`; se a role já estiver ativa, uma
+conexão runtime separada precisa autenticar e concluir uma query constante. Senha obsoleta, identidade
+ambígua ou indisponibilidade bloqueia o workflow antes de alterar o schema. O instalador da VM também
+aceita exclusivamente o formato moderno
 `sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
 alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
 artifacts ou documentação.

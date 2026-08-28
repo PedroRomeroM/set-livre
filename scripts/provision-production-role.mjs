@@ -97,7 +97,9 @@ export function productionRoleConnections(environment = process.env) {
     database,
     host: parsed.hostname,
     port: Number(parsed.port),
+    query_timeout: 20_000,
     ssl: { rejectUnauthorized: true },
+    statement_timeout: 15_000,
   };
   return {
     admin: {
@@ -135,7 +137,7 @@ export function assertProductionDeploymentContract(environment = process.env) {
 
 export async function verifyProductionDeploymentContract(
   environment = process.env,
-  { fetchImplementation = globalThis.fetch } = {},
+  { createClient = createPostgresClient, fetchImplementation = globalThis.fetch } = {},
 ) {
   const connections = assertProductionDeploymentContract(environment);
   const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
@@ -180,6 +182,7 @@ export async function verifyProductionDeploymentContract(
   ) {
     throw new Error("O endpoint Auth do projeto de produção retornou um contrato inválido.");
   }
+  await verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient });
   return connections;
 }
 
@@ -214,6 +217,50 @@ export function productionRoleActivationMode(role) {
 
 function createPostgresClient(configuration) {
   return new Client(configuration);
+}
+
+export async function verifyProductionRuntimeCredentialBeforeMigrations(
+  connections,
+  { createClient = createPostgresClient } = {},
+) {
+  const admin = createClient(connections.admin);
+  let canLogin;
+  try {
+    await admin.connect();
+    const role = await admin.query(`
+      select runtime.rolcanlogin as "canLogin"
+      from pg_catalog.pg_roles as runtime
+      where runtime.rolname = 'app_runtime_production'
+    `);
+    if (role.rowCount === 0) return;
+    if (role.rowCount !== 1 || typeof role.rows[0]?.canLogin !== "boolean") {
+      throw new Error("A role runtime existente possui estado ambíguo.");
+    }
+    canLogin = role.rows[0].canLogin;
+  } catch (error) {
+    throw new Error("Não foi possível validar a role de produção antes das migrations.", {
+      cause: error,
+    });
+  } finally {
+    await admin.end().catch(() => undefined);
+  }
+
+  if (!canLogin) return;
+
+  const runtime = createClient(connections.runtime);
+  try {
+    await runtime.connect();
+    const proof = await runtime.query("select true as authenticated");
+    if (proof.rowCount !== 1 || proof.rows[0]?.authenticated !== true) {
+      throw new Error("A conexão runtime não retornou a prova esperada.");
+    }
+  } catch (error) {
+    throw new Error("A credencial runtime ativa não autenticou antes das migrations.", {
+      cause: error,
+    });
+  } finally {
+    await runtime.end().catch(() => undefined);
+  }
 }
 
 async function productionRoleLoginIsDisabled(adminConnection, createClient) {
