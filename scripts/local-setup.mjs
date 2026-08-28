@@ -1057,6 +1057,10 @@ export async function main(command = "reset") {
     await generateDatabaseArtifacts(runSupabase, { schema: false, types: true });
   } else if (command === "generate") {
     await generateDatabaseArtifacts(runSupabase);
+  } else if (command === "lint") {
+    runSupabase(["db", "lint", "--local", "--level", "warning", "--fail-on", "warning"], {
+      network: true,
+    });
   } else if (command === "test") {
     runSupabase(["test", "db", "--local"], { network: true });
     await verifyDatabaseArtifacts(runSupabase);

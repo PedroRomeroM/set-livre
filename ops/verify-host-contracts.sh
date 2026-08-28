@@ -53,6 +53,11 @@ privileged_regular_file_exists() {
   sudo test -f "$path" && ! sudo test -L "$path"
 }
 
+privileged_directory_exists() {
+  local path="$1"
+  sudo test -d "$path" && ! sudo test -L "$path"
+}
+
 [[ $# -eq 2 ]] || fail "uso: verify-host-contracts.sh <sha> <temporary-directory>."
 release_sha="$1"
 temporary_directory="$(realpath -e -- "$2")"
@@ -581,7 +586,7 @@ for protected_entrypoint in \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --preflight" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --seal-services" \
   "$REPOSITORY_ROOT/ops/deploy-release.sh --recover-services" \
-  "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) --verify-only"; do
+  "$REPOSITORY_ROOT/ops/deploy-release.sh $(printf '0%.0s' {1..40}) $(printf '0%.0s' {1..64}) --stage-only"; do
   read -r -a protected_command <<< "$protected_entrypoint"
   if deploy_lock_probe_output=$(sudo bash "${protected_command[@]}" 2>&1); then
     fail "entrypoint protegido seguiu o symlink do lock de deploy."
@@ -670,7 +675,7 @@ sudo --user deploy-setlivre -- \
   "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 if entry_limit_output="$(
   sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$entry_limit_sha" "$entry_limit_checksum" --verify-only 2>&1
+    "$entry_limit_sha" "$entry_limit_checksum" --stage-only 2>&1
 )"; then
   fail "archive com mais de 20.000 entradas foi aceito."
 fi
@@ -711,7 +716,7 @@ sudo --user deploy-setlivre -- \
   "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 if metadata_limit_output="$(
   sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$metadata_limit_sha" "$metadata_limit_checksum" --verify-only 2>&1
+    "$metadata_limit_sha" "$metadata_limit_checksum" --stage-only 2>&1
 )"; then
   fail "archive com metadata PAX excessiva foi aceito."
 fi
@@ -744,11 +749,20 @@ sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND="upload-backoffice-envir
   "$INSTALLED_DEPLOY_SSH_COMMAND" < "$temporary_directory/backoffice.env"
 stale_trusted=/var/tmp/set-livre-trusted.Ab12Cd.env
 sudo install -o root -g root -m 0600 /dev/null "$stale_trusted"
-sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --verify-only
+# O diretório current acima existe apenas para validar as units durante o bootstrap.
+# O contrato real aceita current ausente ou um symlink íntegro para uma release versionada.
+sudo rm -rf -- /opt/set-livre/current
+staging_probe_output="$(
+  sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" "$release_sha" "$checksum" --stage-only
+)"
+[[ ${staging_probe_output} == "Release ${release_sha} preparada e verificada sem ativação." ]] \
+  || fail "staging privilegiado não confirmou a release exata."
+privileged_directory_exists "/opt/set-livre/releases/${release_sha}" \
+  || fail "staging privilegiado não preservou a release verificada."
+sudo rm -rf --one-file-system -- "/opt/set-livre/releases/${release_sha}"
 ! privileged_path_exists "$stale_trusted" || fail "arquivo confiável residual não foi removido."
 
 # A ativação usa comandos controlados para exercitar o instalador real sem iniciar systemd no runner.
-sudo rm -rf -- /opt/set-livre/current
 fake_bin="$temporary_directory/fake-bin"
 test_state="$temporary_directory/deploy-state"
 mkdir -p "$fake_bin" "$test_state"
@@ -997,7 +1011,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v5 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v6 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {
@@ -1059,12 +1073,13 @@ invoke_candidate_through_forced_command() {
   local candidate_sha="$1"
   local candidate_checksum="$2"
   local phase="${3:-success}"
+  local operation="${4:-stage}"
   sudo --user deploy-setlivre -- \
     env \
     SET_LIVRE_TEST_CANDIDATE="$candidate_sha" \
     SET_LIVRE_TEST_PHASE="$phase" \
     SET_LIVRE_TEST_STATE="$test_state" \
-    SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}" \
+    SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}" \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 }
 
@@ -1145,7 +1160,7 @@ assert_symlinked_release_component_rejected() (
   # O redirect pertence deliberadamente ao runner confiável, não ao sudo.
   # shellcheck disable=SC2024
   if sudo bash "$REPOSITORY_ROOT/ops/deploy-release.sh" \
-    "$(printf '0%.0s' {1..40})" "$(printf '0%.0s' {1..64})" --verify-only \
+    "$(printf '0%.0s' {1..40})" "$(printf '0%.0s' {1..64})" --stage-only \
     > "$output" 2>&1; then
     fail "componente ${component} em symlink foi aceito como raiz de release."
   fi
@@ -1233,6 +1248,11 @@ rm -f -- "$test_state"/*
 package_candidate "$release_sha"
 upload_candidate "$release_sha"
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum"
+privileged_directory_exists "/opt/set-livre/releases/${release_sha}" \
+  || fail "staging remoto não preservou a release verificada."
+! privileged_path_exists /opt/set-livre/current \
+  || fail "staging remoto ativou a release antes da migration."
+invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
 ! privileged_path_exists "$stale_staging_directory" \
   || fail "staging residual validado não foi removido antes da ativação."

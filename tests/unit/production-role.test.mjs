@@ -54,6 +54,8 @@ function productionPreflightAdminQuery({
     ready: true,
   },
   memberships = [expectedRuntimeMembership],
+  migrationCount = 0,
+  migrationTable = null,
   roles = [restrictedAppDalRole, restrictedRuntimeRole],
   runtimeMembers = [expectedRuntimeMember],
 } = {}) {
@@ -61,6 +63,20 @@ function productionPreflightAdminQuery({
     const sql = String(statement);
     if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
       return { rowCount: roles.length, rows: roles };
+    }
+    if (sql.includes("pg_catalog.to_regclass")) {
+      return { rowCount: 1, rows: [{ migrationTable }] };
+    }
+    if (sql.includes('pg_catalog.count(*)::integer as "migrationCount"')) {
+      return {
+        rowCount: 1,
+        rows: [
+          {
+            currentMigrationHead: migrationCount === 0 ? null : "20260824000100",
+            migrationCount,
+          },
+        ],
+      };
     }
     if (sql.includes("where member.rolname = 'app_runtime_production'")) {
       return { rowCount: memberships.length, rows: memberships };
@@ -254,24 +270,59 @@ describe("production role provisioning", () => {
     }
   });
 
-  it("allows only a pristine first bootstrap without querying absent database contracts", async () => {
+  it("allows absent roles only with an empty or not-yet-created migration ledger", async () => {
     const connections = productionRoleConnections({
       PRD_DATABASE_URL_APP_DAL: runtimeUrl,
       SUPABASE_DB_PASSWORD: "admin-secret",
       SUPABASE_PROJECT_REF: projectRef,
     });
-    const query = productionPreflightAdminQuery({ roles: [] });
+    for (const migrationTable of [null, "supabase_migrations.schema_migrations"]) {
+      const query = productionPreflightAdminQuery({ migrationTable, roles: [] });
+      const createClient = vi.fn(() => ({
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query,
+      }));
+
+      await expect(
+        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+      ).resolves.toBeUndefined();
+      expect(createClient).toHaveBeenCalledOnce();
+      expect(query).toHaveBeenCalledTimes(migrationTable === null ? 2 : 3);
+    }
+  });
+
+  it("rejects absent production roles after any migration was recorded", async () => {
+    const connections = productionRoleConnections({
+      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+      SUPABASE_DB_PASSWORD: "admin-secret",
+      SUPABASE_PROJECT_REF: projectRef,
+    });
+    const query = productionPreflightAdminQuery({
+      migrationCount: 1,
+      migrationTable: "supabase_migrations.schema_migrations",
+      roles: [],
+    });
     const createClient = vi.fn(() => ({
       connect: vi.fn(async () => undefined),
       end: vi.fn(async () => undefined),
       query,
     }));
+    let failure;
 
-    await expect(
-      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
-    ).resolves.toBeUndefined();
-    expect(createClient).toHaveBeenCalledOnce();
-    expect(query).toHaveBeenCalledOnce();
+    try {
+      await verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure?.cause).toEqual(
+      expect.objectContaining({
+        message: "Roles ausentes só são permitidas antes da primeira migration de produção.",
+      }),
+    );
+    expect(query).toHaveBeenCalledTimes(3);
   });
 
   it("validates the deployed DAL boundary while the runtime role is still NOLOGIN", async () => {
@@ -534,9 +585,10 @@ describe("production role provisioning", () => {
       "- name: Build backoffice release",
       "- name: Package immutable release",
       "- name: Prepare ephemeral runtime environments",
+      "- name: Stage and verify release on Oracle VM",
       "- name: Apply forward-only Supabase migrations",
       "- name: Activate and verify the restricted production role",
-      "- name: Activate release on Oracle VM",
+      "- name: Activate staged release on Oracle VM",
       "- name: Verify public web health",
     ];
     const positions = orderedSteps.map((step) => deployJob.indexOf(step));
@@ -544,7 +596,10 @@ describe("production role provisioning", () => {
     const sshAuthentication = positions[1];
     const publicHttps = positions[2];
     const webBuild = positions[3];
-    const migrations = positions[7];
+    const staging = positions[7];
+    const migrations = positions[8];
+    const activation = positions[10];
+    const publicHealth = positions[11];
 
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
@@ -555,7 +610,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]');
     const httpsProbe = deployJob.slice(publicHttps, webBuild);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
@@ -567,6 +622,14 @@ describe("production role provisioning", () => {
     expect(deployJob.indexOf("npm run release")).toBeLessThan(migrations);
     expect(deployJob.indexOf("cmp --silent")).toBeLessThan(migrations);
     expect(deployJob.indexOf("write_environment")).toBeLessThan(migrations);
+    const stagingStep = deployJob.slice(staging, migrations);
+    expect(stagingStep).toContain('"upload-release ${GITHUB_SHA}"');
+    expect(stagingStep).toContain('"upload-web-environment ${GITHUB_SHA}"');
+    expect(stagingStep).toContain('"upload-backoffice-environment ${GITHUB_SHA}"');
+    expect(stagingStep).toContain('"stage ${GITHUB_SHA} ${CHECKSUM}"');
+    const activationStep = deployJob.slice(activation, publicHealth);
+    expect(activationStep).toContain('"activate ${GITHUB_SHA} ${CHECKSUM}"');
+    expect(activationStep).not.toContain("upload-release");
   });
 
   it("initializes credentials only for the migration-created NOLOGIN role", () => {

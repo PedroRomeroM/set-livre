@@ -46,7 +46,7 @@
     "supabase:stop": "node scripts/local-setup.mjs stop",
     "supabase:status": "node scripts/local-setup.mjs status",
     "supabase:reset": "node scripts/local-setup.mjs reset",
-    "supabase:lint": "supabase db lint --local --level warning --fail-on warning",
+    "supabase:lint": "node scripts/local-setup.mjs lint",
     "supabase:schema": "node scripts/local-setup.mjs generate-schema",
     "supabase:types": "node scripts/local-setup.mjs generate-types",
     "supabase:generate": "node scripts/local-setup.mjs generate",

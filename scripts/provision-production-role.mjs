@@ -370,6 +370,33 @@ async function verifyRuntimeReadiness(runtime) {
   }
 }
 
+async function assertPristineDatabaseBeforeBootstrap(admin) {
+  const registry = await admin.query(`
+    select pg_catalog.to_regclass(
+      'supabase_migrations.schema_migrations'
+    )::text as "migrationTable"
+  `);
+  const migrationTable = registry.rows[0]?.migrationTable;
+  if (
+    registry.rowCount !== 1 ||
+    (migrationTable !== null && migrationTable !== "supabase_migrations.schema_migrations")
+  ) {
+    throw new Error("O ledger de migrations de produção não pôde ser identificado.");
+  }
+  if (migrationTable === null) return;
+
+  const history = await admin.query(`
+    select
+      pg_catalog.count(*)::integer as "migrationCount",
+      pg_catalog.max(migration.version)::text as "currentMigrationHead"
+    from supabase_migrations.schema_migrations as migration
+  `);
+  const row = history.rows[0];
+  if (history.rowCount !== 1 || row?.migrationCount !== 0 || row?.currentMigrationHead !== null) {
+    throw new Error("Roles ausentes só são permitidas antes da primeira migration de produção.");
+  }
+}
+
 function createPostgresClient(configuration) {
   return new Client(configuration);
 }
@@ -385,7 +412,10 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
     const roleSet = assertProductionRoleSet(await readProductionRoles(admin), {
       allowAbsent: true,
     });
-    if (roleSet === null) return;
+    if (roleSet === null) {
+      await assertPristineDatabaseBeforeBootstrap(admin);
+      return;
+    }
     runtimeIsActive = roleSet.activationMode === "validate";
     await assertProductionMemberships(admin);
     await verifyCurrentDatabaseBoundaryBeforeMigrations(admin);

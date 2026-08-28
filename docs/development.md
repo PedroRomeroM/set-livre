@@ -120,7 +120,8 @@ Ao concluir uma feature, seus cenários automatizados ficam nas specs Playwright
 
 `supabase/schema.generated.sql` e `packages/contracts/src/database.generated.ts` são gerados apenas a
 partir do banco local migrado. A geração valida o conteúdo antes de substituir os arquivos rastreados.
-`supabase:lint` executa o linter oficial do banco e trata qualquer warning como falha. `test:db` roda
+`supabase:lint` passa pelo mesmo guard local de daemon, stack e bindings antes de executar o linter
+oficial do banco, tratando qualquer warning como falha. `test:db` roda
 pgTAP e regenera candidatos temporários; qualquer diferença falha com orientação para executar
 `npm run supabase:generate`.
 

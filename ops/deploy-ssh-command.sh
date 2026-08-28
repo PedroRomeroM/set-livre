@@ -83,14 +83,24 @@ elif [[ ${original_command} =~ ^upload-backoffice-environment\ ([0-9a-f]{40})$ ]
   release_sha="${BASH_REMATCH[1]}"
   cleanup_abandoned_uploads "$release_sha" || fail "entrada abandonada possui contrato inválido."
   upload "${INCOMING_DIRECTORY}/backoffice-${release_sha}.env" "$MAX_ENVIRONMENT_BYTES"
-elif [[ ${original_command} =~ ^deploy\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+elif [[ ${original_command} =~ ^stage\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
   release_sha="${BASH_REMATCH[1]}"
   expected_checksum="${BASH_REMATCH[2]}"
   cleanup_abandoned_uploads "$release_sha" \
     || fail "entrada abandonada possui contrato inválido."
   flock --unlock 9
   exec 9>&-
-  exec sudo --non-interactive /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"
+  exec sudo --non-interactive /usr/local/sbin/set-livre-deploy \
+    "$release_sha" "$expected_checksum" --stage-only
+elif [[ ${original_command} =~ ^activate\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
+  release_sha="${BASH_REMATCH[1]}"
+  expected_checksum="${BASH_REMATCH[2]}"
+  cleanup_abandoned_uploads "$release_sha" \
+    || fail "entrada abandonada possui contrato inválido."
+  flock --unlock 9
+  exec 9>&-
+  exec sudo --non-interactive /usr/local/sbin/set-livre-deploy \
+    "$release_sha" "$expected_checksum" --activate-staged
 else
   fail "comando remoto não autorizado."
 fi

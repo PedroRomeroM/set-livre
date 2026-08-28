@@ -87,6 +87,7 @@ describe("local tooling contracts", () => {
       "node scripts/local-setup.mjs start-backoffice",
     );
     expect(rootManifest.scripts["build:web"]).toBe("node scripts/local-setup.mjs build-web");
+    expect(rootManifest.scripts["supabase:lint"]).toBe("node scripts/local-setup.mjs lint");
     expect(backofficeManifest.scripts.dev).toBe(
       "node ../../scripts/local-setup.mjs dev-backoffice",
     );
@@ -1068,7 +1069,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v5"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v6"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1092,28 +1093,30 @@ describe("local tooling contracts", () => {
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
-    const deployBranchStart = command.indexOf(
-      "elif [[ ${original_command} =~ ^deploy\\ ([0-9a-f]{40})\\ ([0-9a-f]{64})$ ]]; then",
+    const stageBranchStart = command.indexOf(
+      "elif [[ ${original_command} =~ ^stage\\ ([0-9a-f]{40})\\ ([0-9a-f]{64})$ ]]; then",
     );
-    expect(deployBranchStart).toBeGreaterThan(-1);
-    const deployBranch = command.slice(deployBranchStart);
-    expect(deployBranch.indexOf('expected_checksum="${BASH_REMATCH[2]}"')).toBeLessThan(
-      deployBranch.indexOf('cleanup_abandoned_uploads "$release_sha"'),
+    const activateBranchStart = command.indexOf(
+      "elif [[ ${original_command} =~ ^activate\\ ([0-9a-f]{40})\\ ([0-9a-f]{64})$ ]]; then",
     );
-    expect(deployBranch).toContain(
-      'exec sudo --non-interactive /usr/local/sbin/set-livre-deploy "$release_sha" "$expected_checksum"',
+    expect(stageBranchStart).toBeGreaterThan(-1);
+    expect(activateBranchStart).toBeGreaterThan(stageBranchStart);
+    const stageBranch = command.slice(stageBranchStart, activateBranchStart);
+    const activateBranch = command.slice(activateBranchStart);
+    expect(stageBranch.indexOf('expected_checksum="${BASH_REMATCH[2]}"')).toBeLessThan(
+      stageBranch.indexOf('cleanup_abandoned_uploads "$release_sha"'),
     );
-    expect(deployBranch.indexOf("flock --unlock 9")).toBeLessThan(
-      deployBranch.indexOf("exec 9>&-"),
-    );
-    expect(deployBranch.indexOf("exec 9>&-")).toBeLessThan(
-      deployBranch.indexOf("exec sudo --non-interactive /usr/local/sbin/set-livre-deploy"),
+    expect(stageBranch).toContain("--stage-only");
+    expect(activateBranch).toContain("--activate-staged");
+    expect(stageBranch.indexOf("flock --unlock 9")).toBeLessThan(stageBranch.indexOf("exec 9>&-"));
+    expect(stageBranch.indexOf("exec 9>&-")).toBeLessThan(
+      stageBranch.indexOf("exec sudo --non-interactive /usr/local/sbin/set-livre-deploy"),
     );
     expect(hostVerification).toContain(
-      'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
+      'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v5");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v6");
     expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
     expect(hostVerification).toContain(
       "preflight SSH recusou blocker de bootstrap por motivo inesperado",
@@ -1128,7 +1131,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

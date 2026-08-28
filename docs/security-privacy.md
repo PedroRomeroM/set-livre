@@ -94,11 +94,12 @@ nunca coordena mutações múltiplas para simular atomicidade.
   autentica a chave privada contra o comando SSH forçado; o preflight atravessa `sudo` não interativo,
   o instalador root e seu lock, recusa estado de bootstrap, recovery ou ativação pendente e não altera
   a release; certificado, Nginx e rota HTTPS pública também precisam estar íntegros;
-- build de produção, scan, archive determinístico e ambientes efêmeros terminam antes da primeira
-  migration, para que uma falha reversível de empacotamento não deixe o schema avançado sem release;
+- build de produção, scan, archive determinístico, ambientes efêmeros e staging root-owned validado na
+  VM terminam antes da primeira migration; a ativação posterior não aceita reupload;
 - a mesma fronteira relê as duas roles e seus memberships; se já existem, o readiness do head atualmente
   implantado precisa aprovar grants, ownership, RLS e superfícies DAL antes de qualquer alteração de
-  schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito;
+  schema, e uma runtime ativa também precisa assumir `app_dal` e passar no readiness restrito; se ambas
+  as roles estão ausentes, o ledger de migrations precisa estar ausente ou vazio;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa

@@ -408,7 +408,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v5\n'
+  printf 'set-livre-deploy-ready-v6\n'
   exit 0
 fi
 
@@ -450,11 +450,14 @@ fi
 
 validate_deployment_host_prerequisites
 
-verify_only=false
-if [[ $# -eq 3 && ${3:-} == "--verify-only" ]]; then
-  verify_only=true
+stage_only=false
+activation_only=false
+if [[ $# -eq 3 && ${3:-} == "--stage-only" ]]; then
+  stage_only=true
+elif [[ $# -eq 3 && ${3:-} == "--activate-staged" ]]; then
+  activation_only=true
 elif [[ $# -ne 2 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> [--verify-only], --preflight, --recover-services ou --seal-services."
+  fail "uso: set-livre-deploy <sha> <sha256> [--stage-only|--activate-staged], --preflight, --recover-services ou --seal-services."
 fi
 
 release_sha="$1"
@@ -565,8 +568,80 @@ trap 'on_signal HUP 129' HUP
 trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 
-remove_stale_trusted_files \
-  || fail "arquivo confiável residual possui identidade ou permissões inválidas."
+validate_staged_release() {
+  local directory="$1"
+  local expected_release="$2"
+  local expected_archive_checksum="$3"
+  local installed_host_digest manifest_host_digest
+  local -a artifact_checksum=()
+  local -a release_identity=()
+  local -a top_level=()
+
+  [[ ${directory} == "${RELEASES_DIRECTORY}/${expected_release}" \
+    && -d ${directory} && ! -L ${directory} \
+    && $(stat --format '%U:%G:%a' -- "$directory") == "root:setlivre:750" ]] \
+    || fail "release staged não atende ao contrato físico."
+  if find "$directory" -xdev \( ! -user root -o -perm /022 \) -print -quit | grep --quiet .; then
+    fail "release staged possui owner ou permissão gravável inesperada."
+  fi
+  if find "$directory" -xdev -type l -print -quit | grep --quiet .; then
+    fail "release staged contém link simbólico."
+  fi
+
+  mapfile -t top_level < <(find "$directory" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+  [[ ${#top_level[@]} -eq 5 \
+    && ${top_level[0]} == ".artifact.sha256" \
+    && ${top_level[1]} == ".runtime" \
+    && ${top_level[2]} == "backoffice" \
+    && ${top_level[3]} == "release-manifest.json" \
+    && ${top_level[4]} == "web" ]] \
+    || fail "release staged possui conteúdo de topo inesperado."
+  [[ -f "${directory}/web/server.js" \
+    && -f "${directory}/backoffice/apps/backoffice/server.js" ]] \
+    || fail "release staged não contém os entrypoints esperados."
+  [[ -f "${directory}/.artifact.sha256" \
+    && ! -L "${directory}/.artifact.sha256" \
+    && $(stat --format '%U:%G:%a' -- "${directory}/.artifact.sha256") \
+      == "root:setlivre:640" ]] \
+    || fail "checksum da release staged possui metadados inválidos."
+  mapfile -t artifact_checksum < "${directory}/.artifact.sha256"
+  [[ ${#artifact_checksum[@]} -eq 1 \
+    && ${artifact_checksum[0]} == "$expected_archive_checksum" ]] \
+    || fail "checksum da release staged diverge do candidato."
+  [[ $(stat --format '%U:%G:%a' -- "${directory}/.runtime/web.env") \
+      == "root:setlivre-web:640" \
+    && $(stat --format '%U:%G:%a' -- "${directory}/.runtime/backoffice.env") \
+      == "root:setlivre-backoffice:640" \
+    && $(stat --format '%U:%G:%a' -- "${directory}/.runtime/release.env") \
+      == "root:setlivre:640" ]] \
+    || fail "ambientes da release staged possuem metadados inválidos."
+  mapfile -t release_identity < "${directory}/.runtime/release.env"
+  [[ ${#release_identity[@]} -eq 1 \
+    && ${release_identity[0]} == "APP_RELEASE_SHA=${expected_release}" ]] \
+    || fail "identidade da release staged diverge do candidato."
+  jq --exit-status --arg sha "$expected_release" '
+    .version == 2 and
+    .commit == $sha and
+    (.hostConfiguration.sha256 | test("^[0-9a-f]{64}$")) and
+    .applications.web.entrypoint == "server.js" and
+    .applications.web.health == "/api/health/ready" and
+    .applications.backoffice.entrypoint == "apps/backoffice/server.js" and
+    .applications.backoffice.health == "/api/health/ready"
+  ' "${directory}/release-manifest.json" >/dev/null \
+    || fail "manifesto da release staged é inválido."
+  installed_host_digest="$(
+    read_host_state_digest "$HOST_CONFIGURATION_DIGEST" "root:setlivre:640"
+  )" || fail "digest instalado da configuração do host é inválido."
+  manifest_host_digest="$(
+    jq --raw-output '.hostConfiguration.sha256' "${directory}/release-manifest.json"
+  )"
+  [[ ${manifest_host_digest} == "$installed_host_digest" ]] \
+    || fail "configuração do host divergiu da release staged."
+}
+
+if [[ ${activation_only} == false ]]; then
+  remove_stale_trusted_files \
+    || fail "arquivo confiável residual possui identidade ou permissões inválidas."
 
 trust_incoming_file() {
   local source="$1"
@@ -866,11 +941,6 @@ manifest_host_digest="$(jq --raw-output '.hostConfiguration.sha256' "${staging_d
 [[ ${manifest_host_digest} == "${installed_host_digest}" ]] \
   || fail "configuração do host divergiu; reaplique o bootstrap versionado."
 
-if [[ ${verify_only} == true ]]; then
-  printf 'Release %s, ambientes e configuração do host verificados sem ativação.\n' "$release_sha"
-  exit 0
-fi
-
 printf '%s\n' "$actual_checksum" > "${staging_directory}/.artifact.sha256"
 install -d -o root -g setlivre -m 0750 "${staging_directory}/.runtime"
 install -o root -g setlivre-web -m 0640 \
@@ -909,6 +979,10 @@ if [[ -e ${release_directory} ]]; then
 else
   mv -- "$staging_directory" "$release_directory"
   staging_directory=""
+fi
+else
+  release_directory="${RELEASES_DIRECTORY}/${release_sha}"
+  validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
 fi
 
 if [[ -L ${CURRENT_LINK} ]]; then
@@ -960,6 +1034,11 @@ prune_releases() {
 
 prune_releases "$release_directory" "$previous_release" \
   || fail "não foi possível aplicar a retenção antes da ativação."
+if [[ ${stage_only} == true ]]; then
+  validate_staged_release "$release_directory" "$release_sha" "$expected_checksum"
+  printf 'Release %s preparada e verificada sem ativação.\n' "$release_sha"
+  exit 0
+fi
 write_rollback_marker "$previous_release" || fail "não foi possível preparar a recuperação atômica."
 
 activation_started=true

@@ -334,7 +334,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v5" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v6" ]]
 
       - name: Verify public HTTPS entrypoint
         env:
@@ -428,24 +428,7 @@ jobs:
           write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
           write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
 
-      - name: Apply forward-only Supabase migrations
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
-          npx supabase db push --linked --dry-run
-          npx supabase db push --linked
-
-      - name: Activate and verify the restricted production role
-        env:
-          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
-          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
-        run: npm run production:role
-
-      - name: Activate release on Oracle VM
+      - name: Stage and verify release on Oracle VM
         env:
           ARCHIVE: ${{ steps.release.outputs.archive }}
           CHECKSUM: ${{ steps.release.outputs.checksum }}
@@ -473,8 +456,48 @@ jobs:
           ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
             "upload-backoffice-environment ${GITHUB_SHA}" < "$RUNNER_TEMP/set-livre-backoffice.env"
           # shellcheck disable=SC2029
+          staged_release="$(
+            ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+              "stage ${GITHUB_SHA} ${CHECKSUM}"
+          )"
+          [[ "$staged_release" == "Release ${GITHUB_SHA} preparada e verificada sem ativação." ]]
+
+      - name: Apply forward-only Supabase migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
+          npx supabase db push --linked --dry-run
+          npx supabase db push --linked
+
+      - name: Activate and verify the restricted production role
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: npm run production:role
+
+      - name: Activate staged release on Oracle VM
+        env:
+          CHECKSUM: ${{ steps.release.outputs.checksum }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # shellcheck disable=SC2029
           ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
-            "deploy ${GITHUB_SHA} ${CHECKSUM}"
+            "activate ${GITHUB_SHA} ${CHECKSUM}"
 
       - name: Verify public web health
         env:

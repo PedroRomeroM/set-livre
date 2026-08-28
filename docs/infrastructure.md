@@ -25,9 +25,10 @@ flowchart LR
     PR --> CI[GitHub Actions Linux + Windows]
     CI --> MAIN[main aprovada]
     MAIN --> ART[Standalone Linux x86_64 por SHA]
-    ART --> MIG[Supabase CLI db push]
-    MIG --> SSH[SSH de deploy com chave exclusiva]
-    SSH --> VM[Oracle E2 Micro]
+    ART --> STAGE[Release verificada na VM]
+    STAGE --> MIG[Supabase CLI db push]
+    MIG --> ACT[Ativação por SSH]
+    ACT --> VM[Oracle E2 Micro]
     IP[IPv4 reservado 147.15.97.227] --> NG[Nginx 80/443]
     NG --> WEB[web 127.0.0.1:3000]
     SSH --> BO[backoffice 127.0.0.1:3001]
@@ -113,15 +114,16 @@ No merge, o workflow:
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
 4. constrói web e backoffice para o SHA aprovado, recusa segredo no artifact, cria duas vezes o tar
    normalizado, exige bytes idênticos e prepara os dois ambientes efêmeros;
-5. somente depois de existir uma release exata e verificável aplica migrations pendentes com
+5. envia o archive e os dois ambientes pelo comando SSH forçado, valida-os no host e preserva a release
+   root-owned completa sem trocar o symlink ou iniciar serviços;
+6. somente depois de existir essa release exata e já verificada no destino aplica migrations pendentes com
    `supabase db push --linked`, sem seed, e exige que o maior head remoto seja exatamente o head
    compilado pelo candidato;
-6. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
+7. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
    resultado ambíguo do commit abre conexões administrativas novas, força `NOLOGIN` de forma
    idempotente e exige releitura positiva antes de falhar; nos deploys seguintes apenas valida a
    credencial existente, sem rotacioná-la ou imprimi-la;
-7. envia o archive e dois ambientes efêmeros pelo comando SSH forçado;
-8. executa o instalador root allowlisted;
+8. ativa somente a release staged já autenticada, sem reupload depois da migration;
 9. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
    público a partir do runner.
 
@@ -129,7 +131,9 @@ O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manife
 ambientes e o digest da configuração efetivamente instalada no host. Antes de extrair limita tamanho e
 interrompe a leitura no primeiro header além das 20.000 entradas permitidas, sem materializar uma lista
 não limitada; aceita somente diretórios e arquivos regulares nas três raízes esperadas. Cada
-SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. O link
+SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do mesmo SHA. O staging
+termina antes da primeira migration e a ativação posterior relê checksum, manifesto, metadados e digest
+do host dessa mesma árvore root-owned, sem aceitar novos uploads. O link
 `/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
 só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
@@ -500,13 +504,15 @@ URL ou abrir qualquer conexão; esses caracteres precisam estar percent-encoded.
 contrato antes de aceitar os arquivos como `EnvironmentFile` do systemd. O preflight consulta
 `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
 header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
-chave. Em seguida, a sessão administrativa relê as duas roles e seus memberships, descobre o maior head
-remoto em uma única consulta e exige que o `check_readiness` já implantado aprove exatamente esse head.
+chave. Em seguida, a sessão administrativa relê as duas roles e seus memberships. Roles ausentes só são
+aceitas quando o ledger de migrations ainda não existe ou está comprovadamente vazio; qualquer histórico
+com roles ausentes é drift e bloqueia o deploy. Quando as roles existem, a sessão descobre o maior head
+remoto e exige que o `check_readiness` já implantado aprove exatamente esse head.
 Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `app_dal` e passar no
 `check_runtime_readiness`. Senha obsoleta, privilégio ou grant excedente, identidade ambígua ou
 indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige o HTTPS
-público operacional, e build, scan, archive determinístico e ambientes precisam terminar antes do
-primeiro `db push`. O instalador da VM também
+público operacional, e build, scan, archive determinístico, ambientes e staging validado na VM precisam
+terminar antes do primeiro `db push`. O instalador da VM também
 aceita exclusivamente o formato moderno
 `sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
 alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
