@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `media` |
+| Campo            | Valor                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                  |
+| Prioridade       | P0                                                                                                         |
+| Domínio          | `media`                                                                                                    |
 | Specs Playwright | `tests/e2e/critical/feat-008-studio-media.spec.ts`<br>`tests/e2e/regression/feat-008-studio-media.spec.ts` |
 
 ## Objetivo
@@ -79,7 +79,7 @@ Permitir fotos de alta qualidade com upload direto seguro, capa e ordenação, s
 - Pré-visualização em lightbox.
 - Mobile grid.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -100,14 +100,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F008-E2E-001 | P0 | critical | desktop | fazer upload, finalizar, definir capa e reordenar | `tests/e2e/critical/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-002 | P0 | critical | desktop | MIME forjado e tamanho excedido são rejeitados | `tests/e2e/critical/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-003 | P0 | critical | desktop | mídia em rascunho não é pública | `tests/e2e/critical/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-004 | P1 | regression | mobile | reordenar por alternativa acessível | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-005 | P1 | regression | desktop | galeria aprovada não causa CLS | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-006 | P0 | critical | desktop | dono A não obtém upload assinado para estúdio B | `tests/e2e/critical/feat-008-studio-media.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                           | Spec                                                 |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------- | ---------------------------------------------------- |
+| SL-F008-E2E-001 | P0         | critical   | desktop  | fazer upload, finalizar, definir capa e reordenar | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
+| SL-F008-E2E-002 | P0         | critical   | desktop  | MIME forjado e tamanho excedido são rejeitados    | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
+| SL-F008-E2E-003 | P0         | critical   | desktop  | mídia em rascunho não é pública                   | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
+| SL-F008-E2E-004 | P1         | regression | mobile   | reordenar por alternativa acessível               | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
+| SL-F008-E2E-005 | P1         | regression | desktop  | galeria aprovada não causa CLS                    | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
+| SL-F008-E2E-006 | P0         | critical   | desktop  | dono A não obtém upload assinado para estúdio B   | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
 
 Regras:
 
@@ -132,7 +132,7 @@ Regras:
 - security-privacy.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

@@ -1,4 +1,4 @@
-import { delimiter, isAbsolute, win32 } from "node:path";
+import { delimiter, resolve } from "node:path";
 
 const operationalEnvironmentNames = [
   "CI",
@@ -35,7 +35,31 @@ const operationalEnvironmentNames = [
 ] as const;
 
 const pathEnvironmentNames = new Set(["PATH", "Path"]);
-const supportedApplications = new Set(["web", "backoffice"]);
+const nextCliPath = resolve(import.meta.dirname, "../../node_modules/next/dist/bin/next");
+
+function shellArgument(value: string) {
+  if (value === "" || /[\0\r\n]/u.test(value)) {
+    throw new Error("Argumento inválido para o webServer do Playwright.");
+  }
+  if (process.platform === "win32") {
+    if (/[%!"]/u.test(value)) {
+      throw new Error("Path incompatível com a fronteira cmd.exe do Playwright.");
+    }
+    return `"${value}"`;
+  }
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function createPlaywrightNextCommand(argumentsList: readonly string[]) {
+  return [process.execPath, nextCliPath, ...argumentsList].map(shellArgument).join(" ");
+}
+
+export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
+  DATABASE_URL_APP_DAL: string;
+  NEXT_PUBLIC_APP_URL: string;
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
+  NEXT_PUBLIC_SUPABASE_URL: string;
+}>;
 
 function sanitizedOperationalValue(name: string, value: string | undefined) {
   if (value === undefined || value === "" || value.includes("\0")) {
@@ -54,6 +78,7 @@ function sanitizedOperationalValue(name: string, value: string | undefined) {
 
 export function createPlaywrightWebServerEnvironmentOverlay(
   inheritedEnvironment: Readonly<Record<string, string | undefined>>,
+  applicationEnvironment: ValidatedPlaywrightApplicationEnvironment,
 ) {
   const overlay: Record<string, string> = Object.fromEntries(
     Object.keys(inheritedEnvironment).map((name) => [name, ""]),
@@ -66,46 +91,8 @@ export function createPlaywrightWebServerEnvironmentOverlay(
     }
   }
 
+  Object.assign(overlay, applicationEnvironment);
+  overlay.APP_ENV = "test";
+  overlay.APP_RELEASE_SHA = "local";
   return overlay;
-}
-
-function quoteShellArgument(value: string, platform: NodeJS.Platform) {
-  if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
-    throw new Error("O comando do webServer contém um caminho inválido.");
-  }
-
-  if (platform === "win32") {
-    if (/[%!"^&|<>]/u.test(value)) {
-      throw new Error("O caminho do webServer contém metacaractere inseguro no Windows.");
-    }
-    return `"${value}"`;
-  }
-
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-export function createPlaywrightWebServerCommand({
-  application,
-  nodeExecutable,
-  platform = process.platform,
-  wrapperPath,
-}: {
-  application: "backoffice" | "web";
-  nodeExecutable: string;
-  platform?: NodeJS.Platform;
-  wrapperPath: string;
-}) {
-  if (!supportedApplications.has(application)) {
-    throw new Error("A aplicação do webServer Playwright é inválida.");
-  }
-
-  const absolutePath = platform === "win32" ? win32.isAbsolute : isAbsolute;
-  if (!absolutePath(nodeExecutable) || !absolutePath(wrapperPath)) {
-    throw new Error("Node e wrapper do webServer precisam usar caminhos absolutos.");
-  }
-
-  const command = [nodeExecutable, wrapperPath, application]
-    .map((value) => quoteShellArgument(value, platform))
-    .join(" ");
-  return platform === "win32" ? command : `exec ${command}`;
 }

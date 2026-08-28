@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { JsxEmit, ModuleKind, ScriptTarget, transpileModule } from "typescript";
-import { describe, expect, it } from "vitest";
+import { transformWithOxc } from "vite";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createViteServer } from "vitest/node";
 
 const legalDocuments = {
@@ -44,8 +44,11 @@ function isRegistrationFormModule(value: unknown): value is RegistrationFormModu
   );
 }
 
-async function renderRegistrationServerMarkup() {
-  const vite = await createViteServer({
+let registrationForm: RegistrationFormModule["RegistrationForm"];
+let vite: Awaited<ReturnType<typeof createViteServer>>;
+
+beforeAll(async () => {
+  vite = await createViteServer({
     appType: "custom",
     configFile: false,
     logLevel: "silent",
@@ -57,15 +60,11 @@ async function renderRegistrationServerMarkup() {
           if (!id.endsWith(".tsx")) {
             return null;
           }
-          const transformed = transpileModule(source, {
-            compilerOptions: {
-              jsx: JsxEmit.ReactJSX,
-              module: ModuleKind.ESNext,
-              target: ScriptTarget.ES2022,
-            },
-            fileName: id,
+          return transformWithOxc(source, id, {
+            jsx: { runtime: "automatic" },
+            lang: "tsx",
+            target: "es2022",
           });
-          return { code: transformed.outputText, map: null };
         },
       },
     ],
@@ -75,35 +74,40 @@ async function renderRegistrationServerMarkup() {
     root: process.cwd(),
     server: { middlewareMode: true },
   });
+  const registrationFormModule: unknown = await vite.ssrLoadModule(
+    "/src/domains/identity/components/registration-form.tsx",
+  );
+  if (!isRegistrationFormModule(registrationFormModule)) {
+    throw new Error("O módulo SSR não publicou RegistrationForm.");
+  }
+  registrationForm = registrationFormModule.RegistrationForm;
+});
+
+afterAll(async () => {
+  if (vite !== undefined) {
+    await vite.close();
+  }
+});
+
+function renderRegistrationServerMarkup() {
   const queryClient = new QueryClient({
     defaultOptions: {
       mutations: { retry: false },
     },
   });
 
-  try {
-    const registrationFormModule: unknown = await vite.ssrLoadModule(
-      "/src/domains/identity/components/registration-form.tsx",
-    );
-    if (!isRegistrationFormModule(registrationFormModule)) {
-      throw new Error("O módulo SSR não publicou RegistrationForm.");
-    }
-
-    return renderToStaticMarkup(
-      createElement(
-        QueryClientProvider,
-        { client: queryClient },
-        createElement(registrationFormModule.RegistrationForm, { legalDocuments }),
-      ),
-    );
-  } finally {
-    await vite.close();
-  }
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(registrationForm, { legalDocuments }),
+    ),
+  );
 }
 
 describe("registration form hydration boundary", () => {
-  it("renders a fail-closed native form before React hydration", async () => {
-    const html = await renderRegistrationServerMarkup();
+  it("renders a fail-closed native form before React hydration", () => {
+    const html = renderRegistrationServerMarkup();
     const formTag = html.match(/<form\b[^>]*>/u)?.[0];
     const disabledFieldset = html.match(
       /<fieldset\b[^>]*disabled=""[^>]*>[\s\S]*<\/fieldset>/u,

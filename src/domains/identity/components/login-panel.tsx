@@ -168,6 +168,7 @@ function LoginForm({
       }
       return loginIdentity(pendingLogin.current);
     },
+    networkMode: "always",
     onSettled: () => {
       pendingLogin.current = undefined;
     },

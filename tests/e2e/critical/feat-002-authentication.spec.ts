@@ -209,10 +209,16 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     await logoutFeat002Identity(page);
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
 
+    const ambiguousLoginStarted = createDeferredSignal();
     await page.route(
       "**/api/auth/login",
       async (route) => {
-        await route.abort("failed");
+        ambiguousLoginStarted.resolve();
+        await route.fulfill({
+          body: "{",
+          contentType: "application/json",
+          status: 200,
+        });
       },
       { times: 1 },
     );
@@ -222,6 +228,9 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
       identity.password,
     );
     await armLoginFormRedactionObservation(page);
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
     const absentSessionReload = page.waitForRequest((request) => {
       const address = new URL(request.url());
       return (
@@ -233,6 +242,7 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     });
     await page.getByRole("button", { name: "Entrar" }).click();
 
+    await ambiguousLoginStarted.promise;
     await absentSessionReload;
     await expectCurrentPath(page, "/entrar?entrada=verificar");
     await expectLoginFormRedactedBeforeReload(page);

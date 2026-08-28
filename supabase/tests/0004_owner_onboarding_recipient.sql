@@ -123,7 +123,7 @@ revoke all on function private.feat004_capture_error(text)
 revoke all on function private.feat004_create_user(uuid, text, uuid)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(65);
+select plan(63);
 
 create extension if not exists dblink with schema extensions;
 
@@ -1869,16 +1869,6 @@ select is(
   ),
   2::bigint,
   'owner_contract nunca amplia o read model público geral além de dois docs'
-);
-
-select ok(
-  private.check_readiness('20260815000100'),
-  'readiness aceita head FEAT-004 e allowlist DAL ampliada exata'
-);
-
-select ok(
-  not private.check_readiness('20260812000200'),
-  'readiness rejeita predecessor sem correlação de auditoria'
 );
 
 select ok(

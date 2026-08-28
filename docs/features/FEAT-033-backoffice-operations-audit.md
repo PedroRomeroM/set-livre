@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `operations` |
+| Campo            | Valor                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                                |
+| Prioridade       | P0                                                                                                                                       |
+| Domínio          | `operations`                                                                                                                             |
 | Specs Playwright | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`<br>`tests/e2e/regression/feat-033-backoffice-operations-audit.spec.ts` |
 
 ## Objetivo
@@ -78,7 +78,7 @@ Dar visibilidade acionável a filas, incidentes, releases e ações administrati
 - Alert severity text+color.
 - CTA para o runbook.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -98,14 +98,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F033-E2E-001 | P0 | critical | desktop | operações mostra release, saúde e atualização dos workers | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts` |
-| SL-F033-E2E-002 | P0 | critical | desktop | worker desatualizado ou fila acima do limite gera alerta | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts` |
-| SL-F033-E2E-003 | P0 | critical | desktop | auditoria filtra por ator, ação e requestId | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts` |
-| SL-F033-E2E-004 | P0 | critical | desktop | nenhum segredo ou payload bruto do provider é renderizado | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts` |
-| SL-F033-E2E-005 | P0 | critical | desktop | papel não autorizado é rejeitado | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts` |
-| SL-F033-E2E-006 | P1 | regression | desktop | links de runbook apontam para procedimentos vigentes | `tests/e2e/regression/feat-033-backoffice-operations-audit.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                   | Spec                                                                |
+| --------------- | ---------- | ---------- | -------- | --------------------------------------------------------- | ------------------------------------------------------------------- |
+| SL-F033-E2E-001 | P0         | critical   | desktop  | operações mostra release, saúde e atualização dos workers | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`   |
+| SL-F033-E2E-002 | P0         | critical   | desktop  | worker desatualizado ou fila acima do limite gera alerta  | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`   |
+| SL-F033-E2E-003 | P0         | critical   | desktop  | auditoria filtra por ator, ação e requestId               | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`   |
+| SL-F033-E2E-004 | P0         | critical   | desktop  | nenhum segredo ou payload bruto do provider é renderizado | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`   |
+| SL-F033-E2E-005 | P0         | critical   | desktop  | papel não autorizado é rejeitado                          | `tests/e2e/critical/feat-033-backoffice-operations-audit.spec.ts`   |
+| SL-F033-E2E-006 | P1         | regression | desktop  | links de runbook apontam para procedimentos vigentes      | `tests/e2e/regression/feat-033-backoffice-operations-audit.spec.ts` |
 
 Regras:
 
@@ -130,7 +130,7 @@ Regras:
 - backoffice.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

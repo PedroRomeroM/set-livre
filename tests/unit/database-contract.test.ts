@@ -17,7 +17,18 @@ describe("DAL database URL contract", () => {
   it("accepts a restricted session role with required SET ROLE and TLS parameters", () => {
     expect(parseDalDatabaseUrl(validUrl)).toEqual({
       connectionString: validUrl,
+      projectRef: undefined,
       sessionRole: "app_runtime",
+    });
+  });
+
+  it("supports the official Supavisor session username without confusing tenant and role", () => {
+    const poolerUrl =
+      "postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:secret@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal";
+    expect(parseDalDatabaseUrl(poolerUrl)).toEqual({
+      connectionString: poolerUrl,
+      projectRef: "oirvvnojgkzdppkdvhej",
+      sessionRole: "app_runtime_production",
     });
   });
 
@@ -29,6 +40,24 @@ describe("DAL database URL contract", () => {
     ]) {
       expect(() => parseDalDatabaseUrl(value)).toThrow();
     }
+  });
+
+  it("rejects raw control characters before URL normalization", () => {
+    for (const controlCharacter of ["\n", "\r", "\t", "\u0000", "\u007f"]) {
+      expect(() => parseDalDatabaseUrl(`${validUrl}${controlCharacter}`)).toThrow(
+        "caractere de controle não autorizado",
+      );
+    }
+  });
+
+  it("requires percent-encoding for characters that are unsafe in an EnvironmentFile", () => {
+    for (const unsafeCharacter of ["'", '"', "\\", " "]) {
+      const unsafeUrl = validUrl.replace(":secret@", `:sec${unsafeCharacter}ret@`);
+      expect(() => parseDalDatabaseUrl(unsafeUrl)).toThrow("exige percent-encoding");
+    }
+
+    const encodedQuoteUrl = validUrl.replace(":secret@", ":sec%27ret@");
+    expect(parseDalDatabaseUrl(encodedQuoteUrl).connectionString).toBe(encodedQuoteUrl);
   });
 
   it("rejects known privileged login identities", () => {
@@ -53,10 +82,34 @@ describe("DAL database URL contract", () => {
     }
   });
 
-  it("rejects query parameters that can override connection identity", () => {
-    for (const parameter of ["host=remote.example.test", "role=postgres", "user=postgres"]) {
+  it("requires verified TLS remotely and session mode for Supavisor", () => {
+    expect(() =>
+      parseDalDatabaseUrl(
+        "postgresql://app_runtime:secret@db.example.test/set_livre?options=-c%20role%3Dapp_dal",
+      ),
+    ).toThrow("TLS verify-full");
+    expect(() =>
+      parseDalDatabaseUrl(
+        "postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:secret@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal",
+      ),
+    ).toThrow("modo de sessão");
+    expect(() =>
+      parseDalDatabaseUrl(
+        "postgresql://postgres.oirvvnojgkzdppkdvhej:secret@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal",
+      ),
+    ).toThrow("role privilegiada");
+  });
+
+  it("rejects unknown and duplicate connection parameters", () => {
+    for (const parameter of [
+      "host=remote.example.test",
+      "role=postgres",
+      "user=postgres",
+      "application_name=untracked",
+      "sslmode=disable",
+    ]) {
       expect(() => parseDalDatabaseUrl(`${validUrl}&${parameter}`)).toThrow(
-        "sobrescrever sua identidade",
+        parameter === "sslmode=disable" ? "TLS verify-full" : "parâmetro não autorizado",
       );
     }
   });

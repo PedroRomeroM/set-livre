@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `finance` |
+| Campo            | Valor                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                  |
+| Prioridade       | P0                                                                                                         |
+| Domínio          | `finance`                                                                                                  |
 | Specs Playwright | `tests/e2e/critical/feat-026-split-payout.spec.ts`<br>`tests/e2e/regression/feat-026-split-payout.spec.ts` |
 
 ## Objetivo
@@ -80,7 +80,7 @@ Calcular shares sobre o bruto e efetuar/registrar repasse ao dono após o uso, c
 - O admin visualiza motivo e tentativas.
 - A diferença entre agendado e pago é clara.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -101,14 +101,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F026-E2E-001 | P0 | critical | desktop | split 80/20 calculado sobre bruto | `tests/e2e/critical/feat-026-split-payout.spec.ts` |
-| SL-F026-E2E-002 | P0 | critical | desktop | payout não executa antes de end+24h | `tests/e2e/critical/feat-026-split-payout.spec.ts` |
-| SL-F026-E2E-003 | P0 | critical | desktop | completed eligible paga uma vez | `tests/e2e/critical/feat-026-split-payout.spec.ts` |
-| SL-F026-E2E-004 | P0 | critical | desktop | refund/dispute/recipient inactive bloqueiam | `tests/e2e/critical/feat-026-split-payout.spec.ts` |
-| SL-F026-E2E-005 | P1 | regression | desktop | fallback manual exige confirmação e auditoria | `tests/e2e/regression/feat-026-split-payout.spec.ts` |
-| SL-F026-E2E-006 | P0 | critical | desktop | dono A não vê payout B | `tests/e2e/critical/feat-026-split-payout.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                       | Spec                                                 |
+| --------------- | ---------- | ---------- | -------- | --------------------------------------------- | ---------------------------------------------------- |
+| SL-F026-E2E-001 | P0         | critical   | desktop  | split 80/20 calculado sobre bruto             | `tests/e2e/critical/feat-026-split-payout.spec.ts`   |
+| SL-F026-E2E-002 | P0         | critical   | desktop  | payout não executa antes de end+24h           | `tests/e2e/critical/feat-026-split-payout.spec.ts`   |
+| SL-F026-E2E-003 | P0         | critical   | desktop  | completed eligible paga uma vez               | `tests/e2e/critical/feat-026-split-payout.spec.ts`   |
+| SL-F026-E2E-004 | P0         | critical   | desktop  | refund/dispute/recipient inactive bloqueiam   | `tests/e2e/critical/feat-026-split-payout.spec.ts`   |
+| SL-F026-E2E-005 | P1         | regression | desktop  | fallback manual exige confirmação e auditoria | `tests/e2e/regression/feat-026-split-payout.spec.ts` |
+| SL-F026-E2E-006 | P0         | critical   | desktop  | dono A não vê payout B                        | `tests/e2e/critical/feat-026-split-payout.spec.ts`   |
 
 Regras:
 
@@ -133,7 +133,7 @@ Regras:
 - backoffice.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

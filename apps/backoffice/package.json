@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "node ../../scripts/local-development-server.mjs backoffice",
-    "build": "node ../../scripts/next-build.mjs",
-    "start": "node ../../scripts/local-production-server.mjs backoffice",
+    "dev": "node ../../scripts/local-setup.mjs dev-backoffice",
+    "build": "node ../../scripts/local-setup.mjs build-backoffice",
+    "start": "node ../../scripts/local-setup.mjs start-backoffice",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

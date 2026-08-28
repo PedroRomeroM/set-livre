@@ -29,7 +29,7 @@ describe("shared restricted command DAL pool", () => {
     mocks.query.mockRejectedValue(new Error("readiness unavailable in unit test"));
   });
 
-  it("creates one command pool capped at six connections", async () => {
+  it("creates one command pool capped at four connections", async () => {
     const { commandDalPool } = await import("../../src/lib/server/dal-pool");
     const first = commandDalPool();
     const second = commandDalPool();
@@ -38,28 +38,28 @@ describe("shared restricted command DAL pool", () => {
     expect(mocks.configurations).toEqual([
       expect.objectContaining({
         application_name: "set-livre-web-command-dal",
-        max: 6,
+        max: 4,
         query_timeout: 2_000,
         statement_timeout: 2_000,
       }),
     ]);
   });
 
-  it("preserves a separate readiness pool capped at two connections", async () => {
+  it("preserves a separate readiness pool capped at one connection", async () => {
     vi.resetModules();
     const { isDatabaseReady } = await import("../../src/lib/server/database-readiness");
     await expect(isDatabaseReady()).resolves.toBe(false);
     expect(mocks.configurations).toEqual([
       expect.objectContaining({
         application_name: "set-livre-web-readiness",
-        max: 2,
+        max: 1,
         query_timeout: 1_000,
         statement_timeout: 1_000,
       }),
     ]);
   });
 
-  it("keeps web commands plus both app readiness pools within the ten-connection login cap", async () => {
+  it("reserves four production login slots for deploy and recovery", async () => {
     vi.resetModules();
     const { commandDalPool } = await import("../../src/lib/server/dal-pool");
     const { isDatabaseReady: isWebDatabaseReady } =
@@ -74,7 +74,9 @@ describe("shared restricted command DAL pool", () => {
     const connectionBudget = mocks.configurations.map(
       (configuration) => z.object({ max: z.number().int().positive() }).parse(configuration).max,
     );
-    expect(connectionBudget).toEqual([6, 2, 2]);
-    expect(connectionBudget.reduce((total, maximum) => total + maximum, 0)).toBe(10);
+    const allocatedConnections = connectionBudget.reduce((total, maximum) => total + maximum, 0);
+    expect(connectionBudget).toEqual([4, 1, 1]);
+    expect(allocatedConnections).toBe(6);
+    expect(10 - allocatedConnections).toBe(4);
   });
 });

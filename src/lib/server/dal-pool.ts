@@ -21,7 +21,7 @@ export function commandDalPool() {
     connectionString: database.connectionString,
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 10_000,
-    max: 6,
+    max: 4,
     query_timeout: 2_000,
     statement_timeout: 2_000,
   });

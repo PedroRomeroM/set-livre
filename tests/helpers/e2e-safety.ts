@@ -1,6 +1,6 @@
-import { z } from "zod";
+import { Buffer } from "node:buffer";
 
-import { parseLiteralLocalIpv4Url } from "../../scripts/local-network-contract";
+import { z } from "zod";
 
 const safeEnvironmentSchema = z.object({
   adminDatabaseUrl: z.url(),
@@ -9,6 +9,7 @@ const safeEnvironmentSchema = z.object({
   dalDatabaseUrl: z.url(),
   explicitLocalPermission: z.literal("1"),
   publicBaseUrl: z.url(),
+  supabaseAnonKey: z.string().min(1).max(8_192),
   supabaseUrl: z.url(),
 });
 
@@ -19,8 +20,64 @@ type SafeEnvironmentInput = {
   dalDatabaseUrl: string | undefined;
   explicitLocalPermission: string | undefined;
   publicBaseUrl: string | undefined;
+  supabaseAnonKey: string | undefined;
   supabaseUrl: string | undefined;
 };
+
+const publishableKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{12,}$/u;
+const jwtSegmentPattern = /^[A-Za-z0-9_-]+$/u;
+
+function assertPublicSupabaseKey(value: string) {
+  if (publishableKeyPattern.test(value)) return;
+
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY não é uma chave pública Supabase válida.");
+  }
+
+  try {
+    const payload = z
+      .object({ role: z.literal("anon") })
+      .passthrough()
+      .parse(JSON.parse(Buffer.from(segments[1] ?? "", "base64url").toString("utf8")));
+    if (payload.role !== "anon") throw new Error("role inesperada");
+  } catch {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY precisa usar a role pública anon.");
+  }
+}
+
+function rawUrlHostname(value: string): string | undefined {
+  const schemeSeparator = value.indexOf("://");
+  if (schemeSeparator <= 0) return undefined;
+
+  const authorityStart = schemeSeparator + 3;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
+  const authorityEnd =
+    authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const hostAndPort = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hostAndPort.startsWith("[")) {
+    const closingBracket = hostAndPort.indexOf("]");
+    return closingBracket === -1 ? undefined : hostAndPort.slice(0, closingBracket + 1);
+  }
+
+  const portSeparator = hostAndPort.lastIndexOf(":");
+  return portSeparator === -1 ? hostAndPort : hostAndPort.slice(0, portSeparator);
+}
+
+function parseLiteralLocalIpv4Url(value: string, label: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} é inválida.`);
+  }
+
+  if (parsed.hostname !== "127.0.0.1" || rawUrlHostname(value) !== "127.0.0.1") {
+    throw new Error(`${label} precisa usar o host IPv4 literal 127.0.0.1.`);
+  }
+  return parsed;
+}
 
 function assertLocalUrl(
   value: string,
@@ -57,6 +114,7 @@ function assertBareOrigin(parsed: URL, label: string) {
 
 export function assertSafeE2EEnvironment(input: SafeEnvironmentInput) {
   const parsed = safeEnvironmentSchema.parse(input);
+  assertPublicSupabaseKey(parsed.supabaseAnonKey);
 
   const publicBaseUrl = assertLocalUrl(
     parsed.publicBaseUrl,

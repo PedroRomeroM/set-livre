@@ -465,24 +465,39 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       ],
     );
 
-    const staleCommandResponse = page
-      .waitForResponse((response) => {
-        const address = new URL(response.url());
-        return address.pathname === "/api/commands" && response.request().method() === "POST";
-      })
-      .then(async (response) => ({
-        payload: (await response.json()) as unknown,
-        response,
-      }));
+    let staleCommandEvidence:
+      | {
+          payload: unknown;
+          requestBody: string | null;
+          status: number;
+        }
+      | undefined;
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const response = await route.fetch();
+        staleCommandEvidence = {
+          payload: (await response.json()) as unknown,
+          requestBody: route.request().postData(),
+          status: response.status(),
+        };
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
     const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Salvar alterações" }).click();
-    const { payload: rejectedPayload, response: rejectedCommand } = await staleCommandResponse;
-    if (rejectedCommand.status() !== 409) {
+    await reload;
+    if (staleCommandEvidence === undefined) {
+      throw new Error("O comando stale não foi capturado antes da recomposição SSR.");
+    }
+    const { payload: rejectedPayload, requestBody, status } = staleCommandEvidence;
+    if (status !== 409) {
       throw new Error("O comando stale não foi rejeitado com conflito de sessão.");
     }
     let rejectedCommandBody: unknown;
     try {
-      rejectedCommandBody = JSON.parse(rejectedCommand.request().postData() ?? "null") as unknown;
+      rejectedCommandBody = JSON.parse(requestBody ?? "null") as unknown;
     } catch {
       throw new Error("O comando stale não publicou um envelope JSON válido.");
     }
@@ -502,7 +517,6 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     if (!rejected.success || rejected.data.error.code !== "SESSION_CHANGED") {
       throw new Error("O comando stale não retornou o erro público de sessão esperada.");
     }
-    await reload;
     await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
     await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameB);
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameA);

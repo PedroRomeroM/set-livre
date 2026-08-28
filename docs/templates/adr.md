@@ -1,6 +1,7 @@
 # ADR-NNN — Título
 
 ## Status
+
 Proposto | Aceito | Substituído | Rejeitado
 
 ## Blueprint afetado

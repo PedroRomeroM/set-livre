@@ -5,21 +5,28 @@ import { defineConfig } from "@playwright/test";
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
 import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
 import {
-  createPlaywrightWebServerCommand,
+  createPlaywrightNextCommand,
   createPlaywrightWebServerEnvironmentOverlay,
 } from "./tests/helpers/playwright-web-server";
 
+const repositoryRoot = import.meta.dirname;
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
-const webServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env);
-const webServerWrapper = resolve(import.meta.dirname, "scripts/playwright-web-server.mjs");
-const webServerCommand = (application: "backoffice" | "web") =>
-  createPlaywrightWebServerCommand({
-    application,
-    nodeExecutable: process.execPath,
-    wrapperPath: webServerWrapper,
-  });
+const applicationEnvironment = (appUrl: string) => ({
+  DATABASE_URL_APP_DAL: safeEnvironment.dalDatabaseUrl,
+  NEXT_PUBLIC_APP_URL: appUrl,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: safeEnvironment.supabaseAnonKey,
+  NEXT_PUBLIC_SUPABASE_URL: safeEnvironment.supabaseUrl,
+});
+const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
+  process.env,
+  applicationEnvironment(publicBaseUrl),
+);
+const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
+  process.env,
+  applicationEnvironment(backofficeBaseUrl),
+);
 const posixGracefulWebServerShutdown = {
   gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 } satisfies {
@@ -170,8 +177,9 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: webServerCommand("web"),
-      env: webServerEnvironment,
+      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3000"]),
+      cwd: repositoryRoot,
+      env: publicWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",
@@ -180,8 +188,9 @@ export default defineConfig({
       url: `${publicBaseUrl}/api/health/live`,
     },
     {
-      command: webServerCommand("backoffice"),
-      env: webServerEnvironment,
+      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3001"]),
+      cwd: resolve(repositoryRoot, "apps/backoffice"),
+      env: backofficeWebServerEnvironment,
       ...gracefulWebServerShutdown,
       reuseExistingServer: false,
       stderr: "pipe",

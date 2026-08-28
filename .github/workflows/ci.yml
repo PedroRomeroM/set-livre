@@ -1,0 +1,586 @@
+name: CI and production delivery
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Redeploy do SHA atual de main após recuperação da VM
+        required: false
+        default: false
+        type: boolean
+      release_sha:
+        description: SHA completo atual de main; obrigatório quando deploy_production=true
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  PRODUCTION_BACKOFFICE_APP_URL: https://ops.setlivre.com
+  PRODUCTION_PUBLIC_APP_URL: https://147.15.97.227
+  PRODUCTION_SUPABASE_PROJECT_REF: oirvvnojgkzdppkdvhej
+  PRODUCTION_SUPABASE_URL: https://oirvvnojgkzdppkdvhej.supabase.co
+  PRODUCTION_VM_HOST: 147.15.97.227
+
+jobs:
+  quality:
+    name: Quality, local Supabase and browser gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Validate manual production recovery request
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true
+        env:
+          DEPLOY_ENABLED: ${{ vars.PRD_DEPLOY_ENABLED }}
+          REQUESTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          [[ "$DEPLOY_ENABLED" == "true" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$REQUESTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REQUESTED_RELEASE_SHA" == "$GITHUB_SHA" ]]
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Migration immutability gate
+        env:
+          MIGRATION_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run migrations:check
+
+      - name: Validate POSIX operations
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends curl fail2ban nftables nginx openssh-server shellcheck
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -shellcheck shellcheck
+          bash -n ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
+            ops/verify-host-contracts.sh
+          shellcheck ops/bootstrap-host.sh ops/deploy-release.sh ops/deploy-ssh-command.sh \
+            ops/verify-host-contracts.sh
+
+      - name: Formatting gate
+        run: npm run format:check
+
+      - name: Lint gate
+        run: npm run lint
+
+      - name: TypeScript gate
+        run: npm run typecheck
+
+      - name: Unit gate
+        run: npm run test:unit
+
+      - name: Documentation gate
+        run: npm run docs:check
+
+      - name: Dependency audit
+        run: npm run audit
+
+      - name: Unused code gate
+        run: npm run knip
+
+      - name: Reset local Supabase
+        run: npm run supabase:reset
+
+      - name: Database lint
+        run: npm run supabase:lint
+
+      - name: Database gates
+        run: npm run test:db
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Full browser suite
+        id: browser_suite
+        run: npm run test:e2e
+
+      - name: Preserve browser failure evidence
+        if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/playwright-report
+            .artifacts/test-results
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: Build and package Linux release
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
+        run: |
+          NEXT_PUBLIC_APP_URL="$PRODUCTION_PUBLIC_APP_URL" npm run build:web
+          NEXT_PUBLIC_APP_URL="$PRODUCTION_BACKOFFICE_APP_URL" npm run build:backoffice
+          npm run release
+
+      - name: Exercise host activation and rollback contracts
+        run: bash ops/verify-host-contracts.sh "$GITHUB_SHA" "$RUNNER_TEMP"
+
+      - name: Smoke standalone Linux release
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://setlivre.example
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
+        run: |
+          processes=()
+          cleanup() {
+            if (( ${#processes[@]} > 0 )); then
+              kill "${processes[@]}" 2>/dev/null || true
+              wait "${processes[@]}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          smoke_release() {
+            local application="$1"
+            local directory="$2"
+            local entrypoint="$3"
+            local port="$4"
+            local response="$RUNNER_TEMP/${application}-live.json"
+            local log="$RUNNER_TEMP/${application}-standalone.log"
+            local live=false
+
+            (
+              cd "$directory"
+              exec env HOSTNAME=127.0.0.1 PORT="$port" node "$entrypoint"
+            ) >"$log" 2>&1 &
+            processes+=("$!")
+
+            for _ in {1..30}; do
+              if curl --disable --noproxy '*' --fail --silent --max-time 2 \
+                "http://127.0.0.1:${port}/api/health/live" --output "$response"; then
+                live=true
+                break
+              fi
+              sleep 1
+            done
+
+            if [[ "$live" != true ]]; then
+              cat "$log"
+              return 1
+            fi
+
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const [path, application, release] = process.argv.slice(1);
+              const payload = JSON.parse(readFileSync(path, "utf8"));
+              if (payload.application !== application || payload.release !== release || payload.status !== "live") {
+                throw new Error("Liveness standalone inválido para " + application + ".");
+              }
+            ' "$response" "$application" "$GITHUB_SHA"
+          }
+
+          smoke_release web .artifacts/release/web server.js 3100
+          smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3101
+
+      - name: Stop local Supabase
+        if: always()
+        run: npm run supabase:stop
+
+  windows:
+    name: Windows native contracts
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck on Windows
+        run: npm run typecheck
+
+      - name: Unit tests on Windows
+        run: npm run test:unit
+
+      - name: Build and package on Windows
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://ci_runtime:ci-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: https://setlivre.example
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_ci_contract_key
+          NEXT_PUBLIC_SUPABASE_URL: https://supabase.example
+        run: |
+          npm run build
+          npm run release
+
+  deploy:
+    name: Deploy production
+    if: >-
+      vars.PRD_DEPLOY_ENABLED == 'true' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          inputs.deploy_production == true &&
+          inputs.release_sha == github.sha
+        )
+      )
+    needs:
+      - quality
+      - windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout the approved main SHA
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          package-manager-cache: false
+
+      - name: Set up npm
+        run: npm install --global npm@11.19.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate fixed production contract
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+        run: npm run production:preflight
+
+      - name: Authenticate Oracle deployment path
+        env:
+          VM_SSH_HOST_KEY: ${{ vars.PRD_VM_SSH_HOST_KEY }}
+          VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 0700 "$HOME/.ssh"
+          install -m 0600 /dev/null "$HOME/.ssh/set-livre-deploy"
+          printf '%s\n' "$VM_SSH_PRIVATE_KEY" > "$HOME/.ssh/set-livre-deploy"
+          printf '%s\n' "$VM_SSH_HOST_KEY" > "$HOME/.ssh/known_hosts"
+          mapfile -t known_host_lines < "$HOME/.ssh/known_hosts"
+          [[ ${#known_host_lines[@]} -eq 1 ]]
+          read -r known_host known_algorithm known_key unexpected_field <<< "${known_host_lines[0]}"
+          [[ "$known_host" == "$PRODUCTION_VM_HOST" ]]
+          [[ "$known_algorithm" == "ssh-ed25519" ]]
+          [[ "$known_key" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
+          [[ -z "${unexpected_field:-}" ]]
+          ssh-keygen -l -f "$HOME/.ssh/known_hosts"
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          deployment_probe="$(
+            ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
+          )"
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]
+
+      - name: Verify public HTTPS entrypoint
+        env:
+          PUBLIC_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
+        run: |
+          response="$RUNNER_TEMP/set-livre-preflight-robots.txt"
+          headers="$RUNNER_TEMP/set-livre-preflight-headers.txt"
+          status="$(
+            curl --disable --noproxy '*' --silent --show-error \
+              --retry 3 --retry-all-errors --retry-delay 2 --max-time 10 \
+              --proto '=https' --tlsv1.2 --dump-header "$headers" --output "$response" \
+              --write-out '%{http_code}' "${PUBLIC_URL}/robots.txt"
+          )"
+          [[ "$status" == 200 ]]
+          [[ "$(< "$response")" == $'User-agent: *\nDisallow: /' ]]
+          tr --delete '\r' < "$headers" \
+            | grep --ignore-case --fixed-strings --line-regexp \
+              'X-Robots-Tag: noindex, nofollow, noarchive, nosnippet'
+
+      - name: Prepare and identify ephemeral runtime environments
+        id: runtime_environment
+        env:
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          reject_line_breaks() {
+            local value="$1"
+            [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]]
+          }
+          reject_line_breaks "$PRD_DATABASE_URL_APP_DAL"
+          reject_line_breaks "$PRD_SUPABASE_PUBLISHABLE_KEY"
+          umask 077
+          write_environment() {
+            local destination="$1"
+            local app_url="$2"
+            {
+              printf 'APP_ENV=production\n'
+              printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
+              printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
+              printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_PUBLISHABLE_KEY"
+              printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
+            } > "$destination"
+            chmod 0600 "$destination"
+          }
+          write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
+          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+          runtime_digest="$({
+            printf 'web.env\0'
+            cat -- "$RUNNER_TEMP/set-livre-web.env"
+            printf '\0backoffice.env\0'
+            cat -- "$RUNNER_TEMP/set-livre-backoffice.env"
+            printf '\0'
+          } | sha256sum | cut --delimiter=' ' --fields=1)"
+          [[ "$runtime_digest" =~ ^[0-9a-f]{64}$ ]]
+          echo "digest=$runtime_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect exact immutable release on Oracle VM
+        id: existing_release
+        env:
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
+        run: |
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # shellcheck disable=SC2029
+          inspection="$(
+            ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+              "inspect ${GITHUB_SHA} ${RUNTIME_ENVIRONMENT_DIGEST}"
+          )"
+          if [[ "$inspection" == "Release ${GITHUB_SHA} absent." ]]; then
+            echo "reuse=false" >> "$GITHUB_OUTPUT"
+          elif [[ "$inspection" =~ ^Release\ ${GITHUB_SHA}\ staged\ checksum\ ([0-9a-f]{64})\.$ ]]; then
+            echo "reuse=true" >> "$GITHUB_OUTPUT"
+            echo "checksum=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Resposta de inspeção inválida.\n' >&2
+            exit 1
+          fi
+
+      - name: Build web release
+        if: steps.existing_release.outputs.reuse != 'true'
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://build_runtime:build-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
+        run: npm run build:web
+
+      - name: Build backoffice release
+        if: steps.existing_release.outputs.reuse != 'true'
+        env:
+          APP_ENV: production
+          APP_RELEASE_SHA: ${{ github.sha }}
+          DATABASE_URL_APP_DAL: postgresql://build_runtime:build-password@db.example.test:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal
+          NEXT_PUBLIC_APP_URL: ${{ env.PRODUCTION_BACKOFFICE_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.PRODUCTION_SUPABASE_URL }}
+        run: npm run build:backoffice
+
+      - name: Package immutable release
+        id: release
+        if: steps.existing_release.outputs.reuse != 'true'
+        env:
+          DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npm run release
+          archive="$RUNNER_TEMP/set-livre-${GITHUB_SHA}.tar.gz"
+          comparison="$RUNNER_TEMP/set-livre-${GITHUB_SHA}-comparison.tar.gz"
+          source_date_epoch="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          [[ "$source_date_epoch" =~ ^[0-9]+$ ]]
+          create_archive() {
+            local destination="$1"
+            LC_ALL=C tar --hard-dereference --sort=name --mtime="@${source_date_epoch}" \
+              --owner=0 --group=0 --numeric-owner --format=posix \
+              --pax-option=delete=atime,delete=ctime \
+              --create --file=- --directory .artifacts/release . \
+              | gzip --best --no-name > "$destination"
+          }
+          create_archive "$archive"
+          create_archive "$comparison"
+          cmp --silent "$archive" "$comparison"
+          rm --force "$comparison"
+          checksum="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Stage and verify release on Oracle VM
+        if: steps.existing_release.outputs.reuse != 'true'
+        env:
+          ARCHIVE: ${{ steps.release.outputs.archive }}
+          CHECKSUM: ${{ steps.release.outputs.checksum }}
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # SHA e comandos são validados antes da expansão intencional no cliente confiável.
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-release ${GITHUB_SHA}" < "$ARCHIVE"
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-web-environment ${GITHUB_SHA}" < "$RUNNER_TEMP/set-livre-web.env"
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "upload-backoffice-environment ${GITHUB_SHA}" < "$RUNNER_TEMP/set-livre-backoffice.env"
+          # shellcheck disable=SC2029
+          staged_release="$(
+            ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+              "stage ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"
+          )"
+          [[ "$staged_release" == "Release ${GITHUB_SHA} preparada e verificada sem ativação." ]]
+
+      - name: Select exact verified release
+        id: selected_release
+        env:
+          BUILT_CHECKSUM: ${{ steps.release.outputs.checksum }}
+          EXISTING_CHECKSUM: ${{ steps.existing_release.outputs.checksum }}
+          REUSE_EXISTING: ${{ steps.existing_release.outputs.reuse }}
+        run: |
+          if [[ "$REUSE_EXISTING" == "true" ]]; then
+            checksum="$EXISTING_CHECKSUM"
+          else
+            [[ "$REUSE_EXISTING" == "false" ]]
+            checksum="$BUILT_CHECKSUM"
+          fi
+          [[ "$checksum" =~ ^[0-9a-f]{64}$ ]]
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Apply forward-only Supabase migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          npx supabase link --project-ref "$PRODUCTION_SUPABASE_PROJECT_REF"
+          npx supabase db push --linked --dry-run
+          npx supabase db push --linked
+
+      - name: Activate and verify the restricted production role
+        env:
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
+          PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: npm run production:role
+
+      - name: Activate staged release on Oracle VM
+        env:
+          CHECKSUM: ${{ steps.selected_release.outputs.checksum }}
+          RUNTIME_ENVIRONMENT_DIGEST: ${{ steps.runtime_environment.outputs.digest }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHECKSUM" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RUNTIME_ENVIRONMENT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # shellcheck disable=SC2029
+          ssh "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+            "activate ${GITHUB_SHA} ${CHECKSUM} ${RUNTIME_ENVIRONMENT_DIGEST}"
+
+      - name: Verify public web health
+        env:
+          PUBLIC_URL: ${{ env.PRODUCTION_PUBLIC_APP_URL }}
+        run: |
+          verify_health() {
+            local base_url="$1"
+            local application="$2"
+            local response="$RUNNER_TEMP/${application}-health.json"
+            curl --disable --noproxy '*' --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 5 \
+              --max-time 10 "${base_url}/api/health/ready" --output "$response"
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const [path, application, release] = process.argv.slice(1);
+              const payload = JSON.parse(readFileSync(path, "utf8"));
+              if (payload.application !== application || payload.release !== release || payload.status !== "ready") {
+                throw new Error("Health inválido para " + application + ".");
+              }
+            ' "$response" "$application" "$GITHUB_SHA"
+          }
+          verify_health "$PUBLIC_URL" web

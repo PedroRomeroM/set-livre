@@ -1,6 +1,14 @@
+import { Buffer } from "node:buffer";
+
 import { describe, expect, it } from "vitest";
 
 import { assertSafeE2EEnvironment } from "../helpers/e2e-safety";
+
+function jwtForRole(role: string) {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ iss: "supabase", role })).toString("base64url");
+  return `${header}.${payload}.contract-signature`;
+}
 
 const safeInput = {
   adminDatabaseUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
@@ -10,6 +18,7 @@ const safeInput = {
     "postgresql://app_runtime_local:local-secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
   explicitLocalPermission: "1" as const,
   publicBaseUrl: "http://127.0.0.1:3000",
+  supabaseAnonKey: jwtForRole("anon"),
   supabaseUrl: "http://127.0.0.1:54321",
 };
 const nonLiteralLocalHosts = [
@@ -29,6 +38,18 @@ const nonLiteralLocalHosts = [
 describe("E2E safety guard", () => {
   it("accepts an explicitly local environment", () => {
     expect(() => assertSafeE2EEnvironment(safeInput)).not.toThrow();
+    expect(() =>
+      assertSafeE2EEnvironment({
+        ...safeInput,
+        supabaseAnonKey: "sb_publishable_local_contract_key",
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a Supabase service role key at the public application boundary", () => {
+    expect(() =>
+      assertSafeE2EEnvironment({ ...safeInput, supabaseAnonKey: jwtForRole("service_role") }),
+    ).toThrow("role pública anon");
   });
 
   it.each([

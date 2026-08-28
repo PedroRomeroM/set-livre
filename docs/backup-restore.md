@@ -1,104 +1,75 @@
 # Backup, restore e continuidade
 
-## 1. Objetivos
+## Baseline atual
 
-Referência inicial:
+O Supabase Cloud é a fonte canônica de banco, Auth e Storage. O projeto ainda não possui usuários ou
+dados comerciais; por isso o primeiro deploy comprova migrations e segurança, enquanto backup/restore
+permanecem gates do go-live. Não se cria antecipadamente um serviço próprio de backup.
 
-- RPO: 24 horas;
-- RTO: 4 horas;
-- retenção: 30 dias para backups operacionais;
-- restore ensaiado mensalmente no início e trimestralmente após estabilidade.
+- código, migrations, Nginx e units estão no Git;
+- secrets permanecem nos cofres que os consomem, nunca no backup do repositório;
+- a VM não guarda dados canônicos e pode ser reconstruída por bootstrap + release aprovada;
+- status, retenção e recursos de backup gerenciado do plano Supabase devem ser confirmados antes do
+  go-live comercial.
 
-Metas devem ser revistas com volume/receita.
+`pg_dump` periódico ou réplica em OCI Object Storage só será adotado se a retenção/independência
+exigida não for atendida pelo provider ou se houver requisito regulatório aprovado. Não se mantém um
+pipeline sem dado real apenas para antecipar essa possibilidade.
 
-## 2. Banco
+## Gates antes do go-live
 
-Diariamente:
+1. aprovar RPO, RTO e retenção conforme volume, receita e obrigações legais;
+2. comprovar backup/PITR disponível no plano contratado;
+3. restaurar em projeto isolado e executar migrations, RLS, read models e smoke;
+4. definir inventário e recuperação de objetos do Storage quando mídia real existir;
+5. registrar duração, lacunas e ação corretiva do ensaio.
 
-- Supabase CLI/`pg_dump` lógico;
-- schema e data com opções compatíveis;
-- checksum;
-- criptografia;
-- upload OCI Object Storage;
-- manifesto com migration head;
-- alerta em falha.
+Nunca se ensaia restore sobre produção. Mudança destrutiva futura exige backup atual e restore
+comprovado antes da migration.
 
-Backups do provider não substituem cópia operacional do projeto.
+## Recuperação da VM
 
-## 3. Storage
+1. provisionar o shape aprovado, reassociar o IPv4 reservado e confirmar que NSG e subnet expõem
+   somente `22`, `80` e `443`;
+2. pela Console/Serial Console autenticada da OCI, executar
+   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` e
+   `awk '{print "147.15.97.227 " $1 " " $2}' /etc/ssh/ssh_host_ed25519_key.pub`; comparar o fingerprint
+   fora da conexão SSH e só então substituir `PRD_VM_SSH_HOST_KEY` no GitHub. `ssh-keyscan` isolado não
+   autentica uma chave nova;
+3. executar o bootstrap versionado com a chave pública do deployer. Sem certificado, o estado esperado
+   é Nginx em HTTP fail-closed servindo apenas `/.well-known/acme-challenge/`;
+4. emitir o certificado público antes de qualquer release:
 
-Backups do banco não cobrem objetos.
+   ```bash
+   sudo /snap/bin/certbot certonly \
+     --preferred-profile shortlived \
+     --webroot \
+     --webroot-path /var/www/set-livre-acme \
+     --ip-address 147.15.97.227 \
+     --non-interactive \
+     --agree-tos \
+     --email <email-operacional>
+   sudo openssl x509 -checkend 86400 -noout \
+     -in /etc/letsencrypt/live/147.15.97.227/fullchain.pem
+   sudo openssl x509 -noout -ext subjectAltName \
+     -in /etc/letsencrypt/live/147.15.97.227/fullchain.pem \
+     | grep --fixed-strings 'IP Address:147.15.97.227'
+   ```
 
-Estratégia:
+5. reexecutar o mesmo bootstrap para que ele valide SAN/validade, ative o template TLS e instale o hook
+   de renovação; confirmar `sudo nginx -t` e executar, sem `-k`,
+   `curl --fail --show-error https://147.15.97.227/robots.txt`;
+6. confirmar as variáveis e secrets do environment `production`; abrir **Actions → CI and production
+   delivery → Run workflow**, selecionar `main`, marcar `deploy_production`, copiar o SHA completo atual
+   de `main` para `release_sha` e executar. O workflow só publica quando input, `github.sha`, branch,
+   flag de deploy e gates completos convergem; validar então os dois readiness internos, o HTTPS público
+   e o SHA em `current`;
+7. reapontar DNS somente quando houver uma mudança de go-live aprovada. Na fase atual o domínio continua
+   deliberadamente sem apontamento.
 
-- inventário diário de `studio-media`;
-- cópia incremental para OCI Object Storage até limite/custo;
-- checksum;
-- associação media ID/path;
-- teste de amostra.
+Essa ordem é obrigatória: o workflow usa `StrictHostKeyChecking=yes`, e o instalador exige readiness
+HTTPS durante a ativação. Publicar antes de renovar a confiança SSH ou antes da primeira emissão TLS
+falha fechado; nunca se contorna nenhuma dessas verificações.
 
-Se volume ultrapassar Object Storage Always Free, migrar para tier pago; não deixar mídia sem backup por manter custo zero.
-
-## 4. Configuração
-
-Backup seguro de:
-
-- Nginx;
-- systemd;
-- scripts de deploy;
-- manifests;
-- lista de secrets/owners sem valores;
-- DNS/cert procedures.
-
-Código está no Git e artifacts.
-
-## 5. Restore DB
-
-1. abrir incidente;
-2. definir ponto;
-3. criar projeto/DB de restore isolado;
-4. aplicar versão compatível;
-5. restaurar;
-6. validar checks;
-7. rodar smoke/read models/RLS;
-8. reconciliar Storage;
-9. definir cutover;
-10. rotacionar credenciais se necessário.
-
-Nunca testar restore em produção.
-
-## 6. Restore mídia
-
-- comparar inventário;
-- restaurar paths;
-- verificar checksum;
-- garantir policies;
-- invalidar cache se path alterou;
-- registrar lacunas.
-
-## 7. VM perdida
-
-1. provisionar nova ARM64;
-2. hardening;
-3. instalar Node/Nginx/systemd;
-4. restaurar env via cofre;
-5. baixar release SHA;
-6. configurar DNS;
-7. health;
-8. reativar workers;
-9. verificar idempotência/filas.
-
-Como dados canônicos estão no Supabase, perda da VM não deve perder domínio; pode haver logs locais ainda não exportados.
-
-## 8. Teste
-
-Relatório de restore contém:
-
-- backup;
-- data;
-- duração;
-- passos;
-- falhas;
-- RPO/RTO observado;
-- checks de reserva/pagamento/mídia;
-- ação corretiva.
+Perda da VM não pode causar perda de domínio. Logs locais que precisem sobreviver ao host exigirão um
+destino externo aprovado antes do go-live.

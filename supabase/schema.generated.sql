@@ -624,8 +624,8 @@ ALTER FUNCTION "private"."bootstrap_user_preferences"() OWNER TO "postgres";
 CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
-    AS $$
-  with runtime_role as (
+    AS $_$
+  with dal_role as (
     select role.oid
     from pg_catalog.pg_roles as role
     where role.rolname = 'app_dal'
@@ -639,863 +639,287 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
       and role.rolconfig is null
       and not exists (
         select 1
-        from pg_catalog.pg_db_role_setting as setting
-        where setting.setrole = role.oid
+        from pg_catalog.pg_auth_members as membership
+        where membership.member = role.oid
+      )
+      and not exists (
+        select 1
+        from pg_catalog.pg_shdepend as dependency
+        where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+          and dependency.refobjid = role.oid
+          and dependency.deptype = 'o'
+      )
+  ),
+  trusted_owner as (
+    select role.oid
+    from pg_catalog.pg_roles as role
+    where role.rolname = 'postgres'
+  ),
+  migration_is_applied as (
+    select
+      expected_version ~ '^[0-9]{14}$'
+      and exists (
+        select 1
+        from supabase_migrations.schema_migrations as migration
+        where migration.version = expected_version
+      ) as ready
+  ),
+  authorized_dal_routines(oid) as (
+    values
+      (pg_catalog.to_regprocedure('private.activate_owner(uuid,uuid,uuid,uuid,text)')),
+      (pg_catalog.to_regprocedure('private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])')),
+      (pg_catalog.to_regprocedure('private.check_readiness(text)')),
+      (pg_catalog.to_regprocedure('private.check_runtime_readiness(text)')),
+      (pg_catalog.to_regprocedure('private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.close_identity_recovery_session(uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.complete_profile(uuid,bigint,text,text,text,text,text)')),
+      (pg_catalog.to_regprocedure('private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)')),
+      (pg_catalog.to_regprocedure('private.get_owner_recipient_status_for_user(uuid)')),
+      (pg_catalog.to_regprocedure('private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.issue_identity_recovery_context(uuid,uuid,timestamptz)')),
+      (pg_catalog.to_regprocedure('private.prepare_owner_recipient_operation(uuid,text,uuid)')),
+      (pg_catalog.to_regprocedure('private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)')),
+      (pg_catalog.to_regprocedure('private.update_profile_appearance(uuid,bigint,text)')),
+      (pg_catalog.to_regprocedure('private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'))
+  ),
+  private_ownership_is_trusted as (
+    select
+      exists (
+        select 1
+        from pg_catalog.pg_namespace as namespace
+        cross join trusted_owner
+        where namespace.nspname = 'private'
+          and namespace.nspowner = trusted_owner.oid
+      )
+      and not exists (
+        select 1
+        from pg_catalog.pg_proc as routine
+        join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+        cross join trusted_owner
+        where namespace.nspname = 'private'
+          and routine.proowner <> trusted_owner.oid
+      ) as ready
+  ),
+  authorized_dal_routine_attributes_are_trusted as (
+    select not exists (
+      select 1
+      from authorized_dal_routines as authorized
+      left join pg_catalog.pg_proc as routine on routine.oid = authorized.oid
+      where routine.oid is null
+        or not routine.prosecdef
+        or routine.proconfig is distinct from array['search_path=""']::text[]
+    ) as ready
+  ),
+  direct_schema_grants_are_restricted as (
+    select
+      pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid) = 1
+      and coalesce(
+        pg_catalog.bool_and(
+          privilege.grantee = trusted_owner.oid
+          or (
+            privilege.grantee = dal_role.oid
+            and privilege.privilege_type = 'USAGE'
+            and not privilege.is_grantable
+          )
+        ),
+        false
+      ) as ready
+    from pg_catalog.pg_namespace as namespace
+    cross join lateral pg_catalog.aclexplode(namespace.nspacl) as privilege
+    cross join dal_role
+    cross join trusted_owner
+    where namespace.nspname = 'private'
+  ),
+  effective_external_schema_access_is_absent as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_namespace as namespace
+      where namespace.nspname <> 'private'
+        and namespace.nspname <> 'information_schema'
+        and namespace.nspname !~ '^pg_'
+        and (
+          pg_catalog.has_schema_privilege('app_dal', namespace.oid, 'USAGE')
+          or pg_catalog.has_schema_privilege('app_dal', namespace.oid, 'CREATE')
+        )
+    ) as ready
+  ),
+  direct_routine_grants_are_restricted as (
+    select
+      pg_catalog.count(*) filter (where privilege.grantee = dal_role.oid)
+        = (select pg_catalog.count(*) from authorized_dal_routines)
+      and coalesce(
+        pg_catalog.bool_and(
+          privilege.grantee = trusted_owner.oid
+          or (
+            privilege.grantee = dal_role.oid
+            and routine.oid in (select authorized.oid from authorized_dal_routines as authorized)
+            and privilege.privilege_type = 'EXECUTE'
+            and not privilege.is_grantable
+          )
+        ),
+        false
+      )
+      and not exists (
+        select 1
+        from authorized_dal_routines as authorized
+        where authorized.oid is null
+      ) as ready
+    from pg_catalog.pg_proc as routine
+    join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
+    cross join dal_role
+    cross join trusted_owner
+    where namespace.nspname = 'private'
+  ),
+  effective_private_routine_grants_are_restricted as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_proc as routine
+      join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+      where namespace.nspname = 'private'
+        and (
+          pg_catalog.has_function_privilege('app_dal', routine.oid, 'EXECUTE')
+            <> (routine.oid in (select authorized.oid from authorized_dal_routines as authorized))
+          or pg_catalog.has_function_privilege(
+            'app_dal',
+            routine.oid,
+            'EXECUTE WITH GRANT OPTION'
+          )
+        )
+    ) as ready
+  ),
+  direct_data_grants_are_absent as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_class as relation
+      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+      cross join lateral pg_catalog.aclexplode(relation.relacl) as privilege
+      cross join dal_role
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
+
+      union all
+
+      select 1
+      from pg_catalog.pg_attribute as attribute
+      join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+      cross join lateral pg_catalog.aclexplode(attribute.attacl) as privilege
+      cross join dal_role
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
+
+      union all
+
+      select 1
+      from pg_catalog.pg_type as type_object
+      join pg_catalog.pg_namespace as namespace on namespace.oid = type_object.typnamespace
+      cross join lateral pg_catalog.aclexplode(type_object.typacl) as privilege
+      cross join dal_role
+      where namespace.nspname in ('audit', 'private', 'public')
+        and privilege.grantee in (0, dal_role.oid)
+
+      union all
+
+      select 1
+      from pg_catalog.pg_default_acl as defaults
+      left join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+      cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as privilege
+      cross join dal_role
+      where defaults.defaclrole = (
+          select role.oid from pg_catalog.pg_roles as role where role.rolname = 'postgres'
+        )
+        and (defaults.defaclnamespace = 0 or namespace.nspname in ('audit', 'private', 'public'))
+        and privilege.grantee in (0, dal_role.oid)
+    ) as ready
+  ),
+  dal_memberships_are_restricted as (
+    select
+      exists (
+        select 1
+        from pg_catalog.pg_auth_members as membership
+        join pg_catalog.pg_roles as member on member.oid = membership.member
+        where membership.roleid = dal_role.oid
+          and member.rolname = 'app_runtime_production'
+          and not membership.admin_option
+          and not membership.inherit_option
+          and membership.set_option
       )
       and not exists (
         select 1
         from pg_catalog.pg_auth_members as membership
-        where membership.member = role.oid
-      )
-  ),
-  jwt_expiry_pinned as (
-    select pg_catalog.current_setting('app.settings.jwt_exp', true)
-      is not distinct from '3600' as restricted
-  ),
-  authorized_acl_dependencies as (
-    select
-      pg_catalog.count(*) = 17
-      and pg_catalog.bool_and(
-        (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regnamespace('private')
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure('private.check_readiness(text)')
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.check_runtime_readiness(text)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.issue_identity_recovery_context(uuid,uuid,timestamptz)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.close_identity_recovery_session(uuid,uuid)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.complete_profile(uuid,bigint,text,text,text,text,text)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid = pg_catalog.to_regprocedure(
-            'private.update_profile_appearance(uuid,bigint,text)'
-          )
-          and dependency.objsubid = 0
-        )
-        or (
-          dependency.dbid = (
-            select database.oid
-            from pg_catalog.pg_database as database
-            where database.datname = pg_catalog.current_database()
-          )
-          and dependency.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-          and dependency.objid in (
-            pg_catalog.to_regprocedure(
-              'private.get_owner_recipient_status_for_user(uuid)'
-            ),
-            pg_catalog.to_regprocedure(
-              'private.activate_owner(uuid,uuid,uuid,uuid,text)'
-            ),
-            pg_catalog.to_regprocedure(
-              'private.prepare_owner_recipient_operation(uuid,text,uuid)'
-            ),
-            pg_catalog.to_regprocedure(
-              'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
-            )
-          )
-          and dependency.objsubid = 0
-        )
-      ) as restricted
-    from pg_catalog.pg_shdepend as dependency
-    join runtime_role on runtime_role.oid = dependency.refobjid
-    where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
-      and dependency.deptype = 'a'
-  ),
-  authorized_schema_privilege as (
-    select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        privilege.grantee = runtime_role.oid
-        and privilege.grantor <> runtime_role.oid
-        and privilege.privilege_type = 'USAGE'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_namespace as namespace
-    cross join lateral pg_catalog.aclexplode(namespace.nspacl) as privilege
-    cross join runtime_role
-    where namespace.oid = pg_catalog.to_regnamespace('private')
-      and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
-  ),
-  authorized_routine_privilege as (
-    select
-      pg_catalog.count(*) = 16
-      and pg_catalog.bool_and(
-        privilege.grantee = runtime_role.oid
-        and privilege.grantor <> runtime_role.oid
-        and privilege.privilege_type = 'EXECUTE'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_proc as routine
-    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
-    cross join runtime_role
-    where routine.oid in (
-        pg_catalog.to_regprocedure('private.check_readiness(text)'),
-        pg_catalog.to_regprocedure('private.check_runtime_readiness(text)'),
-        pg_catalog.to_regprocedure(
-          'private.create_signup_legal_intent(uuid,uuid,text,uuid,jsonb)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.issue_identity_recovery_context(uuid,uuid,timestamptz)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.inspect_identity_recovery_session(uuid,uuid,timestamptz,uuid,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.claim_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.release_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.consume_identity_recovery_context(uuid,uuid,uuid,uuid,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.close_identity_recovery_session(uuid,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.complete_profile(uuid,bigint,text,text,text,text,text)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.update_profile_identity(uuid,bigint,text,text,boolean,text,boolean,text)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.update_profile_appearance(uuid,bigint,text)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.get_owner_recipient_status_for_user(uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.activate_owner(uuid,uuid,uuid,uuid,text)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.prepare_owner_recipient_operation(uuid,text,uuid)'
-        ),
-        pg_catalog.to_regprocedure(
-          'private.apply_owner_recipient_operation(uuid,uuid,uuid,text,text,text,text[])'
-        )
-      )
-      and (privilege.grantee = runtime_role.oid or privilege.grantor = runtime_role.oid)
-  ),
-  public_schema_privileges_restricted as (
-    select
-      pg_catalog.count(*) = 2
-      and pg_catalog.bool_and(
-        namespace.nspname in ('information_schema', 'pg_catalog')
-        and privilege.grantor = namespace.nspowner
-        and privilege.privilege_type = 'USAGE'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_namespace as namespace
-    cross join lateral pg_catalog.aclexplode(
-      coalesce(
-        namespace.nspacl,
-        pg_catalog.acldefault('n', namespace.nspowner)
-      )
-    ) as privilege
-    where privilege.grantee = 0
-  ),
-  public_database_privileges_restricted as (
-    select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        privilege.grantor = database.datdba
-        and privilege.privilege_type = 'CONNECT'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_database as database
-    cross join lateral pg_catalog.aclexplode(
-      coalesce(database.datacl, pg_catalog.acldefault('d', database.datdba))
-    ) as privilege
-    where database.datname = pg_catalog.current_database()
-      and privilege.grantee = 0
-  ),
-  runtime_role_temporary_privilege_restricted as (
-    select not pg_catalog.has_database_privilege(
-      runtime_role.oid,
-      pg_catalog.current_database(),
-      'TEMPORARY'
-    ) as restricted
-    from runtime_role
-  ),
-  public_default_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_default_acl as defaults
-      cross join lateral pg_catalog.aclexplode(defaults.defaclacl) as privilege
-      where privilege.grantee = 0
-    ) as restricted
-  ),
-  public_large_object_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_largeobject_metadata as large_object
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(
-          large_object.lomacl,
-          pg_catalog.acldefault('L', large_object.lomowner)
-        )
-      ) as privilege
-      where privilege.grantee = 0
-    ) as restricted
-  ),
-  public_parameter_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_parameter_acl as parameter
-      cross join lateral pg_catalog.aclexplode(parameter.paracl) as privilege
-      where privilege.grantee = 0
-    ) as restricted
-  ),
-  public_foreign_data_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_foreign_data_wrapper as wrapper
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(wrapper.fdwacl, pg_catalog.acldefault('F', wrapper.fdwowner))
-      ) as privilege
-      where privilege.grantee = 0
-
-      union all
-
-      select 1
-      from pg_catalog.pg_foreign_server as server
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(server.srvacl, pg_catalog.acldefault('S', server.srvowner))
-      ) as privilege
-      where privilege.grantee = 0
-    ) as restricted
-  ),
-  public_tablespace_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_tablespace as tablespace
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(
-          tablespace.spcacl,
-          pg_catalog.acldefault('t', tablespace.spcowner)
-        )
-      ) as privilege
-      where privilege.grantee = 0
-    ) as restricted
-  ),
-  public_language_privileges_restricted as (
-    select
-      pg_catalog.count(*) = 4
-      and pg_catalog.bool_and(
-        language.lanname in ('c', 'internal', 'plpgsql', 'sql')
-        and privilege.grantor = language.lanowner
-        and privilege.privilege_type = 'USAGE'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_language as language
-    cross join lateral pg_catalog.aclexplode(
-      coalesce(language.lanacl, pg_catalog.acldefault('l', language.lanowner))
-    ) as privilege
-    where privilege.grantee = 0
-  ),
-  sensitive_catalog_relations as (
-    select relation.oid, relation.relowner
-    from pg_catalog.pg_class as relation
-    where relation.oid in (
-      'pg_catalog.pg_db_role_setting'::pg_catalog.regclass,
-      'pg_catalog.pg_roles'::pg_catalog.regclass,
-      'pg_catalog.pg_user'::pg_catalog.regclass
-    )
-  ),
-  sensitive_catalog_privileges_restricted as (
-    select
-      (
-        select pg_catalog.count(*) = 3
-          and pg_catalog.bool_and(
-            relation.relowner = (
-              select role.oid
-              from pg_catalog.pg_roles as role
-              where role.rolname = 'supabase_admin'
-            )
-          )
-        from sensitive_catalog_relations as relation
-      )
-      and (
-        select pg_catalog.count(*) = 3
-          and pg_catalog.bool_and(
-            privilege.grantor = relation.relowner
-            and privilege.privilege_type = 'SELECT'
-            and not privilege.is_grantable
-          )
-        from sensitive_catalog_relations as relation
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            (select catalog.relacl from pg_catalog.pg_class as catalog where catalog.oid = relation.oid),
-            pg_catalog.acldefault('r', relation.relowner)
-          )
-        ) as privilege
-        where privilege.grantee = (
-          select role.oid
-          from pg_catalog.pg_roles as role
-          where role.rolname = 'postgres'
-        )
-      )
-      and not exists (
-        select 1
-        from sensitive_catalog_relations as relation
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            (select catalog.relacl from pg_catalog.pg_class as catalog where catalog.oid = relation.oid),
-            pg_catalog.acldefault('r', relation.relowner)
-          )
-        ) as privilege
-        where not (
-          (
-            privilege.grantee = relation.relowner
-            and privilege.grantor = relation.relowner
-            and not privilege.is_grantable
-          )
-          or (
-            privilege.grantee = (
-              select role.oid
-              from pg_catalog.pg_roles as role
-              where role.rolname = 'postgres'
-            )
-            and privilege.grantor = relation.relowner
-            and privilege.privilege_type = 'SELECT'
-            and not privilege.is_grantable
-          )
-        )
-      )
-      and not exists (
-        select 1
-        from sensitive_catalog_relations as relation
-        join pg_catalog.pg_attribute as attribute on attribute.attrelid = relation.oid
-        cross join lateral pg_catalog.aclexplode(attribute.attacl) as privilege
-        where attribute.attnum > 0
-          and not attribute.attisdropped
-      )
-      and not exists (
-        select 1
-        from sensitive_catalog_relations as relation
-        cross join pg_catalog.pg_roles as role
-        where (
-            role.rolname in (
-              'anon',
-              'app_dal',
-              'authenticated',
-              'service_role'
+        join pg_catalog.pg_roles as member on member.oid = membership.member
+        where membership.roleid = dal_role.oid
+          and not (
+            (
+              member.rolname = 'app_runtime_production'
+              and not membership.admin_option
+              and not membership.inherit_option
+              and membership.set_option
             )
             or (
-              role.rolname = session_user
-              and role.rolname not in ('postgres', 'supabase_admin')
-            )
-          )
-          and (
-            pg_catalog.has_table_privilege(role.oid, relation.oid, 'SELECT')
-            or pg_catalog.has_any_column_privilege(role.oid, relation.oid, 'SELECT')
-          )
-      ) as restricted
-  ),
-  public_catalog_relation_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_class as relation
-      join pg_catalog.pg_namespace as namespace
-        on namespace.oid = relation.relnamespace
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(
-          relation.relacl,
-          pg_catalog.acldefault(
-            case
-              when relation.relkind = 'S'
-                then 's'::pg_catalog."char"
-              else 'r'::pg_catalog."char"
-            end,
-            relation.relowner
-          )
-        )
-      ) as current_privilege
-      where namespace.nspname = 'pg_catalog'
-        and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-        and current_privilege.grantee = 0
-        and not exists (
-          select 1
-          from pg_catalog.pg_init_privs as initial_acl
-          cross join lateral pg_catalog.aclexplode(
-            initial_acl.initprivs
-          ) as initial_privilege
-          where initial_acl.classoid =
-              'pg_catalog.pg_class'::pg_catalog.regclass
-            and initial_acl.objoid = relation.oid
-            and initial_acl.objsubid = 0
-            and initial_acl.privtype in ('i', 'e')
-            and initial_privilege.grantee = 0
-            and initial_privilege.privilege_type =
-              current_privilege.privilege_type
-            and (
-              not current_privilege.is_grantable
-              or initial_privilege.is_grantable
-            )
-        )
-
-      union all
-
-      select 1
-      from pg_catalog.pg_class as relation
-      join pg_catalog.pg_namespace as namespace
-        on namespace.oid = relation.relnamespace
-      join pg_catalog.pg_attribute as attribute
-        on attribute.attrelid = relation.oid
-      cross join lateral pg_catalog.aclexplode(
-        attribute.attacl
-      ) as current_privilege
-      where namespace.nspname = 'pg_catalog'
-        and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-        and attribute.attnum > 0
-        and not attribute.attisdropped
-        and current_privilege.grantee = 0
-        and not exists (
-          select 1
-          from pg_catalog.pg_init_privs as initial_acl
-          cross join lateral pg_catalog.aclexplode(
-            initial_acl.initprivs
-          ) as initial_privilege
-          where initial_acl.classoid =
-              'pg_catalog.pg_class'::pg_catalog.regclass
-            and initial_acl.objoid = relation.oid
-            and initial_acl.objsubid in (0, attribute.attnum)
-            and initial_acl.privtype in ('i', 'e')
-            and initial_privilege.grantee = 0
-            and initial_privilege.privilege_type =
-              current_privilege.privilege_type
-            and (
-              not current_privilege.is_grantable
-              or initial_privilege.is_grantable
-            )
-        )
-    ) as restricted
-  ),
-  implicit_catalog_routine_owners_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_proc as routine
-      join pg_catalog.pg_namespace as namespace
-        on namespace.oid = routine.pronamespace
-      left join pg_catalog.pg_depend as dependency
-        on dependency.classid =
-            'pg_catalog.pg_proc'::pg_catalog.regclass
-        and dependency.objid = routine.oid
-        and dependency.objsubid = 0
-        and dependency.refclassid =
-            'pg_catalog.pg_extension'::pg_catalog.regclass
-        and dependency.deptype = 'e'
-      left join pg_catalog.pg_extension as extension
-        on extension.oid = dependency.refobjid
-      where namespace.nspname = 'pg_catalog'
-        and not exists (
-          select 1
-          from pg_catalog.pg_init_privs as initial_acl
-          where initial_acl.classoid =
-              'pg_catalog.pg_proc'::pg_catalog.regclass
-            and initial_acl.objoid = routine.oid
-            and initial_acl.objsubid = 0
-            and initial_acl.privtype in ('i', 'e')
-        )
-        and (
-          (
-            extension.oid is not null
-            and routine.proowner <> extension.extowner
-          )
-          or (
-            extension.oid is null
-            and routine.oid < 16384
-            and routine.proowner <> 10
-          )
-        )
-    ) as restricted
-  ),
-  public_catalog_routine_privileges_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_proc as routine
-      join pg_catalog.pg_namespace as namespace
-        on namespace.oid = routine.pronamespace
-      left join pg_catalog.pg_depend as dependency
-        on dependency.classid =
-            'pg_catalog.pg_proc'::pg_catalog.regclass
-        and dependency.objid = routine.oid
-        and dependency.objsubid = 0
-        and dependency.refclassid =
-            'pg_catalog.pg_extension'::pg_catalog.regclass
-        and dependency.deptype = 'e'
-      left join pg_catalog.pg_extension as extension
-        on extension.oid = dependency.refobjid
-      cross join lateral pg_catalog.aclexplode(
-        coalesce(
-          routine.proacl,
-          pg_catalog.acldefault('f', routine.proowner)
-        )
-      ) as current_privilege
-      where namespace.nspname = 'pg_catalog'
-        and current_privilege.grantee = 0
-        and not (
-          exists (
-            select 1
-            from pg_catalog.pg_init_privs as initial_acl
-            cross join lateral pg_catalog.aclexplode(
-              initial_acl.initprivs
-            ) as initial_privilege
-            where initial_acl.classoid =
-                'pg_catalog.pg_proc'::pg_catalog.regclass
-              and initial_acl.objoid = routine.oid
-              and initial_acl.objsubid = 0
-              and initial_acl.privtype in ('i', 'e')
-              and initial_privilege.grantee = current_privilege.grantee
-              and initial_privilege.grantor = current_privilege.grantor
-              and initial_privilege.privilege_type =
-                current_privilege.privilege_type
-              and (
-                not current_privilege.is_grantable
-                or initial_privilege.is_grantable
-              )
-          )
-          or (
-            not exists (
-              select 1
-              from pg_catalog.pg_init_privs as initial_acl
-              where initial_acl.classoid =
-                  'pg_catalog.pg_proc'::pg_catalog.regclass
-                and initial_acl.objoid = routine.oid
-                and initial_acl.objsubid = 0
-                and initial_acl.privtype in ('i', 'e')
-            )
-            and (
-              (
-                extension.oid is not null
-                and routine.proowner = extension.extowner
-                and exists (
-                  select 1
-                  from pg_catalog.aclexplode(
-                    pg_catalog.acldefault('f', extension.extowner)
-                  ) as initial_privilege
-                  where initial_privilege.grantee =
-                      current_privilege.grantee
-                    and initial_privilege.grantor =
-                      current_privilege.grantor
-                    and initial_privilege.privilege_type =
-                      current_privilege.privilege_type
-                    and (
-                      not current_privilege.is_grantable
-                      or initial_privilege.is_grantable
-                    )
-                )
-              )
-              or (
-                extension.oid is null
-                and routine.oid < 16384
-                and routine.proowner = 10
-                and exists (
-                  select 1
-                  from pg_catalog.aclexplode(
-                    pg_catalog.acldefault('f', 10::pg_catalog.oid)
-                  ) as initial_privilege
-                  where initial_privilege.grantee =
-                      current_privilege.grantee
-                    and initial_privilege.grantor =
-                      current_privilege.grantor
-                    and initial_privilege.privilege_type =
-                      current_privilege.privilege_type
-                    and (
-                      not current_privilege.is_grantable
-                      or initial_privilege.is_grantable
-                    )
-                )
+              member.rolname = 'app_runtime_local'
+              and not membership.admin_option
+              and not membership.inherit_option
+              and membership.set_option
+              and exists (
+                select 1
+                from pg_catalog.pg_database as database
+                where database.datname = pg_catalog.current_database()
+                  and pg_catalog.shobj_description(database.oid, 'pg_database')
+                    like 'set-livre-e2e:%'
               )
             )
-          )
-        )
-    ) as restricted
-  ),
-  database_global_settings_restricted as (
-    select not exists (
-      select 1
-      from pg_catalog.pg_db_role_setting as setting
-      cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
-      where setting.setrole = 0
-        and setting.setdatabase = (
-          select database.oid
-          from pg_catalog.pg_database as database
-          where database.datname = pg_catalog.current_database()
-        )
-        and pg_catalog.split_part(configuration.value, '=', 1)
-          not in ('app.settings.jwt_exp', 'app.settings.jwt_secret')
-    ) as restricted
-  ),
-  public_private_object_privileges_restricted as (
-    select not exists (
-      select 1
-      from (
-        select privilege.grantee
-        from pg_catalog.pg_class as relation
-        join pg_catalog.pg_namespace as namespace
-          on namespace.oid = relation.relnamespace
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            relation.relacl,
-            pg_catalog.acldefault(
-              case
-                when relation.relkind = 'S'
-                  then 's'::pg_catalog."char"
-                else 'r'::pg_catalog."char"
-              end,
-              relation.relowner
+            or (
+              member.rolname = 'postgres'
+              and membership.admin_option
+              and not membership.inherit_option
+              and not membership.set_option
             )
           )
-        ) as privilege
-        where namespace.nspname = 'private'
-          and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-
-        union all
-
-        select privilege.grantee
-        from pg_catalog.pg_attribute as attribute
-        join pg_catalog.pg_class as relation
-          on relation.oid = attribute.attrelid
-        join pg_catalog.pg_namespace as namespace
-          on namespace.oid = relation.relnamespace
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            attribute.attacl,
-            pg_catalog.acldefault('c', relation.relowner)
-          )
-        ) as privilege
-        where namespace.nspname = 'private'
-          and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-          and attribute.attnum > 0
-          and not attribute.attisdropped
-
-        union all
-
-        select privilege.grantee
-        from pg_catalog.pg_proc as routine
-        join pg_catalog.pg_namespace as namespace
-          on namespace.oid = routine.pronamespace
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            routine.proacl,
-            pg_catalog.acldefault('f', routine.proowner)
-          )
-        ) as privilege
-        where namespace.nspname = 'private'
-
-        union all
-
-        select privilege.grantee
-        from pg_catalog.pg_type as type_object
-        join pg_catalog.pg_namespace as namespace
-          on namespace.oid = type_object.typnamespace
-        cross join lateral pg_catalog.aclexplode(
-          coalesce(
-            type_object.typacl,
-            pg_catalog.acldefault('T', type_object.typowner)
-          )
-        ) as privilege
-        where namespace.nspname = 'private'
-          and not exists (
-            select 1
-            from pg_catalog.pg_type as element_type
-            where element_type.typarray = type_object.oid
-          )
-          and not exists (
-            select 1
-            from pg_catalog.pg_range as range_type
-            where range_type.rngmultitypid = type_object.oid
-          )
-          and (
-            type_object.typrelid = 0
-            or exists (
-              select 1
-              from pg_catalog.pg_class as composite_relation
-              where composite_relation.oid = type_object.typrelid
-                and composite_relation.relkind = 'c'
-            )
-          )
-      ) as private_object_privilege
-      where private_object_privilege.grantee = 0
-    ) as restricted
+      ) as ready
+    from dal_role
+  ),
+  public_tables_use_rls as (
+    select coalesce(pg_catalog.bool_and(relation.relrowsecurity), true) as ready
+    from pg_catalog.pg_class as relation
+    join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relkind in ('p', 'r')
   )
   select coalesce(
-    (
-      select pg_catalog.max(schema_migrations.version)::text = expected_version
-      from supabase_migrations.schema_migrations
-    )
-    and (select restricted from jwt_expiry_pinned)
-    and (select restricted from authorized_acl_dependencies)
-    and (select restricted from authorized_schema_privilege)
-    and (select restricted from authorized_routine_privilege)
-    and (select restricted from public_schema_privileges_restricted)
-    and (select restricted from public_database_privileges_restricted)
-    and (select restricted from runtime_role_temporary_privilege_restricted)
-    and (select restricted from public_default_privileges_restricted)
-    and (select restricted from public_large_object_privileges_restricted)
-    and (select restricted from public_parameter_privileges_restricted)
-    and (select restricted from public_foreign_data_privileges_restricted)
-    and (select restricted from public_tablespace_privileges_restricted)
-    and (select restricted from public_language_privileges_restricted)
-    and (select restricted from sensitive_catalog_privileges_restricted)
-    and (select restricted from public_catalog_relation_privileges_restricted)
-    and (select restricted from implicit_catalog_routine_owners_restricted)
-    and (select restricted from public_catalog_routine_privileges_restricted)
-    and (select restricted from database_global_settings_restricted)
-    and (select restricted from public_private_object_privileges_restricted)
-    and not exists (
-      select 1
-      from pg_catalog.pg_shdepend as dependency
-      join runtime_role on runtime_role.oid = dependency.refobjid
-      where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
-        and dependency.deptype = 'o'
+    (select ready from migration_is_applied)
+    and pg_catalog.current_setting('app.settings.jwt_exp', true) = '3600'
+    and (select ready from private_ownership_is_trusted)
+    and (select ready from authorized_dal_routine_attributes_are_trusted)
+    and (select ready from direct_schema_grants_are_restricted)
+    and (select ready from effective_external_schema_access_is_absent)
+    and (select ready from direct_routine_grants_are_restricted)
+    and (select ready from effective_private_routine_grants_are_restricted)
+    and (select ready from direct_data_grants_are_absent)
+    and (select ready from dal_memberships_are_restricted)
+    and (select ready from public_tables_use_rls)
+    and private.managed_runtime_boundaries_are_ready()
+    and not pg_catalog.has_schema_privilege('public', 'public', 'CREATE')
+    and not pg_catalog.has_schema_privilege('anon', 'public', 'CREATE')
+    and not pg_catalog.has_schema_privilege('authenticated', 'public', 'CREATE')
+    and not pg_catalog.has_schema_privilege('service_role', 'public', 'CREATE')
+    and not pg_catalog.has_schema_privilege('app_dal', 'public', 'CREATE')
+    and not pg_catalog.has_database_privilege(
+      'app_dal',
+      pg_catalog.current_database(),
+      'TEMPORARY'
     ),
     false
   );
-$$;
+$_$;
 
 
 ALTER FUNCTION "private"."check_readiness"("expected_version" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Valida migration head, superfície pública e manifesto exato da role DAL, incluindo cadastro e recovery.';
+COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health do app: migration aplicada e compatível com rollback, role DAL restrita ao schema private, RLS e allowlists exatas.';
 
 
 
@@ -1519,28 +943,60 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
       and role.rolvaliduntil = 'infinity'::timestamptz
       and role.rolconfig is null
       and (
-        select
-          pg_catalog.count(*) = 1
-          and pg_catalog.bool_and(
-            setting.setdatabase = (
-              select database.oid
-              from pg_catalog.pg_database as database
-              where database.datname = pg_catalog.current_database()
-            )
-            and setting.setconfig = array['app.settings.jwt_secret=']::text[]
+        (
+          role.rolname = 'app_runtime_production'
+          and (
+            select pg_catalog.count(*) = 0
+            from pg_catalog.pg_db_role_setting as setting
+            where setting.setrole = role.oid
           )
-        from pg_catalog.pg_db_role_setting as setting
-        where setting.setrole = role.oid
+        )
+        or (
+          role.rolname = 'app_runtime_local'
+          and (
+            select pg_catalog.count(*) = 1
+              and pg_catalog.bool_and(
+                setting.setdatabase = (
+                  select database.oid
+                  from pg_catalog.pg_database as database
+                  where database.datname = pg_catalog.current_database()
+                )
+                and setting.setconfig = array['app.settings.jwt_secret=']::text[]
+              )
+            from pg_catalog.pg_db_role_setting as setting
+            where setting.setrole = role.oid
+          )
+        )
       )
   ),
-  effective_role as (
-    select role.oid
-    from pg_catalog.pg_roles as role
-    where role.rolname = 'app_dal'
+  memberships_are_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        granted.rolname = 'app_dal'
+        and not membership.admin_option
+        and not membership.inherit_option
+        and membership.set_option
+      ) as ready
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    cross join session_role
+    where membership.member = session_role.oid
   ),
-  session_acl_dependencies as (
-    select
-      pg_catalog.count(*) = 1
+  direct_database_privilege_is_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        privilege.grantee = session_role.oid
+        and privilege.privilege_type = 'CONNECT'
+        and not privilege.is_grantable
+      ) as ready
+    from pg_catalog.pg_database as database
+    cross join lateral pg_catalog.aclexplode(database.datacl) as privilege
+    cross join session_role
+    where database.datname = pg_catalog.current_database()
+      and privilege.grantee = session_role.oid
+  ),
+  direct_acl_dependencies_are_restricted as (
+    select pg_catalog.count(*) = 1
       and pg_catalog.bool_and(
         dependency.dbid = 0
         and dependency.classid = 'pg_catalog.pg_database'::pg_catalog.regclass
@@ -1550,106 +1006,30 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
           where database.datname = pg_catalog.current_database()
         )
         and dependency.objsubid = 0
-      ) as restricted
+      ) as ready
     from pg_catalog.pg_shdepend as dependency
     cross join session_role
     where dependency.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
       and dependency.refobjid = session_role.oid
       and dependency.deptype = 'a'
-  ),
-  session_database_privilege as (
-    select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        privilege.grantee = session_role.oid
-        and privilege.grantor <> session_role.oid
-        and privilege.privilege_type = 'CONNECT'
-        and not privilege.is_grantable
-      ) as restricted
-    from pg_catalog.pg_database as database
-    cross join session_role
-    cross join lateral pg_catalog.aclexplode(database.datacl) as privilege
-    where database.datname = pg_catalog.current_database()
-      and (
-        privilege.grantee = session_role.oid
-        or privilege.grantor = session_role.oid
-      )
-  ),
-  temporary_privileges_restricted as (
-    select
-      not pg_catalog.has_database_privilege(
-        session_role.oid,
-        pg_catalog.current_database(),
-        'TEMPORARY'
-      )
-      and not pg_catalog.has_database_privilege(
-        effective_role.oid,
-        pg_catalog.current_database(),
-        'TEMPORARY'
-      ) as restricted
-    from session_role
-    cross join effective_role
-  ),
-  session_memberships as (
-    select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        granted.oid = effective_role.oid
-        and not membership.admin_option
-        and not membership.inherit_option
-        and membership.set_option
-      ) as restricted
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
-    cross join session_role
-    cross join effective_role
-    where membership.member = session_role.oid
-  ),
-  session_assumption as (
-    select
-      pg_catalog.count(*) = 1
-      and pg_catalog.bool_and(
-        member.rolname = 'postgres'
-        and membership.admin_option
-        and not membership.inherit_option
-        and not membership.set_option
-      ) as restricted
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    cross join session_role
-    where membership.roleid = session_role.oid
-  ),
-  effective_assumption as (
-    select
-      pg_catalog.count(*) = 2
-      and pg_catalog.bool_and(
-        (
-          member.oid = session_role.oid
-          and not membership.admin_option
-          and not membership.inherit_option
-          and membership.set_option
-        )
-        or (
-          member.rolname = 'postgres'
-          and membership.admin_option
-          and not membership.inherit_option
-          and not membership.set_option
-        )
-      ) as restricted
-    from pg_catalog.pg_auth_members as membership
-    join pg_catalog.pg_roles as member on member.oid = membership.member
-    cross join session_role
-    cross join effective_role
-    where membership.roleid = effective_role.oid
   )
   select coalesce(
     pg_catalog.current_setting('role', true) = 'app_dal'
-    and (select restricted from session_acl_dependencies)
-    and (select restricted from session_database_privilege)
-    and (select restricted from temporary_privileges_restricted)
-    and (select restricted from session_memberships)
-    and (select restricted from session_assumption)
-    and (select restricted from effective_assumption)
+    and pg_catalog.pg_has_role(session_user, 'app_dal', 'MEMBER')
+    and (select ready from memberships_are_restricted)
+    and (select ready from direct_database_privilege_is_restricted)
+    and (select ready from direct_acl_dependencies_are_restricted)
+    and private.managed_runtime_boundaries_are_ready()
+    and not pg_catalog.has_database_privilege(
+      session_user,
+      pg_catalog.current_database(),
+      'TEMPORARY'
+    )
+    and not pg_catalog.has_database_privilege(
+      'app_dal',
+      pg_catalog.current_database(),
+      'TEMPORARY'
+    )
     and not exists (
       select 1
       from pg_catalog.pg_shdepend as dependency
@@ -1666,7 +1046,7 @@ $$;
 ALTER FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Comprova identidade, manifesto mínimo do login DAL e ausência efetiva de TEMPORARY.';
+COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Health do login restrito: assume app_dal e possui somente CONNECT direto, sem ownership ou ACL adicional.';
 
 
 
@@ -2463,7 +1843,6 @@ CREATE OR REPLACE FUNCTION "private"."is_valid_cnpj"("candidate" "text") RETURNS
 declare
   first_weights constant integer[] := array[5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
   second_weights constant integer[] := array[6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-  position_index integer;
   character_value integer;
   digit_sum integer := 0;
   remainder integer;
@@ -2519,7 +1898,6 @@ CREATE OR REPLACE FUNCTION "private"."is_valid_cpf"("candidate" "text") RETURNS 
     SET "search_path" TO ''
     AS $_$
 declare
-  position_index integer;
   digit integer;
   digit_sum integer := 0;
   first_check_digit integer;
@@ -2727,6 +2105,125 @@ ALTER FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") OWN
 
 
 COMMENT ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") IS 'Purga grants expirados e emite token opaco vinculado ao usuário por 15 minutos.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+  with managed_roles(role_name) as (
+    values
+      ('anon'::text),
+      ('authenticated'::text),
+      ('service_role'::text),
+      ('app_dal'::text),
+      ('app_runtime_production'::text)
+  ),
+  sensitive_catalog_access_is_restricted as (
+    select not exists (
+      select 1
+      from (
+        values
+          ('pg_catalog.pg_db_role_setting'::pg_catalog.regclass),
+          ('pg_catalog.pg_roles'::pg_catalog.regclass),
+          ('pg_catalog.pg_user'::pg_catalog.regclass)
+      ) as catalog(relation_oid)
+      cross join managed_roles
+      where pg_catalog.has_table_privilege(
+          managed_roles.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+        or pg_catalog.has_any_column_privilege(
+          managed_roles.role_name,
+          catalog.relation_oid,
+          'SELECT'
+        )
+    ) as ready
+  ),
+  sensitive_settings_are_absent as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_db_role_setting as setting
+      cross join lateral pg_catalog.unnest(setting.setconfig) as configuration(value)
+      where pg_catalog.split_part(configuration.value, '=', 1)
+        ~* '(^|[._-])(secret|password|token|credential|key)([._-]|$)'
+    ) as ready
+  ),
+  managed_http_access_is_restricted as (
+    select not exists (
+      select 1
+      from pg_catalog.pg_namespace as namespace
+      cross join managed_roles
+      where namespace.nspname = 'net'
+        and (
+          pg_catalog.has_schema_privilege(
+            managed_roles.role_name,
+            namespace.oid,
+            'USAGE'
+          )
+          or pg_catalog.has_schema_privilege(
+            managed_roles.role_name,
+            namespace.oid,
+            'CREATE'
+          )
+      )
+    ) as ready
+  ),
+  application_database_access_is_restricted as (
+    select not exists (
+      select 1
+      from (
+        values
+          ('app_dal'::text),
+          ('app_runtime_production'::text)
+      ) as application_role(role_name)
+      where pg_catalog.has_database_privilege(
+          application_role.role_name,
+          pg_catalog.current_database(),
+          'CREATE'
+        )
+        or pg_catalog.has_database_privilege(
+          application_role.role_name,
+          pg_catalog.current_database(),
+          'TEMPORARY'
+        )
+    ) as ready
+  ),
+  production_runtime_members_are_restricted as (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        member.rolname = 'postgres'
+        and membership.admin_option
+        and not membership.inherit_option
+        and not membership.set_option
+      ) as ready
+    from pg_catalog.pg_auth_members as membership
+    join pg_catalog.pg_roles as granted on granted.oid = membership.roleid
+    join pg_catalog.pg_roles as member on member.oid = membership.member
+    where granted.rolname = 'app_runtime_production'
+  )
+  -- ADR-019 treats these as compensating safeguards: Supabase Cloud owns the managed catalogs as
+  -- supabase_admin, so the project role cannot remove every provider-managed read ACL. A readable
+  -- catalog is accepted only while no role/database setting has a sensitive name.
+  select coalesce(
+    (
+      (select ready from sensitive_catalog_access_is_restricted)
+      or (select ready from sensitive_settings_are_absent)
+    )
+    and (select ready from managed_http_access_is_restricted)
+    and (select ready from application_database_access_is_restricted)
+    and (select ready from production_runtime_members_are_restricted),
+    false
+  );
+$_$;
+
+
+ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos legíveis contêm setting sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
 
 
 
@@ -3928,7 +3425,7 @@ COMMENT ON TABLE "audit"."events" IS 'Eventos operacionais append-only; referên
 
 
 
-COMMENT ON COLUMN "audit"."events"."request_id" IS 'Correlação com o requestId seguro da API e dos logs; linhas anteriores a 20260815000100 conservam o valor legado sem inventar correlação.';
+COMMENT ON COLUMN "audit"."events"."request_id" IS 'Correlação com o requestId seguro da API e dos logs; não é chave de idempotência.';
 
 
 
@@ -4028,7 +3525,7 @@ CREATE TABLE IF NOT EXISTS "private"."owner_recipient_operations" (
     CONSTRAINT "owner_recipient_operations_operation_sequence_check" CHECK (("operation_sequence" >= 1)),
     CONSTRAINT "owner_recipient_operations_profile_version_check" CHECK (("profile_version" >= 0)),
     CONSTRAINT "owner_recipient_operations_provider_check" CHECK ((("provider" IS NULL) OR ("provider" = 'local'::"text"))),
-    CONSTRAINT "owner_recipient_operations_provider_reference_check" CHECK ((("provider_reference" IS NULL) OR ((("char_length"("provider_reference") >= 1) AND ("char_length"("provider_reference") <= 200)) AND ("provider_reference" !~ '[[:cntrl:]]'::"text") AND (("provider_reference" ~ '^local-recipient:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::"text") OR ("provider_reference" = ANY (ARRAY['local-test-fixture:refused'::"text", 'local-test-fixture:suspended'::"text", 'local-test-fixture:blocked'::"text", 'local-test-fixture:unavailable'::"text", 'local-test-fixture:timeout'::"text"])))))),
+    CONSTRAINT "owner_recipient_operations_provider_reference_check" CHECK ((("provider_reference" IS NULL) OR (("char_length"("provider_reference") >= 1) AND ("char_length"("provider_reference") <= 200) AND ("provider_reference" !~ '[[:cntrl:]]'::"text") AND (("provider_reference" ~ '^local-recipient:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::"text") OR ("provider_reference" = ANY (ARRAY['local-test-fixture:refused'::"text", 'local-test-fixture:suspended'::"text", 'local-test-fixture:blocked'::"text", 'local-test-fixture:unavailable'::"text", 'local-test-fixture:timeout'::"text"])))))),
     CONSTRAINT "owner_recipient_operations_result_pair_check" CHECK (((("applied_at" IS NULL) AND ("provider" IS NULL) AND ("result_status" IS NULL) AND ("result_requirements" IS NULL)) OR (("applied_at" IS NOT NULL) AND ("applied_at" >= "created_at") AND ("provider" = 'local'::"text") AND ("provider_reference" IS NOT NULL) AND ("result_status" IS NOT NULL) AND ("result_requirements" IS NOT NULL)))),
     CONSTRAINT "owner_recipient_operations_result_requirements_check" CHECK ((("result_requirements" IS NULL) OR (("cardinality"("result_requirements") <= 3) AND ("array_position"("result_requirements", NULL::"text") IS NULL) AND ("result_requirements" <@ ARRAY['identity_review'::"text", 'additional_information'::"text", 'provider_contact'::"text"]) AND (("cardinality"("result_requirements") < 2) OR ("result_requirements"[1] <> "result_requirements"[2])) AND (("cardinality"("result_requirements") < 3) OR (("result_requirements"[1] <> "result_requirements"[3]) AND ("result_requirements"[2] <> "result_requirements"[3])))))),
     CONSTRAINT "owner_recipient_operations_result_status_check" CHECK ((("result_status" IS NULL) OR ("result_status" = ANY (ARRAY['pending'::"text", 'active'::"text", 'refused'::"text", 'suspended'::"text", 'blocked'::"text"]))))
@@ -4141,11 +3638,11 @@ CASE
     ELSE ("repeat"('*'::"text", ("char_length"("additional_document") - 2)) || "right"("additional_document", 2))
 END) STORED,
     "profile_version" bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT "profiles_additional_document_shape_check" CHECK ((("additional_document" IS NULL) OR ((("char_length"("additional_document") >= 3) AND ("char_length"("additional_document") <= 40)) AND ("additional_document" ~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'::"text")))),
+    CONSTRAINT "profiles_additional_document_shape_check" CHECK ((("additional_document" IS NULL) OR (("char_length"("additional_document") >= 3) AND ("char_length"("additional_document") <= 40) AND ("additional_document" ~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'::"text")))),
     CONSTRAINT "profiles_check" CHECK ((("completed_at" IS NULL) OR ("completed_at" >= "created_at"))),
     CONSTRAINT "profiles_check1" CHECK (("updated_at" >= "created_at")),
     CONSTRAINT "profiles_completion_data_check" CHECK (((("completed_at" IS NULL) AND ("name" IS NULL) AND ("phone_e164" IS NULL) AND ("tax_id" IS NULL) AND ("additional_document" IS NULL)) OR (("completed_at" IS NOT NULL) AND ("name" IS NOT NULL) AND ("phone_e164" IS NOT NULL) AND ("tax_id" IS NOT NULL)))),
-    CONSTRAINT "profiles_name_shape_check" CHECK ((("name" IS NULL) OR ((("char_length"("name") >= 2) AND ("char_length"("name") <= 160)) AND ("name" = "btrim"("name")) AND ("name" !~ '[[:cntrl:]]'::"text")))),
+    CONSTRAINT "profiles_name_shape_check" CHECK ((("name" IS NULL) OR (("char_length"("name") >= 2) AND ("char_length"("name") <= 160) AND ("name" = "btrim"("name")) AND ("name" !~ '[[:cntrl:]]'::"text")))),
     CONSTRAINT "profiles_person_type_check" CHECK (("person_type" = ANY (ARRAY['individual'::"text", 'company'::"text"]))),
     CONSTRAINT "profiles_phone_e164_shape_check" CHECK ((("phone_e164" IS NULL) OR ("phone_e164" ~ '^\+55[1-9][0-9]([2-5][0-9]{7}|9[0-9]{8})$'::"text"))),
     CONSTRAINT "profiles_profile_version_check" CHECK (("profile_version" >= 0)),
@@ -4229,12 +3726,12 @@ CREATE TABLE IF NOT EXISTS "public"."terms_versions" (
     "retired_at" timestamp with time zone,
     "content_hash" "text" GENERATED ALWAYS AS ("encode"("extensions"."digest"("body_markdown", 'sha256'::"text"), 'hex'::"text")) STORED,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "terms_versions_body_markdown_check" CHECK (((("char_length"("btrim"("body_markdown")) >= 1) AND ("char_length"("btrim"("body_markdown")) <= 200000)) AND ("body_markdown" = "btrim"("body_markdown")))),
+    CONSTRAINT "terms_versions_body_markdown_check" CHECK ((("char_length"("btrim"("body_markdown")) >= 1) AND ("char_length"("btrim"("body_markdown")) <= 200000) AND ("body_markdown" = "btrim"("body_markdown")))),
     CONSTRAINT "terms_versions_content_hash_check" CHECK (("content_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "terms_versions_kind_check" CHECK (("kind" = ANY (ARRAY['terms'::"text", 'privacy'::"text", 'owner_contract'::"text"]))),
     CONSTRAINT "terms_versions_retirement_after_effective_check" CHECK ((("retired_at" IS NULL) OR ("retired_at" > "effective_at"))),
     CONSTRAINT "terms_versions_source_check" CHECK (("source" = ANY (ARRAY['local_fixture'::"text", 'approved'::"text"]))),
-    CONSTRAINT "terms_versions_title_check" CHECK (((("char_length"("btrim"("title")) >= 3) AND ("char_length"("btrim"("title")) <= 160)) AND ("title" = "btrim"("title")))),
+    CONSTRAINT "terms_versions_title_check" CHECK ((("char_length"("btrim"("title")) >= 3) AND ("char_length"("btrim"("title")) <= 160) AND ("title" = "btrim"("title")))),
     CONSTRAINT "terms_versions_version_check" CHECK ((("char_length"("version") >= 1) AND ("char_length"("version") <= 40)))
 );
 
@@ -4704,6 +4201,10 @@ GRANT ALL ON FUNCTION "private"."issue_identity_recovery_context"("p_user_id" "u
 
 
 REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() FROM PUBLIC;
 
 
 

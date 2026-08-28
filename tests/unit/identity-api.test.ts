@@ -50,6 +50,29 @@ describe("identity browser API", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("maps a transport rejection to a recoverable redacted network error", async () => {
+    const privatePassword = "NeverPrintThisPassword9A";
+    const fetchMock = vi.fn(async (): Promise<Response> => {
+      throw new Error("private-provider-transport");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+
+    const outcome = await loginIdentity({
+      email: "qa_network@example.test",
+      password: privatePassword,
+    }).catch((error: unknown) => error);
+
+    expect(outcome).toMatchObject({
+      code: "NETWORK_UNAVAILABLE",
+      message: "Não foi possível conectar. Verifique sua internet e tente novamente.",
+    });
+    const serializedError = JSON.stringify(outcome);
+    expect(serializedError).not.toContain(privatePassword);
+    expect(serializedError).not.toContain("private-provider-transport");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("sends guest registration only to its dedicated public route", async () => {
     const requestId = "11111111-1111-4111-8111-111111111111";
     const fetchMock = vi.fn(async () =>

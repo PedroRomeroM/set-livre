@@ -1,0 +1,32 @@
+[Unit]
+Description=Start Set Livre applications after release recovery
+Requires=set-livre-release-recovery.service
+After=set-livre-release-recovery.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service
+RemainAfterExit=yes
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RemoveIPC=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

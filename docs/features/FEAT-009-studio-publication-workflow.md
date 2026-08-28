@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `studios` |
+| Campo            | Valor                                                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                                |
+| Prioridade       | P0                                                                                                                                       |
+| Domínio          | `studios`                                                                                                                                |
 | Specs Playwright | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`<br>`tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
 
 ## Objetivo
@@ -78,7 +78,7 @@ Gerenciar o ciclo editorial do dono com checklist de completude, reaprovação e
 - Confirmação de pausa explica impacto.
 - Sem botão sem ação.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -97,13 +97,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F009-E2E-001 | P0 | critical | desktop | envio completo entra em estado pendente | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-002 | P0 | critical | desktop | incompleto aponta campos e não transiciona | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-003 | P0 | critical | desktop | edição de revisão pendente é bloqueada | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-004 | P0 | critical | desktop | pausa oculta estúdio sem cancelar reserva | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts` |
-| SL-F009-E2E-005 | P1 | regression | mobile | motivo de rejeição e navegação para correção | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                      | Spec                                                                |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------- | ------------------------------------------------------------------- |
+| SL-F009-E2E-001 | P0         | critical   | desktop  | envio completo entra em estado pendente      | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-002 | P0         | critical   | desktop  | incompleto aponta campos e não transiciona   | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-003 | P0         | critical   | desktop  | edição de revisão pendente é bloqueada       | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-004 | P0         | critical   | desktop  | pausa oculta estúdio sem cancelar reserva    | `tests/e2e/critical/feat-009-studio-publication-workflow.spec.ts`   |
+| SL-F009-E2E-005 | P1         | regression | mobile   | motivo de rejeição e navegação para correção | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts` |
 
 Regras:
 
@@ -127,7 +127,7 @@ Regras:
 - notifications.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

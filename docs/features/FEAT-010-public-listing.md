@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `public-web` |
+| Campo            | Valor                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                      |
+| Prioridade       | P0                                                                                                             |
+| Domínio          | `public-web`                                                                                                   |
 | Specs Playwright | `tests/e2e/critical/feat-010-public-listing.spec.ts`<br>`tests/e2e/regression/feat-010-public-listing.spec.ts` |
 
 ## Objetivo
@@ -76,7 +76,7 @@ Permitir comparar estúdios publicados por filtros úteis e disponibilidade real
 - Empty explica limpar filtros.
 - Card inteiro clicável.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -95,14 +95,14 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F010-E2E-001 | P0 | critical | desktop | listar apenas publicados e ordenar preço asc/desc | `tests/e2e/critical/feat-010-public-listing.spec.ts` |
-| SL-F010-E2E-002 | P0 | critical | desktop | filtro de data exclui indisponíveis | `tests/e2e/critical/feat-010-public-listing.spec.ts` |
-| SL-F010-E2E-003 | P1 | regression | mobile | sheet aplica/limpa filtros e URL | `tests/e2e/regression/feat-010-public-listing.spec.ts` |
-| SL-F010-E2E-004 | P0 | critical | desktop | cursor carrega sem duplicação | `tests/e2e/critical/feat-010-public-listing.spec.ts` |
-| SL-F010-E2E-005 | P0 | critical | desktop | pendentes, pausados e desativados não aparecem | `tests/e2e/critical/feat-010-public-listing.spec.ts` |
-| SL-F010-E2E-006 | P1 | regression | mobile | estados vazio, carregamento e erro são acessíveis | `tests/e2e/regression/feat-010-public-listing.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                           | Spec                                                   |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------- | ------------------------------------------------------ |
+| SL-F010-E2E-001 | P0         | critical   | desktop  | listar apenas publicados e ordenar preço asc/desc | `tests/e2e/critical/feat-010-public-listing.spec.ts`   |
+| SL-F010-E2E-002 | P0         | critical   | desktop  | filtro de data exclui indisponíveis               | `tests/e2e/critical/feat-010-public-listing.spec.ts`   |
+| SL-F010-E2E-003 | P1         | regression | mobile   | sheet aplica/limpa filtros e URL                  | `tests/e2e/regression/feat-010-public-listing.spec.ts` |
+| SL-F010-E2E-004 | P0         | critical   | desktop  | cursor carrega sem duplicação                     | `tests/e2e/critical/feat-010-public-listing.spec.ts`   |
+| SL-F010-E2E-005 | P0         | critical   | desktop  | pendentes, pausados e desativados não aparecem    | `tests/e2e/critical/feat-010-public-listing.spec.ts`   |
+| SL-F010-E2E-006 | P1         | regression | mobile   | estados vazio, carregamento e erro são acessíveis | `tests/e2e/regression/feat-010-public-listing.spec.ts` |
 
 Regras:
 
@@ -126,7 +126,7 @@ Regras:
 - ux-blueprint.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 

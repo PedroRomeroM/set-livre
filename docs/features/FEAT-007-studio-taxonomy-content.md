@@ -2,11 +2,11 @@
 
 ## Metadados
 
-| Campo | Valor |
-|---|---|
-| Status | Planejada |
-| Prioridade | P0 |
-| Domínio | `studios` |
+| Campo            | Valor                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Planejada                                                                                                                        |
+| Prioridade       | P0                                                                                                                               |
+| Domínio          | `studios`                                                                                                                        |
 | Specs Playwright | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
 
 ## Objetivo
@@ -74,7 +74,7 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 - Pré-visualização do vídeo.
 - Empty taxonomy orienta contato/admin, não cria improviso.
 
-Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, refetch, vazio, erro de campo, erro de seção, conflito, timeout quando aplicável, sucesso e recuperação.
+Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
@@ -93,13 +93,13 @@ Além do fluxo nominal, a interface DEVE contemplar loading inicial estável, re
 
 ## Playwright obrigatório
 
-| ID | Prioridade | Suíte | Viewport | Cenário | Spec |
-|---|---|---|---|---|---|
-| SL-F007-E2E-001 | P0 | critical | desktop | salvar tags, comodidades, regras e FAQ | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-002 | P1 | regression | mobile | reordenar FAQ e preservar conteúdo | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-003 | P0 | critical | desktop | tag inativa/externa é rejeitada | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-004 | P1 | regression | desktop | YouTube válido renderiza e inválido falha | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-005 | P0 | critical | desktop | texto malicioso não executa script | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts` |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                   | Spec                                                            |
+| --------------- | ---------- | ---------- | -------- | ----------------------------------------- | --------------------------------------------------------------- |
+| SL-F007-E2E-001 | P0         | critical   | desktop  | salvar tags, comodidades, regras e FAQ    | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
+| SL-F007-E2E-002 | P1         | regression | mobile   | reordenar FAQ e preservar conteúdo        | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-003 | P0         | critical   | desktop  | tag inativa/externa é rejeitada           | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
+| SL-F007-E2E-004 | P1         | regression | desktop  | YouTube válido renderiza e inválido falha | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-005 | P0         | critical   | desktop  | texto malicioso não executa script        | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
 
 Regras:
 
@@ -123,7 +123,7 @@ Regras:
 - design-system.md
 - qa-test-plan.md
 
-Toda mudança desta feature também atualiza este arquivo, o catálogo QA e `docs/changes/`.
+Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
 
 ## Definition of Done da feature
 
