@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1 --port 3001",
+    "dev": "node ../../scripts/local-setup.mjs dev-backoffice",
     "build": "next build",
-    "start": "next start --hostname 127.0.0.1 --port 3001",
+    "start": "node ../../scripts/local-setup.mjs start-backoffice",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

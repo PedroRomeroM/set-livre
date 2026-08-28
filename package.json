@@ -27,13 +27,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1 --port 3000",
-    "dev:backoffice": "npm run dev --workspace @set-livre/backoffice",
+    "dev": "node scripts/local-setup.mjs dev-web",
+    "dev:backoffice": "node scripts/local-setup.mjs dev-backoffice",
     "build": "npm run build:web && npm run build:backoffice",
     "build:web": "next build",
     "build:backoffice": "npm run build --workspace @set-livre/backoffice",
-    "start": "next start --hostname 127.0.0.1 --port 3000",
-    "start:backoffice": "npm run start --workspace @set-livre/backoffice",
+    "start": "node scripts/local-setup.mjs start-web",
+    "start:backoffice": "node scripts/local-setup.mjs start-backoffice",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "lint": "eslint . --max-warnings=0",

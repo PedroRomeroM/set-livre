@@ -367,7 +367,9 @@ na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 
 ## Banco de produção
 
-A VM IPv4 usa Supavisor em **session mode**, porta 5432. O usuário de conexão segue o formato oficial
+A VM IPv4 usa o Supavisor em **session mode** na coordenada fixa
+`aws-0-sa-east-1.pooler.supabase.com:5432`. O preflight valida host, porta, projeto, banco e identidade
+antes de qualquer migration. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser
 `app_runtime_production` e assumir `app_dal` por `options=-c role=app_dal`.
 

@@ -64,6 +64,17 @@ describe("production role provisioning", () => {
         SUPABASE_PROJECT_REF: projectRef,
       }),
     ).toThrow("role e o projeto");
+
+    expect(() =>
+      productionRoleConnections({
+        PRD_DATABASE_URL_APP_DAL: runtimeUrl.replace(
+          "aws-0-sa-east-1.pooler.supabase.com",
+          "aws-0-us-east-1.pooler.supabase.com",
+        ),
+        SUPABASE_DB_PASSWORD: "admin-secret",
+        SUPABASE_PROJECT_REF: projectRef,
+      }),
+    ).toThrow("pooler session exato");
   });
 
   it("fails closed when a public production coordinate drifts", () => {

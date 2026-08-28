@@ -26,6 +26,12 @@ assume `app_dal` e grava três arquivos ignorados:
 - `apps/backoffice/.env.local` para o backoffice;
 - `.env.e2e.local` para testes destrutivos.
 
+`npm run dev`, `dev:backoffice`, `start` e `start:backoffice` passam pelo mesmo wrapper local já
+existente. Ele aceita somente o `.env.local` gerado para a aplicação, recusa os demais arquivos de
+ambiente que o Next carregaria, valida as origens e a identidade DAL em `127.0.0.1` e não repassa
+variáveis runtime ou credenciais herdadas do shell. A CLI Next fixada continua sendo chamada
+diretamente, sem shell intermediário.
+
 Os dados são descartáveis. O guardrail relevante não é um firewall especial: Playwright e helpers de
 QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. A stack usa a bridge local
 suportada pela CLI e, depois de cada `start`, `reset` ou `status`, o wrapper comprova a bridge, todos os
@@ -62,9 +68,9 @@ views, sequences e funções não recebem acesso implícito das roles da Data AP
 | gates estáticos             | `npm run format:check`, `lint`, `typecheck`, `docs:check`, `knip` |
 | build das duas aplicações   | `npm run build`                                                   |
 
-Os comandos usam diretamente Next, Playwright, Prettier e Supabase. Um script próprio só existe quando
-coordena uma regra do Set Livre que a ferramenta não oferece: bootstrap da role DAL e publicação
-atômica dos contratos gerados.
+Os comandos usam diretamente Playwright e Prettier. O wrapper único chama as CLIs Next e Supabase
+diretamente somente quando precisa coordenar uma regra do Set Livre que essas ferramentas não oferecem:
+fronteira local, bootstrap da role DAL e publicação atômica dos contratos gerados.
 
 ## Variáveis locais
 

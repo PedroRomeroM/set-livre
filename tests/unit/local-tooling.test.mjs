@@ -1,5 +1,7 @@
 import { X509Certificate } from "node:crypto";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,8 +13,11 @@ import {
 } from "../../scripts/database-artifacts.mjs";
 import {
   assertDockerPolicyOrStopRunningStack,
+  assertLocalStatusOrStopRunningStack,
   assertLoopbackContainerInspections,
   assertLoopbackNetworkInspection,
+  assertNoUnexpectedNextEnvironmentFiles,
+  createLocalApplicationEnvironment,
   parseSupabaseCliError,
   parseSupabaseStatus,
   supabaseLocalNetworkName,
@@ -23,6 +28,81 @@ import {
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
+  const localApplicationEnvironment = {
+    APP_ENV: "local",
+    APP_RELEASE_SHA: "local",
+    DATABASE_URL_APP_DAL:
+      "postgresql://app_runtime_local:local-secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
+    NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_local-contract",
+    NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+  };
+
+  it("launches local apps only with the generated runtime contract", () => {
+    const environment = createLocalApplicationEnvironment({
+      expectedApplicationUrl: "http://127.0.0.1:3000",
+      inheritedEnvironment: {
+        DATABASE_URL_APP_DAL: "postgresql://production.example/unsafe",
+        NEXT_PUBLIC_SUPABASE_URL: "https://production.supabase.co",
+        NODE_EXTRA_CA_CERTS: "production-ca.pem",
+        PATH: "C:\\Windows\\System32",
+        PRD_DATABASE_URL_APP_DAL: "production-secret",
+        SUPABASE_ACCESS_TOKEN: "production-token",
+      },
+      localEnvironment: localApplicationEnvironment,
+    });
+
+    expect(environment).toMatchObject(localApplicationEnvironment);
+    expect(environment.PATH).toBe("C:\\Windows\\System32");
+    expect(environment).not.toHaveProperty("NODE_EXTRA_CA_CERTS");
+    expect(environment).not.toHaveProperty("PRD_DATABASE_URL_APP_DAL");
+    expect(environment).not.toHaveProperty("SUPABASE_ACCESS_TOKEN");
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3000",
+        localEnvironment: {
+          ...localApplicationEnvironment,
+          DATABASE_URL_APP_DAL:
+            "postgresql://app_runtime_local:secret@remote.example:54322/postgres?options=-c%20role%3Dapp_dal",
+        },
+      }),
+    ).toThrow("identidade DAL local");
+  });
+
+  it("routes development scripts through the local guard and rejects extra Next env files", () => {
+    const rootManifest = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    );
+    const backofficeManifest = JSON.parse(
+      readFileSync(new URL("../../apps/backoffice/package.json", import.meta.url), "utf8"),
+    );
+    expect(rootManifest.scripts.dev).toBe("node scripts/local-setup.mjs dev-web");
+    expect(rootManifest.scripts["dev:backoffice"]).toBe(
+      "node scripts/local-setup.mjs dev-backoffice",
+    );
+    expect(rootManifest.scripts.start).toBe("node scripts/local-setup.mjs start-web");
+    expect(rootManifest.scripts["start:backoffice"]).toBe(
+      "node scripts/local-setup.mjs start-backoffice",
+    );
+    expect(backofficeManifest.scripts.dev).toBe(
+      "node ../../scripts/local-setup.mjs dev-backoffice",
+    );
+    expect(backofficeManifest.scripts.start).toBe(
+      "node ../../scripts/local-setup.mjs start-backoffice",
+    );
+
+    const directory = mkdtempSync(resolve(tmpdir(), "set-livre-next-env-"));
+    try {
+      expect(() => assertNoUnexpectedNextEnvironmentFiles(directory, "dev")).not.toThrow();
+      writeFileSync(resolve(directory, ".env.development"), "APP_ENV=unsafe\n", "utf8");
+      expect(() => assertNoUnexpectedNextEnvironmentFiles(directory, "dev")).toThrow(
+        "aceita somente .env.local",
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("cleans a completed schema dump before propagating a later type-generation failure", async () => {
     const supabaseDirectory = new URL("../../supabase/", import.meta.url);
     const temporarySchemaPattern = /^\.schema\.generated\.sql\..+\.tmp$/u;
@@ -1307,6 +1387,28 @@ describe("local tooling contracts", () => {
       }),
     ).toThrow("política Docker ilegível");
     expect(actions).toEqual(["inspect-stack", "validate-policy", "stop-stack"]);
+  });
+
+  it("stops a running Supabase stack when status or binding validation fails", () => {
+    const actions = [];
+    expect(() =>
+      assertLocalStatusOrStopRunningStack({
+        assertBindings: () => {
+          actions.push("validate-bindings");
+          throw new Error("binding externo");
+        },
+        isStackRunning: () => {
+          actions.push("inspect-stack");
+          return true;
+        },
+        readStatus: () => {
+          actions.push("read-status");
+          return { API_URL: "http://127.0.0.1:54321" };
+        },
+        stopStack: () => actions.push("stop-stack"),
+      }),
+    ).toThrow("binding externo");
+    expect(actions).toEqual(["read-status", "validate-bindings", "inspect-stack", "stop-stack"]);
   });
 
   it("accepts only the canonical local Docker contexts", () => {

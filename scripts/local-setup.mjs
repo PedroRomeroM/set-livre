@@ -1,10 +1,12 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { Buffer } from "node:buffer";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { parseEnv } from "node:util";
 
 import { Client } from "pg";
 
@@ -14,6 +16,53 @@ import { generateDatabaseArtifacts, verifyDatabaseArtifacts } from "./database-a
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const require = createRequire(import.meta.url);
+const localApplicationContracts = Object.freeze({
+  backoffice: Object.freeze({
+    environmentPath: "apps/backoffice/.env.local",
+    expectedApplicationUrl: "http://127.0.0.1:3001",
+    port: "3001",
+    workingDirectory: "apps/backoffice",
+  }),
+  web: Object.freeze({
+    environmentPath: ".env.local",
+    expectedApplicationUrl: "http://127.0.0.1:3000",
+    port: "3000",
+    workingDirectory: ".",
+  }),
+});
+const localRuntimeEnvironmentNames = Object.freeze([
+  "APP_ENV",
+  "APP_RELEASE_SHA",
+  "DATABASE_URL_APP_DAL",
+  "NEXT_PUBLIC_APP_URL",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "NEXT_PUBLIC_SUPABASE_URL",
+]);
+const localRuntimeEnvironmentNameSet = new Set(localRuntimeEnvironmentNames);
+const inheritedOperationalEnvironmentNames = Object.freeze([
+  "CI",
+  "COMSPEC",
+  "HOME",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "NEXT_TELEMETRY_DISABLED",
+  "PATH",
+  "PATHEXT",
+  "Path",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USERPROFILE",
+  "WINDIR",
+]);
+const publicSupabaseKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{12,}$/u;
+const jwtSegmentPattern = /^[A-Za-z0-9_-]+$/u;
 const supabasePackagePath = require.resolve("supabase/package.json");
 const supabasePackage = JSON.parse(readFileSync(supabasePackagePath, "utf8"));
 const supabaseBin = supabasePackage.bin?.supabase;
@@ -23,6 +72,206 @@ if (typeof supabaseBin !== "string" || supabaseBin === "") {
 }
 
 const supabaseCliPath = resolve(dirname(supabasePackagePath), supabaseBin);
+const nextCliPath = require.resolve("next/dist/bin/next");
+
+function rawUrlHostname(value) {
+  const schemeSeparator = value.indexOf("://");
+  if (schemeSeparator <= 0) return undefined;
+  const authorityStart = schemeSeparator + 3;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/u);
+  const authorityEnd =
+    authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+  const authority = value.slice(authorityStart, authorityEnd);
+  const hostAndPort = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hostAndPort.startsWith("[")) return undefined;
+  const portSeparator = hostAndPort.lastIndexOf(":");
+  return portSeparator === -1 ? hostAndPort : hostAndPort.slice(0, portSeparator);
+}
+
+function assertPublicSupabaseKey(value) {
+  if (
+    typeof value !== "string" ||
+    value === "" ||
+    value.length > 8_192 ||
+    value.includes("\0") ||
+    value.includes("\n") ||
+    value.includes("\r")
+  ) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY local possui formato inválido.");
+  }
+  if (publicSupabaseKeyPattern.test(value)) return;
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY local não é uma chave pública Supabase válida.");
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+    if (payload?.role !== "anon") throw new Error("role inesperada");
+  } catch {
+    throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY local precisa usar a role pública anon.");
+  }
+}
+
+function assertLocalApplicationEnvironment(localEnvironment, expectedApplicationUrl) {
+  if (localEnvironment === null || typeof localEnvironment !== "object") {
+    throw new Error("O ambiente local da aplicação é inválido.");
+  }
+  const unexpectedNames = Object.keys(localEnvironment).filter(
+    (name) => !localRuntimeEnvironmentNameSet.has(name),
+  );
+  const missingNames = localRuntimeEnvironmentNames.filter(
+    (name) =>
+      typeof localEnvironment[name] !== "string" ||
+      localEnvironment[name] === "" ||
+      localEnvironment[name].includes("\0"),
+  );
+  if (unexpectedNames.length > 0 || missingNames.length > 0) {
+    throw new Error("O arquivo .env.local não contém exatamente o contrato runtime gerado.");
+  }
+  if (localEnvironment.APP_ENV !== "local" || localEnvironment.APP_RELEASE_SHA !== "local") {
+    throw new Error("APP_ENV e APP_RELEASE_SHA precisam identificar o runtime local.");
+  }
+  if (localEnvironment.NEXT_PUBLIC_APP_URL !== expectedApplicationUrl) {
+    throw new Error("NEXT_PUBLIC_APP_URL não corresponde à aplicação local solicitada.");
+  }
+  if (localEnvironment.NEXT_PUBLIC_SUPABASE_URL !== "http://127.0.0.1:54321") {
+    throw new Error("NEXT_PUBLIC_SUPABASE_URL não corresponde ao Supabase local.");
+  }
+  assertPublicSupabaseKey(localEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
+  let dalDatabaseUrl;
+  try {
+    dalDatabaseUrl = new URL(localEnvironment.DATABASE_URL_APP_DAL);
+  } catch {
+    throw new Error("DATABASE_URL_APP_DAL local é inválida.");
+  }
+  if (
+    !new Set(["postgres:", "postgresql:"]).has(dalDatabaseUrl.protocol) ||
+    dalDatabaseUrl.hostname !== "127.0.0.1" ||
+    rawUrlHostname(localEnvironment.DATABASE_URL_APP_DAL) !== "127.0.0.1" ||
+    dalDatabaseUrl.port !== "54322" ||
+    dalDatabaseUrl.username !== "app_runtime_local" ||
+    dalDatabaseUrl.password === "" ||
+    dalDatabaseUrl.pathname !== "/postgres" ||
+    dalDatabaseUrl.hash !== "" ||
+    dalDatabaseUrl.searchParams.size !== 1 ||
+    dalDatabaseUrl.searchParams.get("options") !== "-c role=app_dal"
+  ) {
+    throw new Error("DATABASE_URL_APP_DAL não usa a identidade DAL local restrita.");
+  }
+  return localEnvironment;
+}
+
+export function createLocalApplicationEnvironment({
+  expectedApplicationUrl,
+  inheritedEnvironment = {},
+  localEnvironment,
+}) {
+  const validated = assertLocalApplicationEnvironment(localEnvironment, expectedApplicationUrl);
+  const environment = {};
+  for (const name of inheritedOperationalEnvironmentNames) {
+    const value = inheritedEnvironment[name];
+    if (typeof value === "string" && value !== "" && !value.includes("\0")) {
+      environment[name] = value;
+    }
+  }
+  for (const name of localRuntimeEnvironmentNames) environment[name] = validated[name];
+  return environment;
+}
+
+function readLocalApplicationEnvironment(
+  environmentPath,
+  expectedApplicationUrl,
+  inheritedEnvironment,
+) {
+  const before = lstatSync(environmentPath, { throwIfNoEntry: false });
+  if (
+    before === undefined ||
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    before.nlink !== 1 ||
+    (process.platform !== "win32" && (before.mode & 0o7777) !== 0o600)
+  ) {
+    throw new Error("Execute npm run supabase:reset para gerar um .env.local privado e regular.");
+  }
+  const source = readFileSync(environmentPath, "utf8");
+  const after = lstatSync(environmentPath, { throwIfNoEntry: false });
+  if (
+    after === undefined ||
+    !after.isFile() ||
+    after.isSymbolicLink() ||
+    after.nlink !== 1 ||
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeMs !== after.mtimeMs ||
+    (process.platform !== "win32" && (after.mode & 0o7777) !== 0o600)
+  ) {
+    throw new Error("O arquivo .env.local mudou durante a leitura.");
+  }
+  let localEnvironment;
+  try {
+    localEnvironment = parseEnv(source);
+  } catch {
+    throw new Error("O arquivo .env.local gerado não pôde ser interpretado.");
+  }
+  return createLocalApplicationEnvironment({
+    expectedApplicationUrl,
+    inheritedEnvironment,
+    localEnvironment,
+  });
+}
+
+export function assertNoUnexpectedNextEnvironmentFiles(workingDirectory, mode) {
+  if (mode !== "dev" && mode !== "start") {
+    throw new Error("O modo local solicitado é inválido.");
+  }
+  const names =
+    mode === "dev"
+      ? [".env", ".env.development", ".env.development.local"]
+      : [".env", ".env.production", ".env.production.local"];
+  for (const name of names) {
+    if (lstatSync(resolve(workingDirectory, name), { throwIfNoEntry: false }) !== undefined) {
+      throw new Error(`O runtime local aceita somente .env.local; remova ${name}.`);
+    }
+  }
+}
+
+export function createLocalApplicationLaunch({
+  application,
+  inheritedEnvironment = process.env,
+  mode,
+  root = repositoryRoot,
+}) {
+  const contract = localApplicationContracts[application];
+  if (contract === undefined || (mode !== "dev" && mode !== "start")) {
+    throw new Error("A aplicação ou o modo local solicitado é inválido.");
+  }
+  const workingDirectory = resolve(root, contract.workingDirectory);
+  assertNoUnexpectedNextEnvironmentFiles(workingDirectory, mode);
+  const environment = readLocalApplicationEnvironment(
+    resolve(root, contract.environmentPath),
+    contract.expectedApplicationUrl,
+    inheritedEnvironment,
+  );
+  return {
+    argumentsList: [nextCliPath, mode, "--hostname", "127.0.0.1", "--port", contract.port],
+    command: process.execPath,
+    options: { cwd: workingDirectory, env: environment, shell: false, stdio: "inherit" },
+  };
+}
+
+async function runLocalApplication(application, mode) {
+  const launch = createLocalApplicationLaunch({ application, mode });
+  await new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(launch.command, launch.argumentsList, launch.options);
+    child.once("error", () => rejectPromise(new Error("A CLI Next local não pôde ser iniciada.")));
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`A CLI Next local encerrou sem sucesso (${code ?? signal}).`));
+    });
+  });
+}
 
 const localDockerContracts = {
   linux: new Map([["default", "unix:///var/run/docker.sock"]]),
@@ -375,12 +624,33 @@ export function parseSupabaseStatus(rawStatus) {
   return values;
 }
 
+export function assertLocalStatusOrStopRunningStack({
+  assertBindings,
+  isStackRunning,
+  readStatus,
+  stopStack,
+}) {
+  try {
+    const values = readStatus();
+    assertBindings();
+    return values;
+  } catch (error) {
+    if (isStackRunning()) stopStack();
+    throw error;
+  }
+}
+
 function localStatus() {
-  const values = parseSupabaseStatus(
-    runSupabase(["status", "--output", "json"], { capture: true, network: true }),
-  );
-  assertSupabaseLoopbackBindings(assertLocalDockerDaemon());
-  return values;
+  const environment = assertLocalDockerDaemon();
+  return assertLocalStatusOrStopRunningStack({
+    assertBindings: () => assertSupabaseLoopbackBindings(environment),
+    isStackRunning: () => supabaseProjectContainersAreRunning(environment),
+    readStatus: () =>
+      parseSupabaseStatus(
+        runSupabase(["status", "--output", "json"], { capture: true, network: true }),
+      ),
+    stopStack: () => stopScopedSupabaseStack(environment),
+  });
 }
 
 async function writePrivateEnvironment(destination, contents) {
@@ -664,6 +934,11 @@ function startLocalSupabase() {
 }
 
 export async function main(command = "reset") {
+  const localApplicationCommand = /^(dev|start)-(web|backoffice)$/u.exec(command);
+  if (localApplicationCommand !== null) {
+    await runLocalApplication(localApplicationCommand[2], localApplicationCommand[1]);
+    return;
+  }
   if (command === "start") {
     startLocalSupabase();
     localStatus();

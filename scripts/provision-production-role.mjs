@@ -11,6 +11,8 @@ import {
 const productionRole = "app_runtime_production";
 export const productionCoordinates = Object.freeze({
   backofficeUrl: "https://ops.setlivre.com",
+  databaseHost: "aws-0-sa-east-1.pooler.supabase.com",
+  databasePort: 5432,
   projectRef: "oirvvnojgkzdppkdvhej",
   publicUrl: "https://147.15.97.227",
   supabaseUrl: "https://oirvvnojgkzdppkdvhej.supabase.co",
@@ -81,8 +83,12 @@ export function productionRoleConnections(environment = process.env) {
   const database = decodedUrlPart(parsed.pathname.slice(1), "database");
   const runtimePassword = decodedUrlPart(parsed.password, "senha DAL");
   const runtimeUser = decodedUrlPart(parsed.username, "usuário DAL");
-  if (database !== "postgres") {
-    throw new Error("A conexão de produção precisa usar o banco postgres.");
+  if (
+    parsed.hostname !== productionCoordinates.databaseHost ||
+    Number(parsed.port) !== productionCoordinates.databasePort ||
+    database !== "postgres"
+  ) {
+    throw new Error("A conexão de produção diverge do pooler session exato do projeto Set Livre.");
   }
 
   const shared = {
