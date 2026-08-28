@@ -334,7 +334,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v3" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v4" ]]
 
       - name: Apply forward-only Supabase migrations
         env:

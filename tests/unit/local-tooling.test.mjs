@@ -1062,12 +1062,19 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v3"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v4"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
     const prerequisites = deploy.slice(prerequisiteStart, prerequisiteEnd);
+    const activationTerminalStart = deploy.indexOf("activation_is_terminal() {");
+    const activationTerminalEnd = deploy.indexOf("\n}", activationTerminalStart);
+    const activationTerminal = deploy.slice(activationTerminalStart, activationTerminalEnd);
+    expect(activationTerminal).toContain("ROLLBACK_MARKER");
+    expect(activationTerminal).toContain("! -e");
+    expect(activationTerminal).toContain("! -L");
     expect(prerequisites).toContain("bootstrap_is_terminal");
+    expect(prerequisites).toContain("activation_is_terminal");
     expect(prerequisites).toContain("managed_release_directories_are_valid");
     expect(prerequisites).toContain("INCOMING_DIRECTORY");
     expect(prerequisites).toContain("UPLOAD_LOCK");
@@ -1095,10 +1102,14 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v3");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v4");
     expect(hostVerification).toContain("preflight SSH aceitou blocker de bootstrap ativo");
     expect(hostVerification).toContain(
       "preflight SSH recusou blocker de bootstrap por motivo inesperado",
+    );
+    expect(hostVerification).toContain("preflight SSH aceitou ativação interrompida");
+    expect(hostVerification).toContain(
+      "preflight SSH recusou ativação interrompida por motivo inesperado",
     );
     expect(hostVerification).toContain("lock de upload tem identidade ou modo inválido");
     expect(hostVerification).toContain(

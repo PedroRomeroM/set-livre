@@ -875,6 +875,18 @@ for bootstrap_blocker in \
   sudo rm -f -- "$bootstrap_blocker"
 done
 
+sudo install -o root -g root -m 0600 /dev/null /opt/set-livre/.activation-rollback
+if preflight_activation_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou ativação interrompida."
+fi
+grep --fixed-strings 'a ativação anterior ainda não atingiu estado terminal' \
+  <<< "$preflight_activation_output" >/dev/null \
+  || fail "preflight SSH recusou ativação interrompida por motivo inesperado."
+sudo rm -f -- /opt/set-livre/.activation-rollback
+
 sudo chmod 0755 /opt/set-livre/releases
 if preflight_release_root_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
@@ -911,7 +923,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v3 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v4 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 package_candidate() {

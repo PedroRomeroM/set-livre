@@ -223,9 +223,15 @@ bootstrap_is_terminal() {
   ! bootstrap_recovery_state_is_present
 }
 
+activation_is_terminal() {
+  [[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]
+}
+
 validate_deployment_host_prerequisites() {
   bootstrap_is_terminal \
     || fail "o bootstrap do host ainda não atingiu estado terminal."
+  activation_is_terminal \
+    || fail "a ativação anterior ainda não atingiu estado terminal."
   managed_release_directories_are_valid \
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   [[ -d ${INCOMING_DIRECTORY} && ! -L ${INCOMING_DIRECTORY} \
@@ -373,7 +379,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v3\n'
+  printf 'set-livre-deploy-ready-v4\n'
   exit 0
 fi
 

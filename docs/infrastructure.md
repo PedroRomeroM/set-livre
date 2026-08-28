@@ -106,7 +106,7 @@ No merge, o workflow:
    comando SSH forçado antes de qualquer migration; esse preflight atravessa o `sudo` não interativo,
    o entrypoint root instalado e o mesmo lock do deploy. A camada SSH e a privilegiada validam suas
    próprias precondições, e o laboratório prova que recusam raízes, locks de upload ou marcadores de
-   bootstrap/recovery divergentes sem alterar release ou serviços;
+   bootstrap, recovery ou ativação interrompida sem alterar release ou serviços;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
    ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
 4. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto

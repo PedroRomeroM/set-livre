@@ -541,7 +541,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v3" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v4" ]]');
     expect(migrations).toBeLessThan(webBuild);
     expect(webBuild).toBeLessThan(packaging);
   });
