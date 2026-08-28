@@ -98,9 +98,12 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - release é imutável, ativada por symlink e revertida por readiness;
 - migrations são forward-only e não usam seed em produção.
 
-Secrets ficam no environment do GitHub ou em `/etc/set-livre/*.env` com `0640`, conforme o consumidor.
-Nenhum secret entra em variável `NEXT_PUBLIC`, artifact, log, screenshot ou documentação. Publishable key
-e host key SSH não são secrets; URL DAL, senhas, access token e chave privada são.
+Secrets ficam no environment do GitHub ou nos arquivos imutáveis da release ativa:
+`/opt/set-livre/current/.runtime/web.env` como `root:setlivre-web 0640` e
+`/opt/set-livre/current/.runtime/backoffice.env` como `root:setlivre-backoffice 0640`. Os antigos
+`/etc/set-livre/*.env` não são uma superfície de runtime e são removidos pelo bootstrap. Nenhum secret
+entra em variável `NEXT_PUBLIC`, artifact, log, screenshot ou documentação. Publishable key e host key
+SSH não são secrets; URL DAL, senhas, access token e chave privada são.
 
 ## Borda e headers
 
@@ -124,7 +127,9 @@ fronteira de produção e não recebe firewall customizado sem risco demonstrado
 reutilizar dado ou credencial real.
 
 Arquivos `.env.local` são ignorados e escritos com permissão privada quando a plataforma oferece essa
-semântica. No Windows não se simulam permissões POSIX inexistentes.
+semântica. Antes de interpretar `.env.e2e.local`, o leitor recusa links e arquivos não regulares ou com
+mais de um hard link; em POSIX também exige owner igual ao usuário efetivo e modo exato `0600`. No
+Windows não se simulam permissões POSIX inexistentes.
 
 ## Privacidade e LGPD
 

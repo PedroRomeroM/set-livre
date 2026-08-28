@@ -92,7 +92,9 @@ Antes de qualquer mutação, os helpers exigem:
 
 Qualquer URL cloud, representação alternativa ou chave de `service_role` falha antes do teste. Os
 servidores web recebem explicitamente esse mesmo contrato validado, sem herdar valores de aplicação
-potencialmente divergentes do shell.
+potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é interpretado depois de
+provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
+efetivo e modo `0600` também são obrigatórios.
 
 ## Contrato por feature
 

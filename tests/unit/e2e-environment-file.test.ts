@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   localE2EEnvironmentValue,
@@ -30,7 +30,9 @@ describe("E2E environment file", () => {
 
   it("parses the local environment file", () => {
     const repository = temporaryRepository();
-    writeFileSync(resolve(repository, ".env.e2e.local"), "E2E_ALLOW_LOCAL=1\nVALUE=ok\n");
+    writeFileSync(resolve(repository, ".env.e2e.local"), "E2E_ALLOW_LOCAL=1\nVALUE=ok\n", {
+      mode: 0o600,
+    });
 
     expect(readOptionalE2EEnvironmentFile(repository)).toEqual({
       E2E_ALLOW_LOCAL: "1",
@@ -40,10 +42,62 @@ describe("E2E environment file", () => {
 
   it("rejects malformed contents", () => {
     const repository = temporaryRepository();
-    writeFileSync(resolve(repository, ".env.e2e.local"), "INVALID='unterminated\n");
+    writeFileSync(resolve(repository, ".env.e2e.local"), "INVALID='unterminated\n", {
+      mode: 0o600,
+    });
 
     expect(() => readOptionalE2EEnvironmentFile(repository)).toThrow("interpretar");
   });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects group/world-readable environment files before parsing",
+    () => {
+      const repository = temporaryRepository();
+      const environmentPath = resolve(repository, ".env.e2e.local");
+      writeFileSync(environmentPath, "INVALID='would-reach-parser\n", { mode: 0o600 });
+      chmodSync(environmentPath, 0o644);
+
+      expect(() => readOptionalE2EEnvironmentFile(repository)).toThrow("privado");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects environment files owned by a user other than the effective user",
+    () => {
+      const repository = temporaryRepository();
+      const environmentPath = resolve(repository, ".env.e2e.local");
+      writeFileSync(environmentPath, "E2E_ALLOW_LOCAL=1\n", { mode: 0o600 });
+      const readEffectiveUserId = process.geteuid;
+      if (readEffectiveUserId === undefined) {
+        throw new Error("O teste exige process.geteuid em sistemas POSIX.");
+      }
+      const effectiveUserId = readEffectiveUserId();
+      const getEffectiveUserId = vi.spyOn(process, "geteuid").mockReturnValue(effectiveUserId + 1);
+
+      try {
+        expect(() => readOptionalE2EEnvironmentFile(repository)).toThrow("privado");
+      } finally {
+        getEffectiveUserId.mockRestore();
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects symbolic and hard-linked environment files before parsing",
+    () => {
+      const symbolicRepository = temporaryRepository();
+      const hardLinkRepository = temporaryRepository();
+      const symbolicTarget = resolve(symbolicRepository, "symbolic-target.env");
+      const hardLinkTarget = resolve(hardLinkRepository, "hard-link-target.env");
+      writeFileSync(symbolicTarget, "INVALID='symbolic-target\n", { mode: 0o600 });
+      symlinkSync(symbolicTarget, resolve(symbolicRepository, ".env.e2e.local"));
+      writeFileSync(hardLinkTarget, "INVALID='hard-link-target\n", { mode: 0o600 });
+      linkSync(hardLinkTarget, resolve(hardLinkRepository, ".env.e2e.local"));
+
+      expect(() => readOptionalE2EEnvironmentFile(symbolicRepository)).toThrow("privado");
+      expect(() => readOptionalE2EEnvironmentFile(hardLinkRepository)).toThrow("privado");
+    },
+  );
 
   it("prefers the generated local contract over divergent inherited values", () => {
     const localEnvironment = {
