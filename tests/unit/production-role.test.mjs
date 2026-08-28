@@ -162,22 +162,27 @@ describe("production role provisioning", () => {
     expect(clients[1].query).toHaveBeenCalledWith("select true as authenticated");
   });
 
-  it("rejects control characters before any production network or database access", async () => {
-    const fetchImplementation = vi.fn();
-    const createClient = vi.fn();
-    const environment = {
-      ...fixedCoordinates,
-      PRD_DATABASE_URL_APP_DAL: `${runtimeUrl}\n`,
-      PRD_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_project-contract",
-      SUPABASE_DB_PASSWORD: "admin-secret",
-      SUPABASE_PROJECT_REF: projectRef,
-    };
+  it("rejects unsafe raw URL characters before production network or database access", async () => {
+    for (const [unsafeUrl, message] of [
+      [`${runtimeUrl}\n`, "caractere de controle não autorizado"],
+      [runtimeUrl.replace(":runtime%23secret@", ":runtime'secret@"), "exige percent-encoding"],
+    ]) {
+      const fetchImplementation = vi.fn();
+      const createClient = vi.fn();
+      const environment = {
+        ...fixedCoordinates,
+        PRD_DATABASE_URL_APP_DAL: unsafeUrl,
+        PRD_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_project-contract",
+        SUPABASE_DB_PASSWORD: "admin-secret",
+        SUPABASE_PROJECT_REF: projectRef,
+      };
 
-    await expect(
-      verifyProductionDeploymentContract(environment, { createClient, fetchImplementation }),
-    ).rejects.toThrow("caractere de controle não autorizado");
-    expect(fetchImplementation).not.toHaveBeenCalled();
-    expect(createClient).not.toHaveBeenCalled();
+      await expect(
+        verifyProductionDeploymentContract(environment, { createClient, fetchImplementation }),
+      ).rejects.toThrow(message);
+      expect(fetchImplementation).not.toHaveBeenCalled();
+      expect(createClient).not.toHaveBeenCalled();
+    }
   });
 
   it("allows first initialization states without attempting a runtime login", async () => {

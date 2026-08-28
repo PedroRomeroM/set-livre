@@ -599,6 +599,12 @@ def read_environment(path, label, expected_app_url):
         values[match.group(1)] = match.group(2)
     if set(values) != expected_keys or any(value == "" for value in values.values()):
         fail(label, "conjunto de chaves")
+    if any(
+        character.isspace() or character in {"'", '"', "\\"}
+        for value in values.values()
+        for character in value
+    ):
+        fail(label, "sintaxe de EnvironmentFile")
     if values["APP_ENV"] != "production":
         fail(label, "APP_ENV")
     if values["NEXT_PUBLIC_APP_URL"] != expected_app_url:

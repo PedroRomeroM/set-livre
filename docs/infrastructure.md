@@ -167,7 +167,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
   `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
   recuperável e só então é publicado;
-- Nginx, systemd, OpenSSH, `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
+- Nginx, systemd, OpenSSH com política efetiva validada por `sshd -T` antes de reload,
+  `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações
   automáticas;
 - gate de boot e recovery habilitados; as units dos apps são estáticas, exigem seu entrypoint imutável e
   limitam tentativas de restart para não criar loop em host vazio ou artefato inválido;
@@ -468,8 +469,10 @@ Secrets do environment `production`:
 - `VM_SSH_PRIVATE_KEY`.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de migrations e builds, o preflight
-recusa caracteres de controle na URL DAL bruta, antes de normalizar a URL ou abrir qualquer conexão;
-consulta `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
+recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a
+URL ou abrir qualquer conexão; esses caracteres precisam estar percent-encoded. O instalador repete o
+contrato antes de aceitar os arquivos como `EnvironmentFile` do systemd. O preflight consulta
+`GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
 header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
 chave. Em seguida, a sessão administrativa lê somente `rolcanlogin`; se a role já estiver ativa, uma
 conexão runtime separada precisa autenticar e concluir uma query constante. Senha obsoleta, identidade

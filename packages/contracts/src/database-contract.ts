@@ -8,6 +8,7 @@ const supabasePoolerHostPattern = /^aws-\d+-[a-z0-9-]+\.pooler\.supabase\.com$/u
 const supabasePoolerUserPattern = /^(?<role>[a-z_][a-z0-9_]{0,62})\.(?<projectRef>[a-z]{20})$/u;
 const allowedConnectionParameters = new Set(["options", "sslmode"]);
 const rawControlCharacterPattern = /[\u0000-\u001f\u007f]/u;
+const rawEnvironmentFileSyntaxPattern = /['"\\ ]/u;
 
 const normalizedDalDatabaseUrlSchema = z.url().superRefine((value, context) => {
   const parsed = new URL(value);
@@ -78,6 +79,9 @@ const dalDatabaseUrlSchema = z
   .string()
   .refine((value) => !rawControlCharacterPattern.test(value), {
     message: "A conexão DAL contém caractere de controle não autorizado.",
+  })
+  .refine((value) => !rawEnvironmentFileSyntaxPattern.test(value), {
+    message: "A conexão DAL contém caractere que exige percent-encoding.",
   })
   .pipe(normalizedDalDatabaseUrlSchema);
 

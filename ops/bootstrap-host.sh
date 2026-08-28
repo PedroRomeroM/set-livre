@@ -433,6 +433,43 @@ stop_application_services() {
   done
 }
 
+assert_effective_sshd_policy() {
+  local configuration="$1"
+  local context_user effective expected
+  local -a allow_users=()
+  local -a expected_values=(
+    "authenticationmethods publickey"
+    "allowagentforwarding no"
+    "allowtcpforwarding no"
+    "gatewayports no"
+    "kbdinteractiveauthentication no"
+    "logingracetime 30"
+    "maxauthtries 3"
+    "passwordauthentication no"
+    "permitemptypasswords no"
+    "permitrootlogin no"
+    "permittunnel no"
+    "pubkeyauthentication yes"
+    "x11forwarding no"
+  )
+  [[ ${configuration} == /* && -f ${configuration} && ! -L ${configuration} ]] || return 1
+  for context_user in ubuntu deploy-setlivre root; do
+    effective="$(
+      sshd -T -f "$configuration" \
+        -C "user=${context_user},host=set-livre,addr=203.0.113.1,laddr=${PRODUCTION_IP},lport=22"
+    )" || return 1
+    for expected in "${expected_values[@]}"; do
+      [[ $(grep --fixed-strings --line-regexp --count -- "$expected" <<< "$effective" || true) -eq 1 ]] \
+        || return 1
+    done
+    allow_users=()
+    mapfile -t allow_users < <(grep '^allowusers ' <<< "$effective" || true)
+    [[ ${#allow_users[@]} -eq 2 \
+      && ${allow_users[0]} == "allowusers ubuntu" \
+      && ${allow_users[1]} == "allowusers deploy-setlivre" ]] || return 1
+  done
+}
+
 assert_legacy_surface_absent() {
   local managed_host_contract="$1"
   local managed_nginx_link="/etc/nginx/sites-enabled/setlivre"
@@ -1339,6 +1376,8 @@ PermitTunnel no
 AllowUsers ubuntu deploy-setlivre
 SSHD
 sshd -t
+assert_effective_sshd_policy /etc/ssh/sshd_config \
+  || fail "política SSH efetiva diverge do contrato public-key-only."
 systemctl reload ssh
 
 publish_managed_content /etc/fail2ban/jail.d/set-livre-sshd.local root root 0644 <<'FAIL2BAN' \

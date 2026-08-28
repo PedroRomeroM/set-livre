@@ -50,6 +50,16 @@ describe("DAL database URL contract", () => {
     }
   });
 
+  it("requires percent-encoding for characters that are unsafe in an EnvironmentFile", () => {
+    for (const unsafeCharacter of ["'", '"', "\\", " "]) {
+      const unsafeUrl = validUrl.replace(":secret@", `:sec${unsafeCharacter}ret@`);
+      expect(() => parseDalDatabaseUrl(unsafeUrl)).toThrow("exige percent-encoding");
+    }
+
+    const encodedQuoteUrl = validUrl.replace(":secret@", ":sec%27ret@");
+    expect(parseDalDatabaseUrl(encodedQuoteUrl).connectionString).toBe(encodedQuoteUrl);
+  });
+
   it("rejects known privileged login identities", () => {
     for (const role of ["postgres", "service_role", "supabase_admin"]) {
       expect(() =>

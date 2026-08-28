@@ -398,6 +398,31 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("verifies the effective SSH policy before reloading the daemon", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const validation = bootstrap.indexOf("assert_effective_sshd_policy /etc/ssh/sshd_config");
+    const reload = bootstrap.indexOf("systemctl reload ssh", validation);
+
+    expect(bootstrap).toContain('sshd -T -f "$configuration"');
+    expect(bootstrap).toContain(
+      '-C "user=${context_user},host=set-livre,addr=203.0.113.1,laddr=${PRODUCTION_IP},lport=22"',
+    );
+    expect(bootstrap).toContain("for context_user in ubuntu deploy-setlivre root");
+    for (const expected of [
+      "authenticationmethods publickey",
+      "kbdinteractiveauthentication no",
+      "passwordauthentication no",
+      "permitrootlogin no",
+      "pubkeyauthentication yes",
+      "allowusers ubuntu",
+      "allowusers deploy-setlivre",
+    ]) {
+      expect(bootstrap).toContain(expected);
+    }
+    expect(validation).toBeGreaterThan(-1);
+    expect(reload).toBeGreaterThan(validation);
+  });
+
   it("rejects every retired pull-deployer surface before changing the host", () => {
     const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
     const guardCall = bootstrap.indexOf('assert_legacy_surface_absent "$managed_host_contract"');

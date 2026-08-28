@@ -1007,6 +1007,22 @@ sudo ln --symbolic --force "/opt/set-livre/releases/${release_sha}" \
 sudo mv --no-target-directory --force /opt/set-livre/current.next /opt/set-livre/current
 assert_current_release "$release_sha"
 
+unsafe_environment_sha="$(printf '0badcafe%.0s' {1..5})"
+rm -f -- "$test_state"/*
+package_candidate "$unsafe_environment_sha"
+python3 - "$candidate_web_environment" <<'PYTHON'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace("ci-password", "ci'password", 1))
+PYTHON
+upload_candidate "$unsafe_environment_sha"
+if invoke_candidate "$unsafe_environment_sha" success; then
+  fail "EnvironmentFile com aspas não escapadas foi aceito."
+fi
+assert_current_release "$release_sha"
+
 integrity_guard_sha="$(printf 'deadc0de%.0s' {1..5})"
 rm -f -- "$test_state"/*
 package_candidate "$integrity_guard_sha"
