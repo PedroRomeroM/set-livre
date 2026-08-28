@@ -104,6 +104,10 @@ test("SL-F002-E2E-006 @p1 formulários mobile passam axe e navegação por tecla
 
   try {
     await gotoExpectedPage(page, "/cadastro", "Crie sua conta");
+    const individualChoice = page.getByRole("radio", { name: "Pessoa física" });
+    const companyChoice = page.getByRole("radio", { name: "Pessoa jurídica" });
+    await expect(individualChoice).toBeEnabled();
+    await expect(companyChoice).toBeEnabled();
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme });
       await expectNonTextContrastTokens(page);
@@ -112,8 +116,6 @@ test("SL-F002-E2E-006 @p1 formulários mobile passam axe e navegação por tecla
     await page.emulateMedia({ colorScheme: "light" });
     await expectNoHorizontalOverflow(page);
 
-    const individualChoice = page.getByRole("radio", { name: "Pessoa física" });
-    const companyChoice = page.getByRole("radio", { name: "Pessoa jurídica" });
     await page.keyboard.press("Tab");
     await expect(individualChoice).toBeFocused();
     await page.keyboard.press("ArrowRight");
@@ -178,11 +180,13 @@ test("SL-F002-E2E-006 @p1 formulários mobile passam axe e navegação por tecla
     await expectAxeClean(page);
 
     await gotoExpectedPage(page, "/entrar", "Entre na sua conta");
+    const loginEmail = page.getByRole("textbox", { name: "E-mail" });
+    const loginPassword = getFeat002PasswordControl(page, "Senha");
+    await expect(loginEmail).toBeEnabled();
+    await expect(loginPassword).toBeEnabled();
     await expectAxeClean(page);
     await expectNoHorizontalOverflow(page);
 
-    const loginEmail = page.getByRole("textbox", { name: "E-mail" });
-    const loginPassword = getFeat002PasswordControl(page, "Senha");
     await page.keyboard.press("Tab");
     await expect(loginEmail).toBeFocused();
     await page.keyboard.type(missingIdentity.email);
@@ -211,7 +215,7 @@ test("SL-F002-E2E-006 @p1 formulários mobile passam axe e navegação por tecla
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     const recoveryEmail = page.getByRole("textbox", { name: "E-mail" });
-    await expect(recoveryEmail).toBeVisible();
+    await expect(recoveryEmail).toBeEnabled();
     await expectAxeClean(page);
     await expectNoHorizontalOverflow(page);
 

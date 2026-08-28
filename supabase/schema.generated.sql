@@ -946,7 +946,15 @@ CREATE OR REPLACE FUNCTION "private"."check_runtime_readiness"("expected_session
         (
           role.rolname = 'app_runtime_production'
           and (
-            select pg_catalog.count(*) = 0
+            select pg_catalog.count(*) = 1
+              and pg_catalog.bool_and(
+                setting.setdatabase = (
+                  select database.oid
+                  from pg_catalog.pg_database as database
+                  where database.datname = pg_catalog.current_database()
+                )
+                and setting.setconfig = array['role=app_dal']::text[]
+              )
             from pg_catalog.pg_db_role_setting as setting
             where setting.setrole = role.oid
           )
@@ -1046,7 +1054,7 @@ $$;
 ALTER FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Health do login restrito: assume app_dal e possui somente CONNECT direto, sem ownership ou ACL adicional.';
+COMMENT ON FUNCTION "private"."check_runtime_readiness"("expected_session_role" "text") IS 'Health do login restrito: assume app_dal por configuração canônica do database e possui somente CONNECT direto, sem ownership ou ACL adicional.';
 
 
 

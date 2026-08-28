@@ -41,6 +41,7 @@ describe("migration immutability", () => {
       assertImmutableMigrations({
         ...fixture,
         bootstrapBaseCommit: fixture.baseRef,
+        expectedHead: "20260824000100",
       }),
     ).toMatchObject({
       bootstrap: true,

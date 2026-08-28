@@ -44,6 +44,10 @@ customizados. A complexidade não era proporcional ao estágio do produto.
   novo digest volta a iniciar os apps;
 - o runtime de banco recebe senha apenas na transição inicial `NOLOGIN` para `LOGIN`; deploy normal
   valida a credencial sem alterá-la, e rotação futura exige fluxo dedicado com transição compatível;
+- o startup packet do cliente não é autoridade para a role efetiva porque o Supavisor pode não
+  encaminhar opções arbitrárias. Uma migration append-only fixa o setting não secreto `role=app_dal`
+  para `app_runtime_production` somente no database `postgres`, e o readiness valida a configuração e
+  a sessão real antes da ativação;
 - objetos internos do Supabase permanecem sob a identidade gerenciada `supabase_admin`, que não pode
   ser assumida pelo `postgres` do projeto. A produção não armazena segredo em GUC de role/database e
   o readiness falha se catálogos efetivamente legíveis contiverem configuração com nome sensível;

@@ -421,7 +421,11 @@ autenticação, não o readiness do banco atual.
 Quando já possui `LOGIN`, uma conexão real com a URL DAL também precisa assumir `app_dal` e passar
 `check_runtime_readiness`. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser
-`app_runtime_production` e assumir `app_dal` por `options=-c role=app_dal`.
+`app_runtime_production` e assumir `app_dal`. A URL conserva `options=-c role=app_dal` como contrato
+explícito e defesa para conexões diretas, mas isso não é autoridade na produção: o Supavisor pode não
+encaminhar opções arbitrárias do startup packet. A migration append-only configura `role=app_dal`
+exatamente para esse login no database `postgres`; uma sessão nova recebe a role pelo PostgreSQL e o
+readiness valida setting, `session_user`, role efetiva e membership antes da ativação.
 
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é
