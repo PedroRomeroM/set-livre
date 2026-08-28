@@ -31,7 +31,10 @@ QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. A s
 suportada pela CLI e, depois de cada `start`, `reset` ou `status`, o wrapper comprova a bridge, todos os
 containers e exatamente as quatro portas publicadas. No Windows também exige o modo nativo
 `local-only-port-binding` do Docker Desktop; no Linux, cada binding precisa ser `127.0.0.1`. Estado
-divergente é parado e falha fechado.
+divergente é parado e falha fechado. A existência da stack é inspecionada antes de validar a política
+do Docker Desktop: se a configuração mudar ou ficar ilegível enquanto houver containers em execução,
+o wrapper encerra a stack antes de propagar o erro e revalida a política imediatamente antes de qualquer
+novo `start`.
 
 Antes de qualquer chamada à CLI Supabase, o wrapper exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes,
 comprova o contexto local canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux),

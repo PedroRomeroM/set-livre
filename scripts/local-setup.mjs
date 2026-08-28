@@ -70,6 +70,17 @@ export function validateDockerDesktopPortBindingPolicy(settings) {
   }
 }
 
+export function assertDockerPolicyOrStopRunningStack({ assertPolicy, isStackRunning, stopStack }) {
+  const stackIsRunning = isStackRunning();
+  try {
+    assertPolicy();
+  } catch (error) {
+    if (stackIsRunning) stopStack();
+    throw error;
+  }
+  return stackIsRunning;
+}
+
 function assertDockerDesktopPortBindingPolicy(environment, platform) {
   if (platform !== "win32") return false;
   const appData = environment.APPDATA;
@@ -629,14 +640,19 @@ function stopScopedSupabaseStack(environment = assertLocalDockerDaemon()) {
 
 function startLocalSupabase() {
   const environment = assertLocalDockerDaemon();
-  assertDockerDesktopPortBindingPolicy(environment, process.platform);
-  if (supabaseProjectContainersAreRunning(environment)) {
+  const stackIsRunning = assertDockerPolicyOrStopRunningStack({
+    assertPolicy: () => assertDockerDesktopPortBindingPolicy(environment, process.platform),
+    isStackRunning: () => supabaseProjectContainersAreRunning(environment),
+    stopStack: () => stopScopedSupabaseStack(environment),
+  });
+  if (stackIsRunning) {
     try {
       assertSupabaseLoopbackBindings(environment);
     } catch {
       stopScopedSupabaseStack(environment);
     }
   }
+  assertDockerDesktopPortBindingPolicy(environment, process.platform);
   ensureSupabaseLoopbackNetwork(environment);
   try {
     runSupabase(["start"], { capture: true, network: true });

@@ -10,6 +10,7 @@ import {
   verifyDatabaseArtifacts,
 } from "../../scripts/database-artifacts.mjs";
 import {
+  assertDockerPolicyOrStopRunningStack,
   assertLoopbackContainerInspections,
   assertLoopbackNetworkInspection,
   parseSupabaseCliError,
@@ -1287,6 +1288,25 @@ describe("local tooling contracts", () => {
     expect(() =>
       validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "default-port-binding" }),
     ).toThrow("Local only");
+  });
+
+  it("stops a running Supabase stack before propagating an unverifiable Docker policy", () => {
+    const actions = [];
+
+    expect(() =>
+      assertDockerPolicyOrStopRunningStack({
+        assertPolicy: () => {
+          actions.push("validate-policy");
+          throw new Error("política Docker ilegível");
+        },
+        isStackRunning: () => {
+          actions.push("inspect-stack");
+          return true;
+        },
+        stopStack: () => actions.push("stop-stack"),
+      }),
+    ).toThrow("política Docker ilegível");
+    expect(actions).toEqual(["inspect-stack", "validate-policy", "stop-stack"]);
   });
 
   it("accepts only the canonical local Docker contexts", () => {
