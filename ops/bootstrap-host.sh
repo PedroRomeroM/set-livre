@@ -518,6 +518,8 @@ assert_effective_sshd_policy() {
     "authenticationmethods publickey"
     "allowagentforwarding no"
     "allowtcpforwarding no"
+    "authorizedkeyscommand none"
+    "authorizedkeysfile .ssh/authorized_keys"
     "gatewayports no"
     "kbdinteractiveauthentication no"
     "logingracetime 30"
@@ -527,6 +529,7 @@ assert_effective_sshd_policy() {
     "permitrootlogin no"
     "permittunnel no"
     "pubkeyauthentication yes"
+    "trustedusercakeys none"
     "x11forwarding no"
   )
   [[ ${configuration} == /* && -f ${configuration} && ! -L ${configuration} ]] || return 1
@@ -1439,6 +1442,9 @@ KbdInteractiveAuthentication no
 PermitRootLogin no
 PubkeyAuthentication yes
 AuthenticationMethods publickey
+AuthorizedKeysFile .ssh/authorized_keys
+AuthorizedKeysCommand none
+TrustedUserCAKeys none
 PermitEmptyPasswords no
 MaxAuthTries 3
 LoginGraceTime 30

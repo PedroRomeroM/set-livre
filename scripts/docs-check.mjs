@@ -86,13 +86,16 @@ for (const path of playwrightFiles) {
 
 const implementationExtensions = new Set([
   ".cjs",
+  ".conf",
   ".css",
   ".html",
   ".js",
   ".jsx",
   ".json",
   ".mjs",
+  ".path",
   ".py",
+  ".service",
   ".sh",
   ".sql",
   ".toml",

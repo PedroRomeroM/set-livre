@@ -184,7 +184,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
 - Nginx, systemd e OpenSSH; a superfície SSH exige owner/grupo root e ausência de escrita por identidades
   não privilegiadas, recusa qualquer `Match`, include aninhado ou drop-in simbólico, aceita somente o
   include global canônico e então valida por `sshd -T` a política efetiva para usuário comum, deployer e
-  root antes do reload, interpretando semanticamente a lista `AllowUsers`;
+  root antes do reload, interpretando semanticamente a lista `AllowUsers`; a autorização aceita apenas
+  `.ssh/authorized_keys`, sem comando alternativo nem CA de usuários;
   no runner sem daemon, o laboratório cria e valida `/run/sshd` somente como fixture efêmera e o remove
   ao terminar;
 - `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações

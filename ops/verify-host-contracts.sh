@@ -271,6 +271,9 @@ KbdInteractiveAuthentication no
 PermitRootLogin no
 PubkeyAuthentication yes
 AuthenticationMethods publickey
+AuthorizedKeysFile .ssh/authorized_keys
+AuthorizedKeysCommand none
+TrustedUserCAKeys none
 PermitEmptyPasswords no
 MaxAuthTries 3
 LoginGraceTime 30
@@ -293,6 +296,31 @@ if effective_allow_users_are_exact $'allowusers ubuntu deploy-setlivre\nallowuse
 fi
 assert_effective_sshd_policy "$configuration" \
   || fail "configuração efetiva canônica foi recusada."
+
+cat > "${drop_in_directory}/10-alternate-authorized-keys.conf" <<'ALTERNATE_KEYS_CONFIGURATION'
+AuthorizedKeysFile .ssh/authorized_keys .ssh/authorized_keys2
+ALTERNATE_KEYS_CONFIGURATION
+if assert_effective_sshd_policy "$configuration"; then
+  fail "arquivo alternativo de chaves SSH foi aceito."
+fi
+rm -- "${drop_in_directory}/10-alternate-authorized-keys.conf"
+
+cat > "${drop_in_directory}/10-authorized-keys-command.conf" <<'AUTHORIZED_KEYS_COMMAND_CONFIGURATION'
+AuthorizedKeysCommand /bin/true
+AuthorizedKeysCommandUser nobody
+AUTHORIZED_KEYS_COMMAND_CONFIGURATION
+if assert_effective_sshd_policy "$configuration"; then
+  fail "comando alternativo de autorização SSH foi aceito."
+fi
+rm -- "${drop_in_directory}/10-authorized-keys-command.conf"
+
+cat > "${drop_in_directory}/10-trusted-user-ca.conf" <<'TRUSTED_USER_CA_CONFIGURATION'
+TrustedUserCAKeys /dev/null
+TRUSTED_USER_CA_CONFIGURATION
+if assert_effective_sshd_policy "$configuration"; then
+  fail "CA alternativa de usuários SSH foi aceita."
+fi
+rm -- "${drop_in_directory}/10-trusted-user-ca.conf"
 
 cat > "${drop_in_directory}/10-conditional.conf" <<'CONDITIONAL_CONFIGURATION'
 Match Address 198.51.100.0/24

@@ -456,10 +456,13 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("for context_user in ubuntu deploy-setlivre root");
     for (const expected of [
       "authenticationmethods publickey",
+      "authorizedkeyscommand none",
+      "authorizedkeysfile .ssh/authorized_keys",
       "kbdinteractiveauthentication no",
       "passwordauthentication no",
       "permitrootlogin no",
       "pubkeyauthentication yes",
+      "trustedusercakeys none",
     ]) {
       expect(bootstrap).toContain(expected);
     }
@@ -467,6 +470,9 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("$'allowusers ubuntu\\nallowusers deploy-setlivre'");
     expect(hostVerification).toContain("'allowusers ubuntu deploy-setlivre'");
     expect(hostVerification).toContain("política Match condicional foi aceita");
+    expect(hostVerification).toContain("arquivo alternativo de chaves SSH foi aceito");
+    expect(hostVerification).toContain("comando alternativo de autorização SSH foi aceito");
+    expect(hostVerification).toContain("CA alternativa de usuários SSH foi aceita");
     expect(hostVerification).toContain(
       "drop-in SSH gravável por identidade não privilegiada foi aceito",
     );
@@ -1439,6 +1445,9 @@ describe("local tooling contracts", () => {
       expect(docsCheck).toContain(`"${root}"`);
     }
     expect(docsCheck).toContain('".py"');
+    for (const extension of [".conf", ".path", ".service"]) {
+      expect(docsCheck).toContain(`"${extension}"`);
+    }
     expect(docsCheck).toContain('${"TO" + "DO"}|${"FIX" + "ME"}');
     expect(docsCheck).toContain("for (const path of implementationFiles)");
   });
