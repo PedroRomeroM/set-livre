@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 27/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 28/08/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -141,12 +141,11 @@
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
           multiengine, acessibilidade, builds standalone e fronteiras de segurança da entrega e do
-          host. Stderr da CLI Supabase é sanitizado antes de chegar aos logs, caches transitórios do
-          Next são removidos mesmo quando o build falha e a política SSH global recusa regras
-          condicionais antes do reload; o laboratório cria e remove o runtime efêmero exigido por
-          <code>sshd -T</code> quando o runner não iniciou o daemon. Testes não usam retry, timeout
-          ampliado ou relaxamento de asserção para mascarar falhas; os resultados permanecem no PR e
-          nos checks.
+          host. Testes não usam retry, timeout ampliado ou relaxamento de asserção para mascarar
+          falhas; os resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas
+          fontes canônicas de <a href="docs/development.md">desenvolvimento</a>,
+          <a href="docs/infrastructure.md">infraestrutura</a> e
+          <a href="docs/security-privacy.md">segurança</a>.
         </p>
         <p>
           Ambiente local e banco recusam exposição de rede, configuração insegura ou divergente.

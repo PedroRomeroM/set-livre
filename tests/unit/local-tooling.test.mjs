@@ -448,6 +448,8 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain('keyword == "match"');
     expect(bootstrap).toContain('expected_include="${drop_in_directory}/*.conf"');
     expect(bootstrap).toContain('effective_allow_users_are_exact "$effective"');
+    expect(bootstrap).toContain('root_owned_without_unprivileged_write "$configuration"');
+    expect(bootstrap).toContain('root_owned_without_unprivileged_write "$drop_in_directory"');
     expect(bootstrap).toContain(
       '-C "user=${context_user},host=set-livre,addr=203.0.113.1,laddr=${PRODUCTION_IP},lport=22"',
     );
@@ -465,6 +467,12 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("$'allowusers ubuntu\\nallowusers deploy-setlivre'");
     expect(hostVerification).toContain("'allowusers ubuntu deploy-setlivre'");
     expect(hostVerification).toContain("política Match condicional foi aceita");
+    expect(hostVerification).toContain(
+      "drop-in SSH gravável por identidade não privilegiada foi aceito",
+    );
+    expect(hostVerification).toContain("configuração SSH sem ownership root foi aceita");
+    expect(hostVerification).toContain("diretório de drop-ins SSH gravável por grupo foi aceito");
+    expect(hostVerification).toContain("diretório principal SSH gravável por grupo foi aceito");
     expect(unconditional).toBeGreaterThan(-1);
     expect(validation).toBeGreaterThan(-1);
     expect(validation).toBeGreaterThan(unconditional);
@@ -1020,6 +1028,8 @@ describe("local tooling contracts", () => {
       ),
     );
     expect(command).toContain("SSH_ORIGINAL_COMMAND");
+    expect(command).toContain('if [[ ${original_command} == "preflight" ]]');
+    expect(command).toContain("set-livre-deploy-ready-v1");
     expect(command).toContain("cleanup_abandoned_uploads");
     expect(command).toContain(".incoming.lock");
     expect(command).not.toMatch(/\beval\b/u);
@@ -1043,6 +1053,7 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain(
       'SSH_ORIGINAL_COMMAND="deploy ${candidate_sha} ${candidate_checksum}"',
     );
+    expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );

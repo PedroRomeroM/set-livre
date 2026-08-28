@@ -272,21 +272,28 @@ describe("production role provisioning", () => {
     ).rejects.not.toThrow(publishableKey);
   });
 
-  it("runs the key probe before migrations, builds, and packaging", () => {
+  it("runs database and SSH probes before migrations, builds, and packaging", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
     );
     const preflight = workflow.indexOf("- name: Validate fixed production contract");
+    const sshAuthentication = workflow.indexOf("- name: Authenticate Oracle deployment path");
     const migrations = workflow.indexOf("- name: Apply forward-only Supabase migrations");
     const webBuild = workflow.indexOf("- name: Build web release");
     const packaging = workflow.indexOf("- name: Package immutable release");
 
     expect(preflight).toBeGreaterThan(-1);
-    expect(preflight).toBeLessThan(migrations);
-    expect(workflow.slice(preflight, migrations)).toContain(
+    expect(sshAuthentication).toBeGreaterThan(preflight);
+    expect(sshAuthentication).toBeLessThan(migrations);
+    expect(workflow.slice(preflight, sshAuthentication)).toContain(
       "NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt",
     );
+    const sshProbe = workflow.slice(sshAuthentication, migrations);
+    expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
+    expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
+    expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v1" ]]');
     expect(migrations).toBeLessThan(webBuild);
     expect(webBuild).toBeLessThan(packaging);
   });

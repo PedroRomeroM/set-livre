@@ -98,9 +98,11 @@ das árvores permitidas, podem ser materializados.
 
 No merge, o workflow:
 
-1. aplica migrations pendentes com `supabase db push --linked`, sem seed;
-2. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
-3. aplica migrations e exige que o maior head remoto seja exatamente o head compilado pelo candidato;
+1. usa o project ref literal versionado e valida o contrato fixo antes da primeira escrita cloud;
+2. exige uma única host key Ed25519 para o IP de produção e autentica chave privada, host exato e o
+   comando SSH forçado por um preflight não mutante antes de qualquer migration;
+3. aplica migrations pendentes com `supabase db push --linked`, sem seed, e exige que o maior head remoto
+   seja exatamente o head compilado pelo candidato;
 4. inicializa a identidade restrita somente se a migration acabou de criá-la como `NOLOGIN`; um
    resultado ambíguo do commit abre conexões administrativas novas, força `NOLOGIN` de forma
    idempotente e exige releitura positiva antes de falhar; nos deploys seguintes apenas valida a
@@ -170,9 +172,10 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
   root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
   `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
   recuperável e só então é publicado;
-- Nginx, systemd e OpenSSH; a superfície SSH recusa qualquer `Match`, include aninhado ou drop-in
-  simbólico, aceita somente o include global canônico e então valida por `sshd -T` a política efetiva
-  para usuário comum, deployer e root antes do reload, interpretando semanticamente a lista `AllowUsers`;
+- Nginx, systemd e OpenSSH; a superfície SSH exige owner/grupo root e ausência de escrita por identidades
+  não privilegiadas, recusa qualquer `Match`, include aninhado ou drop-in simbólico, aceita somente o
+  include global canônico e então valida por `sshd -T` a política efetiva para usuário comum, deployer e
+  root antes do reload, interpretando semanticamente a lista `AllowUsers`;
   no runner sem daemon, o laboratório cria e valida `/run/sshd` somente como fixture efêmera e o remove
   ao terminar;
 - `iptables-persistent`, Fail2ban, Certbot oficial via Snap e atualizações

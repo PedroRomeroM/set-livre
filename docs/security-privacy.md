@@ -87,8 +87,11 @@ nunca coordena mutações múltiplas para simular atomicidade.
 - builds ocorrem em runner Linux x86_64, nunca na VM;
 - caches transitórios do Next são removidos após sucesso ou falha; erro de limpeza invalida o build;
 - archive é identificado por SHA-256 e manifesto com o commit completo;
-- VM aceita SSH somente por chave; senha e root login ficam desabilitados, e políticas condicionais
-  `Match` ou includes SSH fora da superfície global canônica são recusados antes do reload;
+- VM aceita SSH somente por chave; senha e root login ficam desabilitados, arquivos e diretórios da
+  configuração exigem ownership root sem escrita não privilegiada, e políticas condicionais `Match` ou
+  includes fora da superfície global canônica são recusados antes do reload;
+- antes de migrations forward-only, o deploy exige uma única host key Ed25519 para o IP canônico e
+  autentica a chave privada contra um preflight não mutante do comando SSH forçado;
 - usuário de deploy possui apenas um comando sudo allowlisted;
 - arquivos gerenciados do host recusam symlink/hardlink, usam staging privado `root:root 0700` no mesmo
   filesystem e entram por rename atômico; o bloqueio de bootstrap precede qualquer restrição que possa

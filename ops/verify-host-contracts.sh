@@ -317,6 +317,30 @@ if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory
 fi
 rm -- "${drop_in_directory}/10-linked.conf"
 
+chmod 0664 "${drop_in_directory}/60-set-livre.conf"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "drop-in SSH gravável por identidade não privilegiada foi aceito."
+fi
+chmod 0644 "${drop_in_directory}/60-set-livre.conf"
+
+chown deploy-setlivre:deploy-setlivre "$configuration"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "configuração SSH sem ownership root foi aceita."
+fi
+chown root:root "$configuration"
+
+chmod 0775 "$drop_in_directory"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "diretório de drop-ins SSH gravável por grupo foi aceito."
+fi
+chmod 0755 "$drop_in_directory"
+
+chmod 0775 "$test_root"
+if assert_unconditional_sshd_policy_surface "$configuration" "$drop_in_directory"; then
+  fail "diretório principal SSH gravável por grupo foi aceito."
+fi
+chmod 0755 "$test_root"
+
 printf 'SSH policy runtime contracts OK\n'
 SSH_POLICY_RUNTIME
 } > "$ssh_policy_runtime"
@@ -590,6 +614,13 @@ for abandoned in \
   "/home/deploy-setlivre/incoming/.upload.Ab12Cd"; do
   sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null "$abandoned"
 done
+
+preflight_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
+)"
+[[ ${preflight_output} == set-livre-deploy-ready-v1 ]] \
+  || fail "preflight SSH não comprovou o comando forçado instalado."
 
 if sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND='not-authorized' \
   "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null; then

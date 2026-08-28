@@ -67,7 +67,9 @@ exec 9<>"$UPLOAD_LOCK"
 flock --exclusive 9
 
 original_command="${SSH_ORIGINAL_COMMAND:-}"
-if [[ ${original_command} =~ ^upload-release\ ([0-9a-f]{40})$ ]]; then
+if [[ ${original_command} == "preflight" ]]; then
+  printf 'set-livre-deploy-ready-v1\n'
+elif [[ ${original_command} =~ ^upload-release\ ([0-9a-f]{40})$ ]]; then
   release_sha="${BASH_REMATCH[1]}"
   cleanup_abandoned_uploads "$release_sha" || fail "entrada abandonada possui contrato inválido."
   upload "${INCOMING_DIRECTORY}/set-livre-${release_sha}.tar.gz" "$MAX_RELEASE_BYTES"

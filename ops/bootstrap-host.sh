@@ -434,21 +434,36 @@ stop_application_services() {
 }
 
 # BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES
+root_owned_without_unprivileged_write() {
+  local path="$1"
+  local metadata owner group mode
+  metadata="$(stat --format '%u:%g:%a' -- "$path")" || return 1
+  IFS=: read -r owner group mode <<< "$metadata"
+  [[ ${owner} == 0 && ${group} == 0 && ${mode} =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#${mode} & 0022) == 0 ))
+}
+
 assert_unconditional_sshd_policy_surface() {
   local configuration="$1"
   local drop_in_directory="$2"
+  local configuration_directory="${configuration%/*}"
   local candidate
   local -a configuration_files=("$configuration")
   local -a drop_in_candidates=()
   [[ ${configuration} == /* && -f ${configuration} && ! -L ${configuration} ]] || return 1
+  [[ -d ${configuration_directory} && ! -L ${configuration_directory} ]] || return 1
   [[ ${drop_in_directory} == /* && -d ${drop_in_directory} && ! -L ${drop_in_directory} ]] \
     || return 1
+  root_owned_without_unprivileged_write "$configuration_directory" || return 1
+  root_owned_without_unprivileged_write "$configuration" || return 1
+  root_owned_without_unprivileged_write "$drop_in_directory" || return 1
   mapfile -d '' -t drop_in_candidates < <(
     find -P "$drop_in_directory" -mindepth 1 -maxdepth 1 -name '*.conf' -print0 \
       | LC_ALL=C sort -z
   )
   for candidate in "${drop_in_candidates[@]}"; do
     [[ -f ${candidate} && ! -L ${candidate} ]] || return 1
+    root_owned_without_unprivileged_write "$candidate" || return 1
     configuration_files+=("$candidate")
   done
   awk \
