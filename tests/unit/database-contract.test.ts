@@ -42,6 +42,14 @@ describe("DAL database URL contract", () => {
     }
   });
 
+  it("rejects raw control characters before URL normalization", () => {
+    for (const controlCharacter of ["\n", "\r", "\t", "\u0000", "\u007f"]) {
+      expect(() => parseDalDatabaseUrl(`${validUrl}${controlCharacter}`)).toThrow(
+        "caractere de controle não autorizado",
+      );
+    }
+  });
+
   it("rejects known privileged login identities", () => {
     for (const role of ["postgres", "service_role", "supabase_admin"]) {
       expect(() =>

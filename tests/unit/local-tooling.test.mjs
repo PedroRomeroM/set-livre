@@ -1276,8 +1276,38 @@ describe("local tooling contracts", () => {
     ]) {
       expect(docsCheck).toContain(`"${root}"`);
     }
+    expect(docsCheck).toContain('".py"');
     expect(docsCheck).toContain('${"TO" + "DO"}|${"FIX" + "ME"}');
     expect(docsCheck).toContain("for (const path of implementationFiles)");
+  });
+
+  it("disables ambient curl configuration for every operational invocation", () => {
+    const sources = [
+      "../../.github/workflows/ci.yml",
+      "../../ops/bootstrap-host.sh",
+      "../../ops/deploy-release.sh",
+      "../../ops/verify-host-contracts.sh",
+    ].map((path) => readFileSync(new URL(path, import.meta.url), "utf8"));
+
+    for (const source of sources) {
+      const invocations = source
+        .split("\n")
+        .filter((line) => /^\s*(?:(?:if|&&)\s+)?curl\s+--/u.test(line));
+      expect(invocations.length).toBeGreaterThan(0);
+      for (const invocation of invocations) {
+        expect(invocation).toMatch(/\bcurl --disable\b/u);
+      }
+    }
+
+    for (const path of ["../../ops/bootstrap-host.sh", "../../ops/deploy-release.sh"]) {
+      const source = readFileSync(new URL(path, import.meta.url), "utf8");
+      const invocations = source
+        .split("\n")
+        .filter((line) => /^\s*(?:(?:if|&&)\s+)?curl\s+--/u.test(line));
+      for (const invocation of invocations) {
+        expect(invocation).toContain("--noproxy '*'");
+      }
+    }
   });
 
   it("uses the supported Certbot distribution and automated IP-certificate renewal", () => {

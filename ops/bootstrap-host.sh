@@ -736,11 +736,11 @@ remove_invalid_swapfile() {
 wait_for_active_health() {
   local expected_release="$1"
   for _ in $(seq 1 30); do
-    if curl --fail --silent --show-error --max-time 2 \
+    if curl --disable --noproxy '*' --fail --silent --show-error --max-time 2 \
       http://127.0.0.1:3000/api/health/ready \
       | jq --exit-status --arg release "$expected_release" \
         '.application == "web" and .release == $release and .status == "ready"' >/dev/null \
-      && curl --fail --silent --show-error --max-time 2 \
+      && curl --disable --noproxy '*' --fail --silent --show-error --max-time 2 \
         http://127.0.0.1:3001/api/health/ready \
         | jq --exit-status --arg release "$expected_release" \
           '.application == "backoffice" and .release == $release and .status == "ready"' >/dev/null; then
@@ -754,7 +754,7 @@ wait_for_active_health() {
 wait_for_active_public_health() {
   local expected_release="$1"
   for _ in $(seq 1 12); do
-    if curl --fail --silent --show-error --max-time 5 \
+    if curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 \
       "https://${PRODUCTION_IP}/api/health/ready" \
       | jq --exit-status --arg release "$expected_release" \
         '.application == "web" and .release == $release and .status == "ready"' >/dev/null; then
@@ -1122,10 +1122,10 @@ dpkg --compare-versions "$certbot_version" ge "$CERTBOT_MINIMUM_VERSION" \
 if ! node_installation_is_valid "$NODE_INSTALLATION_DIRECTORY"; then
   temporary_directory="$(mktemp -d)"
   archive="${NODE_DIRECTORY}.tar.xz"
-  curl --fail --location --proto '=https' --tlsv1.2 \
+  curl --disable --noproxy '*' --fail --location --proto '=https' --tlsv1.2 \
     --output "${temporary_directory}/${archive}" \
     "https://nodejs.org/dist/v${NODE_VERSION}/${archive}"
-  curl --fail --location --proto '=https' --tlsv1.2 \
+  curl --disable --noproxy '*' --fail --location --proto '=https' --tlsv1.2 \
     --output "${temporary_directory}/SHASUMS256.txt" \
     "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
   (

@@ -92,6 +92,7 @@ const implementationExtensions = new Set([
   ".jsx",
   ".json",
   ".mjs",
+  ".py",
   ".sh",
   ".sql",
   ".toml",

@@ -63,14 +63,16 @@ health_is_ready() {
   local port="$1"
   local application="$2"
   local expected_release="$3"
-  curl --fail --silent --show-error --max-time 2 "http://127.0.0.1:${port}/api/health/ready" \
+  curl --disable --noproxy '*' --fail --silent --show-error --max-time 2 \
+    "http://127.0.0.1:${port}/api/health/ready" \
     | jq --exit-status --arg application "$application" --arg release "$expected_release" \
       '.application == $application and .release == $release and .status == "ready"' >/dev/null
 }
 
 public_health_is_ready() {
   local expected_release="$1"
-  curl --fail --silent --show-error --max-time 5 "${PRODUCTION_URL}/api/health/ready" \
+  curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 \
+    "${PRODUCTION_URL}/api/health/ready" \
     | jq --exit-status --arg release "$expected_release" \
       '.application == "web" and .release == $release and .status == "ready"' >/dev/null
 }

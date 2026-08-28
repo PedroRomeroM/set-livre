@@ -313,7 +313,8 @@ python3 -m http.server 3000 --bind 127.0.0.1 --directory "$temporary_directory" 
   > "$temporary_directory/nginx-backend.log" 2>&1 &
 nginx_backend_process=$!
 for _ in {1..20}; do
-  if curl --silent --output /dev/null --max-time 1 http://127.0.0.1:3000/; then
+  if curl --disable --noproxy '*' --silent --output /dev/null --max-time 1 \
+    http://127.0.0.1:3000/; then
     break
   fi
   /usr/bin/sleep 0.05
@@ -328,8 +329,8 @@ nginx_test_active=true
 sudo truncate --size 0 \
   /var/log/nginx/set-livre-access.log \
   /var/log/nginx/set-livre-error.log
-curl --fail --silent --show-error --max-time 5 --retry 5 --retry-all-errors --retry-delay 1 \
-  --noproxy '*' \
+curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 \
+  --retry 5 --retry-all-errors --retry-delay 1 \
   --cacert "$temporary_directory/ip.crt" \
   --resolve "147.15.97.227:443:127.0.0.1" \
   --dump-header "$temporary_directory/ip.headers" \
@@ -345,14 +346,12 @@ edge_request_id="$(
 [[ ${edge_request_id} =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || fail "edge não publicou request ID UUIDv4 autoritativo."
 grep --fixed-strings --line-regexp 'Disallow: /' "$temporary_directory/ip.robots" >/dev/null
-curl --fail --silent --show-error --max-time 2 \
-  --noproxy '*' \
+curl --disable --noproxy '*' --fail --silent --show-error --max-time 2 \
   --resolve "147.15.97.227:80:127.0.0.1" \
   http://147.15.97.227/.well-known/acme-challenge/regular-probe \
   | grep --fixed-strings --line-regexp 'set-livre-acme-regular' >/dev/null
 symlink_status="$(
-  curl --silent --show-error --max-time 2 \
-    --noproxy '*' \
+  curl --disable --noproxy '*' --silent --show-error --max-time 2 \
     --resolve "147.15.97.227:80:127.0.0.1" \
     --output "$temporary_directory/acme-symlink-response" \
     --write-out '%{http_code}' \
@@ -360,15 +359,14 @@ symlink_status="$(
 )"
 [[ ${symlink_status} == 404 ]] \
   || fail "Nginx não recusou o arquivo symlink dentro do webroot ACME."
-curl --silent --show-error --max-time 2 \
+curl --disable --noproxy '*' --silent --show-error --max-time 2 \
   --header 'Host: invalid.example' \
   --output /dev/null \
   http://127.0.0.1/ 2>/dev/null || true
 rate_limited=false
 for _ in {1..80}; do
   edge_status="$(
-    curl --silent --show-error --max-time 2 \
-      --noproxy '*' \
+    curl --disable --noproxy '*' --silent --show-error --max-time 2 \
       --cacert "$temporary_directory/ip.crt" \
       --resolve "147.15.97.227:443:127.0.0.1" \
       --output /dev/null \
@@ -388,8 +386,7 @@ wait "$nginx_backend_process" 2>/dev/null || true
 nginx_backend_process=""
 sudo truncate --size 0 /var/log/nginx/set-livre-error.log
 upstream_status="$(
-  curl --silent --show-error --max-time 5 \
-    --noproxy '*' \
+  curl --disable --noproxy '*' --silent --show-error --max-time 5 \
     --cacert "$temporary_directory/ip.crt" \
     --resolve "147.15.97.227:443:127.0.0.1" \
     --dump-header "$temporary_directory/upstream.headers" \
@@ -640,6 +637,7 @@ SYSTEMCTL
 cat > "$fake_bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+[[ ${1:-} == "--disable" ]] || exit 64
 url="${!#}"
 phase="${SET_LIVRE_TEST_PHASE:-success}"
 candidate="${SET_LIVRE_TEST_CANDIDATE:-}"

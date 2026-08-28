@@ -162,7 +162,8 @@ compilado obsoleto. Alterações destrutivas exigem backup e recuperação compr
 
 `ops/bootstrap-host.sh` é idempotente para a VM dedicada e instala apenas:
 
-- Node 24.18 x86_64 verificado pelos `SHASUMS256` oficiais, extraído em staging, validado como árvore
+- Node 24.18 x86_64 baixado sem configuração `curl` ou proxy herdado, verificado pelos
+  `SHASUMS256` oficiais, extraído em staging, validado como árvore
   root-only funcional e publicado por rename somente depois da prova integral; o alias canônico
   `/opt/node` também é preparado como link validado, substitui diretório legado por quarentena
   recuperável e só então é publicado;
@@ -467,6 +468,7 @@ Secrets do environment `production`:
 - `VM_SSH_PRIVATE_KEY`.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de migrations e builds, o preflight
+recusa caracteres de controle na URL DAL bruta, antes de normalizar a URL ou abrir qualquer conexão;
 consulta `GET /auth/v1/settings` no endpoint HTTPS do project ref versionado, envia a chave somente no
 header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inválido e não registra a
 chave. Em seguida, a sessão administrativa lê somente `rolcanlogin`; se a role já estiver ativa, uma
@@ -484,8 +486,8 @@ Comandos úteis no host:
 ```bash
 sudo systemctl status set-livre-web set-livre-backoffice nginx
 sudo journalctl -u set-livre-web -u set-livre-backoffice -n 100 --no-pager
-curl --fail http://127.0.0.1:3000/api/health/ready
-curl --fail http://127.0.0.1:3001/api/health/ready
+curl --disable --noproxy '*' --fail http://127.0.0.1:3000/api/health/ready
+curl --disable --noproxy '*' --fail http://127.0.0.1:3001/api/health/ready
 ```
 
 Disco, memória, OOM, conexões e latência devem ser medidos. Migração de shape ou arquitetura só é
