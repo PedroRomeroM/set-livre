@@ -1187,7 +1187,7 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery).not.toContain("set-livre-deploy.lock");
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      6,
+      5,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
@@ -1207,7 +1207,7 @@ describe("local tooling contracts", () => {
     expect(rollback.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       rollback.lastIndexOf('rm -f -- "$ROLLBACK_MARKER"'),
     );
-    expect(deploy.match(/wait_for_public_health "\$recovered_release"/gu)).toHaveLength(3);
+    expect(deploy.match(/wait_for_public_health "\$recovered_release"/gu)).toHaveLength(2);
     expect(deploy).toContain('re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{12,}", publishable_key)');
     expect(bootstrap).toContain('active_host_digest} == "$host_configuration_digest"');
     expect(bootstrap).toContain('wait_for_active_health "$active_release_sha"');
@@ -1227,7 +1227,7 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("[[ ! -e ${ROLLBACK_MARKER} && ! -L ${ROLLBACK_MARKER} ]]");
     expect(
       deploy.match(/if \[\[ -e \$\{ROLLBACK_MARKER\} \|\| -L \$\{ROLLBACK_MARKER\} \]\]; then/gu),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     const bootstrapDigestPublished = bootstrap.indexOf(
       'mv --no-target-directory --force -- "$digest_source" "$HOST_CONFIGURATION_DIGEST"',
     );
@@ -1312,11 +1312,14 @@ describe("local tooling contracts", () => {
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );
     expect(hostVerification).toContain("recovery-public-health-observed");
+    const dedicatedRecoveryPublicHealth = hostVerification.indexOf(
+      "SET_LIVRE_TEST_PHASE=recovery-public-health",
+    );
     expect(hostVerification.indexOf('retention_sha="$(printf')).toBeLessThan(
-      hostVerification.indexOf('recovery_public_sha="$(printf'),
+      dedicatedRecoveryPublicHealth,
     );
     expect(hostVerification.indexOf('rollback_source="$temporary_directory')).toBeLessThan(
-      hostVerification.indexOf('recovery_public_sha="$(printf'),
+      dedicatedRecoveryPublicHealth,
     );
     expect(bootstrap.indexOf('active_host_digest} == "$host_configuration_digest"')).toBeLessThan(
       bootstrap.indexOf("apt-get update"),

@@ -539,20 +539,6 @@ trap 'on_signal TERM 143' TERM
 remove_stale_trusted_files \
   || fail "arquivo confiável residual possui identidade ou permissões inválidas."
 
-if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
-  recover_link_from_marker || fail "não foi possível recuperar o deploy anterior."
-  if [[ -z ${recovered_release} ]]; then
-    systemctl stop set-livre-web.service set-livre-backoffice.service \
-      || fail "não foi possível estabilizar o host sem release anterior."
-  elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
-    || ! wait_for_health "$recovered_release" \
-    || ! wait_for_public_health "$recovered_release"; then
-    systemctl stop set-livre-web.service set-livre-backoffice.service || true
-    fail "a release recuperada não atingiu readiness interno e público."
-  fi
-  rm -f -- "$ROLLBACK_MARKER"
-fi
-
 trust_incoming_file() {
   local source="$1"
   local maximum_bytes="$2"

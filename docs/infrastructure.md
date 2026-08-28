@@ -143,7 +143,8 @@ fluxo de bootstrap, também recompõe o blocker. O link só é alterado depois d
 digest instalado e manifesto
 da release; rollback, boot e retry removem o marcador apenas depois de estabilizar os serviços e provar
 readiness interno e HTTPS público. Uma falha mantém o marcador para nova tentativa e interrompe os
-serviços. A recovery unit encerra sem trabalho se o deploy normal já removeu o marcador. Rollback
+serviços. Um marcador anterior bloqueia preflight e deploy; somente a recovery unit dedicada o consome.
+A recovery unit encerra sem trabalho se o deploy normal já removeu seu próprio marcador. Rollback
 incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços. Um SHA existente só pode
 ser reutilizado
 quando artifact, ambientes e o digest determinístico da árvore instalada completa correspondem à
