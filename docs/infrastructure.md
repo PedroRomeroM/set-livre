@@ -244,8 +244,8 @@ rollback ou remover um `current` pendente. Somente `incoming` permanece graváve
 seguida, o bootstrap exige
 exatamente uma chave pública, decodifica o blob SSH, comprova o algoritmo Ed25519 e os 32 bytes de
 material e substitui `authorized_keys` por rename atômico. A chave instalada usa
-`authorized_keys command=` e aceita apenas
-uploads limitados e `deploy <sha> <checksum>`; não abre
+`authorized_keys command=` e aceita apenas uploads limitados, `stage <sha> <checksum>` e
+`activate <sha> <checksum>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
