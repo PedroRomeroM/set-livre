@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
 import { Client } from "pg";
@@ -10,6 +11,8 @@ import {
 
 const productionRole = "app_runtime_production";
 const productionRoleNames = "app_dal,app_runtime_production";
+const runtimeTerminationPollIntervalMilliseconds = 250;
+const runtimeTerminationTimeoutMilliseconds = 5_000;
 const migrationVersionPattern = /^[0-9]{14}$/u;
 export const productionCoordinates = Object.freeze({
   backofficeUrl: "https://ops.setlivre.com",
@@ -553,11 +556,44 @@ async function productionRoleIsSafelyDisabled(adminConnection, createClient, all
   }
 }
 
+async function countProductionRuntimeSessions(client) {
+  const result = await client.query(`
+    select pg_catalog.count(*)::integer as "activeConnections"
+    from pg_catalog.pg_stat_activity as activity
+    where activity.usename = 'app_runtime_production'
+      and activity.pid <> pg_catalog.pg_backend_pid()
+  `);
+  const activeConnections = result.rows[0]?.activeConnections;
+  if (result.rowCount !== 1 || !Number.isInteger(activeConnections) || activeConnections < 0) {
+    throw new Error("As sessões runtime não puderam ser contadas durante a compensação.");
+  }
+  return activeConnections;
+}
+
+function readCompensationTime(currentTime) {
+  const value = currentTime();
+  if (!Number.isFinite(value)) {
+    throw new Error("Relógio da compensação retornou um valor inválido.");
+  }
+  return value;
+}
+
+async function waitForProductionRuntimeSessionsToEnd(client, deadline, currentTime, wait) {
+  while (true) {
+    if ((await countProductionRuntimeSessions(client)) === 0) return true;
+    const remainingMilliseconds = deadline - readCompensationTime(currentTime);
+    if (remainingMilliseconds <= 0) return false;
+    await wait(Math.min(runtimeTerminationPollIntervalMilliseconds, remainingMilliseconds));
+  }
+}
+
 export async function forceProductionRoleDisabled({
   adminConnection,
   allowMissingVerifier = false,
   createClient = createPostgresClient,
+  currentTime = () => performance.now(),
   maximumAttempts = 2,
+  wait = (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
 }) {
   if (!Number.isInteger(maximumAttempts) || maximumAttempts < 1 || maximumAttempts > 3) {
     throw new Error("Quantidade de tentativas de compensação inválida.");
@@ -565,10 +601,15 @@ export async function forceProductionRoleDisabled({
   if (typeof allowMissingVerifier !== "boolean") {
     throw new Error("Contrato de verificador da compensação inválido.");
   }
+  if (typeof currentTime !== "function" || typeof wait !== "function") {
+    throw new Error("Relógio da compensação inválido.");
+  }
 
   let lastError = new Error("A role de produção ainda aceita login.");
+  let terminationDeadline;
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     const recovery = createClient(adminConnection);
+    let sessionTerminationTimedOut = false;
     let transactionIsOpen = false;
     try {
       await recovery.connect();
@@ -580,17 +621,32 @@ export async function forceProductionRoleDisabled({
       transactionIsOpen = false;
       await recovery.query("commit");
       await recovery.query(`
-        select pg_catalog.pg_terminate_backend(activity.pid, 5000)
+        select pg_catalog.pg_terminate_backend(activity.pid)
         from pg_catalog.pg_stat_activity as activity
         where activity.usename = 'app_runtime_production'
           and activity.pid <> pg_catalog.pg_backend_pid()
       `);
+      terminationDeadline ??=
+        readCompensationTime(currentTime) + runtimeTerminationTimeoutMilliseconds;
+      if (
+        !(await waitForProductionRuntimeSessionsToEnd(
+          recovery,
+          terminationDeadline,
+          currentTime,
+          wait,
+        ))
+      ) {
+        sessionTerminationTimedOut = true;
+        throw new Error("As sessões runtime não terminaram dentro do prazo único da compensação.");
+      }
     } catch (error) {
       lastError = error;
       if (transactionIsOpen) await recovery.query("rollback").catch(() => undefined);
     } finally {
       await recovery.end().catch(() => undefined);
     }
+
+    if (sessionTerminationTimedOut) break;
 
     try {
       if (await productionRoleIsSafelyDisabled(adminConnection, createClient, allowMissingVerifier))

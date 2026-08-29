@@ -914,7 +914,12 @@ describe("production role provisioning", () => {
   it("preserves the verifier and waits for runtime session termination", async () => {
     let activeConnections = 2;
     let canLogin = true;
+    let currentTime = 0;
     const clients = [];
+    const wait = vi.fn(async (milliseconds) => {
+      currentTime += milliseconds;
+      activeConnections = 0;
+    });
     const createClient = () => {
       const clientIndex = clients.length;
       const client = {
@@ -923,8 +928,8 @@ describe("production role provisioning", () => {
         query: vi.fn(async (statement) => {
           const sql = String(statement).trim().toLowerCase();
           if (clientIndex === 0 && sql === "commit") canLogin = false;
-          if (clientIndex === 0 && sql.includes("pg_terminate_backend")) {
-            activeConnections = 0;
+          if (clientIndex === 0 && sql.includes('count(*)::integer as "activeconnections"')) {
+            return { rowCount: 1, rows: [{ activeConnections }] };
           }
           if (sql.includes("authentication.rolpassword is not null")) {
             return {
@@ -949,6 +954,8 @@ describe("production role provisioning", () => {
       forceProductionRoleDisabled({
         adminConnection: { application_name: "test" },
         createClient,
+        currentTime: () => currentTime,
+        wait,
       }),
     ).resolves.toBeUndefined();
     expect(canLogin).toBe(false);
@@ -956,9 +963,70 @@ describe("production role provisioning", () => {
     expect(clients).toHaveLength(2);
     expect(clients[0].query).toHaveBeenCalledWith("alter role app_runtime_production nologin");
     expect(clients[0].query).toHaveBeenCalledWith(
-      expect.stringContaining("pg_terminate_backend(activity.pid, 5000)"),
+      expect.stringContaining("pg_terminate_backend(activity.pid)"),
     );
+    const recoveryQueries = clients[0].query.mock.calls.map(([statement]) => String(statement));
+    expect(recoveryQueries.findIndex((sql) => sql.includes("pg_terminate_backend"))).toBeLessThan(
+      recoveryQueries.findIndex((sql) => sql.includes('count(*)::integer as "activeConnections"')),
+    );
+    expect(wait).toHaveBeenCalledOnce();
+    expect(wait).toHaveBeenCalledWith(250);
     expect(clients[0].query.mock.calls.flat().join(" ")).not.toContain("password null");
+  });
+
+  it("uses one termination deadline across retries for all ten supported sessions", async () => {
+    let currentTime = 0;
+    const clients = [];
+    const wait = vi.fn(async (milliseconds) => {
+      currentTime += milliseconds;
+    });
+    const createClient = () => {
+      const clientIndex = clients.length;
+      const client = {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async (statement) => {
+          const sql = String(statement).trim().toLowerCase();
+          if (clientIndex === 0 && sql.includes('count(*)::integer as "activeconnections"')) {
+            currentTime = 3_000;
+            throw new Error("transient session count failure");
+          }
+          if (clientIndex === 1 && sql.includes("authentication.rolpassword is not null")) {
+            return {
+              rowCount: 1,
+              rows: [{ activeConnections: 10, canLogin: false, hasPassword: true }],
+            };
+          }
+          if (sql.includes('count(*)::integer as "activeconnections"')) {
+            return { rowCount: 1, rows: [{ activeConnections: 10 }] };
+          }
+          return { rowCount: null, rows: [] };
+        }),
+      };
+      clients.push(client);
+      return client;
+    };
+
+    await expect(
+      forceProductionRoleDisabled({
+        adminConnection: { application_name: "test" },
+        createClient,
+        currentTime: () => currentTime,
+        maximumAttempts: 3,
+        wait,
+      }),
+    ).rejects.toThrow("comprovar a desativação");
+
+    expect(clients).toHaveLength(3);
+    expect(wait).toHaveBeenCalledTimes(8);
+    expect(wait.mock.calls.reduce((total, [milliseconds]) => total + milliseconds, 0)).toBe(2_000);
+    expect(
+      clients.flatMap((client) =>
+        client.query.mock.calls.filter(([statement]) =>
+          String(statement).includes("pg_terminate_backend"),
+        ),
+      ),
+    ).toHaveLength(2);
   });
 
   it("accepts the verifier-free initial state after an ambiguous initialization commit", async () => {
@@ -1131,7 +1199,9 @@ describe("production role provisioning", () => {
     expect(compensation).toBeGreaterThan(activationCommit);
     expect(source).toContain("alter role app_runtime_production nologin");
     expect(source).not.toContain("alter role app_runtime_production nologin password null");
-    expect(source).toContain("pg_catalog.pg_terminate_backend(activity.pid, 5000)");
+    expect(source).toContain("pg_catalog.pg_terminate_backend(activity.pid)");
+    expect(source).not.toContain("pg_catalog.pg_terminate_backend(activity.pid, 5000)");
+    expect(source).toContain("runtimeTerminationTimeoutMilliseconds = 5_000");
     expect(source).toContain("from pg_catalog.pg_roles as role");
     expect(source).toContain("authentication.rolpassword is not null");
     expect(source).not.toContain("select authentication.rolpassword\n");

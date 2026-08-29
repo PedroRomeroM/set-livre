@@ -2,11 +2,11 @@ import type { CurrentLegalDocuments } from "@set-livre/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createElement, type ComponentType } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { transformWithOxc } from "vite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createViteServer } from "vitest/node";
+import { describe, expect, it } from "vitest";
+
+import { RegistrationForm } from "../../src/domains/identity/components/registration-form";
 
 const legalDocuments = {
   privacy: {
@@ -31,64 +31,6 @@ const legalDocuments = {
   },
 } satisfies CurrentLegalDocuments;
 
-type RegistrationFormModule = {
-  RegistrationForm: ComponentType<{ legalDocuments: CurrentLegalDocuments }>;
-};
-
-function isRegistrationFormModule(value: unknown): value is RegistrationFormModule {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "RegistrationForm" in value &&
-    typeof value.RegistrationForm === "function"
-  );
-}
-
-let registrationForm: RegistrationFormModule["RegistrationForm"];
-let vite: Awaited<ReturnType<typeof createViteServer>>;
-
-beforeAll(async () => {
-  vite = await createViteServer({
-    appType: "custom",
-    configFile: false,
-    logLevel: "silent",
-    plugins: [
-      {
-        enforce: "pre",
-        name: "registration-form-ssr-test-tsx",
-        transform(source, id) {
-          if (!id.endsWith(".tsx")) {
-            return null;
-          }
-          return transformWithOxc(source, id, {
-            jsx: { runtime: "automatic" },
-            lang: "tsx",
-            target: "es2022",
-          });
-        },
-      },
-    ],
-    resolve: {
-      alias: { "@": resolve(process.cwd(), "src") },
-    },
-    root: process.cwd(),
-    server: { middlewareMode: true },
-  });
-  const registrationFormModule: unknown = await vite.ssrLoadModule(
-    "/src/domains/identity/components/registration-form.tsx",
-  );
-  if (!isRegistrationFormModule(registrationFormModule)) {
-    throw new Error("O módulo SSR não publicou RegistrationForm.");
-  }
-  registrationForm = registrationFormModule.RegistrationForm;
-});
-
-afterAll(async () => {
-  if (vite !== undefined) {
-    await vite.close();
-  }
-});
-
 function renderRegistrationServerMarkup() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -100,7 +42,7 @@ function renderRegistrationServerMarkup() {
     createElement(
       QueryClientProvider,
       { client: queryClient },
-      createElement(registrationForm, { legalDocuments }),
+      createElement(RegistrationForm, { legalDocuments }),
     ),
   );
 }

@@ -438,10 +438,11 @@ verificador é inválido. Os atributos vêm da view pública `pg_roles`; a conex
 provando uma conexão real que assume `app_dal`.
 
 Da alteração até o readiness, qualquer erro trata o commit como potencialmente aplicado. Uma conexão
-administrativa nova impõe somente `NOLOGIN`, sem apagar ou rotacionar a senha, encerra cada sessão
-runtime com a sobrecarga temporizada de `pg_terminate_backend` e outra conexão relê
-`rolcanlogin=false`, verificador esperado e zero sessões. Somente um commit inicial ambíguo que não
-retornou sucesso admite o estado original sem verificador; uma retomada sempre exige preservação.
+administrativa nova impõe somente `NOLOGIN`, sem apagar ou rotacionar a senha, envia primeiro o sinal de
+término a todas as sessões runtime e então relê a contagem a cada 250 ms sob um único prazo monotônico
+de cinco segundos, compartilhado por qualquer retry. Outra conexão comprova `rolcanlogin=false`,
+verificador esperado e zero sessões. Somente um commit inicial ambíguo que não retornou sucesso admite o
+estado original sem verificador; uma retomada sempre exige preservação.
 Antes de essa compensação encerrar sessões, o cliente que executou o readiness é fechado e retirado do
 teardown final, impedindo que a própria conexão seja terminada por outro backend enquanto ainda está
 associada a um emissor ativo do driver PostgreSQL.

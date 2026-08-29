@@ -42,10 +42,9 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - uma path unit aguarda o lock e recupera `SIGKILL`; o bootstrap recalcula a árvore completa antes de
   reutilizar a release ativa, interrompe release incompatível antes de mutar o host e só a release do
   novo digest volta a iniciar os apps;
-- o runtime de banco recebe senha apenas na transição inicial sem verificador. Falha posterior impõe
-  `NOLOGIN`, preserva o verificador e encerra sessões com espera limitada; retry retoma `LOGIN` sem
-  rotação. Estado sem verificador só é aceito após commit inicial ambíguo não confirmado. O deploy lê
-  apenas a presença, nunca o hash; rotação futura exige fluxo dedicado;
+- ativação e recuperação do runtime de banco são fail-closed e seguem o contrato operacional em
+  [infrastructure.md, Banco de produção](../infrastructure.md#banco-de-producao); rotação implícita
+  permanece fora do deploy normal;
 - o startup packet do cliente não é autoridade para a role efetiva porque o Supavisor pode não
   encaminhar opções arbitrárias. Uma migration append-only fixa o setting não secreto `role=app_dal`
   para `app_runtime_production` somente no database `postgres`, e o readiness valida a configuração e

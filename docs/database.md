@@ -35,12 +35,9 @@ A baseline implementada inclui:
   catálogos internos do Cloud, nenhum `CREATE/TEMP` direto para DAL/runtime no database e nenhum
   `USAGE/CREATE` efetivo de `app_dal` fora de `private` e dos schemas internos do PostgreSQL.
 
-O provisionador diferencia `NOLOGIN` sem verificador, `NOLOGIN` com verificador preservado e `LOGIN`.
-Somente o primeiro estado recebe a senha inicial; o segundo retoma a mesma credencial sem rotação. Uma
-compensação impõe `NOLOGIN`, termina sessões com espera limitada e comprova em conexão independente
-verificador esperado e zero sessões. Ausência do verificador só é segura quando o commit da
-inicialização foi ambíguo e não retornou sucesso. Os atributos vêm de `pg_roles`; a conexão
-administrativa consulta em `pg_authid` apenas o booleano de presença, sem retornar o hash.
+O ciclo de inicialização, retomada, validação e compensação dessa role pertence ao contrato operacional
+canônico em [infrastructure.md, Banco de produção](infrastructure.md#banco-de-producao). Este documento
+mantém somente o estado estrutural e as invariantes de banco.
 
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
 expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, comandos allowlisted preservados
