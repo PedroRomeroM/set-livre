@@ -87,8 +87,8 @@
               <td>
                 Oracle <code>VM.Standard.E2.1.Micro</code> Always Free-eligible, x86_64, Ubuntu
                 24.04, IPv4 reservado, Nginx/systemd e SSH de deploy dedicado; recuperação
-                fail-closed, request IDs confiáveis e logs redigidos na borda, sem o antigo agente
-                pull ou suas credenciais no host.
+                fail-closed do host e da ativação do banco, request IDs confiáveis e logs redigidos
+                na borda, sem o antigo agente pull ou suas credenciais no host.
               </td>
             </tr>
             <tr>
@@ -127,9 +127,7 @@
           </li>
           <li>
             Banco e credenciais de produção seguem privilégio mínimo e falham fechado diante de
-            configuração ambígua. A role DAL efetiva é imposta pelo PostgreSQL, sem depender de
-            parâmetros arbitrários encaminhados pelo pooler. Os contratos duráveis ficam nas fontes
-            canônicas de
+            configuração ambígua. Os contratos duráveis ficam nas fontes canônicas de
             <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
           </li>
         </ul>

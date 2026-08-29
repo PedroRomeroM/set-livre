@@ -43,6 +43,8 @@ comandos publicados. O login de produção `app_runtime_production`:
 - pode apenas conectar e assumir `app_dal`;
 - tem limite de dez conexões;
 - não possui superuser, inherit, criação, replicação, bypass RLS, TEMP ou objetos;
+- ativação e recuperação seguem o contrato fail-closed canônico em
+  [infrastructure.md, Banco de produção](infrastructure.md#banco-de-producao);
 - falha no provisionamento e no health se ele ou `app_dal` receber `CREATE`/`TEMP` no database;
 - assume `app_dal` por um único setting não secreto, limitado ao database `postgres` e validado
   exatamente pelo readiness; a segurança não depende de o Supavisor encaminhar opções do cliente;

@@ -35,6 +35,10 @@ A baseline implementada inclui:
   catálogos internos do Cloud, nenhum `CREATE/TEMP` direto para DAL/runtime no database e nenhum
   `USAGE/CREATE` efetivo de `app_dal` fora de `private` e dos schemas internos do PostgreSQL.
 
+O ciclo de inicialização, retomada, validação e compensação dessa role pertence ao contrato operacional
+canônico em [infrastructure.md, Banco de produção](infrastructure.md#banco-de-producao). Este documento
+mantém somente o estado estrutural e as invariantes de banco.
+
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
 expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, comandos allowlisted preservados
 como `security definer` com a configuração exata `search_path = ''`, ACL do schema `private` restrita

@@ -80,6 +80,9 @@ diretamente somente quando precisa coordenar uma regra do Set Livre que essas fe
 fronteira local, limpeza garantida do cache de build, bootstrap da role DAL e publicação atômica dos
 contratos gerados.
 
+O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs importam o componente
+diretamente e não iniciam um servidor Vite aninhado.
+
 ## Variáveis locais
 
 Aplicações:
