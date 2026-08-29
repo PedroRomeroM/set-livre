@@ -61,6 +61,13 @@ Dados de CPF/CNPJ e documento permanecem em colunas privadas e não entram no re
 mantém valores sensíveis apenas pelo tempo da ação e não os coloca em query key, URL, mutation cache ou
 evidência Playwright.
 
+Na FEAT-006, nome, descrição e endereço de revisão ainda não aprovada são acessíveis somente ao próprio
+dono autenticado por grants de coluna, `auth.uid()` e RLS; outro dono recebe o mesmo `404` de ausência.
+`app_dal` não lê tabelas e executa apenas as três fachadas privadas. Cada uma revalida perfil
+ativo/completo, autoridade e contrato vigente antes inclusive de replay idempotente. O ledger guarda
+somente hash e referências; auditoria e logs operacionais não recebem conteúdo ou endereço. O browser
+mantém o editor em key com usuário + estúdio e callbacks tardios não recriam cache após troca de sessão.
+
 ## Comandos, origem e abuso
 
 Escritas cookie-based exigem método, body limitado, content type, `Origin`/`Host` exatos e, em produção,

@@ -12,6 +12,7 @@ import {
   verifyDatabaseArtifacts,
 } from "../../scripts/database-artifacts.mjs";
 import {
+  applicationDatabaseSchemas,
   assertDockerPolicyOrStopRunningStack,
   assertLocalStatusOrStopRunningStack,
   assertLoopbackContainerInspections,
@@ -22,6 +23,7 @@ import {
   parseSupabaseStatus,
   runNextBuildWithCacheCleanup,
   runSupabase,
+  runWindowsDatabaseTests,
   supabaseLocalNetworkName,
   validateLocalDockerContext,
   validateDockerDesktopPortBindingPolicy,
@@ -88,6 +90,7 @@ describe("local tooling contracts", () => {
     );
     expect(rootManifest.scripts["build:web"]).toBe("node scripts/local-setup.mjs build-web");
     expect(rootManifest.scripts["supabase:lint"]).toBe("node scripts/local-setup.mjs lint");
+    expect(applicationDatabaseSchemas).toEqual(["public", "private", "audit"]);
     expect(backofficeManifest.scripts.dev).toBe(
       "node ../../scripts/local-setup.mjs dev-backoffice",
     );
@@ -1784,6 +1787,40 @@ describe("local tooling contracts", () => {
     expect(invocationOptions?.stdio).toEqual(["ignore", "inherit", "pipe"]);
     expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
     expect(thrown).not.toContain("raw-secret");
+  });
+
+  it("runs Windows pgTAP without bind mounts and always removes the container", () => {
+    const invocations = [];
+    runWindowsDatabaseTests(
+      { DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres" },
+      {
+        containerName: "set-livre-pgtap-test",
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command, options });
+          return { status: 0, stderr: "", stdout: "" };
+        },
+        resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+      },
+    );
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "rm",
+    ]);
+    expect(invocations[0]?.argumentsList).not.toContain("-v");
+    expect(invocations[0]?.argumentsList).not.toContain("--mount");
+    expect(invocations[0]?.argumentsList).not.toContain("local-password");
+    expect(invocations[0]?.options.env).toMatchObject({
+      PGDATABASE: "postgres",
+      PGHOST: "supabase_db_set-livre",
+      PGPASSWORD: "local-password",
+      PGPORT: "5432",
+      PGUSER: "postgres",
+    });
+    expect(invocations[1]?.argumentsList[2]).toBe("set-livre-pgtap-test:/tests");
+    expect(invocations[2]?.options.stdio).toEqual(["ignore", "inherit", "pipe"]);
   });
 
   it("normalizes and validates the tracked schema dump", () => {

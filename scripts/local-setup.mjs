@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
@@ -39,6 +39,7 @@ const localRuntimeEnvironmentNames = Object.freeze([
   "NEXT_PUBLIC_SUPABASE_URL",
 ]);
 const localRuntimeEnvironmentNameSet = new Set(localRuntimeEnvironmentNames);
+export const applicationDatabaseSchemas = Object.freeze(["public", "private", "audit"]);
 const inheritedOperationalEnvironmentNames = Object.freeze([
   "CI",
   "COMSPEC",
@@ -649,6 +650,102 @@ export function runSupabase(
   return result.stdout ?? "";
 }
 
+const pgProveImage = "public.ecr.aws/supabase/pg_prove:3.36";
+
+export function runWindowsDatabaseTests(
+  values,
+  {
+    containerName = `set-livre-pgtap-${process.pid}-${randomUUID()}`,
+    execute = spawnSync,
+    resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+  } = {},
+) {
+  const databaseUrl = new URL(values.DB_URL);
+  const environment = {
+    ...resolveLocalDockerEnvironment(),
+    PGDATABASE: decodeURIComponent(databaseUrl.pathname.slice(1)),
+    PGHOST: `supabase_db_${supabaseLocalProjectId}`,
+    PGPASSWORD: decodeURIComponent(databaseUrl.password),
+    PGPORT: "5432",
+    PGUSER: decodeURIComponent(databaseUrl.username),
+  };
+  const invoke = (argumentsList, { attached = false, label }) => {
+    const result = execute("docker", argumentsList, {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: ["ignore", attached ? "inherit" : "pipe", "pipe"],
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      throw new Error(`${label} falhou no runner pgTAP efêmero do Windows.`);
+    }
+    return result.stdout ?? "";
+  };
+
+  let containerCreated = false;
+  let failure;
+  try {
+    invoke(
+      [
+        "create",
+        "--name",
+        containerName,
+        "--network",
+        supabaseLocalNetworkName,
+        "-e",
+        "PGHOST",
+        "-e",
+        "PGPORT",
+        "-e",
+        "PGUSER",
+        "-e",
+        "PGPASSWORD",
+        "-e",
+        "PGDATABASE",
+        "-w",
+        "/tests",
+        pgProveImage,
+        "pg_prove",
+        "--ext",
+        ".pg",
+        "--ext",
+        ".sql",
+        "-r",
+        "/tests",
+      ],
+      { label: "A criação" },
+    );
+    containerCreated = true;
+    invoke(
+      ["cp", `${resolve(repositoryRoot, "supabase/tests")}${sep}.`, `${containerName}:/tests`],
+      { label: "A cópia dos testes" },
+    );
+    invoke(["start", "--attach", containerName], {
+      attached: true,
+      label: "A execução dos testes SQL",
+    });
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (containerCreated) {
+      try {
+        invoke(["rm", "--force", containerName], { label: "A limpeza" });
+      } catch (cleanupError) {
+        failure ??= cleanupError;
+      }
+    }
+  }
+  if (failure !== undefined) throw failure;
+}
+
+function runDatabaseTests(values) {
+  if (process.platform === "win32") {
+    runWindowsDatabaseTests(values);
+    return;
+  }
+  runSupabase(["test", "db", "--local"], { network: true });
+}
+
 export function parseSupabaseCliError(rawError) {
   if (typeof rawError !== "string" || rawError.trim() === "") return undefined;
   const lines = rawError.trim().split(/\r?\n/u).reverse();
@@ -1109,7 +1206,7 @@ export async function main(command = "reset") {
     return;
   }
 
-  localStatus();
+  const values = localStatus();
   if (command === "generate-schema") {
     await generateDatabaseArtifacts(runSupabase, { schema: true, types: false });
   } else if (command === "generate-types") {
@@ -1117,12 +1214,23 @@ export async function main(command = "reset") {
   } else if (command === "generate") {
     await generateDatabaseArtifacts(runSupabase);
   } else if (command === "lint") {
-    runSupabase(["db", "lint", "--local", "--level", "warning", "--fail-on", "warning"], {
-      network: true,
-    });
+    runSupabase(
+      [
+        "db",
+        "lint",
+        "--local",
+        "--schema",
+        applicationDatabaseSchemas.join(","),
+        "--level",
+        "warning",
+        "--fail-on",
+        "warning",
+      ],
+      { network: true },
+    );
   } else if (command === "test") {
-    runSupabase(["test", "db", "--local"], { network: true });
-    await verifyProductionRoleStartupAssumption(localStatus());
+    runDatabaseTests(values);
+    await verifyProductionRoleStartupAssumption(values);
     await verifyDatabaseArtifacts(runSupabase);
     process.stdout.write("Testes SQL e artefatos gerados estão consistentes.\n");
   } else {

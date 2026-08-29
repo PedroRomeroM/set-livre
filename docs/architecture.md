@@ -73,6 +73,24 @@ O estado comum expõe `recipientOnboardingCapability: "local_adapter" | "unavail
 
 A projeção completa acrescenta separadamente `ownerActivationCapability: "available" | "unavailable"`; a projeção compacta não recebe esse campo. A derivação server-only combina a fonte do contrato com o ambiente: `approved` é sempre `available`; `local_fixture` é `available` apenas em `local | test` e falha fechada em `development | production`, ambiente ausente ou valor inválido. Essa capability não é coluna nem altera `source`, `nextAction` ou qualquer fato. A leitura de ativação continua retornando o documento completo para consulta quando `unavailable`, enquanto `owner.activate` retorna `503 SERVICE_UNAVAILABLE` antes de `activateOwnerProfile` e da escrita. As tuples SQL permanecem com 21/16 colunas e nenhuma migration é necessária.
 
+#### Núcleo versionado de estúdio da FEAT-006
+
+`/dono/estudios/novo` e `/dono/estudios/[studioId]/dados` são Server Components nas fronteiras de
+sessão, perfil, autoridade de dono e contrato, com um único Client Component para formulário, preview
+e conflito. O editor interativo inteiro só monta depois do primeiro commit do cliente; o HTML inicial
+publica apenas um estado neutro, evitando entrada anterior aos handlers e divergência de hidratação.
+
+As três escritas entram no registry fechado de `POST /api/commands`, passam por Zod, rate limit,
+serviço, DAL `server-only` e uma função SQL privada específica. O banco revalida perfil ativo e
+completo, autoridade de dono e aceite vigente antes inclusive de replay idempotente. Criação,
+atualização/clone e descarte usam lock, token `{revisionId, revisionVersion}`, ledger mínimo sem
+conteúdo e auditoria redigida. `app_dal` executa somente essas fachadas e continua sem leitura direta.
+
+As leituras usam RPCs `security invoker` filtradas por `auth.uid()` e RLS. A key privada do editor
+inclui usuário e estúdio; uma resposta tardia só substitui uma key já existente do mesmo escopo.
+Conflito otimista relê a revisão e preserva os valores locais para comparação. Contrato vencido usa
+`OWNER_CONTRACT_CHANGED` e recompõe a rota no servidor, em vez de fingir conflito de conteúdo.
+
 ### 2.2 Backoffice
 
 Aplicação Next.js separada em `apps/backoffice`.

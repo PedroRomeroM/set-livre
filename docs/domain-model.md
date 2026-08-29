@@ -135,7 +135,20 @@ A leitura da conta usa `public.get_my_profile()` como read model `security invok
 
 ### 4.3 Estúdio
 
-`studios.owner_user_id` é `not null`. Uma conta pode possuir vários estúdios. Não existe membership nesta versão.
+`studios.owner_user_id` referencia a autoridade em `owner_profiles` e é `not null`. Uma conta pode
+possuir vários estúdios; não existe membership nesta versão. O registro operacional guarda somente
+estado e os ponteiros `published_revision_id`/`draft_revision_id`; todo conteúdo editável fica em
+`studio_revisions`.
+
+Um estúdio possui ao menos um dos ponteiros e no máximo um draft. O ponteiro sempre referencia uma
+revisão do próprio estúdio. A primeira criação gera estúdio + revisão 1/draft atomicamente. Atualizar
+draft incrementa `revision_version`; editar uma revisão aprovada sem draft cria o próximo
+`revision_number` e preserva a aprovada. Descartar o único draft remove o estúdio ainda inédito;
+descartar um draft sobre publicação volta ao ponteiro aprovado sem alterar histórico público.
+
+Toda mutação revalida no banco perfil ativo/completo, dono ativo e aceite vigente de
+`owner_contract`, inclusive em replay idempotente. O navegador envia somente conteúdo e o fence
+`{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente.
 
 ### 4.4 Reserva
 
@@ -172,6 +185,9 @@ disabled → published | paused (somente admin)
 Regras:
 
 - `published_revision_id` pode existir em `published`, `changes_pending`, `paused`, `disabled`;
+- `draft_revision_id` e `published_revision_id`, quando presentes, são diferentes e pertencem ao
+  próprio estúdio;
+- estúdio ainda inédito aponta para exatamente um draft; descartar esse draft remove a entidade;
 - primeira aprovação é obrigatória;
 - rejeitar alteração não remove revisão pública;
 - pausa não cancela reservas;
@@ -185,7 +201,9 @@ Regras:
 - `rejected`;
 - `superseded`.
 
-Somente draft pode ser editada. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com motivo. Aprovação marca revisão anterior como superseded.
+Somente draft pode ser editada ou removida; o trigger exige incremento exato de
+`revision_version`. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com
+motivo. Aprovação marca revisão anterior como superseded.
 
 ## 7. Estado de tentativa/hold
 

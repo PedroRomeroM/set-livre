@@ -103,7 +103,23 @@ Medir; não usar Infinity em dado operacional.
 - `/dono` e `GET /api/owner/activation` semeiam/refazem somente `activation`, cuja projeção possui o contrato completo. `/dono/recebimentos`, `GET /api/owner/recipient` e `recipient.onboarding.start | refresh` publicam somente `recipient`, sem título, versão textual, hash ou corpo Markdown. Um DTO nunca é aceito na key da outra projeção;
 - `owner.activate` e `recipient.onboarding.*` mantêm `{ expectedScope, idempotencyKey }` em closure/ref one-shot, usam `networkMode: "always"`, não fazem optimistic update e só publicam DTO monotônico se a key/scope/projeção esperados ainda existirem;
 - `CONFLICT` e `VALIDATION_FAILED` sem `fieldErrors` desabilitam a ação até um GET autoritativo explícito e nunca repetem o POST. `VALIDATION_FAILED` com erro de campo continua no formulário e pode ser corrigido sem forçar releitura. A combinação privada exata `42501 + owner_contract_not_current` vira `409 CONFLICT` para usar esse fence; outros `42501`, inclusive bloqueios, permanecem `403 FORBIDDEN` e não são reclassificados como recuperáveis;
-- conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;\n- alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
+- conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;
+- alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
+- tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; editores usam
+  `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
+  logout/troca de sessão remove toda a família `owner/private/studio-editor`;
+- o editor começa com `initialData` validado e `staleTime: 0`. Resultado de mutation só publica sobre
+  uma key já existente do mesmo usuário/estúdio; callback tardio depois da limpeza falha fechado e não
+  recria dados privados. Outros estúdios do mesmo dono são preservados e scopes de outro usuário são
+  removidos;
+- create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
+  mesma chave quando o resultado é ambíguo. Update/discard seguem o mesmo contrato. Sucesso de update
+  substitui o editor autoritativo; descarte remove toda a família se o estúdio inédito foi excluído ou
+  publica o editor da revisão aprovada preservada;
+- conflito otimista faz GET do editor, conserva o formulário local e mostra comparação; `Usar versão
+salva` troca os valores sem POST, e `Continuar com minhas alterações` exige um novo submit com o token
+  recente. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED` e `UNAUTHENTICATED` recompõem a rota SSR em vez
+  de entrar nessa comparação;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

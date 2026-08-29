@@ -17,8 +17,6 @@ import {
 } from "../../helpers/feat-003-profile-account";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 function createDeferredSignal() {
   let resolved = false;
   let resolve: () => void = () => {

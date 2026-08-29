@@ -33,7 +33,11 @@ type LogoutRequest = {
 };
 ```
 
-Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No registry implementado, `expectedScope` pertence aos dois comandos de perfil e aos três comandos de dono/recebedor; estes três também exigem `idempotencyKey`. A rota Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
+Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No
+registry implementado, `expectedScope` pertence aos dois comandos de perfil, aos três comandos de
+dono/recebedor e aos três comandos de estúdio; os seis últimos também exigem `idempotencyKey`. A rota
+Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID
+estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
 Headers:
 
@@ -41,7 +45,8 @@ Headers:
 - `X-Request-Id` opcional, validado;
 - cookie de sessão;
 - `Origin` confiável;
-- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código; os três comandos FEAT-004 usam exclusivamente `idempotencyKey` no envelope.
+- `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código;
+  os comandos FEAT-004 e FEAT-006 usam exclusivamente `idempotencyKey` no envelope.
 
 `X-Request-Id`/`requestId` identifica a request HTTP e nunca substitui `idempotencyKey`. A chave de idempotência identifica a tentativa lógica repetível e pode atravessar retries com novos request IDs; ela não é copiada para o campo público de correlação.
 
@@ -161,23 +166,53 @@ Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo s
 
 ### 5.3 Estúdio e revisão
 
-| Action                           | Efeito                            |
-| -------------------------------- | --------------------------------- |
-| `studio.create`                  | cria studio + revisão draft       |
-| `studio.revision.updateCore`     | dados, endereço, capacidade, tipo |
-| `studio.revision.updateTaxonomy` | tags/amenities                    |
-| `studio.revision.updateContent`  | descrição/regras/FAQ/YouTube      |
-| `studio.revision.submit`         | valida completude e envia         |
-| `studio.pause`                   | pausa novas reservas              |
-| `studio.resume`                  | retoma se elegível                |
-| `studio.draft.discard`           | descarta draft sem dependência    |
-| `studio.media.upload.prepare`    | emite upload assinado             |
-| `studio.media.upload.finalize`   | valida objeto/metadados           |
-| `studio.media.reorder`           | posição                           |
-| `studio.media.cover.set`         | capa                              |
-| `studio.media.delete`            | remove se seguro                  |
+Implementados na FEAT-006:
 
-`studio.revision.update*` usa optimistic concurrency (`expectedUpdatedAt` ou revision token).
+| Action                       | Efeito                                             |
+| ---------------------------- | -------------------------------------------------- |
+| `studio.create`              | cria studio + revisão draft                        |
+| `studio.revision.updateCore` | dados, endereço, capacidade, tipo                  |
+| `studio.draft.discard`       | remove draft; preserva publicado ou exclui inédito |
+
+Planejados para features posteriores:
+
+| Action                           | Efeito                       |
+| -------------------------------- | ---------------------------- |
+| `studio.revision.updateTaxonomy` | tags/amenities               |
+| `studio.revision.updateContent`  | descrição/regras/FAQ/YouTube |
+| `studio.revision.submit`         | valida completude e envia    |
+| `studio.pause`                   | pausa novas reservas         |
+| `studio.resume`                  | retoma se elegível           |
+| `studio.media.upload.prepare`    | emite upload assinado        |
+| `studio.media.upload.finalize`   | valida objeto/metadados      |
+| `studio.media.reorder`           | posição                      |
+| `studio.media.cover.set`         | capa                         |
+| `studio.media.delete`            | remove se seguro             |
+
+Os três envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
+payload de criação contém somente os dados centrais. Update e descarte recebem `studioId`,
+`expectedRevisionId` e `expectedRevisionVersion`; status e número de revisão nunca são aceitos do
+browser. Curitiba/PR, CEP, capacidade, tipo ativo e limites textuais são validados por Zod e pelo
+banco.
+
+O retorno de create/update é o `StudioEditor` autoritativo. Discard retorna união discriminada:
+`studioDeleted=true` sem editor para estúdio inédito ou `studioDeleted=false` com editor da revisão
+publicada preservada. A mesma chave/payload não repete efeito; chave reutilizada com payload divergente
+falha `409 CONFLICT`.
+
+Concorrência otimista usa o token `{revisionId, revisionVersion}`. Conflito relê
+`GET /api/owner/studios/[studioId]` e só um novo submit salva os valores locais escolhidos. A combinação
+interna `42501 + owner_contract_not_current` da guarda de estúdio vira
+`409 OWNER_CONTRACT_CHANGED`: o cliente recompõe a rota SSR para exigir o contrato vigente e não
+classifica isso como conflito de conteúdo. Outros `42501` permanecem `403 FORBIDDEN`.
+
+Leituras implementadas:
+
+- `GET /api/studio-types`: sessão autenticada e lista estrita de tipos ativos;
+- `GET /api/owner/studios/[studioId]`: sessão autenticada, UUID estrito e 0/1 editor do próprio dono;
+  UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem revelar existência.
+
+Ambas usam deadline server-side de 2 segundos, resposta sem cache e evento operacional redigido.
 
 ### 5.4 Calendário
 
@@ -350,7 +385,7 @@ Cada um retorna somente campos de tela:
 - `list_my_reservations`;
 - `get_my_reservation`;
 - `list_owner_studios`;
-- `get_owner_studio_editor`;
+- `get_owner_studio_editor`: implementado na FEAT-006; escolhe draft ou publicado e repete `scope`;
 - `get_owner_calendar`;
 - `list_owner_reservations`;
 - `list_owner_payments`;
@@ -432,6 +467,11 @@ Antes de renderizar PII de sessão, o cliente remove scopes anteriores e também
 Na FEAT-003, cada mutation sensível de perfil envia `{ action, expectedScope, payload }` a partir de uma ref one-shot e usa `networkMode: "always"`; ausência de rede é executada como erro e nunca vira fila pausada retomável sob outra sessão. `SESSION_CHANGED` ou `UNAUTHENTICATED` fecham o DOM privado, limpam `MutationCache` e as famílias `account/profile` + `identity/session` e forçam nova composição SSR. O logout repete o fence com closure sem `variables` nas duas superfícies, mas limpa integralmente o `QueryClient` antes do reload SSR em qualquer resposta terminal ou incerta. Uma closure stale de A não encerra B: após `getClaims`, a classificação termina antes de o fluxo obter explicitamente o cookie store e antes dos efeitos destrutivos explícitos de recovery, deleção de cookies ou `signOut`; a tentativa offline executa uma única request sem retomada tardia. Reseeds autoritativos normais em login, perfil e segurança fazem a limpeza privada preservando queries públicas. No sucesso do perfil, a publicação sobrescreve a query observada sem removê-la, descarta scopes privados incompatíveis e rejeita callback tardio se a key esperada já tiver sido removida por uma transição A→B.
 
 Na FEAT-004, as famílias privadas são `owner/private/activation/<userId>` e `owner/private/recipient/<userId>`; projeção e usuário fazem parte da identidade do cache. O refetch de `/dono` chama somente o GET completo de ativação, enquanto recebimentos usa somente o GET compacto. Sucesso de `owner.activate` publica `activation`; `recipient.onboarding.start | refresh` publicam `recipient`. Um erro concorrente `409` ou uma validação sem campo exige GET explícito antes de habilitar nova ação, sem replay do comando.
+
+Na FEAT-006, tipos usam `studio/taxonomies/types` e cada editor usa
+`owner/private/studio-editor/<userId>/<studioId>`. Sucesso só publica sobre a key existente do mesmo
+escopo; logout remove toda a família privada. Conflito otimista relê o editor e preserva os valores
+locais para comparação. Exclusão de inédito remove a família; contrato alterado recompõe a rota SSR.
 
 ## 10. Rate limits iniciais
 

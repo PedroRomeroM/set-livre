@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 import styles from "./owner.module.css";
 
-export type OwnerPage = "overview" | "recipient";
+export type OwnerPage = "overview" | "recipient" | "studio";
 
 export function OwnerPageFrame({
   children,
@@ -43,6 +43,13 @@ export function OwnerPageFrame({
               href="/dono/recebimentos"
             >
               Recebimentos
+            </Link>
+            <Link
+              aria-current={currentPage === "studio" ? "page" : undefined}
+              className={styles.ownerNavLink}
+              href="/dono/estudios/novo"
+            >
+              Novo estúdio
             </Link>
           </nav>
           <Panel className={styles.ownerContent}>{children}</Panel>

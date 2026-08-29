@@ -1,0 +1,228 @@
+.editorLayout,
+.form,
+.formSection,
+.sectionHeader,
+.preview,
+.conflict,
+.discardConfirmation {
+  display: grid;
+  min-width: 0;
+}
+
+.editorLayout {
+  grid-template-columns: minmax(0, 1.45fr) minmax(17rem, 0.75fr);
+  gap: var(--sl-space-6);
+  align-items: start;
+}
+
+.form {
+  gap: var(--sl-space-6);
+}
+
+.formSection,
+.preview,
+.conflict,
+.discardConfirmation {
+  gap: var(--sl-space-4);
+}
+
+.formSection + .formSection {
+  padding-top: var(--sl-space-6);
+  border-top: 1px solid var(--sl-color-line);
+}
+
+.sectionHeader {
+  gap: var(--sl-space-2);
+}
+
+.sectionTitle,
+.sectionDescription,
+.previewLabel,
+.previewTitle,
+.previewMeta,
+.previewDescription,
+.discardConfirmation p {
+  margin: 0;
+}
+
+.sectionTitle,
+.previewTitle {
+  color: var(--sl-color-ink-strong);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.sectionTitle {
+  font-size: 1.35rem;
+}
+
+.sectionDescription,
+.previewMeta,
+.previewAddress {
+  color: var(--sl-color-ink-muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sl-space-4);
+  min-width: 0;
+}
+
+.preview {
+  position: sticky;
+  top: var(--sl-space-5);
+  padding: var(--sl-space-5);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  background: var(--sl-color-surface-soft);
+}
+
+.previewLabel {
+  color: var(--sl-color-brand-strong);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.previewTitle {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+
+.previewDescription {
+  color: var(--sl-color-ink);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.previewAddress {
+  font-style: normal;
+}
+
+.actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--sl-space-3);
+}
+
+.actions > button {
+  flex: 1 1 13rem;
+}
+
+.revisionSummary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--sl-space-2) var(--sl-space-4);
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface-soft);
+  color: var(--sl-color-ink-muted);
+}
+
+.revisionSummary strong {
+  color: var(--sl-color-ink-strong);
+}
+
+.conflict,
+.discardConfirmation {
+  padding: var(--sl-space-4);
+  border: 1px solid var(--sl-color-danger);
+  border-radius: var(--sl-radius-sm);
+  background: var(--sl-color-surface);
+}
+
+.conflictTable {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-sm);
+  overflow: hidden;
+}
+
+.conflictHeader,
+.conflictRow {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.6fr) repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.conflictHeader {
+  background: var(--sl-color-surface-soft);
+  color: var(--sl-color-ink-strong);
+  font-weight: 800;
+}
+
+.conflictHeader > span,
+.conflictRow > :is(strong, span) {
+  min-width: 0;
+  padding: var(--sl-space-3);
+  border-bottom: 1px solid var(--sl-color-line);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conflictRow:last-child > :is(strong, span) {
+  border-bottom: 0;
+}
+
+@media (max-width: 62rem) {
+  .editorLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preview {
+    position: static;
+  }
+}
+
+@media (max-width: 36rem) {
+  .formGrid,
+  .conflictHeader,
+  .conflictRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conflictHeader {
+    display: none;
+  }
+
+  .conflictRow {
+    padding-block: var(--sl-space-2);
+    border-bottom: 1px solid var(--sl-color-line);
+  }
+
+  .conflictRow:last-child {
+    border-bottom: 0;
+  }
+
+  .conflictRow > :is(strong, span) {
+    border-bottom: 0;
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .actions > button {
+    width: 100%;
+    flex: 0 1 auto;
+  }
+}
+
+@media (forced-colors: active) {
+  .preview,
+  .revisionSummary,
+  .conflict,
+  .discardConfirmation,
+  .conflictTable {
+    border-color: CanvasText;
+  }
+}

@@ -83,6 +83,14 @@ contratos gerados.
 O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs importam o componente
 diretamente e não iniciam um servidor Vite aninhado.
 
+No Windows, `npm run test:db` usa a imagem pinada
+`public.ecr.aws/supabase/pg_prove:3.36` em um container efêmero na rede local oficial do Supabase.
+Os testes são copiados com `docker cp`, sem bind mount sujeito a permissões/compartilhamento do
+OneDrive; host, usuário, senha e database entram apenas no ambiente do processo/container. O runner
+sempre remove o container no `finally` e preserva a primeira falha se a limpeza também falhar. Linux
+continua usando o comando oficial `supabase test db --local`. Em ambos, `0000_test_setup.sql` cria a
+extensão pgTAP idempotentemente antes das suítes, e o gate ainda valida readiness e artefatos gerados.
+
 ## Variáveis locais
 
 Aplicações:
@@ -124,7 +132,9 @@ Ao concluir uma feature, seus cenários automatizados ficam nas specs Playwright
 `supabase/schema.generated.sql` e `packages/contracts/src/database.generated.ts` são gerados apenas a
 partir do banco local migrado. A geração valida o conteúdo antes de substituir os arquivos rastreados.
 `supabase:lint` passa pelo mesmo guard local de daemon, stack e bindings antes de executar o linter
-oficial do banco, tratando qualquer warning como falha. `test:db` roda
+oficial nos schemas próprios `public`, `private` e `audit`, tratando qualquer warning como falha. O
+schema `extensions` contém implementações de terceiros, inclusive pgTAP, e fica fora desse gate;
+`test:db` roda
 pgTAP e regenera candidatos temporários; qualquer diferença falha com orientação para executar
 `npm run supabase:generate`.
 

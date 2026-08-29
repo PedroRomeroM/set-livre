@@ -97,6 +97,26 @@ potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é 
 provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
 efetivo e modo `0600` também são obrigatórios.
 
+## Matriz da FEAT-006 em andamento
+
+Os sete cenários estáveis `SL-F006-E2E-001..007` expandem para 24 execuções:
+
+- P0 de criação, clone de publicado e isolamento entre donos nos três engines;
+- validação e conflito em desktop, mobile, 320 px e altura compacta;
+- axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
+- reflow a 200% em Chromium, Firefox e WebKit.
+
+O helper cria dono real pelo fluxo UI, prova pré-requisitos no banco e limita queries administrativas
+ao ambiente E2E já validado. O teardown aguarda quiescência real da rede e fecha a página antes da
+remoção transacional das fixtures, evitando que refetches de fundo produzam `404/503` artificiais no
+log. A criação só retorna ao cenário depois da leitura inicial do editor responder `200`; assim a
+fixture de conflito avança uma versão já observada, sem competir com o refetch de montagem. As specs
+herdam a retenção global de
+trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência localmente.
+
+No banco, `0005_studio_core_revision.sql` possui 30 asserções de domínio/segurança e integra a suíte
+total de 264 testes. O setup `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
+
 ## Contrato por feature
 
 Enquanto planejada ou em andamento, cada feature possui um arquivo em `docs/features/` com seus

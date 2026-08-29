@@ -3,7 +3,7 @@ export type { ButtonProps, ButtonVariant } from "./button";
 export { Alert } from "./feedback";
 export type { AlertProps, AlertVariant } from "./feedback";
 export { FoundationStatus } from "./foundation-status";
-export { Checkbox, ChoiceGroup, Field, Input, Select } from "./form-controls";
+export { Checkbox, ChoiceGroup, Field, Input, Select, Textarea } from "./form-controls";
 export type {
   CheckboxProps,
   ChoiceGroupProps,
@@ -11,6 +11,7 @@ export type {
   FieldProps,
   InputProps,
   SelectProps,
+  TextareaProps,
 } from "./form-controls";
 export { AuthFrame, PageFrame, Panel, Stack } from "./layout";
 export type {

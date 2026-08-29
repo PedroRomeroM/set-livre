@@ -5,9 +5,13 @@ import {
 import { readRouteIdentitySession } from "@/domains/identity/server/identity-read-model";
 import { runPrivateCommandPostRoute } from "@/domains/identity/server/identity-route";
 import { executeOwnerCommand } from "@/domains/owners/server/owner-command-handler";
+import { executeStudioCommand } from "@/domains/studios/server/studio-command-handler";
 import { ApiRouteError, parseOrInputError, readLimitedJson } from "@/lib/server/api-route";
 
-const executePrivateCommand = createPrivateCommandRegistry({ executeOwnerCommand });
+const executePrivateCommand = createPrivateCommandRegistry({
+  executeOwnerCommand,
+  executeStudioCommand,
+});
 
 export async function POST(request: Request) {
   return runPrivateCommandPostRoute(request, async (requestId, setAction, setResponseHeaders) => {

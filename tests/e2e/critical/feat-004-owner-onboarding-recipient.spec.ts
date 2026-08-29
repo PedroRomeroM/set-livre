@@ -18,8 +18,6 @@ import {
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 import { switchFeat003SessionWithoutNavigation } from "../../helpers/feat-003-profile-account";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 function deferredSignal() {
   let resolve: () => void = () => {
     throw new Error("O sinal assíncrono FEAT-004 não foi inicializado.");

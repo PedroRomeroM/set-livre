@@ -26,8 +26,6 @@ import {
 } from "../../helpers/feat-003-profile-account";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], expected: string) {
   await expect
     .poll(

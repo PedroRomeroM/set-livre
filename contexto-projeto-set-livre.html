@@ -66,7 +66,12 @@
           <tbody>
             <tr>
               <td>Produto</td>
-              <td>FEAT-002, FEAT-003 e FEAT-004 concluídas; 31 planos permanecem no roadmap.</td>
+              <td>
+                FEAT-002, FEAT-003 e FEAT-004 concluídas. A FEAT-006 está em andamento nesta branch:
+                núcleo/revisões de estúdio, editor privado, concorrência, RLS e testes foram
+                implementados localmente, mas ainda dependem de PR, review limpo, merge e deploy.
+                Outras 30 features permanecem planejadas.
+              </td>
             </tr>
             <tr>
               <td>Desenvolvimento</td>
@@ -142,9 +147,10 @@
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
           multiengine, acessibilidade, builds standalone, disciplina de dívida técnica e fronteiras
-          de segurança da entrega e do host. Testes não usam retry, timeout ampliado ou relaxamento
-          de asserção para mascarar falhas; os resultados permanecem no PR e nos checks. Os
-          contratos técnicos ficam nas fontes canônicas de
+          de segurança da entrega e do host. Testes não usam retry ou relaxamento de asserção para
+          mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
+          resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas
+          de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

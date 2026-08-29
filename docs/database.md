@@ -13,21 +13,23 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot e tipos são gerados.
 
-### 1.1 Estado implementado até a FEAT-004
+### 1.1 Estado versionado até a FEAT-006 em andamento
 
-A árvore possui a baseline inicial `20260824000100` e a migration append-only
-`20260828174500_default_production_dal_role`, que é o head atual. Antes do primeiro deploy, enquanto o
+A árvore possui a baseline inicial `20260824000100`, a migration de role de produção
+`20260828174500_default_production_dal_role` e a migration append-only
+`20260829103831_feat_006_studio_core_revision`, que é o head da branch atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. Quatro suítes pgTAP cobrem baseline/isolamento, identidade e núcleo legal, perfil e
-dono/recebedor.
+dump de schema. O runner executa um setup idempotente e cinco suítes pgTAP; o recorte atual totaliza
+264 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e núcleo de estúdio.
 
 A baseline implementada inclui:
 
 - schemas `private` e `audit`, `app_dal NOLOGIN NOINHERIT`, grants mínimos e RLS;
 - identidade mínima, termos/aceites, recovery one-shot e perfil privado;
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
+- núcleo de estúdio/revisão, taxonomia mínima, concorrência otimista, ownership e descarte seguro;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
@@ -65,7 +67,9 @@ expand/contract. O deploy mantém a barreira mais forte: depois do `db push` e a
 validar o login, o provisionador exige que o maior head remoto seja exatamente o head compilado pelo
 candidato. Assim, compatibilidade operacional não permite publicar schema divergente.
 
-`npm run supabase:lint` executa o linter oficial com warnings fatais. `npm run supabase:generate`
+`npm run supabase:lint` executa o linter oficial com warnings fatais sobre os schemas próprios
+`public`, `private` e `audit`; extensões de terceiros, incluindo pgTAP, não são atribuídas à aplicação.
+`npm run supabase:generate`
 recria o snapshot SQL e os tipos em temporários irmãos, valida o formato e publica por rename
 atômico. `npm run test:db` executa pgTAP e compara ambos com a geração atual. Falha preserva os
 arquivos rastreados anteriores e não deixa saída parcial.
@@ -185,41 +189,40 @@ Sem escrita pelo browser.
 
 ### 4.6 Taxonomias
 
-`studio_types`, `amenities`, `tags`:
+O recorte implementado possui somente `studio_types`:
 
 - UUID;
 - nome;
 - slug;
-- descrição curta;
 - `active`;
 - `sort_order`;
 - timestamps;
 - slug único.
 
-Browser lê ativos; somente backoffice altera via comando.
+Quatro tipos mínimos são seedados deterministicamente. Browser autenticado lê apenas ativos por
+`list_active_studio_types()`; escrita runtime permanece revogada. Amenities e tags não são criadas
+antecipadamente e pertencem à feature própria.
 
 ### 4.7 `studios`
 
-| Coluna                  | Tipo/Regra                |
-| ----------------------- | ------------------------- |
-| `id`                    | uuid PK                   |
-| `owner_user_id`         | FK profile, not null      |
-| `status`                | check de ciclo            |
-| `published_revision_id` | FK revision null          |
-| `draft_revision_id`     | FK revision null          |
-| `timezone`              | default America/Sao_Paulo |
-| `reservations_enabled`  | boolean                   |
-| `disabled_reason`       | text null                 |
-| `created_at/updated_at` | timestamptz               |
-| `paused_at/disabled_at` | timestamptz null          |
+| Coluna                  | Tipo/Regra                 |
+| ----------------------- | -------------------------- |
+| `id`                    | uuid PK                    |
+| `owner_user_id`         | FK owner profile, not null |
+| `status`                | check de ciclo             |
+| `published_revision_id` | FK revision null           |
+| `draft_revision_id`     | FK revision null           |
+| `created_at/updated_at` | timestamptz                |
 
-A FK circular revisão↔estúdio é criada em etapas de migration.
+As FKs de ponteiro são criadas depois das duas tabelas. Um constraint trigger com autoridade interna
+prova ao fim de cada instrução atômica que existe ao menos um ponteiro e que ambos pertencem ao mesmo
+estúdio. O índice parcial garante no máximo uma revisão `draft` por estúdio.
 
 ### 4.8 `studio_revisions`
 
 Campos públicos versionados:
 
-- `id`, `studio_id`, `revision_number`;
+- `id`, `studio_id`, `revision_number`, `revision_version`;
 - `status`;
 - `name` 2–120;
 - `description` 20–5000;
@@ -228,14 +231,12 @@ Campos públicos versionados:
 - `state` = PR;
 - `postal_code`;
 - `capacity` 1–500;
-- `rules_text` até 5000;
-- `youtube_video_id` null;
 - `studio_type_id`;
-- `submitted_at`, `reviewed_at`, `reviewed_by`, `review_notes`;
 - timestamps;
 - unique `(studio_id, revision_number)`.
 
-Uma revisão submetida/aprovada/rejeitada é imutável por trigger/comando.
+Somente `draft` pode ser atualizada ou removida, e cada atualização incrementa exatamente
+`revision_version`. Revisão `pending`, `approved`, `rejected` ou `superseded` é imutável por trigger.
 
 ### 4.9 Relações da revisão
 
@@ -612,9 +613,22 @@ Snapshot:
 - ip_hash;
 - metadata redigida.
 
-Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.contract_renewed` e `recipient.status_transitioned`. `request_id` correlaciona a request HTTP e `idempotency_key` identifica a tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna privada para replay e não entra em log operacional, DTO ou metadata; payload, requisito bruto, provider e referência externa também não entram na metadata.
+Na FEAT-006, a allowlist acrescenta `studio.created`, `studio.revision_updated` e
+`studio.draft_discarded`. `request_id` correlaciona a request HTTP e `idempotency_key` identifica a
+tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não
+deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice
+parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna
+privada para replay e não entra em log operacional, DTO ou metadata; conteúdo e endereço do estúdio,
+payload, requisito bruto, provider e referência externa também não entram na metadata.
 
 ### 4.34 Idempotência e jobs
+
+Implementado para a FEAT-006, `private.studio_command_requests` usa
+`(owner_user_id, idempotency_key)` como PK e guarda somente action, hash SHA-256 do payload, IDs e
+versão resultante ou o tombstone de exclusão. Não replica nome, descrição ou endereço. Cada fachada
+trava a chave lógica, revalida a autoridade corrente antes do replay e rejeita reutilização divergente.
+
+Planejado para domínios futuros, `private.idempotency_keys`:
 
 `private.idempotency_keys`:
 
@@ -631,7 +645,7 @@ Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.
 
 ## 5. Read models
 
-Implementados nas FEAT-002/003/004:
+Implementados nas FEAT-002/003/004/006:
 
 - `public.get_current_legal_terms()`: retorna somente `id`, tipo, versão, título, Markdown, hash, origem e vigência atuais; `anon` e `authenticated` podem executar;
 - `public.get_own_identity_context()`: retorna 0/1 linha com usuário, tipo de pessoa, status e conclusão derivada; somente `authenticated` pode executar;
@@ -640,6 +654,10 @@ Implementados nas FEAT-002/003/004:
 - `public.get_current_owner_contract()`: retorna exclusivamente a versão vigente de `owner_contract` para `authenticated`; `anon` não recebe `EXECUTE` nem leitura dessa espécie jurídica;
 - `public.get_owner_activation_status()`: não recebe UUID, filtra `auth.uid()` e retorna 21 colunas, incluindo o contrato completo necessário exclusivamente à leitura/aceite em `/dono`;
 - `public.get_owner_recipient_status()`: não recebe UUID, filtra `auth.uid()`, repete o `scope` e retorna 16 colunas com somente a referência mínima do contrato, status internos, requisitos allowlisted, próxima ação, versões e elegibilidade derivada; nunca retorna título, versão textual, hash, corpo Markdown, PII, provider ou referência externa.
+- `public.list_active_studio_types()`: retorna somente `id`, nome e ordem dos tipos ativos para
+  `authenticated`;
+- `public.get_owner_studio_editor(uuid)`: retorna 0/1 editor do próprio `auth.uid()`, escolhe o draft
+  atual ou a revisão publicada e nunca revela a existência do estúdio de outro dono.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -656,7 +674,6 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `public.list_my_reservations(...)`;
 - `public.get_my_reservation(uuid)`;
 - `public.list_owner_studios(...)`;
-- `public.get_owner_studio_editor(uuid)`;
 - `public.get_owner_calendar(...)`;
 - `public.list_owner_reservations(...)`;
 - `public.list_owner_payments(...)`;
@@ -740,7 +757,10 @@ Usuário lê somente as colunas seguras necessárias aos read models invoker do 
 
 ### 8.2 Estúdios
 
-Dono lê seus estúdios/revisões/configurações. Público lê somente read models de publicado. Não conceder select público direto em revisões.
+Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões;
+as policies usam `auth.uid()` e outro dono obtém zero linhas. `anon`, `service_role` e `app_dal` não
+recebem acesso às tabelas; a DAL executa apenas três funções privadas. O tipo ativo possui policy
+separada. Conteúdo ainda não aprovado não possui read model público.
 
 ### 8.3 Reservas
 
@@ -756,7 +776,9 @@ Upload permitido somente por URL assinada. Leitura pública de mídia passa por 
 
 ## 9. Índices estruturais iniciais
 
-Implementados até a FEAT-004: PKs, FKs, uniques de `(kind, version)`, `(request_id, terms_version_id)`, `request_id` da intenção, chaves de ativação/operação e sequência, GiST de vigência jurídica e B-trees usadas pelos purges obrigatórios. `audit.events` possui índice parcial estrutural em `actor_user_id` para sua FK. `user_preferences`, `owner_profiles` e `owner_payment_recipients` usam suas PKs/FKs 1:1; CPF/CNPJ não recebe índice ou unique. Nenhum índice alheio aos caminhos implementados foi criado por antecipação.
+Implementados até a FEAT-006: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
+de revisão não nulos, a FK de tipo e os uniques `(studio_id, revision_number)` e de um único draft
+ativo. Todos sustentam FK ou invariantes; nenhum índice de busca pública foi antecipado.
 
 Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor definido:
 

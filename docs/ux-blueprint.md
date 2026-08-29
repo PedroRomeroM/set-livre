@@ -249,7 +249,9 @@ Bootstrap da FEAT-004:
 - loading/refetch/pausa/troca de sessão fecham status, elegibilidade e ações privados. Timeout ou resultado ambíguo oferece `Verificar estado atual`, sem afirmar falha nem reenviar cegamente; durante esse GET, a superfície privada fecha sob boundary neutro e, ao terminar, o foco programático vai ao heading do checklist no sucesso ou ao alerta seguro na falha. Nesse alerta, `Tentar novamente` repete o boundary e devolve foco ao heading somente após novo GET bem-sucedido;
 - se uma nova versão do contrato surgir entre a tela e `start | refresh`, a API devolve `409 CONFLICT` e conduz ao mesmo `Verificar estado atual`; nenhuma tentativa é repetida. Dono ou recebedor realmente bloqueado continua proibido e não é apresentado como simples estado stale recuperável;
 - `pending`, `active`, `refused`, `suspended` e `blocked` são apresentados por texto, não somente cor. Mudança assíncrona usa `role=status`, erro usa `role=alert` e foco retorna ao heading/alerta pertinente;
-- não há link para estúdios, checkout, financeiro, suporte inventado, fallback administrativo nem formulário bancário enquanto essas superfícies não existirem.
+- a navegação agora inclui somente `Novo estúdio`, superfície real da FEAT-006. Portfólio, checkout,
+  financeiro, suporte, fallback administrativo e formulário bancário continuam ausentes enquanto suas
+  features não existirem.
 
 Dashboard:
 
@@ -261,12 +263,22 @@ Dashboard:
 
 Editor de estúdio:
 
-- navegação por etapas;
-- progresso derivado;
-- autosave somente se seguro; baseline usa salvar explícito;
-- status da revisão;
-- preview aprovado/draft;
-- submit com checklist.
+- `/dono/estudios/novo` exige sessão, perfil completo, dono ativo e contrato vigente; estados
+  suspenso/incompleto/inativo substituem o formulário por ação factual;
+- `/dono/estudios/[studioId]/dados` usa o mesmo gate e retorna a mesma composição `not found` para UUID
+  inválido, estúdio ausente ou pertencente a outro dono, com `noindex` e sem conteúdo privado;
+- o editor só monta depois da hidratação completa, usa salvar explícito e divide nome/tipo/capacidade,
+  descrição e endereço Curitiba/PR em seções; não há autosave;
+- preview local acompanha os valores e sempre informa **não publicada**. Revisão, versão e condição
+  draft/aprovada são texto factual;
+- validação preserva a entrada e não envia POST. Timeout/resultado ambíguo permite repetir somente a
+  mesma chave idempotente;
+- conflito otimista preserva valores locais, mostra diferenças lado a lado e exige escolher remoto ou
+  novo submit sobre o token atual. Contrato alterado recompõe a rota e volta ao aceite vigente;
+- descartar exige confirmação: remove o cadastro ainda inédito ou somente o draft quando há publicação.
+  A revisão aprovada nunca é alterada pelo editor;
+- mobile, 320 px e zoom 200% usam uma coluna, sem overflow; axe, teclado, toque e alvos de 44 px fazem
+  parte da matriz da feature.
 
 Agenda:
 

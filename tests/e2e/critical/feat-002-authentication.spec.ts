@@ -20,8 +20,6 @@ import {
   expireExactLocalRecoveryGrant,
 } from "../../helpers/local-recovery-grant";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 function createDeferredSignal() {
   let resolve: () => void = () => {
     throw new Error("O sinal assíncrono do cenário Auth não foi inicializado.");

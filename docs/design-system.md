@@ -174,6 +174,21 @@ Status de ativação e recebedor são texto factual, não badge ornamental nem s
 
 Os controles de onboarding também são gated por `recipientOnboardingCapability`. Em `local_adapter`, o notice local e o CTA compatível com `nextAction` permanecem visíveis. Em `unavailable`, ambos os CTAs de início/refresh e o notice são **ausentes**, não renderizados como disabled; o estado factual continua consultável e um `Alert` `status` (`role=status`) apresenta o título **Cadastro de recebimentos indisponível** e o corpo **A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.** A composição não inventa provider, prontidão ou ação que o servidor não autorizou.
 
+### 3.4 Extensão da FEAT-006
+
+- `Textarea`: textarea nativo que preserva toda a API HTML, herda borda, erro, disabled, foco e forced
+  colors de `Input`, possui altura mínima de 9 rem e resize vertical. O contador de descrição pertence
+  ao `Field`, não à primitive;
+- editor de estúdio: seções semânticas de identidade/endereço, grid responsivo, preview local
+  explicitamente não publicado e comparação de conflito em tabela acessível. A navegação do dono
+  reutiliza os links e estilos existentes e passa a três colunas somente quando há espaço;
+- hidratação: `StudioCorePanel` é o boundary inteiro. O servidor e o primeiro cliente exibem somente
+  `Alert` com **Preparando o editor seguro**; depois do commit, um efeito cancelável libera de uma vez o
+  formulário e o preview. Nenhum input existe antes dos handlers, evitando perda de digitação e
+  mismatch sem duplicar estado de controle;
+- o editor preserva 44 px, 320 px, tema escuro, forced colors e reflow a 160 CSS px. Erro de campo
+  permanece no `Field`; conflito/timeout/sucesso usam `Alert` e ações explícitas.
+
 ## 4. Contratos
 
 ### 4.1 Botões

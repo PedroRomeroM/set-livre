@@ -1,0 +1,53 @@
+import type { StudioCorePayload, StudioEditor, StudioTypeOption } from "@set-livre/contracts";
+
+export const studioTestIds = {
+  idempotencyKey: "33333333-3333-4333-8333-333333333333",
+  otherStudioId: "77777777-7777-4777-8777-777777777777",
+  otherUserId: "22222222-2222-4222-8222-222222222222",
+  publishedRevisionId: "66666666-6666-4666-8666-666666666666",
+  requestId: "44444444-4444-4444-8444-444444444444",
+  revisionId: "55555555-5555-4555-8555-555555555555",
+  studioId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  studioTypeId: "60000000-0000-4000-8000-000000000001",
+  userId: "11111111-1111-4111-8111-111111111111",
+} as const;
+
+export const studioCoreFixture = {
+  addressComplement: null,
+  capacity: 12,
+  city: "Curitiba",
+  description: "Estúdio completo para ensaios fotográficos e gravações audiovisuais.",
+  name: "Estúdio Aurora",
+  neighborhood: "Centro",
+  postalCode: "80010000",
+  state: "PR",
+  street: "Rua das Flores",
+  streetNumber: "100",
+  studioTypeId: studioTestIds.studioTypeId,
+} satisfies StudioCorePayload;
+
+export const studioTypeFixture = {
+  id: studioTestIds.studioTypeId,
+  name: "Estúdio audiovisual",
+  sortOrder: 10,
+} satisfies StudioTypeOption;
+
+export const studioEditorFixture = {
+  draftRevisionId: studioTestIds.revisionId,
+  hasDraft: true,
+  publishedRevisionId: null,
+  revision: {
+    ...studioCoreFixture,
+    id: studioTestIds.revisionId,
+    number: 1,
+    status: "draft",
+    version: 1,
+  },
+  scope: studioTestIds.userId,
+  studioId: studioTestIds.studioId,
+  studioStatus: "draft",
+  studioType: {
+    id: studioTypeFixture.id,
+    name: studioTypeFixture.name,
+  },
+} satisfies StudioEditor;

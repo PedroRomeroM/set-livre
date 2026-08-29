@@ -16,8 +16,6 @@ import {
 import { gotoExpectedPage } from "../../helpers/expected-page";
 import { srgbContrastRatio } from "../../helpers/srgb-contrast";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 async function requestRecoveryThroughUi(page: Page, email: string) {
   const responsePromise = page.waitForResponse((response) => {
     const address = new URL(response.url());

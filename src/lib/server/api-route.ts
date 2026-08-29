@@ -22,7 +22,9 @@ export type ApiRouteErrorCode =
   | "FORBIDDEN"
   | "INPUT_INVALID"
   | "METHOD_NOT_ALLOWED"
+  | "NOT_FOUND"
   | "ORIGIN_INVALID"
+  | "OWNER_CONTRACT_CHANGED"
   | "PAYMENT_PROVIDER_UNAVAILABLE"
   | "RATE_LIMITED"
   | "RECOVERY_INVALID"
@@ -275,9 +277,19 @@ const observableActionSchema = z.enum([
   "profile.update",
   "recipient.onboarding.refresh",
   "recipient.onboarding.start",
+  "studio.create",
+  "studio.draft.discard",
+  "studio.read",
+  "studio.revision.updateCore",
+  "studio.types.read",
 ]);
 const observableOutcomeSchema = z.enum(["accepted", "rejected", "unavailable"]);
-const observableEventSchema = z.enum(["identity.request", "owner.request", "private.command"]);
+const observableEventSchema = z.enum([
+  "identity.request",
+  "owner.request",
+  "private.command",
+  "studio.request",
+]);
 
 export function writeSafeOperationalEvent(event: {
   action: z.infer<typeof observableActionSchema>;
