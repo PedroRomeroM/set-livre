@@ -99,10 +99,10 @@ efetivo e modo `0600` também são obrigatórios.
 
 ## Matriz da FEAT-006 em andamento
 
-Os dezesseis cenários estáveis `SL-F006-E2E-001..016` expandem para 58 execuções:
+Os dezessete cenários estáveis `SL-F006-E2E-001..017` expandem para 61 execuções:
 
-- P0 de criação, clone de publicado, isolamento entre donos e troca de sessão no editor e na criação
-  ainda não salva nos três engines;
+- P0 de criação, clone de publicado, isolamento entre donos, troca de sessão no editor e na criação
+  ainda não salva e revogação da autoridade de dono durante a criação nos três engines;
 - validação, tokens locais independentes de update/descarte preservados após refetch, estado terminal
   de criação, retry ambíguo, reconfirmação de descarte sem liberar save stale, bloqueio administrativo
   arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,

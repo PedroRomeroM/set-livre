@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 const studioPrivateRoot = ["owner", "private", "studio-editor"] as const;
 
 export const studioQueryKeys = {
+  creationAccess: (userId: string) => ["owner", "private", "studio-create", userId] as const,
   editor: (userId: string, studioId: string) => [...studioPrivateRoot, userId, studioId] as const,
   privateEditors: studioPrivateRoot,
   taxonomies: ["studio", "taxonomies", "content"] as const,

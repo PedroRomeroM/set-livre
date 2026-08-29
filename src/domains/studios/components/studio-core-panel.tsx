@@ -14,11 +14,14 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { IdentityApiError, readIdentitySession } from "@/domains/identity/components/identity-api";
 import {
   IdentitySessionScopeChangedError,
-  identityQueryKeys,
-  identitySessionCanRender,
   identitySessionForScope,
-  identitySessionMatchesScope,
 } from "@/domains/identity/components/identity-query-keys";
+import { OwnerApiError, readOwnerActivation } from "@/domains/owners/components/owner-api";
+import {
+  OwnerPrivateScopeChangedError,
+  ownerPrivateForBoundary,
+} from "@/domains/owners/components/owner-query-keys";
+import { ownerHasCurrentContract } from "@/domains/owners/components/owner-view-state";
 import { useHydrated } from "@/lib/client/use-hydrated";
 
 import {
@@ -62,6 +65,13 @@ type StudioCoreFormState = {
 type CreateCommand = Parameters<typeof createStudio>[0];
 type UpdateCommand = Parameters<typeof updateStudioCore>[0];
 type DiscardCommand = Parameters<typeof discardStudioDraft>[0];
+
+class StudioCreationEligibilityChangedError extends Error {
+  constructor() {
+    super("A elegibilidade para criar estúdios mudou.");
+    this.name = "StudioCreationEligibilityChangedError";
+  }
+}
 
 const emptyFormState: StudioCoreFormState = {
   addressComplement: "",
@@ -410,15 +420,27 @@ function StudioTypesFeedback({
   );
 }
 
+async function readStudioCreationAccess(userId: string) {
+  const session = identitySessionForScope(await readIdentitySession(), userId);
+  if (!session.authenticated || session.status !== "active" || !session.profileCompleted) {
+    throw new StudioCreationEligibilityChangedError();
+  }
+  const owner = ownerPrivateForBoundary(await readOwnerActivation(), userId, "activation");
+  if (!ownerHasCurrentContract(owner)) {
+    throw new StudioCreationEligibilityChangedError();
+  }
+  return userId;
+}
+
 function CreateStudioForm({
   initialTypes,
   userId,
 }: Readonly<{ initialTypes: readonly StudioTypeOption[]; userId: string }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const sessionQuery = useQuery({
-    queryFn: async () => identitySessionForScope(await readIdentitySession(), userId),
-    queryKey: identityQueryKeys.session(userId),
+  const accessQuery = useQuery({
+    queryFn: () => readStudioCreationAccess(userId),
+    queryKey: studioQueryKeys.creationAccess(userId),
     refetchOnMount: "always",
     refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
@@ -455,20 +477,17 @@ function CreateStudioForm({
       pendingCommand.current = undefined;
     },
   });
-  const observedSession = sessionQuery.data;
-  const sessionCanRender =
-    observedSession !== undefined &&
-    identitySessionCanRender(observedSession, userId, sessionQuery.fetchStatus);
-  const observedScopeChanged =
-    observedSession !== undefined && !identitySessionMatchesScope(observedSession, userId);
-  const authoritativeScopeChanged = sessionQuery.error instanceof IdentitySessionScopeChangedError;
-  const scopeTransitionRequired = observedScopeChanged || authoritativeScopeChanged;
+  const authoritativeScopeChanged = accessQuery.error instanceof IdentitySessionScopeChangedError;
+  const ownerScopeChanged = accessQuery.error instanceof OwnerPrivateScopeChangedError;
+  const eligibilityChanged = accessQuery.error instanceof StudioCreationEligibilityChangedError;
+  const boundaryTransitionRequired =
+    authoritativeScopeChanged || ownerScopeChanged || eligibilityChanged;
 
   useEffect(() => {
-    if (!scopeTransitionRequired) return;
+    if (!boundaryTransitionRequired) return;
     pendingCommand.current = undefined;
     recomposeStudioClientBoundary(queryClient);
-  }, [queryClient, scopeTransitionRequired]);
+  }, [boundaryTransitionRequired, queryClient]);
 
   function updateField(field: keyof StudioCoreFormState, value: string) {
     setFormState((current) => ({ ...current, [field]: value }));
@@ -505,26 +524,28 @@ function CreateStudioForm({
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
 
-  if (scopeTransitionRequired || sessionQuery.fetchStatus !== "idle") {
-    return <Alert>Validando sua sessão antes de criar o estúdio…</Alert>;
+  if (boundaryTransitionRequired || accessQuery.fetchStatus !== "idle") {
+    return <Alert>Validando sua sessão e seu cadastro de dono antes de criar o estúdio…</Alert>;
   }
 
-  if (sessionQuery.isError || !sessionCanRender) {
+  if (accessQuery.isError || accessQuery.data !== userId) {
     const message =
-      sessionQuery.error instanceof IdentityApiError
-        ? sessionQuery.error.message
-        : "Não foi possível confirmar a identidade desta página.";
+      accessQuery.error instanceof IdentityApiError
+        ? accessQuery.error.message
+        : accessQuery.error instanceof OwnerApiError
+          ? accessQuery.error.message
+          : "Não foi possível confirmar a identidade e a autoridade de dono desta página.";
     return (
       <Stack space={4}>
-        <Alert title="Sessão indisponível" variant="error">
+        <Alert title="Acesso de dono indisponível" variant="error">
           {message}
         </Alert>
         <div className={styles.actions}>
           <Button
-            loading={sessionQuery.isFetching}
-            loadingLabel="Validando sessão"
+            loading={accessQuery.isFetching}
+            loadingLabel="Validando acesso"
             onClick={() => {
-              void sessionQuery.refetch();
+              void accessQuery.refetch();
             }}
             variant="secondary"
           >

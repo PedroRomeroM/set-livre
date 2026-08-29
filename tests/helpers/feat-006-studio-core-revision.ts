@@ -324,6 +324,22 @@ export async function setFeat006ProfileStatus(userId: string, status: "active" |
   });
 }
 
+export async function setFeat006OwnerStatus(userId: string, status: "active" | "blocked") {
+  const parsedUserId = z.uuid().parse(userId);
+  await withFeat006AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.owner_profiles as owner
+          set status = $2
+        where owner.user_id = $1::uuid
+      returning owner.user_id`,
+      [parsedUserId, status],
+    );
+    if (result.rows.length !== 1) {
+      throw new Error("A fixture FEAT-006 não alterou exatamente um status de dono.");
+    }
+  });
+}
+
 export async function setFeat006StudioTypeActive(studioTypeId: string, active: boolean) {
   const parsedStudioTypeId = z.uuid().parse(studioTypeId);
   await withFeat006AdminPool(async (pool) => {

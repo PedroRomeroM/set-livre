@@ -13,6 +13,7 @@ import {
   publishFeat006Studio,
   readFeat006StudioEvidence,
   saveFeat006StudioThroughUi,
+  setFeat006OwnerStatus,
 } from "../../helpers/feat-006-studio-core-revision";
 
 function createDeferredSignal() {
@@ -317,7 +318,9 @@ test("SL-F006-E2E-016 @p0 troca de sessão oculta e apaga criação ainda não s
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
     await sameScopeReadCaptured.promise;
     await expect(
-      page.getByText("Validando sua sessão antes de criar o estúdio…", { exact: true }),
+      page.getByText("Validando sua sessão e seu cadastro de dono antes de criar o estúdio…", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
     releaseSameScopeRead.resolve();
@@ -351,7 +354,9 @@ test("SL-F006-E2E-016 @p0 troca de sessão oculta e apaga criação ainda não s
     await sessionReadCaptured.promise;
 
     await expect(
-      page.getByText("Validando sua sessão antes de criar o estúdio…", { exact: true }),
+      page.getByText("Validando sua sessão e seu cadastro de dono antes de criar o estúdio…", {
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
     await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
@@ -372,5 +377,59 @@ test("SL-F006-E2E-016 @p0 troca de sessão oculta e apaga criação ainda não s
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identityB);
     await cleanupFeat006QaIdentity(identityA);
+  }
+});
+
+test("SL-F006-E2E-017 @p0 revogação do dono oculta e apaga criação ainda não salva", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, "017_create_owner_boundary");
+  const ownerReadCaptured = createDeferredSignal();
+  const releaseOwnerRead = createDeferredSignal();
+  const privateName = "Estúdio não salvo do dono revogado";
+  const privateStreet = "Rua privada do dono revogado";
+  try {
+    await provisionFeat006Owner(page, identity, "017");
+    await fillFeat006Core(page, { name: privateName, street: privateStreet });
+    if (identity.userId === undefined) {
+      throw new Error("A identidade FEAT-006 não publicou o escopo do dono.");
+    }
+    await setFeat006OwnerStatus(identity.userId, "blocked");
+
+    await page.route(
+      "**/api/owner/activation",
+      async (route) => {
+        const response = await route.fetch();
+        ownerReadCaptured.resolve();
+        await releaseOwnerRead.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await ownerReadCaptured.promise;
+
+    await expect(
+      page.getByText("Validando sua sessão e seu cadastro de dono antes de criar o estúdio…", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
+
+    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+    releaseOwnerRead.resolve();
+    await reload;
+
+    await expect(page.getByText("Ative seu cadastro de dono", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
+  } finally {
+    releaseOwnerRead.resolve();
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
   }
 });
