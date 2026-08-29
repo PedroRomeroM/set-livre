@@ -94,6 +94,6 @@ nos documentos de domínio e testes.
 ## Entrega
 
 Todo PR destinado a `main` segue [`docs/review-deploy-cycle.md`](docs/review-deploy-cycle.md): checks,
-`@codex review`, espera mínima real de 60 minutos, correções e novos ciclos até review explicitamente
-limpo no SHA atual. Depois do merge, Supabase, VM Oracle e health público são acompanhados até estado
-terminal.
+`@codex review`, polling a cada 10 minutos até `Completed` no SHA exato, correções e novos ciclos até
+review explicitamente limpo. Sessenta minutos sem conclusão são um alerta operacional, nunca
+aprovação. Depois do merge, Supabase, VM Oracle e health público são acompanhados até estado terminal.

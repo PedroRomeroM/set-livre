@@ -119,6 +119,32 @@ async function expectLoginFormRedactedBeforeReload(page: Page) {
     .toBe("yes");
 }
 
+async function corruptNextSuccessfulLoginPayload(page: Page) {
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      const input = args[0];
+      const requestUrl =
+        input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+      const address = new URL(requestUrl, window.location.href);
+
+      if (address.pathname !== "/api/auth/login" || !response.ok) {
+        return response;
+      }
+
+      window.fetch = originalFetch;
+      await response.arrayBuffer();
+      return new Response("{}", {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+        statusText: response.statusText,
+      });
+    };
+  });
+}
+
 test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos", async ({
   browser,
   page,
@@ -157,30 +183,17 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     const confirmedSession = await confirmFeat002Registration(page, identity, notBefore);
     await logoutFeat002Identity(page);
 
-    let serverPublishedLoginSession = false;
-    await page.route(
-      "**/api/auth/login",
-      async (route) => {
-        try {
-          const response = await route.fetch();
-          if (response.status() !== 200) {
-            await route.abort("failed");
-            return;
-          }
-          serverPublishedLoginSession = true;
-          await route.fulfill({ body: "{}", response });
-        } catch {
-          await route.abort("failed");
-        }
-      },
-      { times: 1 },
-    );
+    await corruptNextSuccessfulLoginPayload(page);
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
     await stageFeat002PasswordForSubmission(
       getFeat002PasswordControl(page, "Senha"),
       identity.password,
     );
     await armLoginFormRedactionObservation(page);
+    const publishedLoginSession = page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return response.request().method() === "POST" && address.pathname === "/api/auth/login";
+    });
     const publishedSessionReload = page.waitForRequest((request) => {
       const address = new URL(request.url());
       return (
@@ -192,8 +205,8 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     });
     await page.getByRole("button", { name: "Entrar" }).click();
 
+    expect((await publishedLoginSession).status()).toBe(200);
     await publishedSessionReload;
-    expect(serverPublishedLoginSession).toBe(true);
     await expectCurrentPath(page, "/entrar?entrada=verificar");
     await expectLoginFormRedactedBeforeReload(page);
     await expect(page.getByRole("button", { name: "Entrar", exact: true })).toHaveCount(0);
