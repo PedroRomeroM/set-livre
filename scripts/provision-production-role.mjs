@@ -681,6 +681,9 @@ export async function provisionProductionRole(
   } catch (error) {
     if (transactionIsOpen) await admin.query("rollback").catch(() => undefined);
     if (activationMayHaveCommitted) {
+      const readinessClient = runtime;
+      runtime = undefined;
+      await readinessClient?.end().catch(() => undefined);
       await admin.end().catch(() => undefined);
       try {
         await forceProductionRoleDisabled({

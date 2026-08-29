@@ -105,6 +105,36 @@ function productionPreflightAdminQuery({
   });
 }
 
+function productionProvisioningAdminQuery({
+  roles = [restrictedAppDalRole, initialRuntimeRole],
+} = {}) {
+  return vi.fn(async (statement) => {
+    const sql = String(statement);
+    if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
+      return { rowCount: roles.length, rows: roles };
+    }
+    if (sql.includes("where member.rolname = 'app_runtime_production'")) {
+      return { rowCount: 1, rows: [expectedRuntimeMembership] };
+    }
+    if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
+      return { rowCount: 1, rows: [expectedRuntimeMember] };
+    }
+    if (sql.includes("select private.managed_runtime_boundaries_are_ready() as ready")) {
+      return { rowCount: 1, rows: [{ ready: true }] };
+    }
+    if (sql.includes("private.check_readiness($1::text) as ready")) {
+      return { rowCount: 1, rows: [{ migrationHeadIsCurrent: true, ready: true }] };
+    }
+    if (sql.includes("pg_catalog.format('alter role app_runtime_production login password")) {
+      return {
+        rowCount: 1,
+        rows: [{ statement: "alter role app_runtime_production login password 'runtime-secret'" }],
+      };
+    }
+    return { rowCount: null, rows: [] };
+  });
+}
+
 describe("production role provisioning", () => {
   const fixedCoordinates = {
     PRODUCTION_BACKOFFICE_APP_URL: "https://ops.setlivre.com",
@@ -733,33 +763,7 @@ describe("production role provisioning", () => {
   });
 
   it("commits the initial password before validating the runtime", async () => {
-    const adminQuery = vi.fn(async (statement) => {
-      const sql = String(statement);
-      if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
-        return { rowCount: 2, rows: [restrictedAppDalRole, initialRuntimeRole] };
-      }
-      if (sql.includes("where member.rolname = 'app_runtime_production'")) {
-        return { rowCount: 1, rows: [expectedRuntimeMembership] };
-      }
-      if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
-        return { rowCount: 1, rows: [expectedRuntimeMember] };
-      }
-      if (sql.includes("select private.managed_runtime_boundaries_are_ready() as ready")) {
-        return { rowCount: 1, rows: [{ ready: true }] };
-      }
-      if (sql.includes("private.check_readiness($1::text) as ready")) {
-        return { rowCount: 1, rows: [{ migrationHeadIsCurrent: true, ready: true }] };
-      }
-      if (sql.includes("pg_catalog.format('alter role app_runtime_production login password")) {
-        return {
-          rowCount: 1,
-          rows: [
-            { statement: "alter role app_runtime_production login password 'runtime-secret'" },
-          ],
-        };
-      }
-      return { rowCount: null, rows: [] };
-    });
+    const adminQuery = productionProvisioningAdminQuery();
     const runtimeQuery = vi.fn(async () => ({
       rowCount: 1,
       rows: [{ currentRole: "app_dal", ready: true, sessionRole: "app_runtime_production" }],
@@ -800,30 +804,8 @@ describe("production role provisioning", () => {
   });
 
   it("resumes a compensated role without replacing its password", async () => {
-    const adminQuery = productionPreflightAdminQuery({
+    const adminQuery = productionProvisioningAdminQuery({
       roles: [restrictedAppDalRole, { ...restrictedRuntimeRole, canLogin: false }],
-    });
-    adminQuery.mockImplementation(async (statement) => {
-      const sql = String(statement);
-      if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
-        return {
-          rowCount: 2,
-          rows: [restrictedAppDalRole, { ...restrictedRuntimeRole, canLogin: false }],
-        };
-      }
-      if (sql.includes("where member.rolname = 'app_runtime_production'")) {
-        return { rowCount: 1, rows: [expectedRuntimeMembership] };
-      }
-      if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
-        return { rowCount: 1, rows: [expectedRuntimeMember] };
-      }
-      if (sql.includes("select private.managed_runtime_boundaries_are_ready() as ready")) {
-        return { rowCount: 1, rows: [{ ready: true }] };
-      }
-      if (sql.includes("private.check_readiness($1::text) as ready")) {
-        return { rowCount: 1, rows: [{ migrationHeadIsCurrent: true, ready: true }] };
-      }
-      return { rowCount: null, rows: [] };
     });
     const runtimeQuery = vi.fn(async () => ({
       rowCount: 1,
@@ -860,6 +842,73 @@ describe("production role provisioning", () => {
       "alter role app_runtime_production login password",
     );
     expect(runtimeQuery).toHaveBeenCalledOnce();
+  });
+
+  it("closes a failed readiness client before terminating runtime sessions", async () => {
+    const events = [];
+    const adminQuery = productionProvisioningAdminQuery();
+    const runtimeEnd = vi.fn(async () => {
+      events.push("runtime:end");
+    });
+    const recoveryQuery = vi.fn(async (statement) => {
+      if (String(statement).includes("pg_terminate_backend")) events.push("recovery:terminate");
+      return { rowCount: null, rows: [] };
+    });
+    const verifierQuery = vi.fn(async (statement) => {
+      if (String(statement).includes("authentication.rolpassword is not null")) {
+        return {
+          rowCount: 1,
+          rows: [{ activeConnections: 0, canLogin: false, hasPassword: true }],
+        };
+      }
+      return { rowCount: null, rows: [] };
+    });
+    const clients = [
+      {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: adminQuery,
+      },
+      {
+        connect: vi.fn(async () => undefined),
+        end: runtimeEnd,
+        query: vi.fn(async () => ({
+          rowCount: 1,
+          rows: [
+            {
+              currentRole: "app_runtime_production",
+              ready: false,
+              sessionRole: "app_runtime_production",
+            },
+          ],
+        })),
+      },
+      {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: recoveryQuery,
+      },
+      {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: verifierQuery,
+      },
+    ];
+
+    await expect(
+      provisionProductionRole(
+        {
+          ...fixedCoordinates,
+          PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+          SUPABASE_DB_PASSWORD: "admin-secret",
+          SUPABASE_PROJECT_REF: projectRef,
+        },
+        { createClient: () => clients.shift() },
+      ),
+    ).rejects.toThrow("readiness restrito");
+
+    expect(runtimeEnd).toHaveBeenCalledOnce();
+    expect(events).toEqual(["runtime:end", "recovery:terminate"]);
   });
 
   it("preserves the verifier and waits for runtime session termination", async () => {

@@ -441,8 +441,12 @@ Da alteração até o readiness, qualquer erro trata o commit como potencialment
 administrativa nova impõe somente `NOLOGIN`, sem apagar ou rotacionar a senha, encerra cada sessão
 runtime com a sobrecarga temporizada de `pg_terminate_backend` e outra conexão relê
 `rolcanlogin=false`, verificador esperado e zero sessões. Somente um commit inicial ambíguo que não
-retornou sucesso admite o estado original sem verificador; uma retomada sempre exige preservação. Nova
-execução retoma a mesma credencial, evitando invalidar o cache de autenticação do Supavisor. Quando a
+retornou sucesso admite o estado original sem verificador; uma retomada sempre exige preservação.
+Antes de essa compensação encerrar sessões, o cliente que executou o readiness é fechado e retirado do
+teardown final, impedindo que a própria conexão seja terminada por outro backend enquanto ainda está
+associada a um emissor ativo do driver PostgreSQL.
+
+Nova execução retoma a mesma credencial, evitando invalidar o cache de autenticação do Supavisor. Quando a
 role já tem `LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM
 sem alterar a credencial que sustenta a release vigente. Rotação futura exige mudança operacional
 própria com duas credenciais/identidades durante a transição, comprovação e retirada da anterior; não
