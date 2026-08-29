@@ -117,6 +117,7 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 | SL-F006-E2E-013 | P1         | regression    | desktop/mobile/320/compact | arquivamento concorrente recupera o editor                      | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-014 | P1         | regression    | desktop/mobile/320/compact | arquivamento concorrente recupera a criação                     | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-015 | P1         | regression    | desktop/mobile/320/compact | revogação de conta bloqueia e recompõe o editor aberto          | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-016 | P0         | critical      | 3 engines                  | troca de sessão oculta e apaga criação ainda não salva          | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 
 Regras:
 

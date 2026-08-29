@@ -11,6 +11,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { IdentityApiError, readIdentitySession } from "@/domains/identity/components/identity-api";
+import {
+  IdentitySessionScopeChangedError,
+  identityQueryKeys,
+  identitySessionCanRender,
+  identitySessionForScope,
+  identitySessionMatchesScope,
+} from "@/domains/identity/components/identity-query-keys";
 import { useHydrated } from "@/lib/client/use-hydrated";
 
 import {
@@ -408,6 +416,15 @@ function CreateStudioForm({
 }: Readonly<{ initialTypes: readonly StudioTypeOption[]; userId: string }>) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const sessionQuery = useQuery({
+    queryFn: async () => identitySessionForScope(await readIdentitySession(), userId),
+    queryKey: identityQueryKeys.session(userId),
+    refetchOnMount: "always",
+    refetchOnReconnect: "always",
+    refetchOnWindowFocus: "always",
+    retry: false,
+    staleTime: 30_000,
+  });
   const typesQuery = useStudioTypes(initialTypes);
   const pendingCommand = useRef<CreateCommand>(undefined);
   const [createdStudioId, setCreatedStudioId] = useState<string>();
@@ -438,6 +455,20 @@ function CreateStudioForm({
       pendingCommand.current = undefined;
     },
   });
+  const observedSession = sessionQuery.data;
+  const sessionCanRender =
+    observedSession !== undefined &&
+    identitySessionCanRender(observedSession, userId, sessionQuery.fetchStatus);
+  const observedScopeChanged =
+    observedSession !== undefined && !identitySessionMatchesScope(observedSession, userId);
+  const authoritativeScopeChanged = sessionQuery.error instanceof IdentitySessionScopeChangedError;
+  const scopeTransitionRequired = observedScopeChanged || authoritativeScopeChanged;
+
+  useEffect(() => {
+    if (!scopeTransitionRequired) return;
+    pendingCommand.current = undefined;
+    recomposeStudioClientBoundary(queryClient);
+  }, [queryClient, scopeTransitionRequired]);
 
   function updateField(field: keyof StudioCoreFormState, value: string) {
     setFormState((current) => ({ ...current, [field]: value }));
@@ -473,6 +504,36 @@ function CreateStudioForm({
     createdStudioId !== undefined ||
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
+
+  if (scopeTransitionRequired || sessionQuery.fetchStatus !== "idle") {
+    return <Alert>Validando sua sessão antes de criar o estúdio…</Alert>;
+  }
+
+  if (sessionQuery.isError || !sessionCanRender) {
+    const message =
+      sessionQuery.error instanceof IdentityApiError
+        ? sessionQuery.error.message
+        : "Não foi possível confirmar a identidade desta página.";
+    return (
+      <Stack space={4}>
+        <Alert title="Sessão indisponível" variant="error">
+          {message}
+        </Alert>
+        <div className={styles.actions}>
+          <Button
+            loading={sessionQuery.isFetching}
+            loadingLabel="Validando sessão"
+            onClick={() => {
+              void sessionQuery.refetch();
+            }}
+            variant="secondary"
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      </Stack>
+    );
+  }
 
   return (
     <div className={styles.editorLayout}>

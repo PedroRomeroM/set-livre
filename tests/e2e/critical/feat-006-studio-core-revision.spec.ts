@@ -282,3 +282,95 @@ test("SL-F006-E2E-008 @p0 troca de sessão oculta editor privado antes da releit
     await cleanupFeat006QaIdentity(identityA);
   }
 });
+
+test("SL-F006-E2E-016 @p0 troca de sessão oculta e apaga criação ainda não salva", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(220_000);
+  const identityA = createFeat006QaIdentity(testInfo, "016_create_scope_a");
+  const identityB = createFeat006QaIdentity(testInfo, "016_create_scope_b");
+  const sameScopeReadCaptured = createDeferredSignal();
+  const releaseSameScopeRead = createDeferredSignal();
+  const sessionReadCaptured = createDeferredSignal();
+  const releaseSessionRead = createDeferredSignal();
+  const privateName = "Estúdio não salvo do escopo A";
+  const privateStreet = "Rua privada da criação A";
+  let contextB: BrowserContext | undefined;
+  try {
+    await provisionFeat006Owner(page, identityA, "016");
+    await fillFeat006Core(page, { name: privateName, street: privateStreet });
+
+    await page.route(
+      "**/api/auth/session",
+      async (route) => {
+        const response = await route.fetch();
+        sameScopeReadCaptured.resolve();
+        await releaseSameScopeRead.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+    const sameScopeReadFinished = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/api/auth/session",
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await sameScopeReadCaptured.promise;
+    await expect(
+      page.getByText("Validando sua sessão antes de criar o estúdio…", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    releaseSameScopeRead.resolve();
+    await sameScopeReadFinished;
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(privateName);
+    await expect(page.getByRole("textbox", { name: "Rua ou avenida" })).toHaveValue(privateStreet);
+
+    contextB = await browser.newContext({
+      baseURL: new URL(page.url()).origin,
+      viewport: { height: 900, width: 1440 },
+    });
+    const pageB = await contextB.newPage();
+    await provisionFeat006Owner(pageB, identityB, "116");
+    await contextB.close();
+    contextB = undefined;
+
+    await page.route(
+      "**/api/auth/session",
+      async (route) => {
+        const response = await route.fetch();
+        sessionReadCaptured.resolve();
+        await releaseSessionRead.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+
+    const switched = await switchFeat003SessionWithoutNavigation(page, identityB);
+    expect(switched.session).toMatchObject({ authenticated: true, userId: identityB.userId });
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await sessionReadCaptured.promise;
+
+    await expect(
+      page.getByText("Validando sua sessão antes de criar o estúdio…", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
+
+    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+    releaseSessionRead.resolve();
+    await reload;
+
+    await expect(page.getByRole("heading", { level: 1, name: "Novo estúdio" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+    await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
+  } finally {
+    releaseSameScopeRead.resolve();
+    releaseSessionRead.resolve();
+    await contextB?.close();
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identityB);
+    await cleanupFeat006QaIdentity(identityA);
+  }
+});

@@ -13,6 +13,9 @@
 - adiciona read models estritos para tipos ativos e editor do próprio dono;
 - entrega `/dono/estudios/novo` e `/dono/estudios/[studioId]/dados`, preview local, validação,
   conflito comparável, descarte confirmado e boundary integral de hidratação e sessão;
+- revalida a sessão autoritativa também durante a criação: enquanto a releitura está pendente o
+  formulário fica oculto, o mesmo escopo preserva o rascunho local e uma troca de usuário limpa o
+  boundary antes de recompor a rota;
 - torna criação aceita um estado terminal com navegação explícita, congela payloads de resultado
   ambíguo, recupera conflitos de descarte por releitura e mantém estúdio desabilitado somente leitura;
 - mantém tokens otimistas independentes para edição e descarte mesmo após refetch; update só adota o
