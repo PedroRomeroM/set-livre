@@ -226,8 +226,12 @@ async function readProductionRoles(admin) {
       role.rolbypassrls as "bypassRls",
       role.rolvaliduntil = 'infinity'::timestamptz as "validUntilIsInfinite",
       role.rolconfig is null as "settingsAreEmpty",
-      role.rolpassword is not null as "hasPassword"
-    from pg_catalog.pg_authid as role
+      (
+        select authentication.rolpassword is not null
+        from pg_catalog.pg_authid as authentication
+        where authentication.oid = role.oid
+      ) as "hasPassword"
+    from pg_catalog.pg_roles as role
     where role.rolname in ('app_dal', 'app_runtime_production')
     order by role.rolname
   `);
@@ -510,20 +514,24 @@ export async function verifyProductionRuntimeCredentialBeforeMigrations(
   }
 }
 
-async function productionRoleIsSafelyDisabled(adminConnection, createClient) {
+async function productionRoleIsSafelyDisabled(adminConnection, createClient, allowMissingVerifier) {
   const verifier = createClient(adminConnection);
   try {
     await verifier.connect();
     const result = await verifier.query(`
       select
         role.rolcanlogin as "canLogin",
-        role.rolpassword is not null as "hasPassword",
+        (
+          select authentication.rolpassword is not null
+          from pg_catalog.pg_authid as authentication
+          where authentication.oid = role.oid
+        ) as "hasPassword",
         (
           select pg_catalog.count(*)::integer
           from pg_catalog.pg_stat_activity as activity
           where activity.usename = role.rolname
         ) as "activeConnections"
-      from pg_catalog.pg_authid as role
+      from pg_catalog.pg_roles as role
       where role.rolname = 'app_runtime_production'
     `);
     const state = result.rows[0];
@@ -535,7 +543,11 @@ async function productionRoleIsSafelyDisabled(adminConnection, createClient) {
     ) {
       throw new Error("A role de produção não pôde ser relida após a compensação.");
     }
-    return state.canLogin === false && state.hasPassword === true && state.activeConnections === 0;
+    return (
+      state.canLogin === false &&
+      (state.hasPassword === true || allowMissingVerifier === true) &&
+      state.activeConnections === 0
+    );
   } finally {
     await verifier.end().catch(() => undefined);
   }
@@ -543,11 +555,15 @@ async function productionRoleIsSafelyDisabled(adminConnection, createClient) {
 
 export async function forceProductionRoleDisabled({
   adminConnection,
+  allowMissingVerifier = false,
   createClient = createPostgresClient,
   maximumAttempts = 2,
 }) {
   if (!Number.isInteger(maximumAttempts) || maximumAttempts < 1 || maximumAttempts > 3) {
     throw new Error("Quantidade de tentativas de compensação inválida.");
+  }
+  if (typeof allowMissingVerifier !== "boolean") {
+    throw new Error("Contrato de verificador da compensação inválido.");
   }
 
   let lastError = new Error("A role de produção ainda aceita login.");
@@ -564,7 +580,7 @@ export async function forceProductionRoleDisabled({
       transactionIsOpen = false;
       await recovery.query("commit");
       await recovery.query(`
-        select pg_catalog.pg_terminate_backend(activity.pid)
+        select pg_catalog.pg_terminate_backend(activity.pid, 5000)
         from pg_catalog.pg_stat_activity as activity
         where activity.usename = 'app_runtime_production'
           and activity.pid <> pg_catalog.pg_backend_pid()
@@ -577,7 +593,8 @@ export async function forceProductionRoleDisabled({
     }
 
     try {
-      if (await productionRoleIsSafelyDisabled(adminConnection, createClient)) return;
+      if (await productionRoleIsSafelyDisabled(adminConnection, createClient, allowMissingVerifier))
+        return;
       lastError = new Error(
         "A role de produção não preservou o verificador, o estado NOLOGIN e zero sessões.",
       );
@@ -599,6 +616,8 @@ export async function provisionProductionRole(
   const admin = createClient(connections.admin);
   let runtime;
   let activationMayHaveCommitted = false;
+  let activationCommitCompleted = false;
+  let activationMode;
   let transactionIsOpen = false;
 
   await admin.connect();
@@ -608,9 +627,9 @@ export async function provisionProductionRole(
     await admin.query("set local statement_timeout = '15s'");
     await admin.query("set local lock_timeout = '5s'");
 
-    const { activationMode } = assertProductionRoleSet(await readProductionRoles(admin), {
+    ({ activationMode } = assertProductionRoleSet(await readProductionRoles(admin), {
       allowAbsent: false,
-    });
+    }));
 
     await assertProductionMemberships(admin);
 
@@ -653,6 +672,7 @@ export async function provisionProductionRole(
     }
     transactionIsOpen = false;
     await admin.query("commit");
+    activationCommitCompleted = true;
 
     runtime = createClient(connections.runtime);
     await runtime.connect();
@@ -665,6 +685,8 @@ export async function provisionProductionRole(
       try {
         await forceProductionRoleDisabled({
           adminConnection: connections.admin,
+          allowMissingVerifier:
+            activationMode === "initialize" && activationCommitCompleted === false,
           createClient,
         });
       } catch (recoveryError) {

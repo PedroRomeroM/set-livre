@@ -36,6 +36,13 @@ const restrictedAppDalRole = Object.freeze({
   connectionLimit: -1,
   hasPassword: false,
   roleName: "app_dal",
+  settingsAreEmpty: true,
+});
+const initialRuntimeRole = Object.freeze({
+  ...restrictedRuntimeRole,
+  canLogin: false,
+  hasPassword: false,
+  settingsAreEmpty: true,
 });
 const expectedRuntimeMembership = Object.freeze({
   adminOption: false,
@@ -380,7 +387,7 @@ describe("production role provisioning", () => {
       SUPABASE_PROJECT_REF: projectRef,
     });
     const query = productionPreflightAdminQuery({
-      roles: [restrictedAppDalRole, { ...restrictedRuntimeRole, canLogin: false }],
+      roles: [restrictedAppDalRole, initialRuntimeRole],
     });
     const createClient = vi.fn(() => ({
       connect: vi.fn(async () => undefined),
@@ -706,23 +713,90 @@ describe("production role provisioning", () => {
   });
 
   it("initializes once, resumes without rotation, and validates an active credential", () => {
-    const restrictedRole = {
-      ...restrictedRuntimeRole,
-      canLogin: false,
-      hasPassword: false,
-    };
-
-    expect(productionRoleActivationMode(restrictedRole)).toBe("initialize");
-    expect(productionRoleActivationMode({ ...restrictedRole, hasPassword: true })).toBe("resume");
-    expect(
-      productionRoleActivationMode({ ...restrictedRole, canLogin: true, hasPassword: true }),
-    ).toBe("validate");
-    expect(() =>
-      productionRoleActivationMode({ ...restrictedRole, canLogin: true, hasPassword: false }),
-    ).toThrow("LOGIN sem verificador");
-    expect(() => productionRoleActivationMode({ ...restrictedRole, connectionLimit: 20 })).toThrow(
-      "atributos restritos",
+    expect(productionRoleActivationMode(initialRuntimeRole)).toBe("initialize");
+    expect(productionRoleActivationMode({ ...restrictedRuntimeRole, canLogin: false })).toBe(
+      "resume",
     );
+    expect(productionRoleActivationMode(restrictedRuntimeRole)).toBe("validate");
+    expect(() => productionRoleActivationMode({ ...initialRuntimeRole, canLogin: true })).toThrow(
+      "LOGIN sem verificador",
+    );
+    expect(
+      productionRoleActivationMode({
+        ...initialRuntimeRole,
+        hasPassword: true,
+      }),
+    ).toBe("resume");
+    expect(() =>
+      productionRoleActivationMode({ ...initialRuntimeRole, connectionLimit: 20 }),
+    ).toThrow("atributos restritos");
+  });
+
+  it("commits the initial password before validating the runtime", async () => {
+    const adminQuery = vi.fn(async (statement) => {
+      const sql = String(statement);
+      if (sql.includes("where role.rolname in ('app_dal', 'app_runtime_production')")) {
+        return { rowCount: 2, rows: [restrictedAppDalRole, initialRuntimeRole] };
+      }
+      if (sql.includes("where member.rolname = 'app_runtime_production'")) {
+        return { rowCount: 1, rows: [expectedRuntimeMembership] };
+      }
+      if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
+        return { rowCount: 1, rows: [expectedRuntimeMember] };
+      }
+      if (sql.includes("select private.managed_runtime_boundaries_are_ready() as ready")) {
+        return { rowCount: 1, rows: [{ ready: true }] };
+      }
+      if (sql.includes("private.check_readiness($1::text) as ready")) {
+        return { rowCount: 1, rows: [{ migrationHeadIsCurrent: true, ready: true }] };
+      }
+      if (sql.includes("pg_catalog.format('alter role app_runtime_production login password")) {
+        return {
+          rowCount: 1,
+          rows: [
+            { statement: "alter role app_runtime_production login password 'runtime-secret'" },
+          ],
+        };
+      }
+      return { rowCount: null, rows: [] };
+    });
+    const runtimeQuery = vi.fn(async () => ({
+      rowCount: 1,
+      rows: [{ currentRole: "app_dal", ready: true, sessionRole: "app_runtime_production" }],
+    }));
+    const clients = [
+      {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: adminQuery,
+      },
+      {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: runtimeQuery,
+      },
+    ];
+
+    await expect(
+      provisionProductionRole(
+        {
+          ...fixedCoordinates,
+          PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+          SUPABASE_DB_PASSWORD: "admin-secret",
+          SUPABASE_PROJECT_REF: projectRef,
+        },
+        { createClient: () => clients.shift() },
+      ),
+    ).resolves.toBeUndefined();
+
+    const statements = adminQuery.mock.calls.map(([statement]) => String(statement));
+    const password = statements.indexOf(
+      "alter role app_runtime_production login password 'runtime-secret'",
+    );
+    const commit = statements.indexOf("commit");
+    expect(password).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(password);
+    expect(runtimeQuery).toHaveBeenCalledOnce();
   });
 
   it("resumes a compensated role without replacing its password", async () => {
@@ -788,7 +862,7 @@ describe("production role provisioning", () => {
     expect(runtimeQuery).toHaveBeenCalledOnce();
   });
 
-  it("preserves the verifier and terminates runtime sessions during compensation", async () => {
+  it("preserves the verifier and waits for runtime session termination", async () => {
     let activeConnections = 2;
     let canLogin = true;
     const clients = [];
@@ -803,10 +877,16 @@ describe("production role provisioning", () => {
           if (clientIndex === 0 && sql.includes("pg_terminate_backend")) {
             activeConnections = 0;
           }
-          if (sql.includes('role.rolpassword is not null as "haspassword"')) {
+          if (sql.includes("authentication.rolpassword is not null")) {
             return {
               rowCount: 1,
-              rows: [{ activeConnections, canLogin, hasPassword: true }],
+              rows: [
+                {
+                  activeConnections,
+                  canLogin,
+                  hasPassword: true,
+                },
+              ],
             };
           }
           return { rowCount: null, rows: [] };
@@ -826,11 +906,13 @@ describe("production role provisioning", () => {
     expect(activeConnections).toBe(0);
     expect(clients).toHaveLength(2);
     expect(clients[0].query).toHaveBeenCalledWith("alter role app_runtime_production nologin");
-    expect(clients[0].query).toHaveBeenCalledWith(expect.stringContaining("pg_terminate_backend"));
+    expect(clients[0].query).toHaveBeenCalledWith(
+      expect.stringContaining("pg_terminate_backend(activity.pid, 5000)"),
+    );
     expect(clients[0].query.mock.calls.flat().join(" ")).not.toContain("password null");
   });
 
-  it("proves the preserved verifier with a fresh connection after an ambiguous commit", async () => {
+  it("accepts the verifier-free initial state after an ambiguous initialization commit", async () => {
     let canLogin = true;
     const clients = [];
     const createClient = () => {
@@ -844,10 +926,16 @@ describe("production role provisioning", () => {
             canLogin = false;
             throw new Error("connection lost after commit");
           }
-          if (sql.includes('role.rolpassword is not null as "haspassword"')) {
+          if (sql.includes("authentication.rolpassword is not null")) {
             return {
               rowCount: 1,
-              rows: [{ activeConnections: 0, canLogin, hasPassword: true }],
+              rows: [
+                {
+                  activeConnections: 0,
+                  canLogin,
+                  hasPassword: false,
+                },
+              ],
             };
           }
           return { rowCount: null, rows: [] };
@@ -860,6 +948,7 @@ describe("production role provisioning", () => {
     await expect(
       forceProductionRoleDisabled({
         adminConnection: { application_name: "test" },
+        allowMissingVerifier: true,
         createClient,
       }),
     ).resolves.toBeUndefined();
@@ -868,6 +957,42 @@ describe("production role provisioning", () => {
     expect(clients[0].query).toHaveBeenCalledWith("commit");
     expect(clients[0].query).not.toHaveBeenCalledWith("rollback");
     expect(clients[1].query).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a verifier-free state when compensating a resume", async () => {
+    let clientIndex = 0;
+    const createClient = () => {
+      const currentIndex = clientIndex;
+      clientIndex += 1;
+      return {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: vi.fn(async (statement) => {
+          const sql = String(statement).trim().toLowerCase();
+          if (currentIndex === 1 && sql.includes("authentication.rolpassword is not null")) {
+            return {
+              rowCount: 1,
+              rows: [
+                {
+                  activeConnections: 0,
+                  canLogin: false,
+                  hasPassword: false,
+                },
+              ],
+            };
+          }
+          return { rowCount: null, rows: [] };
+        }),
+      };
+    };
+
+    await expect(
+      forceProductionRoleDisabled({
+        adminConnection: { application_name: "test" },
+        createClient,
+        maximumAttempts: 1,
+      }),
+    ).rejects.toThrow("comprovar a desativação");
   });
 
   it("fails closed when a fresh connection still observes LOGIN", async () => {
@@ -880,10 +1005,16 @@ describe("production role provisioning", () => {
         end: vi.fn(async () => undefined),
         query: vi.fn(async (statement) => {
           const sql = String(statement).trim().toLowerCase();
-          if (currentIndex === 1 && sql.includes('role.rolpassword is not null as "haspassword"')) {
+          if (currentIndex === 1 && sql.includes("authentication.rolpassword is not null")) {
             return {
               rowCount: 1,
-              rows: [{ activeConnections: 0, canLogin: true, hasPassword: true }],
+              rows: [
+                {
+                  activeConnections: 0,
+                  canLogin: true,
+                  hasPassword: true,
+                },
+              ],
             };
           }
           return { rowCount: null, rows: [] };
@@ -951,7 +1082,13 @@ describe("production role provisioning", () => {
     expect(compensation).toBeGreaterThan(activationCommit);
     expect(source).toContain("alter role app_runtime_production nologin");
     expect(source).not.toContain("alter role app_runtime_production nologin password null");
-    expect(source).toContain("pg_catalog.pg_terminate_backend(activity.pid)");
+    expect(source).toContain("pg_catalog.pg_terminate_backend(activity.pid, 5000)");
+    expect(source).toContain("from pg_catalog.pg_roles as role");
+    expect(source).toContain("authentication.rolpassword is not null");
+    expect(source).not.toContain("select authentication.rolpassword\n");
+    expect(source).toContain(
+      'activationMode === "initialize" && activationCommitCompleted === false',
+    );
     expect(source).not.toContain("app.settings.jwt_secret");
     expect(migration).toContain("ADR-019 treats these as compensating safeguards");
     expect(migration).toContain(

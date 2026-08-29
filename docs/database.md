@@ -37,8 +37,10 @@ A baseline implementada inclui:
 
 O provisionador diferencia `NOLOGIN` sem verificador, `NOLOGIN` com verificador preservado e `LOGIN`.
 Somente o primeiro estado recebe a senha inicial; o segundo retoma a mesma credencial sem rotação. Uma
-compensação impõe `NOLOGIN`, termina sessões runtime e comprova em conexão independente verificador
-presente e zero sessões, sem expor o hash.
+compensação impõe `NOLOGIN`, termina sessões com espera limitada e comprova em conexão independente
+verificador esperado e zero sessões. Ausência do verificador só é segura quando o commit da
+inicialização foi ambíguo e não retornou sucesso. Os atributos vêm de `pg_roles`; a conexão
+administrativa consulta em `pg_authid` apenas o booleano de presença, sem retornar o hash.
 
 A baseline encerra com readiness objetivo: migration esperada presente no histórico aplicado, JWT
 expiry, atributos mínimos de `app_dal`, allowlist exata de comandos, comandos allowlisted preservados

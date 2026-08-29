@@ -43,8 +43,9 @@ comandos publicados. O login de produção `app_runtime_production`:
 - pode apenas conectar e assumir `app_dal`;
 - tem limite de dez conexões;
 - não possui superuser, inherit, criação, replicação, bypass RLS, TEMP ou objetos;
-- em falha de ativação, volta a `NOLOGIN`, preserva o verificador de senha e encerra todas as sessões;
-  a retomada habilita a mesma credencial sem rotação implícita;
+- em falha de ativação, a role volta a `NOLOGIN`, preserva o verificador e encerra todas as sessões com
+  espera limitada. A retomada habilita a mesma credencial sem rotação implícita; o provisionador lê
+  somente o booleano de presença e nunca retorna o hash;
 - falha no provisionamento e no health se ele ou `app_dal` receber `CREATE`/`TEMP` no database;
 - assume `app_dal` por um único setting não secreto, limitado ao database `postgres` e validado
   exatamente pelo readiness; a segurança não depende de o Supavisor encaminhar opções do cliente;
