@@ -15,7 +15,12 @@ consumidor.
 
 ## 1.1 Estado implementado
 
-A superfície técnica `FoundationStatus` continua exportada para comprovar a fundação nos dois apps. A FEAT-002 acrescentou as primitives compartilhadas consumidas pelos fluxos de autenticação. A FEAT-003 reutiliza essa base para a conta e acrescenta somente o `Select` nativo já consumido pela preferência visual e pelas ações explícitas sobre documentos. Nenhuma delas antecipa home, dashboard ou domínio posterior.
+A superfície técnica `FoundationStatus` continua exportada para comprovar a fundação nos dois apps.
+Seu rótulo é neutro ao ambiente: identifica a aplicação e a fundação técnica sem apresentar um deploy
+como local. A FEAT-002 acrescentou as primitives compartilhadas consumidas pelos fluxos de
+autenticação. A FEAT-003 reutiliza essa base para a conta e acrescenta somente o `Select` nativo já
+consumido pela preferência visual e pelas ações explícitas sobre documentos. Nenhuma delas antecipa
+home, dashboard ou domínio posterior.
 
 Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
 

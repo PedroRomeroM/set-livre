@@ -10,7 +10,7 @@ export function FoundationStatus({ application, description, title }: Foundation
   return (
     <main className={styles.shell}>
       <section className={styles.panel} aria-labelledby="foundation-title">
-        <p className={styles.eyebrow}>{application} · ambiente local</p>
+        <p className={styles.eyebrow}>{application} · fundação técnica</p>
         <h1 className={styles.title} id="foundation-title">
           {title}
         </h1>
