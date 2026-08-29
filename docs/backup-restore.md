@@ -3,7 +3,7 @@
 ## Baseline atual
 
 O Supabase Cloud é a fonte canônica de banco, Auth e Storage. O projeto ainda não possui usuários ou
-dados comerciais; por isso o primeiro deploy comprova migrations e segurança, enquanto backup/restore
+dados comerciais; o primeiro deploy já comprovou migrations e segurança, enquanto backup/restore
 permanecem gates do go-live. Não se cria antecipadamente um serviço próprio de backup.
 
 - código, migrations, Nginx e units estão no Git;

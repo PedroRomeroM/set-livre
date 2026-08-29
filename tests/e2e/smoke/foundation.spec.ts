@@ -170,7 +170,20 @@ test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundaçã
   });
 
   await expectNonceProtectedDevelopmentPage(page, request, backofficeBaseUrl, "Operação Set Livre");
+  await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toBeVisible();
+  await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
+
   await expectNonceProtectedDevelopmentPage(page, request, "/", "Set Livre");
+  await expect(
+    page.getByText("Plataforma pública · fundação técnica", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "A fundação de aplicações, contratos, qualidade e segurança está ativa. A experiência pública será construída na FEAT-001.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
 
   for (const baseUrl of [publicBaseUrl, backofficeBaseUrl]) {
     await expectNonceProtectedDevelopmentDocument(request, baseUrl, 200, {

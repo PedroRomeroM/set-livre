@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 28/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 29/08/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -94,14 +94,12 @@
             <tr>
               <td>Entrega</td>
               <td class="status">
-                Host, credenciais privadas, proteção de branch e HTTPS por IP configurados; os
-                contratos do rollout ficam na
-                <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. CI pode ser
-                repetido manualmente sem autorizar produção. A primeira tentativa aplicou a baseline
-                no Supabase, mas falhou fechada antes de ativar a aplicação na VM. Um merge só é
-                considerado publicado quando migrations, ativação e health terminam verdes no mesmo
-                SHA; sem essa evidência, a aplicação permanece bloqueada. DNS foi adiado até o
-                go-live.
+                Host, credenciais privadas, proteção de branch e HTTPS por IP configurados. O ciclo
+                protegido já concluiu migrations, ativação atômica do runtime restrito e health
+                público no mesmo SHA; a produção serve somente a fundação técnica, com identificação
+                neutra ao ambiente e sem simular features planejadas. Os contratos do rollout ficam
+                na <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. DNS foi
+                adiado até o go-live.
               </td>
             </tr>
           </tbody>
