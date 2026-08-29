@@ -1642,6 +1642,9 @@ begin
     if editor is null then
       raise exception using errcode = '40001', message = 'studio_create_result_missing';
     end if;
+    if private.studio_result_hash(editor) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'studio_create_result_stale';
+    end if;
     return editor;
   end if;
 
@@ -1697,11 +1700,17 @@ begin
     p_studio_type_id
   from inserted_studio;
 
+  editor := private.studio_editor_json(p_user_id, studio_id);
+  if editor is null then
+    raise exception using errcode = 'P0002', message = 'studio_create_result_missing';
+  end if;
+
   insert into private.studio_command_requests (
     owner_user_id,
     idempotency_key,
     action,
     payload_hash,
+    result_hash,
     studio_id,
     resulting_revision_id,
     resulting_revision_version
@@ -1711,6 +1720,7 @@ begin
     p_idempotency_key,
     'studio.create',
     payload_hash,
+    private.studio_result_hash(editor),
     studio_id,
     revision_id,
     1
@@ -1745,10 +1755,6 @@ begin
     )
   );
 
-  editor := private.studio_editor_json(p_user_id, studio_id);
-  if editor is null then
-    raise exception using errcode = 'P0002', message = 'studio_create_result_missing';
-  end if;
   return editor;
 end;
 $$;
@@ -1772,6 +1778,7 @@ declare
   existing_request private.studio_command_requests%rowtype;
   payload_hash text;
   published_revision public.studio_revisions%rowtype;
+  result jsonb;
 begin
   if p_user_id is null
     or p_studio_id is null
@@ -1820,23 +1827,27 @@ begin
     end if;
 
     if existing_request.studio_deleted then
-      return pg_catalog.jsonb_build_object(
+      result := pg_catalog.jsonb_build_object(
         'scope', p_user_id,
         'studioId', p_studio_id,
         'studioDeleted', true
       );
+    else
+      editor := private.studio_editor_json(p_user_id, p_studio_id);
+      if editor is null then
+        raise exception using errcode = '40001', message = 'studio_discard_result_missing';
+      end if;
+      result := pg_catalog.jsonb_build_object(
+        'scope', p_user_id,
+        'studioId', p_studio_id,
+        'studioDeleted', false,
+        'editor', editor
+      );
     end if;
-
-    editor := private.studio_editor_json(p_user_id, p_studio_id);
-    if editor is null then
-      raise exception using errcode = '40001', message = 'studio_discard_result_missing';
+    if private.studio_result_hash(result) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'studio_discard_result_stale';
     end if;
-    return pg_catalog.jsonb_build_object(
-      'scope', p_user_id,
-      'studioId', p_studio_id,
-      'studioDeleted', false,
-      'editor', editor
-    );
+    return result;
   end if;
 
   select studio.*
@@ -1872,11 +1883,18 @@ begin
   end if;
 
   if current_studio.published_revision_id is null then
+    result := pg_catalog.jsonb_build_object(
+      'scope', p_user_id,
+      'studioId', p_studio_id,
+      'studioDeleted', true
+    );
+
     insert into private.studio_command_requests (
       owner_user_id,
       idempotency_key,
       action,
       payload_hash,
+      result_hash,
       studio_id,
       resulting_revision_id,
       resulting_revision_version,
@@ -1887,6 +1905,7 @@ begin
       p_idempotency_key,
       'studio.draft.discard',
       payload_hash,
+      private.studio_result_hash(result),
       p_studio_id,
       null,
       null,
@@ -1923,11 +1942,7 @@ begin
 
     delete from public.studios as studio where studio.id = p_studio_id;
 
-    return pg_catalog.jsonb_build_object(
-      'scope', p_user_id,
-      'studioId', p_studio_id,
-      'studioDeleted', true
-    );
+    return result;
   end if;
 
   select revision.*
@@ -1947,11 +1962,23 @@ begin
   delete from public.studio_revisions as revision
   where revision.id = current_revision.id;
 
+  editor := private.studio_editor_json(p_user_id, p_studio_id);
+  if editor is null then
+    raise exception using errcode = 'P0002', message = 'studio_discard_result_missing';
+  end if;
+  result := pg_catalog.jsonb_build_object(
+    'scope', p_user_id,
+    'studioId', p_studio_id,
+    'studioDeleted', false,
+    'editor', editor
+  );
+
   insert into private.studio_command_requests (
     owner_user_id,
     idempotency_key,
     action,
     payload_hash,
+    result_hash,
     studio_id,
     resulting_revision_id,
     resulting_revision_version,
@@ -1962,6 +1989,7 @@ begin
     p_idempotency_key,
     'studio.draft.discard',
     payload_hash,
+    private.studio_result_hash(result),
     p_studio_id,
     published_revision.id,
     published_revision.revision_version,
@@ -1996,16 +2024,7 @@ begin
     )
   );
 
-  editor := private.studio_editor_json(p_user_id, p_studio_id);
-  if editor is null then
-    raise exception using errcode = 'P0002', message = 'studio_discard_result_missing';
-  end if;
-  return pg_catalog.jsonb_build_object(
-    'scope', p_user_id,
-    'studioId', p_studio_id,
-    'studioDeleted', false,
-    'editor', editor
-  );
+  return result;
 end;
 $$;
 
@@ -3494,6 +3513,23 @@ $$;
 ALTER FUNCTION "private"."studio_editor_json"("p_user_id" "uuid", "p_studio_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."studio_result_hash"("p_result" "jsonb") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.encode(
+    extensions.digest(
+      pg_catalog.convert_to(p_result::text, 'UTF8'),
+      'sha256'
+    ),
+    'hex'
+  );
+$$;
+
+
+ALTER FUNCTION "private"."studio_result_hash"("p_result" "jsonb") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -3751,6 +3787,9 @@ begin
     if editor is null then
       raise exception using errcode = '40001', message = 'studio_update_result_missing';
     end if;
+    if private.studio_result_hash(editor) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'studio_update_result_stale';
+    end if;
     return editor;
   end if;
 
@@ -3877,11 +3916,17 @@ begin
     where studio.id = current_studio.id;
   end if;
 
+  editor := private.studio_editor_json(p_user_id, p_studio_id);
+  if editor is null then
+    raise exception using errcode = 'P0002', message = 'studio_update_result_missing';
+  end if;
+
   insert into private.studio_command_requests (
     owner_user_id,
     idempotency_key,
     action,
     payload_hash,
+    result_hash,
     studio_id,
     resulting_revision_id,
     resulting_revision_version
@@ -3891,6 +3936,7 @@ begin
     p_idempotency_key,
     'studio.revision.updateCore',
     payload_hash,
+    private.studio_result_hash(editor),
     p_studio_id,
     resulting_revision_id,
     resulting_revision_version
@@ -3924,10 +3970,6 @@ begin
     )
   );
 
-  editor := private.studio_editor_json(p_user_id, p_studio_id);
-  if editor is null then
-    raise exception using errcode = 'P0002', message = 'studio_update_result_missing';
-  end if;
   return editor;
 end;
 $$;
@@ -4584,6 +4626,7 @@ CREATE TABLE IF NOT EXISTS "private"."studio_command_requests" (
     "idempotency_key" "uuid" NOT NULL,
     "action" "text" NOT NULL,
     "payload_hash" "text" NOT NULL,
+    "result_hash" "text" NOT NULL,
     "studio_id" "uuid" NOT NULL,
     "resulting_revision_id" "uuid",
     "resulting_revision_version" bigint,
@@ -4592,6 +4635,7 @@ CREATE TABLE IF NOT EXISTS "private"."studio_command_requests" (
     CONSTRAINT "studio_command_requests_action_check" CHECK (("action" = ANY (ARRAY['studio.create'::"text", 'studio.revision.updateCore'::"text", 'studio.draft.discard'::"text"]))),
     CONSTRAINT "studio_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "studio_command_requests_result_check" CHECK (((("action" = 'studio.draft.discard'::"text") AND (("studio_deleted" AND ("resulting_revision_id" IS NULL) AND ("resulting_revision_version" IS NULL)) OR ((NOT "studio_deleted") AND ("resulting_revision_id" IS NOT NULL) AND ("resulting_revision_version" IS NOT NULL)))) OR (("action" <> 'studio.draft.discard'::"text") AND (NOT "studio_deleted") AND ("resulting_revision_id" IS NOT NULL) AND ("resulting_revision_version" IS NOT NULL)))),
+    CONSTRAINT "studio_command_requests_result_hash_check" CHECK (("result_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "studio_command_requests_revision_version_check" CHECK ((("resulting_revision_version" IS NULL) OR ("resulting_revision_version" >= 1)))
 );
 
@@ -4599,7 +4643,7 @@ CREATE TABLE IF NOT EXISTS "private"."studio_command_requests" (
 ALTER TABLE "private"."studio_command_requests" OWNER TO "postgres";
 
 
-COMMENT ON TABLE "private"."studio_command_requests" IS 'Ledger mínimo de idempotência dos comandos de estúdio; não replica conteúdo nem endereço.';
+COMMENT ON TABLE "private"."studio_command_requests" IS 'Ledger mínimo de idempotência dos comandos de estúdio; hashes verificam payload e resultado sem replicar conteúdo nem endereço.';
 
 
 
@@ -5302,7 +5346,10 @@ CREATE POLICY "studio_revisions_select_own" ON "public"."studio_revisions" FOR S
 ALTER TABLE "public"."studio_types" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "studio_types_select_active" ON "public"."studio_types" FOR SELECT TO "authenticated" USING ("active");
+CREATE POLICY "studio_types_select_active" ON "public"."studio_types" FOR SELECT TO "authenticated" USING (("active" OR (EXISTS ( SELECT 1
+   FROM ("public"."studio_revisions" "revision"
+     JOIN "public"."studios" "studio" ON (("studio"."id" = "revision"."studio_id")))
+  WHERE (("revision"."studio_type_id" = "studio_types"."id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid")))))));
 
 
 
@@ -5535,6 +5582,10 @@ REVOKE ALL ON FUNCTION "private"."studio_core_payload_hash"("p_name" "text", "p_
 
 
 REVOKE ALL ON FUNCTION "private"."studio_editor_json"("p_user_id" "uuid", "p_studio_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."studio_result_hash"("p_result" "jsonb") FROM PUBLIC;
 
 
 

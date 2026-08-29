@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext } from "@playwright/test";
 
 import { readFeat002IdentitySession } from "../../helpers/feat-002-authentication";
+import { switchFeat003SessionWithoutNavigation } from "../../helpers/feat-003-profile-account";
 import {
   closeFeat006PageBeforeCleanup,
   cleanupFeat006QaIdentity,
@@ -14,6 +15,16 @@ import {
   saveFeat006StudioThroughUi,
 } from "../../helpers/feat-006-studio-core-revision";
 
+function createDeferredSignal() {
+  let resolve: () => void = () => {
+    throw new Error("O sinal de fronteira do editor não foi inicializado.");
+  };
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 test("SL-F006-E2E-001 @p0 cria estúdio e primeira revisão draft atomicamente", async ({
   page,
 }, testInfo) => {
@@ -21,6 +32,10 @@ test("SL-F006-E2E-001 @p0 cria estúdio e primeira revisão draft atomicamente",
   const identity = createFeat006QaIdentity(testInfo, "001_create");
   try {
     await provisionFeat006Owner(page, identity, "001");
+    await expect(page.getByRole("link", { exact: true, name: "Novo estúdio" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     await expect(page.getByText("Prévia local — não publicada", { exact: true })).toBeVisible();
     await fillFeat006Core(page);
     await expect(
@@ -42,6 +57,10 @@ test("SL-F006-E2E-001 @p0 cria estúdio e primeira revisão draft atomicamente",
     await expect(page.getByText("Rascunho privado", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
       feat006DefaultCore.name,
+    );
+    await expect(page.getByRole("link", { exact: true, name: "Novo estúdio" })).not.toHaveAttribute(
+      "aria-current",
+      "page",
     );
 
     const evidence = await readFeat006StudioEvidence(editor.studioId);
@@ -193,6 +212,71 @@ test("SL-F006-E2E-003 @p0 dono B não lê nem altera o estúdio do dono A", asyn
       }
       await contextB.close();
     }
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identityB);
+    await cleanupFeat006QaIdentity(identityA);
+  }
+});
+
+test("SL-F006-E2E-008 @p0 troca de sessão oculta editor privado antes da releitura", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(220_000);
+  const identityA = createFeat006QaIdentity(testInfo, "008_scope_a");
+  const identityB = createFeat006QaIdentity(testInfo, "008_scope_b");
+  const editorReadCaptured = createDeferredSignal();
+  const releaseEditorRead = createDeferredSignal();
+  let contextB: BrowserContext | undefined;
+  try {
+    await provisionFeat006Owner(page, identityA, "008");
+    await fillFeat006Core(page, { name: "Estúdio ultraprivado do escopo A" });
+    const editorA = await createFeat006StudioThroughUi(page);
+
+    contextB = await browser.newContext({
+      baseURL: new URL(page.url()).origin,
+      viewport: { height: 900, width: 1440 },
+    });
+    const pageB = await contextB.newPage();
+    await provisionFeat006Owner(pageB, identityB, "108");
+    await contextB.close();
+    contextB = undefined;
+
+    await page.route(
+      `**/api/owner/studios/${editorA.studioId}`,
+      async (route) => {
+        const response = await route.fetch();
+        editorReadCaptured.resolve();
+        await releaseEditorRead.promise;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+
+    const switched = await switchFeat003SessionWithoutNavigation(page, identityB);
+    expect(switched.session).toMatchObject({ authenticated: true, userId: identityB.userId });
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await editorReadCaptured.promise;
+
+    await expect(page.getByText("Verificando o editor seguro", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByText("Estúdio ultraprivado do escopo A", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(page.getByText(feat006DefaultCore.street, { exact: true })).toHaveCount(0);
+
+    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+    releaseEditorRead.resolve();
+    await reload;
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Estúdio não encontrado" }),
+    ).toBeVisible();
+    await expect(page.getByText("Estúdio ultraprivado do escopo A", { exact: true })).toHaveCount(
+      0,
+    );
+  } finally {
+    releaseEditorRead.resolve();
+    await contextB?.close();
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identityB);
     await cleanupFeat006QaIdentity(identityA);

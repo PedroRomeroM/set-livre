@@ -161,6 +161,7 @@ export async function createFeat006StudioThroughUi(page: Page) {
   );
   expect(result.response.status()).toBe(200);
   if (result.editor === undefined) throw new Error("A criação FEAT-006 não retornou o editor.");
+  await page.getByRole("button", { name: "Abrir editor criado" }).click();
   await expect(page).toHaveURL(new RegExp(`/dono/estudios/${result.editor.studioId}/dados$`, "u"));
   const editorRead = await initialEditorRead;
   expect(editorRead.status()).toBe(200);
@@ -276,6 +277,41 @@ export async function mutateFeat006DraftForConflict(
     );
     if (result.rows.length !== 1) {
       throw new Error("A fixture FEAT-006 não avançou exatamente uma revisão draft.");
+    }
+  });
+}
+
+export async function setFeat006StudioStatus(
+  studioId: string,
+  status: "disabled" | "draft" | "published",
+) {
+  const parsedStudioId = z.uuid().parse(studioId);
+  await withFeat006AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.studios as studio
+          set status = $2
+        where studio.id = $1::uuid
+      returning studio.id`,
+      [parsedStudioId, status],
+    );
+    if (result.rows.length !== 1) {
+      throw new Error("A fixture FEAT-006 não alterou exatamente um status de estúdio.");
+    }
+  });
+}
+
+export async function setFeat006StudioTypeActive(studioTypeId: string, active: boolean) {
+  const parsedStudioTypeId = z.uuid().parse(studioTypeId);
+  await withFeat006AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.studio_types as studio_type
+          set active = $2
+        where studio_type.id = $1::uuid
+      returning studio_type.id`,
+      [parsedStudioTypeId, active],
+    );
+    if (result.rows.length !== 1) {
+      throw new Error("A fixture FEAT-006 não alterou exatamente um tipo de estúdio.");
     }
   });
 }

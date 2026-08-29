@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { clearIdentityAndAccountQueryCache } from "../../src/domains/identity/components/account-query-keys";
 import {
   publishStudioEditor,
+  studioEditorCanRender,
   StudioScopeChangedError,
   studioQueryKeys,
 } from "../../src/domains/studios/components/studio-query-keys";
@@ -90,6 +91,45 @@ describe("studio private query cache", () => {
     ).toBeUndefined();
   });
 
+  it("keeps SSR private values hidden until an authoritative scoped read succeeds", () => {
+    expect(
+      studioEditorCanRender(
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        "fetching",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      studioEditorCanRender(
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        "idle",
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      studioEditorCanRender(
+        studioEditorFixture,
+        studioTestIds.otherUserId,
+        studioTestIds.studioId,
+        "idle",
+        false,
+      ),
+    ).toBe(false);
+    expect(
+      studioEditorCanRender(
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        "idle",
+        false,
+      ),
+    ).toBe(true);
+  });
+
   it("parses form scalars and exposes only changed conflict rows", () => {
     const local = studioCorePanelInternals.editorFormState(studioEditorFixture);
     const parsed = studioCorePanelInternals.parseCoreForm({
@@ -109,5 +149,9 @@ describe("studio private query cache", () => {
       { field: "name", label: "Nome", local: local.name, remote: "Nome remoto" },
       { field: "streetNumber", label: "Número", local: local.streetNumber, remote: "200" },
     ]);
+
+    expect(
+      studioCorePanelInternals.includeCurrentStudioType([], studioEditorFixture.studioType),
+    ).toEqual([{ ...studioEditorFixture.studioType, sortOrder: 0 }]);
   });
 });

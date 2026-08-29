@@ -172,6 +172,10 @@
   border-bottom: 0;
 }
 
+.mobileConflictLabel {
+  display: none;
+}
+
 @media (max-width: 62rem) {
   .editorLayout {
     grid-template-columns: minmax(0, 1fr);
@@ -190,7 +194,15 @@
   }
 
   .conflictHeader {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .conflictRow {
@@ -204,6 +216,15 @@
 
   .conflictRow > :is(strong, span) {
     border-bottom: 0;
+  }
+
+  .mobileConflictLabel {
+    display: block;
+    margin-bottom: var(--sl-space-1);
+    color: var(--sl-color-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 800;
+    text-transform: uppercase;
   }
 
   .actions {

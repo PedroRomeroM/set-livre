@@ -16,12 +16,36 @@ export class StudioScopeChangedError extends Error {
   }
 }
 
-function assertStudioEditorBoundary(
+function studioEditorMatchesBoundary(
+  editor: StudioEditor | undefined,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return (
+    editor !== undefined && editor.scope === expectedUserId && editor.studioId === expectedStudioId
+  );
+}
+
+export function studioEditorCanRender(
+  editor: StudioEditor | undefined,
+  expectedUserId: string,
+  expectedStudioId: string,
+  fetchStatus: "fetching" | "idle" | "paused",
+  hasError: boolean,
+) {
+  return (
+    fetchStatus === "idle" &&
+    !hasError &&
+    studioEditorMatchesBoundary(editor, expectedUserId, expectedStudioId)
+  );
+}
+
+export function assertStudioEditorBoundary(
   editor: StudioEditor,
   expectedUserId: string,
   expectedStudioId: string,
 ) {
-  if (editor.scope !== expectedUserId || editor.studioId !== expectedStudioId) {
+  if (!studioEditorMatchesBoundary(editor, expectedUserId, expectedStudioId)) {
     throw new StudioScopeChangedError();
   }
   return editor;

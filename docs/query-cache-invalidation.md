@@ -108,17 +108,23 @@ Medir; não usar Infinity em dado operacional.
 - tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; editores usam
   `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
   logout/troca de sessão remove toda a família `owner/private/studio-editor`;
-- o editor começa com `initialData` validado e `staleTime: 0`. Resultado de mutation só publica sobre
-  uma key já existente do mesmo usuário/estúdio; callback tardio depois da limpeza falha fechado e não
-  recria dados privados. Outros estúdios do mesmo dono são preservados e scopes de outro usuário são
-  removidos;
+- o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
+  até o GET autoritativo do mesmo usuário/estúdio terminar em `idle` sem erro. Refetch de montagem,
+  foco ou conflito volta ao boundary neutro; erro de sessão/acesso limpa o cliente inteiro e recompõe
+  SSR. Resultado de mutation só publica sobre uma key já existente do mesmo usuário/estúdio; callback
+  tardio depois da limpeza falha fechado e não recria dados privados. Outros estúdios do mesmo dono
+  são preservados e scopes de outro usuário são removidos;
 - create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
-  mesma chave quando o resultado é ambíguo. Update/discard seguem o mesmo contrato. Sucesso de update
-  substitui o editor autoritativo; descarte remove toda a família se o estúdio inédito foi excluído ou
-  publica o editor da revisão aprovada preservada;
-- conflito otimista faz GET do editor, conserva o formulário local e mostra comparação; `Usar versão
-salva` troca os valores sem POST, e `Continuar com minhas alterações` exige um novo submit com o token
-  recente. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED` e `UNAUTHENTICATED` recompõem a rota SSR em vez
+  mesma chave quando o resultado é ambíguo. Campos e ações concorrentes ficam bloqueados durante esse
+  retry. Criação aceita entra em estado terminal e exige a navegação explícita para o editor, sem gerar
+  uma segunda chave. Update/discard seguem o mesmo contrato. Sucesso de update substitui o editor
+  autoritativo; descarte remove toda a família se o estúdio inédito foi excluído ou publica o editor da
+  revisão aprovada preservada;
+- conflito otimista de update faz GET do editor, conserva o formulário local e mostra comparação;
+  `Usar versão salva` troca os valores sem POST, e `Continuar com minhas alterações` exige um novo
+  submit com o token recente. Conflito de descarte fecha o diálogo, descarta o comando vencido, relê o
+  editor e exige nova confirmação. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED`, `UNAUTHENTICATED`,
+  `FORBIDDEN`, `ACCOUNT_SUSPENDED` e `NOT_FOUND` recompõem a rota SSR em vez
   de entrar nessa comparação;
 - authoritative mutation success shown immediately;
 - invalidation may run background;

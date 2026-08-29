@@ -46,6 +46,7 @@ test("SL-F006-E2E-006 @p1 editor principal passa axe, teclado, toque e mobile", 
     const studioNavigation = page.getByRole("link", { exact: true, name: "Novo estúdio" });
     await expectTouchTarget(createButton);
     await expectTouchTarget(studioNavigation);
+    await expect(studioNavigation).toHaveAttribute("aria-current", "page");
     await expectAxeClean(page);
     await expectNoHorizontalOverflow(page);
 
@@ -56,8 +57,13 @@ test("SL-F006-E2E-006 @p1 editor principal passa axe, teclado, toque e mobile", 
     await createButton.focus();
     await expect(createButton).toBeFocused();
     await page.keyboard.press("Enter");
+    const openEditorButton = page.getByRole("button", { name: "Abrir editor criado" });
+    await expect(openEditorButton).toBeVisible();
+    await expectTouchTarget(openEditorButton);
+    await openEditorButton.click();
     await expect(page).toHaveURL(/\/dono\/estudios\/[0-9a-f-]+\/dados$/u);
     await expect(page.getByText("Rascunho privado", { exact: true })).toBeVisible();
+    await expect(studioNavigation).not.toHaveAttribute("aria-current", "page");
     await expectAxeClean(page);
     await expectNoHorizontalOverflow(page);
 

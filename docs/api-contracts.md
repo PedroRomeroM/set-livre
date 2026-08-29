@@ -50,7 +50,10 @@ Headers:
 
 `X-Request-Id`/`requestId` identifica a request HTTP e nunca substitui `idempotencyKey`. A chave de idempotência identifica a tentativa lógica repetível e pode atravessar retries com novos request IDs; ela não é copiada para o campo público de correlação.
 
-Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-002 usa o limite mais restritivo de 16 KiB e consome o stream independentemente de `Content-Length`.
+Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-002 usa o limite mais
+restritivo de 16 KiB. `/api/commands` usa 32 KiB no recorte da FEAT-006, suficiente para o maior
+payload válido do núcleo de estúdio mesmo em UTF-8 multibyte; todo limite consome o stream
+independentemente de `Content-Length`.
 
 ### 2.1 Superfície implementada na FEAT-002
 
@@ -197,11 +200,16 @@ banco.
 
 O retorno de create/update é o `StudioEditor` autoritativo. Discard retorna união discriminada:
 `studioDeleted=true` sem editor para estúdio inédito ou `studioDeleted=false` com editor da revisão
-publicada preservada. A mesma chave/payload não repete efeito; chave reutilizada com payload divergente
-falha `409 CONFLICT`.
+publicada preservada. A mesma chave/payload não repete efeito e retorna exatamente o resultado cujo
+hash foi registrado; se uma mudança posterior impedir reconstruir esse resultado, o replay falha
+fechado como conflito em vez de devolver o estado atual. Chave reutilizada com payload divergente
+também falha `409 CONFLICT`.
 
-Concorrência otimista usa o token `{revisionId, revisionVersion}`. Conflito relê
-`GET /api/owner/studios/[studioId]` e só um novo submit salva os valores locais escolhidos. A combinação
+Concorrência otimista usa o token `{revisionId, revisionVersion}`. Conflito de update relê
+`GET /api/owner/studios/[studioId]` e só um novo submit salva os valores locais escolhidos. Conflito de
+descarte fecha a confirmação, relê o token e exige nova confirmação explícita. Resultado de transporte
+ambíguo mantém campos e ações concorrentes bloqueados; somente o retry do mesmo payload/chave fica
+disponível. A combinação
 interna `42501 + owner_contract_not_current` da guarda de estúdio vira
 `409 OWNER_CONTRACT_CHANGED`: o cliente recompõe a rota SSR para exigir o contrato vigente e não
 classifica isso como conflito de conteúdo. Outros `42501` permanecem `403 FORBIDDEN`.
@@ -470,8 +478,10 @@ Na FEAT-004, as famílias privadas são `owner/private/activation/<userId>` e `o
 
 Na FEAT-006, tipos usam `studio/taxonomies/types` e cada editor usa
 `owner/private/studio-editor/<userId>/<studioId>`. Sucesso só publica sobre a key existente do mesmo
-escopo; logout remove toda a família privada. Conflito otimista relê o editor e preserva os valores
-locais para comparação. Exclusão de inédito remove a família; contrato alterado recompõe a rota SSR.
+escopo; logout remove toda a família privada. `initialData` SSR permanece oculto até um GET autoritativo
+do mesmo usuário/estúdio terminar sem erro; refetch em curso volta ao boundary neutro. Conflito
+otimista relê o editor e preserva os valores locais para comparação. Exclusão de inédito remove a
+família; mudança de sessão, acesso ou contrato limpa o cliente e recompõe a rota SSR.
 
 ## 10. Rate limits iniciais
 

@@ -1,32 +1,22 @@
 # FEAT-006 — núcleo e revisões de estúdio
 
-## Estado
-
-Em andamento na branch `codex/platform-foundation-batch`. Este registro não declara conclusão:
-faltam commit, PR, review limpo no SHA atual, merge e deploy monitorado.
-
 ## Mudança
 
-- adiciona `studio_types`, `studios`, `studio_revisions` e o ledger privado mínimo de idempotência;
+- adiciona `studio_types`, `studios`, `studio_revisions` e o ledger privado mínimo de idempotência,
+  com hashes do payload e do resultado exato sem replicar conteúdo ou endereço;
 - implementa criação, atualização/clone e descarte por três funções SQL privadas atômicas;
-- revalida perfil, autoridade de dono e contrato vigente antes inclusive de replay;
+- revalida perfil, autoridade de dono e contrato vigente antes inclusive de replay; resultado antigo que
+  já não pode ser reconstruído exatamente falha fechado;
 - aplica grants mínimos, RLS por `auth.uid()`, imutabilidade e ponteiros/revisões canônicos;
+- mantém tipo arquivado legível somente para o dono de uma revisão histórica, sem recolocá-lo na lista
+  de escolhas ativas;
 - adiciona read models estritos para tipos ativos e editor do próprio dono;
 - entrega `/dono/estudios/novo` e `/dono/estudios/[studioId]/dados`, preview local, validação,
-  conflito comparável, descarte confirmado e boundary integral de hidratação;
+  conflito comparável, descarte confirmado e boundary integral de hidratação e sessão;
+- torna criação aceita um estado terminal com navegação explícita, congela payloads de resultado
+  ambíguo, recupera conflitos de descarte por releitura e mantém estúdio desabilitado somente leitura;
 - adiciona `Textarea` à UI compartilhada e invalidação/cache privado por usuário + estúdio;
 - habilita runner pgTAP efêmero sem bind mount no Windows e restaura artefatos Playwright em falhas.
-
-## Evidência local atual
-
-- reset do Supabase do zero, lint sem warnings nos schemas próprios e 6 arquivos/264 testes SQL verdes;
-- 69 arquivos/678 testes unitários verdes, com 3 skips condicionais previstos;
-- formatação, documentação, imutabilidade de migrations, ESLint, typecheck, audit sem vulnerabilidades e
-  Knip verdes;
-- build standalone de web e backoffice verde;
-- matriz FEAT-006 final com 24/24 execuções Playwright verdes em 2,9 minutos;
-- teardown com quiescência comprovada, sem `404/503` artificiais; somente os `409` de conflito e `404`
-  deliberados do isolamento entre donos apareceram no log.
 
 ## Operação e rollback
 

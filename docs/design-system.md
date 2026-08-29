@@ -187,7 +187,12 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   formulário e o preview. Nenhum input existe antes dos handlers, evitando perda de digitação e
   mismatch sem duplicar estado de controle;
 - o editor preserva 44 px, 320 px, tema escuro, forced colors e reflow a 160 CSS px. Erro de campo
-  permanece no `Field`; conflito/timeout/sucesso usam `Alert` e ações explícitas.
+  permanece no `Field`; conflito/timeout/sucesso usam `Alert` e ações explícitas. Em largura móvel, o
+  cabeçalho semântico da comparação continua disponível a tecnologia assistiva e cada valor recebe
+  rótulo visual **Sua versão**/**Versão salva**, sem depender da posição da coluna;
+- depois da hidratação, uma segunda fronteira mantém formulário e preview privados fora do DOM enquanto
+  o GET autoritativo está em curso ou falha. Criação aceita, retry ambíguo, bloqueio administrativo e
+  taxonomia arquivada usam estados factuais e controles realmente desabilitados, não apenas aparência.
 
 ## 4. Contratos
 

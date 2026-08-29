@@ -7,7 +7,7 @@ import styles from "@/domains/owners/components/owner.module.css";
 export default function StudioNotFound() {
   return (
     <OwnerPageFrame
-      currentPage="studio"
+      currentPage="studio-editor"
       description="O endereço informado não corresponde a um estúdio acessível pela sessão atual."
       title="Estúdio não encontrado"
     >

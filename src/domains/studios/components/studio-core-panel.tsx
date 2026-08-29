@@ -7,9 +7,9 @@ import {
   type StudioTypeOption,
 } from "@set-livre/contracts";
 import { Alert, Button, Field, Input, Select, Stack, Textarea } from "@set-livre/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { useHydrated } from "@/lib/client/use-hydrated";
 
@@ -23,7 +23,13 @@ import {
   StudioApiError,
   updateStudioCore,
 } from "./studio-api";
-import { publishStudioEditor, StudioScopeChangedError, studioQueryKeys } from "./studio-query-keys";
+import {
+  assertStudioEditorBoundary,
+  publishStudioEditor,
+  studioEditorCanRender,
+  StudioScopeChangedError,
+  studioQueryKeys,
+} from "./studio-query-keys";
 import styles from "./studio.module.css";
 
 type FieldErrors = Readonly<Record<string, string>>;
@@ -120,6 +126,19 @@ function apiError(error: unknown) {
   return error instanceof StudioApiError ? error : undefined;
 }
 
+function recomposeStudioClientBoundary(queryClient: QueryClient) {
+  queryClient.clear();
+  window.location.reload();
+}
+
+function includeCurrentStudioType(
+  types: readonly StudioTypeOption[],
+  currentType: StudioEditor["studioType"],
+) {
+  if (types.some((type) => type.id === currentType.id)) return [...types];
+  return [{ ...currentType, sortOrder: 0 }, ...types];
+}
+
 function StudioMutationFeedback({
   error,
   onRetry,
@@ -147,12 +166,14 @@ function StudioMutationFeedback({
 }
 
 function StudioCoreFields({
+  unavailableTypeId,
   disabled,
   errors,
   onChange,
   state,
   types,
 }: Readonly<{
+  unavailableTypeId?: string;
   disabled: boolean;
   errors: FieldErrors;
   onChange: (field: keyof StudioCoreFormState, value: string) => void;
@@ -190,8 +211,9 @@ function StudioCoreFields({
             >
               <option value="">Selecione</option>
               {types.map((type) => (
-                <option key={type.id} value={type.id}>
+                <option disabled={type.id === unavailableTypeId} key={type.id} value={type.id}>
                   {type.name}
+                  {type.id === unavailableTypeId ? " (arquivado)" : ""}
                 </option>
               ))}
             </Select>
@@ -348,8 +370,10 @@ function CreateStudioForm({
   userId,
 }: Readonly<{ initialTypes: readonly StudioTypeOption[]; userId: string }>) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const typesQuery = useStudioTypes(initialTypes);
   const pendingCommand = useRef<CreateCommand>(undefined);
+  const [createdStudioId, setCreatedStudioId] = useState<string>();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState<StudioCoreFormState>(emptyFormState);
   const [successMessage, setSuccessMessage] = useState<string>();
@@ -362,12 +386,12 @@ function CreateStudioForm({
     },
     networkMode: "always",
     onError: (error) => {
-      if (isStudioBoundaryChangedError(error)) router.refresh();
+      if (isStudioBoundaryChangedError(error)) recomposeStudioClientBoundary(queryClient);
     },
     onSuccess: (editor) => {
-      setSuccessMessage("Rascunho criado. Abrindo o editor canônico.");
+      setCreatedStudioId(editor.studioId);
+      setSuccessMessage("Rascunho criado. Abra o editor canônico para continuar.");
       pendingCommand.current = undefined;
-      router.push(`/dono/estudios/${editor.studioId}/dados`);
     },
   });
 
@@ -396,9 +420,10 @@ function CreateStudioForm({
 
   const error = apiError(mutation.error);
   const visibleErrors = error?.fieldErrors ?? fieldErrors;
-  const retry =
-    error !== undefined && isAmbiguousStudioError(error) ? () => mutation.mutate() : undefined;
+  const hasAmbiguousRequest = error !== undefined && isAmbiguousStudioError(error);
+  const retry = hasAmbiguousRequest ? () => mutation.mutate() : undefined;
   const types = typesQuery.data;
+  const formLocked = mutation.isPending || hasAmbiguousRequest || createdStudioId !== undefined;
 
   return (
     <div className={styles.editorLayout}>
@@ -411,11 +436,21 @@ function CreateStudioForm({
         <StudioMutationFeedback error={error} onRetry={retry} />
         {successMessage === undefined ? null : (
           <Alert title="Estúdio salvo" variant="status">
-            {successMessage}
+            <Stack space={3}>
+              <span>{successMessage}</span>
+              {createdStudioId === undefined ? null : (
+                <Button
+                  onClick={() => router.push(`/dono/estudios/${createdStudioId}/dados`)}
+                  variant="secondary"
+                >
+                  Abrir editor criado
+                </Button>
+              )}
+            </Stack>
           </Alert>
         )}
         <StudioCoreFields
-          disabled={mutation.isPending}
+          disabled={formLocked}
           errors={visibleErrors}
           onChange={updateField}
           state={formState}
@@ -423,7 +458,7 @@ function CreateStudioForm({
         />
         <div className={styles.actions}>
           <Button
-            disabled={types.length === 0}
+            disabled={types.length === 0 || formLocked}
             loading={mutation.isPending}
             loadingLabel="Criando rascunho"
             type="submit"
@@ -481,8 +516,18 @@ function StudioConflictComparison({
           {rows.map((row) => (
             <div className={styles.conflictRow} key={row.field} role="row">
               <strong role="cell">{row.label}</strong>
-              <span role="cell">{row.local || "—"}</span>
-              <span role="cell">{row.remote || "—"}</span>
+              <span role="cell">
+                <span aria-hidden="true" className={styles.mobileConflictLabel}>
+                  Sua versão
+                </span>
+                <span>{row.local || "—"}</span>
+              </span>
+              <span role="cell">
+                <span aria-hidden="true" className={styles.mobileConflictLabel}>
+                  Versão salva
+                </span>
+                <span>{row.remote || "—"}</span>
+              </span>
             </div>
           ))}
         </div>
@@ -509,10 +554,23 @@ function EditStudioForm({
   const router = useRouter();
   const queryClient = useQueryClient();
   const typesQuery = useStudioTypes(initialTypes);
+  const editorQueryKey = useMemo(
+    () => studioQueryKeys.editor(userId, initialEditor.studioId),
+    [initialEditor.studioId, userId],
+  );
+  const [studioDeleted, setStudioDeleted] = useState(false);
   const editorQuery = useQuery({
+    enabled: !studioDeleted,
     initialData: initialEditor,
-    queryFn: ({ signal }) => readStudioEditor(initialEditor.studioId, signal),
-    queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
+    queryFn: async ({ signal }) =>
+      assertStudioEditorBoundary(
+        await readStudioEditor(initialEditor.studioId, signal),
+        userId,
+        initialEditor.studioId,
+      ),
+    queryKey: editorQueryKey,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
   });
@@ -524,6 +582,30 @@ function EditStudioForm({
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
   const [successMessage, setSuccessMessage] = useState<string>();
 
+  useEffect(() => {
+    if (
+      editorQuery.error instanceof StudioScopeChangedError ||
+      isStudioBoundaryChangedError(editorQuery.error)
+    ) {
+      recomposeStudioClientBoundary(queryClient);
+    }
+  }, [editorQuery.error, queryClient]);
+
+  useEffect(() => {
+    if (!studioDeleted) return;
+
+    let redirectPending = true;
+    void queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey }).then(() => {
+      if (!redirectPending) return;
+      queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });
+      router.replace("/dono/estudios/novo");
+    });
+
+    return () => {
+      redirectPending = false;
+    };
+  }, [editorQueryKey, queryClient, router, studioDeleted]);
+
   const updateMutation = useMutation({
     mutationFn: () => {
       if (pendingUpdate.current === undefined) {
@@ -534,10 +616,11 @@ function EditStudioForm({
     networkMode: "always",
     onError: async (error) => {
       if (isStudioBoundaryChangedError(error)) {
-        router.refresh();
+        recomposeStudioClientBoundary(queryClient);
         return;
       }
       if (error instanceof StudioApiError && error.code === "CONFLICT") {
+        pendingUpdate.current = undefined;
         const refreshed = await editorQuery.refetch();
         if (refreshed.data !== undefined) setConflictRemote(refreshed.data);
       }
@@ -554,7 +637,7 @@ function EditStudioForm({
         publishStudioEditor(queryClient, editor, userId, initialEditor.studioId);
       } catch (error) {
         if (error instanceof StudioScopeChangedError) {
-          router.refresh();
+          recomposeStudioClientBoundary(queryClient);
           return;
         }
         throw error;
@@ -571,15 +654,22 @@ function EditStudioForm({
       return discardStudioDraft(pendingDiscard.current);
     },
     networkMode: "always",
-    onError: (error) => {
-      if (isStudioBoundaryChangedError(error)) router.refresh();
+    onError: async (error) => {
+      if (isStudioBoundaryChangedError(error)) {
+        recomposeStudioClientBoundary(queryClient);
+        return;
+      }
+      if (error instanceof StudioApiError && error.code === "CONFLICT") {
+        pendingDiscard.current = undefined;
+        setConfirmDiscard(false);
+        await editorQuery.refetch();
+      }
     },
     onSuccess: async (result) => {
       pendingDiscard.current = undefined;
       setConfirmDiscard(false);
       if (result.studioDeleted) {
-        queryClient.removeQueries({ queryKey: studioQueryKeys.privateEditors });
-        router.push("/dono/estudios/novo");
+        setStudioDeleted(true);
         return;
       }
       await queryClient.cancelQueries({
@@ -589,7 +679,7 @@ function EditStudioForm({
         publishStudioEditor(queryClient, result.editor, userId, initialEditor.studioId);
       } catch (error) {
         if (error instanceof StudioScopeChangedError) {
-          router.refresh();
+          recomposeStudioClientBoundary(queryClient);
           return;
         }
         throw error;
@@ -630,17 +720,33 @@ function EditStudioForm({
 
   function beginDiscard() {
     const editor = editorQuery.data;
-    pendingDiscard.current = {
-      action: "studio.draft.discard",
-      expectedScope: userId,
-      idempotencyKey: crypto.randomUUID(),
-      payload: {
-        expectedRevisionId: editor.revision.id,
-        expectedRevisionVersion: editor.revision.version,
-        studioId: editor.studioId,
-      },
-    };
+    if (pendingDiscard.current === undefined) {
+      pendingDiscard.current = {
+        action: "studio.draft.discard",
+        expectedScope: userId,
+        idempotencyKey: crypto.randomUUID(),
+        payload: {
+          expectedRevisionId: editor.revision.id,
+          expectedRevisionVersion: editor.revision.version,
+          studioId: editor.studioId,
+        },
+      };
+    }
     discardMutation.mutate();
+  }
+
+  function openDiscardConfirmation() {
+    pendingDiscard.current = undefined;
+    discardMutation.reset();
+    setConfirmDiscard(true);
+  }
+
+  if (studioDeleted) {
+    return (
+      <Alert title="Rascunho descartado" variant="status">
+        O cadastro removido não permanecerá no histórico de navegação. Abrindo um novo formulário.
+      </Alert>
+    );
   }
 
   const updateError = apiError(updateMutation.error);
@@ -648,17 +754,55 @@ function EditStudioForm({
   const visibleErrors = updateError?.fieldErrors ?? fieldErrors;
   const types = typesQuery.data;
   const editor = editorQuery.data;
+  const editorIsVerified = studioEditorCanRender(
+    editor,
+    userId,
+    initialEditor.studioId,
+    editorQuery.fetchStatus,
+    editorQuery.isError,
+  );
   const canEdit =
-    editor.revision.status === "draft" ||
-    (!editor.hasDraft && editor.revision.status === "approved");
-  const retryUpdate =
-    updateError !== undefined && isAmbiguousStudioError(updateError)
-      ? () => updateMutation.mutate()
-      : undefined;
-  const retryDiscard =
-    discardError !== undefined && isAmbiguousStudioError(discardError)
-      ? () => discardMutation.mutate()
-      : undefined;
+    editor.studioStatus !== "disabled" &&
+    (editor.revision.status === "draft" ||
+      (!editor.hasDraft && editor.revision.status === "approved"));
+  const hasAmbiguousUpdate = updateError !== undefined && isAmbiguousStudioError(updateError);
+  const hasAmbiguousDiscard = discardError !== undefined && isAmbiguousStudioError(discardError);
+  const retryUpdate = hasAmbiguousUpdate ? () => updateMutation.mutate() : undefined;
+  const retryDiscard = hasAmbiguousDiscard ? () => discardMutation.mutate() : undefined;
+  const displayTypes = includeCurrentStudioType(types, editor.studioType);
+  const unavailableTypeId = types.some((type) => type.id === editor.studioType.id)
+    ? undefined
+    : editor.studioType.id;
+  const selectedTypeIsUnavailable = formState.studioTypeId === unavailableTypeId;
+  const formLocked =
+    !canEdit ||
+    updateMutation.isPending ||
+    discardMutation.isPending ||
+    hasAmbiguousUpdate ||
+    hasAmbiguousDiscard;
+
+  if (!editorIsVerified) {
+    const verifying = editorQuery.fetchStatus === "fetching";
+    return (
+      <Alert
+        title={verifying ? "Verificando o editor seguro" : "Não foi possível verificar o editor"}
+        variant={verifying ? "status" : "error"}
+      >
+        <Stack space={3}>
+          <span>
+            {verifying
+              ? "Os dados privados permanecerão ocultos até a confirmação autoritativa da sessão."
+              : "Os dados privados continuam ocultos. Verifique novamente a sessão antes de editar."}
+          </span>
+          {verifying ? null : (
+            <Button onClick={() => void editorQuery.refetch()} variant="secondary">
+              Verificar novamente
+            </Button>
+          )}
+        </Stack>
+      </Alert>
+    );
+  }
 
   return (
     <div className={styles.editorLayout}>
@@ -668,7 +812,12 @@ function EditStudioForm({
           <span>Versão de edição {editor.revision.version}</span>
           <span>{editor.hasDraft ? "Rascunho privado" : "Versão publicada aprovada"}</span>
         </div>
-        {!canEdit ? (
+        {editor.studioStatus === "disabled" ? (
+          <Alert title="Estúdio desabilitado" variant="error">
+            Este estúdio foi desabilitado administrativamente e permanece somente para consulta.
+            Nenhuma alteração ou descarte está disponível neste estado.
+          </Alert>
+        ) : !canEdit ? (
           <Alert title="Esta revisão não pode ser editada" variant="error">
             O estado atual é factual e imutável. Use a etapa de publicação para iniciar a próxima
             transição disponível.
@@ -692,24 +841,31 @@ function EditStudioForm({
             remote={editorFormState(conflictRemote)}
           />
         )}
+        {selectedTypeIsUnavailable ? (
+          <Alert title="Tipo de estúdio arquivado" variant="error">
+            O tipo histórico continua visível, mas não pode ser salvo em uma nova alteração. Escolha
+            um tipo ativo para continuar.
+          </Alert>
+        ) : null}
         <StudioCoreFields
-          disabled={!canEdit || updateMutation.isPending || discardMutation.isPending}
+          {...(unavailableTypeId === undefined ? {} : { unavailableTypeId })}
+          disabled={formLocked}
           errors={visibleErrors}
           onChange={updateField}
           state={formState}
-          types={types}
+          types={displayTypes}
         />
         <div className={styles.actions}>
           <Button
-            disabled={!canEdit || types.length === 0}
+            disabled={formLocked || types.length === 0 || selectedTypeIsUnavailable}
             loading={updateMutation.isPending}
             loadingLabel="Salvando revisão"
             type="submit"
           >
             {editor.hasDraft ? "Salvar rascunho" : "Criar rascunho e salvar"}
           </Button>
-          {editor.hasDraft && editor.revision.status === "draft" ? (
-            <Button onClick={() => setConfirmDiscard(true)} variant="ghost">
+          {canEdit && editor.hasDraft && editor.revision.status === "draft" ? (
+            <Button disabled={formLocked} onClick={openDiscardConfirmation} variant="ghost">
               Descartar rascunho
             </Button>
           ) : null}
@@ -723,6 +879,7 @@ function EditStudioForm({
             </p>
             <div className={styles.actions}>
               <Button
+                disabled={hasAmbiguousDiscard}
                 loading={discardMutation.isPending}
                 loadingLabel="Descartando"
                 onClick={beginDiscard}
@@ -731,7 +888,7 @@ function EditStudioForm({
                 Confirmar descarte
               </Button>
               <Button
-                disabled={discardMutation.isPending}
+                disabled={discardMutation.isPending || hasAmbiguousDiscard}
                 onClick={() => setConfirmDiscard(false)}
                 variant="ghost"
               >
@@ -741,7 +898,7 @@ function EditStudioForm({
           </div>
         ) : null}
       </form>
-      <StudioLocalPreview state={formState} types={types} />
+      <StudioLocalPreview state={formState} types={displayTypes} />
     </div>
   );
 }
@@ -779,5 +936,6 @@ export function StudioCorePanel(
 export const studioCorePanelInternals = {
   conflictRows,
   editorFormState,
+  includeCurrentStudioType,
   parseCoreForm,
 };

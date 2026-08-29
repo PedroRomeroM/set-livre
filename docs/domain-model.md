@@ -148,7 +148,12 @@ descartar um draft sobre publicação volta ao ponteiro aprovado sem alterar his
 
 Toda mutação revalida no banco perfil ativo/completo, dono ativo e aceite vigente de
 `owner_contract`, inclusive em replay idempotente. O navegador envia somente conteúdo e o fence
-`{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente.
+`{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente. O
+ledger compara hashes do payload e do resultado original: replay devolve exatamente a resposta
+registrada ou falha fechado quando uma mudança posterior impede reconstruí-la.
+
+Tipo arquivado continua legível somente ao dono de revisão que o referencia, preservando o histórico.
+Ele não reaparece na lista ativa e nenhuma nova mutação pode selecioná-lo.
 
 ### 4.4 Reserva
 

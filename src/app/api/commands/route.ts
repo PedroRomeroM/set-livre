@@ -13,6 +13,8 @@ const executePrivateCommand = createPrivateCommandRegistry({
   executeStudioCommand,
 });
 
+export const privateCommandMaximumBytes = 32 * 1024;
+
 export async function POST(request: Request) {
   return runPrivateCommandPostRoute(request, async (requestId, setAction, setResponseHeaders) => {
     const routeIdentity = await readRouteIdentitySession();
@@ -20,10 +22,14 @@ export async function POST(request: Request) {
     if (!routeIdentity.session.authenticated) {
       throw new ApiRouteError(401, "UNAUTHENTICATED", "Entre novamente para continuar.");
     }
-    const command = parseOrInputError(privateCommandSchema, await readLimitedJson(request), {
-      code: "VALIDATION_FAILED",
-      status: 422,
-    });
+    const command = parseOrInputError(
+      privateCommandSchema,
+      await readLimitedJson(request, privateCommandMaximumBytes),
+      {
+        code: "VALIDATION_FAILED",
+        status: 422,
+      },
+    );
     setAction(command.action);
     return {
       data: await executePrivateCommand(command, {

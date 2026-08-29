@@ -90,7 +90,7 @@ revoke all on function private.feat006_capture_error(text)
 revoke all on function private.feat006_create_owner(uuid, text, text, integer)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(30);
+select plan(41);
 
 select private.feat006_create_owner(
   '61000000-0000-4000-8000-000000000001',
@@ -188,7 +188,7 @@ grant app_dal to postgres with inherit false, set true;
 set local role app_dal;
 
 select pg_catalog.set_config(
-  'set_livre.test.studio_a',
+  'set_livre.test.create_response',
   (
     private.create_studio(
       '61000000-0000-4000-8000-000000000001',
@@ -205,12 +205,28 @@ select pg_catalog.set_config(
       '80010000',
       12,
       '60000000-0000-4000-8000-000000000001'
-    ) ->> 'studioId'
+    )::text
+  ),
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.studio_a',
+  (
+    pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+      ->> 'studioId'
   ),
   true
 );
 select pg_catalog.set_config(
   'set_livre.test.revision_a',
+  (
+    pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+      #>> '{revision,id}'
+  ),
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.create_replay_equal',
   (
     private.create_studio(
       '61000000-0000-4000-8000-000000000001',
@@ -227,12 +243,17 @@ select pg_catalog.set_config(
       '80010000',
       12,
       '60000000-0000-4000-8000-000000000001'
-    ) #>> '{revision,id}'
-  ),
+    )::text = pg_catalog.current_setting('set_livre.test.create_response')
+  )::text,
   true
 );
 reset role;
 revoke app_dal from postgres granted by current_user;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.create_replay_equal')::boolean,
+  'replay de criação retorna exatamente o resultado originalmente registrado'
+);
 
 select ok(
   exists (
@@ -260,6 +281,17 @@ select is(
   'replay idempotente converge sem criar outro estúdio'
 );
 
+select ok(
+  exists (
+    select 1
+    from private.studio_command_requests as request
+    where request.owner_user_id = '61000000-0000-4000-8000-000000000001'
+      and request.idempotency_key = '65000000-0000-4000-8000-000000000001'
+      and request.result_hash ~ '^[0-9a-f]{64}$'
+  ),
+  'ledger preserva somente o hash verificável do resultado idempotente'
+);
+
 select matches(
   private.feat006_capture_error(
     $command$
@@ -280,27 +312,54 @@ select matches(
 
 grant app_dal to postgres with inherit false, set true;
 set local role app_dal;
-select private.update_studio_revision_core(
-  '61000000-0000-4000-8000-000000000001',
-  pg_catalog.current_setting('set_livre.test.studio_a')::uuid,
-  pg_catalog.current_setting('set_livre.test.revision_a')::uuid,
-  1,
-  '65000000-0000-4000-8000-000000000002',
-  '66000000-0000-4000-8000-000000000004',
-  'Estúdio Aurora Atualizado',
-  'Descrição atualizada sem perder a versão canônica nem o endereço estruturado.',
-  'Rua das Flores',
-  '101',
-  null,
-  'Centro',
-  'Curitiba',
-  'PR',
-  '80010000',
-  16,
-  '60000000-0000-4000-8000-000000000002'
+select pg_catalog.set_config(
+  'set_livre.test.update_response',
+  private.update_studio_revision_core(
+    '61000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.studio_a')::uuid,
+    pg_catalog.current_setting('set_livre.test.revision_a')::uuid,
+    1,
+    '65000000-0000-4000-8000-000000000002',
+    '66000000-0000-4000-8000-000000000004',
+    'Estúdio Aurora Atualizado',
+    'Descrição atualizada sem perder a versão canônica nem o endereço estruturado.',
+    'Rua das Flores',
+    '101',
+    null,
+    'Centro',
+    'Curitiba',
+    'PR',
+    '80010000',
+    16,
+    '60000000-0000-4000-8000-000000000002'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.update_replay_equal',
+  (
+    private.update_studio_revision_core(
+    '61000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.studio_a')::uuid,
+    pg_catalog.current_setting('set_livre.test.revision_a')::uuid,
+    1,
+    '65000000-0000-4000-8000-000000000002',
+    '66000000-0000-4000-8000-000000000004',
+    'Estúdio Aurora Atualizado',
+    'Descrição atualizada sem perder a versão canônica nem o endereço estruturado.',
+    'Rua das Flores', '101', null, 'Centro', 'Curitiba', 'PR', '80010000', 16,
+    '60000000-0000-4000-8000-000000000002'
+    )::text = pg_catalog.current_setting('set_livre.test.update_response')
+  )::text,
+  true
 );
 reset role;
 revoke app_dal from postgres granted by current_user;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.update_replay_equal')::boolean,
+  'replay de atualização retorna exatamente o resultado originalmente registrado'
+);
 
 select ok(
   exists (
@@ -312,6 +371,24 @@ select ok(
       and revision.capacity = 16
   ),
   'update altera somente draft e incrementa o token otimista'
+);
+
+select matches(
+  private.feat006_capture_error(
+    $command$
+      select private.create_studio(
+        '61000000-0000-4000-8000-000000000001',
+        '65000000-0000-4000-8000-000000000001',
+        '66000000-0000-4000-8000-000000000011',
+        'Estúdio Aurora',
+        'Estúdio completo para ensaios fotográficos e gravações audiovisuais.',
+        'Rua das Flores', '100', 'Sala 2', 'Centro', 'Curitiba', 'PR', '80010000', 12,
+        '60000000-0000-4000-8000-000000000001'
+      )
+    $command$
+  ),
+  '^40001:studio_create_result_stale$',
+  'replay antigo falha fechado quando o resultado exato da criação não é mais reconstruível'
 );
 
 select matches(
@@ -368,6 +445,28 @@ set
   published_revision_id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid,
   draft_revision_id = null
 where studio.id = pg_catalog.current_setting('set_livre.test.studio_a')::uuid;
+
+select matches(
+  private.feat006_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.update_studio_revision_core(
+          '61000000-0000-4000-8000-000000000001', %L::uuid, %L::uuid, 1,
+          '65000000-0000-4000-8000-000000000002',
+          '66000000-0000-4000-8000-000000000012',
+          'Estúdio Aurora Atualizado',
+          'Descrição atualizada sem perder a versão canônica nem o endereço estruturado.',
+          'Rua das Flores', '101', null, 'Centro', 'Curitiba', 'PR', '80010000', 16,
+          '60000000-0000-4000-8000-000000000002'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.studio_a'),
+      pg_catalog.current_setting('set_livre.test.revision_a')
+    )
+  ),
+  '^40001:studio_update_result_stale$',
+  'replay antigo falha fechado quando o resultado exato da atualização não é mais reconstruível'
+);
 
 grant app_dal to postgres with inherit false, set true;
 set local role app_dal;
@@ -465,7 +564,7 @@ select matches(
 grant app_dal to postgres with inherit false, set true;
 set local role app_dal;
 select pg_catalog.set_config(
-  'set_livre.test.discard_published',
+  'set_livre.test.discard_published_response',
   (
     private.discard_studio_draft(
       '61000000-0000-4000-8000-000000000001',
@@ -474,12 +573,37 @@ select pg_catalog.set_config(
       1,
       '65000000-0000-4000-8000-000000000006',
       '66000000-0000-4000-8000-000000000008'
-    ) ->> 'studioDeleted'
+    )::text
   ),
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.discard_published',
+  pg_catalog.current_setting('set_livre.test.discard_published_response')::jsonb
+    ->> 'studioDeleted',
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.discard_published_replay_equal',
+  (
+    private.discard_studio_draft(
+    '61000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.studio_a')::uuid,
+    pg_catalog.current_setting('set_livre.test.cloned_revision')::uuid,
+    1,
+    '65000000-0000-4000-8000-000000000006',
+    '66000000-0000-4000-8000-000000000013'
+    )::text = pg_catalog.current_setting('set_livre.test.discard_published_response')
+  )::text,
   true
 );
 reset role;
 revoke app_dal from postgres granted by current_user;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.discard_published_replay_equal')::boolean,
+  'replay de descarte retorna exatamente o resultado originalmente registrado'
+);
 
 select ok(
   not pg_catalog.current_setting('set_livre.test.discard_published')::boolean
@@ -531,7 +655,7 @@ select pg_catalog.set_config(
   true
 );
 select pg_catalog.set_config(
-  'set_livre.test.discard_unpublished',
+  'set_livre.test.discard_unpublished_response',
   (
     private.discard_studio_draft(
       '61000000-0000-4000-8000-000000000001',
@@ -540,12 +664,37 @@ select pg_catalog.set_config(
       1,
       '65000000-0000-4000-8000-000000000008',
       '66000000-0000-4000-8000-000000000010'
-    ) ->> 'studioDeleted'
+    )::text
   ),
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.discard_unpublished',
+  pg_catalog.current_setting('set_livre.test.discard_unpublished_response')::jsonb
+    ->> 'studioDeleted',
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.discard_unpublished_replay_equal',
+  (
+    private.discard_studio_draft(
+    '61000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.unpublished_studio')::uuid,
+    pg_catalog.current_setting('set_livre.test.unpublished_revision')::uuid,
+    1,
+    '65000000-0000-4000-8000-000000000008',
+    '66000000-0000-4000-8000-000000000014'
+    )::text = pg_catalog.current_setting('set_livre.test.discard_unpublished_response')
+  )::text,
   true
 );
 reset role;
 revoke app_dal from postgres granted by current_user;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.discard_unpublished_replay_equal')::boolean,
+  'replay de descarte integral reconstrói exatamente o resultado terminal registrado'
+);
 
 select ok(
   pg_catalog.current_setting('set_livre.test.discard_unpublished')::boolean
@@ -554,6 +703,32 @@ select ok(
       where studio.id = pg_catalog.current_setting('set_livre.test.unpublished_studio')::uuid
     ),
   'descartar o único draft remove o estúdio ainda inédito'
+);
+
+update public.studio_types as studio_type
+set active = false
+where studio_type.id = '60000000-0000-4000-8000-000000000002';
+
+select matches(
+  private.feat006_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.update_studio_revision_core(
+          '61000000-0000-4000-8000-000000000001', %L::uuid, %L::uuid, 3,
+          '65000000-0000-4000-8000-000000000009',
+          '66000000-0000-4000-8000-000000000015',
+          'Tipo arquivado',
+          'Uma nova alteração nunca pode conservar uma opção retirada da seleção ativa.',
+          'Rua das Flores', '101', null, 'Centro', 'Curitiba', 'PR', '80010000', 16,
+          '60000000-0000-4000-8000-000000000002'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.studio_a'),
+      pg_catalog.current_setting('set_livre.test.revision_a')
+    )
+  ),
+  '^23514:studio_type_inactive$',
+  'comando rejeita tipo arquivado mesmo quando ele pertence à revisão histórica atual'
 );
 
 set local role authenticated;
@@ -571,6 +746,24 @@ select is(
 select is(
   (
     select pg_catalog.count(*)::integer
+    from public.studio_types as studio_type
+    where studio_type.id = '60000000-0000-4000-8000-000000000002'
+  ),
+  1,
+  'RLS mantém o tipo arquivado legível para o dono da revisão histórica'
+);
+select is(
+  (
+    select pg_catalog.count(*)::integer
+    from public.list_active_studio_types() as studio_type
+    where studio_type.id = '60000000-0000-4000-8000-000000000002'
+  ),
+  0,
+  'read model de seleção exclui o tipo arquivado de novas alterações'
+);
+select is(
+  (
+    select pg_catalog.count(*)::integer
     from public.get_owner_studio_editor(
       pg_catalog.current_setting('set_livre.test.studio_a')::uuid
     )
@@ -583,6 +776,15 @@ select pg_catalog.set_config(
   'request.jwt.claim.sub',
   '61000000-0000-4000-8000-000000000002',
   true
+);
+select is(
+  (
+    select pg_catalog.count(*)::integer
+    from public.studio_types as studio_type
+    where studio_type.id = '60000000-0000-4000-8000-000000000002'
+  ),
+  0,
+  'RLS não revela o tipo arquivado a outro dono sem revisão correspondente'
 );
 select is(
   (
@@ -653,6 +855,11 @@ select ok(
     and not pg_catalog.has_function_privilege(
       'app_dal',
       'private.studio_editor_json(uuid,uuid)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'app_dal',
+      'private.studio_result_hash(jsonb)',
       'EXECUTE'
     )
     and not pg_catalog.has_function_privilege(

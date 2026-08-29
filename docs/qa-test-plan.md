@@ -99,10 +99,11 @@ efetivo e modo `0600` também são obrigatórios.
 
 ## Matriz da FEAT-006 em andamento
 
-Os sete cenários estáveis `SL-F006-E2E-001..007` expandem para 24 execuções:
+Os treze cenários estáveis `SL-F006-E2E-001..013` expandem para 47 execuções:
 
-- P0 de criação, clone de publicado e isolamento entre donos nos três engines;
-- validação e conflito em desktop, mobile, 320 px e altura compacta;
+- P0 de criação, clone de publicado, isolamento entre donos e troca de sessão nos três engines;
+- validação, conflito, estado terminal de criação, retry ambíguo, conflito de descarte, bloqueio
+  administrativo e taxonomia histórica em desktop, mobile, 320 px e altura compacta;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -114,8 +115,8 @@ fixture de conflito avança uma versão já observada, sem competir com o refetc
 herdam a retenção global de
 trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência localmente.
 
-No banco, `0005_studio_core_revision.sql` possui 30 asserções de domínio/segurança e integra a suíte
-total de 264 testes. O setup `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
+No banco, `0005_studio_core_revision.sql` possui 41 asserções de domínio/segurança e integra a suíte
+total de 275 testes. O setup `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
 
 ## Contrato por feature
 

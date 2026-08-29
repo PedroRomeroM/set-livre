@@ -45,7 +45,7 @@ export default async function NewStudioPage() {
 
   return (
     <OwnerPageFrame
-      currentPage="studio"
+      currentPage="studio-create"
       description="Cadastre o conteúdo central em um rascunho privado. Nada será publicado nesta etapa."
       title="Novo estúdio"
     >

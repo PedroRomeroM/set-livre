@@ -71,7 +71,7 @@ export default async function StudioCorePage({
 
   return (
     <OwnerPageFrame
-      currentPage="studio"
+      currentPage="studio-editor"
       description="Salve explicitamente um rascunho. Se já houver publicação, ela permanece intacta até uma futura aprovação."
       title="Dados do estúdio"
     >

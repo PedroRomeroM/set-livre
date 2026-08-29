@@ -22,7 +22,7 @@ projeto Supabase de produção ainda não possuía migrations, tabelas ou usuár
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e cinco suítes pgTAP; o recorte atual totaliza
-264 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e núcleo de estúdio.
+275 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e núcleo de estúdio.
 
 A baseline implementada inclui:
 
@@ -199,9 +199,11 @@ O recorte implementado possui somente `studio_types`:
 - timestamps;
 - slug único.
 
-Quatro tipos mínimos são seedados deterministicamente. Browser autenticado lê apenas ativos por
-`list_active_studio_types()`; escrita runtime permanece revogada. Amenities e tags não são criadas
-antecipadamente e pertencem à feature própria.
+Quatro tipos mínimos são seedados deterministicamente. `list_active_studio_types()` oferece somente
+ativos para novas escolhas. A policy também conserva legível um tipo arquivado quando ele é
+referenciado por revisão pertencente ao `auth.uid()`, permitindo abrir o histórico sem expor esse tipo
+a outro dono nem aceitá-lo em nova mutação. Escrita runtime permanece revogada. Amenities e tags não
+são criadas antecipadamente e pertencem à feature própria.
 
 ### 4.7 `studios`
 
@@ -624,9 +626,11 @@ payload, requisito bruto, provider e referência externa também não entram na 
 ### 4.34 Idempotência e jobs
 
 Implementado para a FEAT-006, `private.studio_command_requests` usa
-`(owner_user_id, idempotency_key)` como PK e guarda somente action, hash SHA-256 do payload, IDs e
-versão resultante ou o tombstone de exclusão. Não replica nome, descrição ou endereço. Cada fachada
-trava a chave lógica, revalida a autoridade corrente antes do replay e rejeita reutilização divergente.
+`(owner_user_id, idempotency_key)` como PK e guarda somente action, hashes SHA-256 do payload e do
+resultado JSON exato, IDs e versão resultante ou o tombstone de exclusão. Não replica nome, descrição
+ou endereço. Cada fachada trava a chave lógica, revalida a autoridade corrente antes do replay e
+reconstrói o resultado: hash divergente falha fechado como resultado stale, nunca retorna o estado
+atual como se fosse a resposta original.
 
 Planejado para domínios futuros, `private.idempotency_keys`:
 
@@ -657,7 +661,8 @@ Implementados nas FEAT-002/003/004/006:
 - `public.list_active_studio_types()`: retorna somente `id`, nome e ordem dos tipos ativos para
   `authenticated`;
 - `public.get_owner_studio_editor(uuid)`: retorna 0/1 editor do próprio `auth.uid()`, escolhe o draft
-  atual ou a revisão publicada e nunca revela a existência do estúdio de outro dono.
+  atual ou a revisão publicada, preserva o nome do tipo histórico arquivado e nunca revela a existência
+  do estúdio de outro dono.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -759,8 +764,9 @@ Usuário lê somente as colunas seguras necessárias aos read models invoker do 
 
 Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões;
 as policies usam `auth.uid()` e outro dono obtém zero linhas. `anon`, `service_role` e `app_dal` não
-recebem acesso às tabelas; a DAL executa apenas três funções privadas. O tipo ativo possui policy
-separada. Conteúdo ainda não aprovado não possui read model público.
+recebem acesso às tabelas; a DAL executa apenas três funções privadas. A policy de tipo permite ativo
+ou referência histórica do próprio dono, enquanto o read model de seleção continua filtrando somente
+ativos. Conteúdo ainda não aprovado não possui read model público.
 
 ### 8.3 Reservas
 

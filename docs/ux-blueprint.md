@@ -267,16 +267,22 @@ Editor de estúdio:
   suspenso/incompleto/inativo substituem o formulário por ação factual;
 - `/dono/estudios/[studioId]/dados` usa o mesmo gate e retorna a mesma composição `not found` para UUID
   inválido, estúdio ausente ou pertencente a outro dono, com `noindex` e sem conteúdo privado;
-- o editor só monta depois da hidratação completa, usa salvar explícito e divide nome/tipo/capacidade,
+- o editor só monta depois da hidratação completa e mantém todos os valores SSR privados ocultos até o
+  GET autoritativo do mesmo usuário/estúdio terminar. Durante montagem, foco/refetch ou falha de
+  acesso, somente o boundary neutro permanece; usa salvar explícito e divide nome/tipo/capacidade,
   descrição e endereço Curitiba/PR em seções; não há autosave;
 - preview local acompanha os valores e sempre informa **não publicada**. Revisão, versão e condição
   draft/aprovada são texto factual;
-- validação preserva a entrada e não envia POST. Timeout/resultado ambíguo permite repetir somente a
-  mesma chave idempotente;
-- conflito otimista preserva valores locais, mostra diferenças lado a lado e exige escolher remoto ou
-  novo submit sobre o token atual. Contrato alterado recompõe a rota e volta ao aceite vigente;
+- validação preserva a entrada e não envia POST. Timeout/resultado ambíguo congela campos e ações
+  concorrentes e permite repetir somente o mesmo payload/chave idempotente;
+- conflito otimista de update preserva valores locais, mostra diferenças com rótulos também em mobile
+  e exige escolher remoto ou novo submit sobre o token atual. Conflito de descarte fecha a confirmação,
+  relê e exige nova confirmação. Contrato alterado recompõe a rota e volta ao aceite vigente;
 - descartar exige confirmação: remove o cadastro ainda inédito ou somente o draft quando há publicação.
   A revisão aprovada nunca é alterada pelo editor;
+- criação aceita não reabilita o formulário: mostra estado terminal e ação única para abrir o editor.
+  Estúdio `disabled` é somente leitura. Tipo arquivado permanece identificável no histórico, mas salvar
+  exige escolher uma opção ativa;
 - mobile, 320 px e zoom 200% usam uma coluna, sem overflow; axe, teclado, toque e alvos de 44 px fazem
   parte da matriz da feature.
 

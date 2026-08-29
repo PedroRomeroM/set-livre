@@ -107,6 +107,34 @@ describe("studio command route", () => {
     expect(telemetry).not.toContain(studioCoreFixture.street);
   });
 
+  it("accepts a valid maximum studio core encoded with multibyte characters", async () => {
+    const command = {
+      action: "studio.create",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: {
+        ...studioCoreFixture,
+        addressComplement: "界".repeat(120),
+        description: "界".repeat(5_000),
+        name: "界".repeat(120),
+        neighborhood: "界".repeat(120),
+        street: "界".repeat(160),
+        streetNumber: "界".repeat(20),
+      },
+    } as const;
+    const request = commandRequest(command);
+    expect(new TextEncoder().encode(await request.clone().text()).byteLength).toBeGreaterThan(
+      16 * 1024,
+    );
+
+    const { POST, privateCommandMaximumBytes } = await import("../../src/app/api/commands/route");
+    expect(privateCommandMaximumBytes).toBe(32 * 1024);
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mocks.createStudio).toHaveBeenCalledWith(command, expect.any(Object));
+  });
+
   it("rejects a stale scope before the studio service", async () => {
     const { POST } = await import("../../src/app/api/commands/route");
     const response = await POST(

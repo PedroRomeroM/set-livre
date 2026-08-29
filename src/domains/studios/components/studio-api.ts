@@ -154,8 +154,13 @@ export function isAmbiguousStudioError(error: unknown) {
 export function isStudioBoundaryChangedError(error: unknown) {
   return (
     error instanceof StudioApiError &&
-    (error.code === "OWNER_CONTRACT_CHANGED" ||
-      error.code === "SESSION_CHANGED" ||
-      error.code === "UNAUTHENTICATED")
+    [
+      "ACCOUNT_SUSPENDED",
+      "FORBIDDEN",
+      "NOT_FOUND",
+      "OWNER_CONTRACT_CHANGED",
+      "SESSION_CHANGED",
+      "UNAUTHENTICATED",
+    ].includes(error.code)
   );
 }
