@@ -260,20 +260,28 @@ export async function publishFeat006Studio(editor: StudioEditor) {
 
 export async function mutateFeat006DraftForConflict(
   editor: StudioEditor,
-  input: Readonly<{ description: string; name: string }>,
+  input: Readonly<{ description: string; name: string; studioTypeId?: string }>,
 ) {
   await withFeat006AdminPool(async (pool) => {
     const result = await pool.query(
       `update public.studio_revisions as revision
           set name = $3,
               description = $4,
+              studio_type_id = coalesce($5::uuid, revision.studio_type_id),
               revision_version = revision.revision_version + 1
         where revision.id = $2::uuid
           and revision.studio_id = $1::uuid
           and revision.status = 'draft'
-          and revision.revision_version = $5::bigint
+          and revision.revision_version = $6::bigint
       returning revision.id`,
-      [editor.studioId, editor.revision.id, input.name, input.description, editor.revision.version],
+      [
+        editor.studioId,
+        editor.revision.id,
+        input.name,
+        input.description,
+        input.studioTypeId ?? null,
+        editor.revision.version,
+      ],
     );
     if (result.rows.length !== 1) {
       throw new Error("A fixture FEAT-006 não avançou exatamente uma revisão draft.");

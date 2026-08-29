@@ -103,6 +103,7 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
     await mutateFeat006DraftForConflict(editor, {
       description: remoteDescription,
       name: remoteName,
+      studioTypeId: "60000000-0000-4000-8000-000000000002",
     });
 
     const backgroundRead = page.waitForResponse(
@@ -147,6 +148,11 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
     const comparison = page.getByRole("table", { name: "Diferenças do estúdio" });
     await expect(comparison.getByText(localName, { exact: true })).toBeVisible();
     await expect(comparison.getByText(remoteName, { exact: true })).toBeVisible();
+    await expect(comparison.getByText("Estúdio audiovisual", { exact: true })).toBeVisible();
+    await expect(comparison.getByText("Estúdio fotográfico", { exact: true })).toBeVisible();
+    await expect(
+      comparison.getByText("60000000-0000-4000-8000-000000000002", { exact: true }),
+    ).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(localName);
     if ((page.viewportSize()?.width ?? 0) <= 576) {
       await expect(

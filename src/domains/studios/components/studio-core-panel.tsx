@@ -141,6 +141,21 @@ function includeCurrentStudioType(
   return [{ ...currentType, sortOrder: 0 }, ...types];
 }
 
+function mergeStudioTypeDescriptors(
+  types: readonly StudioTypeOption[],
+  descriptors: readonly StudioEditor["studioType"][],
+) {
+  const known = new Map(types.map((type) => [type.id, type]));
+  for (const descriptor of descriptors) {
+    const current = known.get(descriptor.id);
+    known.set(descriptor.id, {
+      ...descriptor,
+      sortOrder: current?.sortOrder ?? 0,
+    });
+  }
+  return [...known.values()];
+}
+
 function StudioMutationFeedback({
   error,
   onRetry,
@@ -511,14 +526,27 @@ function CreateStudioForm({
   );
 }
 
-function conflictRows(local: StudioCoreFormState, remote: StudioCoreFormState) {
+function conflictValue(
+  field: keyof StudioCoreFormState,
+  value: string,
+  studioTypes: readonly StudioTypeOption[],
+) {
+  if (field !== "studioTypeId") return value;
+  return studioTypes.find((type) => type.id === value)?.name ?? "Tipo indisponível";
+}
+
+function conflictRows(
+  local: StudioCoreFormState,
+  remote: StudioCoreFormState,
+  studioTypes: readonly StudioTypeOption[],
+) {
   return (Object.keys(fieldLabels) as Array<keyof StudioCoreFormState>)
     .filter((field) => local[field] !== remote[field])
     .map((field) => ({
       field,
       label: fieldLabels[field],
-      local: local[field],
-      remote: remote[field],
+      local: conflictValue(field, local[field], studioTypes),
+      remote: conflictValue(field, remote[field], studioTypes),
     }));
 }
 
@@ -527,13 +555,18 @@ function StudioConflictComparison({
   onKeepLocal,
   onUseRemote,
   remote,
+  studioTypes,
 }: Readonly<{
   local: StudioCoreFormState;
   onKeepLocal: () => void;
   onUseRemote: () => void;
   remote: StudioCoreFormState;
+  studioTypes: readonly StudioTypeOption[];
 }>) {
-  const rows = useMemo(() => conflictRows(local, remote), [local, remote]);
+  const rows = useMemo(
+    () => conflictRows(local, remote, studioTypes),
+    [local, remote, studioTypes],
+  );
   return (
     <section aria-labelledby="studio-conflict-title" className={styles.conflict}>
       <h2 className={styles.sectionTitle} id="studio-conflict-title">
@@ -879,6 +912,14 @@ function EditStudioForm({
   const retryUpdate = hasAmbiguousUpdate ? () => updateMutation.mutate() : undefined;
   const retryDiscard = hasAmbiguousDiscard ? () => discardMutation.mutate() : undefined;
   const displayTypes = includeCurrentStudioType(types, editor.studioType);
+  const conflictTypes = mergeStudioTypeDescriptors(
+    [...initialTypes, ...displayTypes],
+    [
+      initialEditor.studioType,
+      editor.studioType,
+      ...(conflictRemote === undefined ? [] : [conflictRemote.studioType]),
+    ],
+  );
   const unavailableTypeId = types.some((type) => type.id === editor.studioType.id)
     ? undefined
     : editor.studioType.id;
@@ -964,6 +1005,7 @@ function EditStudioForm({
               setConflictRemote(undefined);
             }}
             remote={editorFormState(conflictRemote)}
+            studioTypes={conflictTypes}
           />
         )}
         {selectedTypeIsUnavailable ? (

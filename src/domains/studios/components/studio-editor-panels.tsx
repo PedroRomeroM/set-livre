@@ -5,10 +5,36 @@ import { Stack } from "@set-livre/ui";
 import { useState } from "react";
 
 import { StudioCorePanel } from "./studio-core-panel";
-import { studioRevisionToken } from "./studio-query-keys";
+import { studioRevisionToken, type StudioRevisionToken } from "./studio-query-keys";
 import { StudioTaxonomyContentPanel } from "./studio-taxonomy-content-panel";
 
 type StudioEditorCommandSurface = "commercial" | "core";
+type StudioEditorFormSurface = "content" | "core" | "taxonomy";
+
+type StudioEditorRevisionState = Readonly<{
+  content: StudioRevisionToken;
+  core: StudioRevisionToken;
+  discard: StudioRevisionToken;
+  taxonomy: StudioRevisionToken;
+}>;
+
+function sameRevision(left: StudioRevisionToken, right: StudioRevisionToken) {
+  return left.id === right.id && left.version === right.version;
+}
+
+function advanceEditorRevisions(
+  current: StudioEditorRevisionState,
+  source: StudioEditorFormSurface,
+  saved: StudioRevisionToken,
+): StudioEditorRevisionState {
+  const sourceRevision = current[source];
+  return {
+    content: sameRevision(current.content, sourceRevision) ? saved : current.content,
+    core: sameRevision(current.core, sourceRevision) ? saved : current.core,
+    discard: saved,
+    taxonomy: sameRevision(current.taxonomy, sourceRevision) ? saved : current.taxonomy,
+  };
+}
 
 export function StudioEditorPanels({
   initialEditor,
@@ -21,33 +47,30 @@ export function StudioEditorPanels({
   initialTypes: readonly StudioTypeOption[];
   userId: string;
 }>) {
-  const [coreRevision, setCoreRevision] = useState(() => studioRevisionToken(initialEditor));
-  const [discardRevision, setDiscardRevision] = useState(() => studioRevisionToken(initialEditor));
-  const [taxonomyRevision, setTaxonomyRevision] = useState(() =>
-    studioRevisionToken(initialEditor),
-  );
-  const [contentRevision, setContentRevision] = useState(() => studioRevisionToken(initialEditor));
+  const [revisions, setRevisions] = useState<StudioEditorRevisionState>(() => {
+    const initialRevision = studioRevisionToken(initialEditor);
+    return {
+      content: initialRevision,
+      core: initialRevision,
+      discard: initialRevision,
+      taxonomy: initialRevision,
+    };
+  });
   const [authoritativeEditor, setAuthoritativeEditor] = useState(initialEditor);
   const [commercialGeneration, setCommercialGeneration] = useState(0);
   const [commandSurface, setCommandSurface] = useState<StudioEditorCommandSurface>();
   const [studioDeleted, setStudioDeleted] = useState(false);
 
-  function acceptEditorSave(editor: StudioEditor) {
+  function acceptEditorSave(surface: StudioEditorFormSurface, editor: StudioEditor) {
     const revision = studioRevisionToken(editor);
     setAuthoritativeEditor(editor);
-    setCoreRevision(revision);
-    setDiscardRevision(revision);
-    setTaxonomyRevision(revision);
-    setContentRevision(revision);
+    setRevisions((current) => advanceEditorRevisions(current, surface, revision));
   }
 
   function replaceAuthoritativeEditor(editor: StudioEditor) {
     const revision = studioRevisionToken(editor);
     setAuthoritativeEditor(editor);
-    setCoreRevision(revision);
-    setDiscardRevision(revision);
-    setTaxonomyRevision(revision);
-    setContentRevision(revision);
+    setRevisions({ content: revision, core: revision, discard: revision, taxonomy: revision });
     setCommercialGeneration((current) => current + 1);
   }
 
@@ -58,38 +81,44 @@ export function StudioEditorPanels({
   return (
     <Stack space={6}>
       <StudioCorePanel
-        discardRevision={discardRevision}
+        discardRevision={revisions.discard}
         externalCommandLocked={commandSurface === "commercial"}
-        formRevision={coreRevision}
+        formRevision={revisions.core}
         initialEditor={authoritativeEditor}
         initialTypes={initialTypes}
         mode="edit"
-        onAuthoritativeRevisionAdvance={acceptEditorSave}
+        onAuthoritativeRevisionAdvance={(editor) => acceptEditorSave("core", editor)}
         onAuthoritativeRevisionReplacement={replaceAuthoritativeEditor}
         onCommandFinish={() => finishCommand("core")}
         onCommandStart={() => setCommandSurface("core")}
-        onDiscardRevisionChange={setDiscardRevision}
-        onFormRevisionChange={setCoreRevision}
+        onDiscardRevisionChange={(discard) => setRevisions((current) => ({ ...current, discard }))}
+        onFormRevisionChange={(core) => setRevisions((current) => ({ ...current, core }))}
         onStudioDeleted={() => setStudioDeleted(true)}
         userId={userId}
       />
       {studioDeleted ? null : (
         <StudioTaxonomyContentPanel
-          contentRevision={contentRevision}
+          contentRevision={revisions.content}
           externalCommandLocked={commandSurface === "core"}
           key={`commercial-${commercialGeneration}`}
           initialEditor={authoritativeEditor}
           initialTaxonomies={initialTaxonomies}
-          onContentRevisionChange={setContentRevision}
-          onContentSave={acceptEditorSave}
+          onContentRevisionChange={(content) =>
+            setRevisions((current) => ({ ...current, content }))
+          }
+          onContentSave={(editor) => acceptEditorSave("content", editor)}
           onCommandFinish={() => finishCommand("commercial")}
           onCommandStart={() => setCommandSurface("commercial")}
-          onTaxonomyRevisionChange={setTaxonomyRevision}
-          onTaxonomySave={acceptEditorSave}
-          taxonomyRevision={taxonomyRevision}
+          onTaxonomyRevisionChange={(taxonomy) =>
+            setRevisions((current) => ({ ...current, taxonomy }))
+          }
+          onTaxonomySave={(editor) => acceptEditorSave("taxonomy", editor)}
+          taxonomyRevision={revisions.taxonomy}
           userId={userId}
         />
       )}
     </Stack>
   );
 }
+
+export const studioEditorPanelsInternals = { advanceEditorRevisions };

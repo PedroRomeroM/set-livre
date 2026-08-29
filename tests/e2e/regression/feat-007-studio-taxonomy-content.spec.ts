@@ -8,6 +8,7 @@ import {
   closeFeat006PageBeforeCleanup,
   cleanupFeat006QaIdentity,
   publishFeat006Studio,
+  saveFeat006StudioThroughUi,
 } from "../../helpers/feat-006-studio-core-revision";
 import {
   createFeat007QaIdentity,
@@ -268,10 +269,16 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
   const identity = createFeat007QaIdentity(testInfo, "011_refetch_conflict");
   const localRules = "Valores locais preservados até o conflito ficar explícito.";
   const remoteRules = "Conteúdo concorrente salvo por outra sessão.";
+  const sharedQuestion = "Qual resposta deve prevalecer?";
+  const localAnswer = "A resposta preservada no formulário local.";
+  const remoteAnswer = "A resposta salva pela sessão concorrente.";
   const submittedVersions: number[] = [];
   try {
     const editor = await provisionFeat007Studio(page, identity, "711");
     await page.getByRole("textbox", { name: "Regras de uso" }).fill(localRules);
+    await page.getByRole("button", { name: "Adicionar pergunta" }).click();
+    await page.getByRole("textbox", { name: "Pergunta 1" }).fill(sharedQuestion);
+    await page.getByRole("textbox", { name: "Resposta 1" }).fill(localAnswer);
     page.on("request", (request) => {
       if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") {
         return;
@@ -293,7 +300,7 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
         payload: {
           expectedRevisionId: editor.revision.id,
           expectedRevisionVersion: editor.revision.version,
-          faqs: [],
+          faqs: [{ answer: remoteAnswer, question: sharedQuestion }],
           studioId: editor.studioId,
           usageRules: remoteRules,
           youtubeVideoId: null,
@@ -339,6 +346,12 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
     await expect(page.getByRole("group", { name: "Confirmar descarte" })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(localRules);
 
+    const savedCore = await saveFeat006StudioThroughUi(page);
+    expect(savedCore.response.status()).toBe(200);
+    expect(savedCore.editor?.revision.version).toBe(3);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(localRules);
+    await expect(page.getByRole("textbox", { name: "Resposta 1" })).toHaveValue(localAnswer);
+
     await page.route(`**/api/owner/studios/${editor.studioId}`, (route) => route.abort("failed"), {
       times: 1,
     });
@@ -356,14 +369,27 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
     const comparison = page.getByRole("table", { name: "Comparação de conteúdo" });
     await expect(comparison.getByRole("cell", { exact: true, name: localRules })).toBeVisible();
     await expect(comparison.getByRole("cell", { exact: true, name: remoteRules })).toBeVisible();
+    await expect(comparison.getByText(localAnswer, { exact: false })).toBeVisible();
+    await expect(comparison.getByText(remoteAnswer, { exact: false })).toBeVisible();
+    if ((page.viewportSize()?.width ?? 0) <= 576) {
+      await expect(
+        comparison.locator('[aria-hidden="true"]', { hasText: "Sua versão" }).first(),
+      ).toBeVisible();
+      await expect(
+        comparison.locator('[aria-hidden="true"]', { hasText: "Versão salva" }).first(),
+      ).toBeVisible();
+    }
     await page.getByRole("button", { name: "Continuar com meu conteúdo" }).click();
 
     const rebased = await saveFeat007ContentThroughUi(page);
     expect(rebased.response.status()).toBe(200);
-    expectFeat007EditorVersion(rebased.editor, 3);
-    expect(submittedVersions).toEqual([1, 2]);
+    expectFeat007EditorVersion(rebased.editor, 4);
+    expect(submittedVersions).toEqual([1, 3]);
     const evidence = await readFeat007Evidence(editor.revision.id);
     expect(evidence.usage_rules).toBe(localRules);
+    expect(evidence.faqs).toEqual([
+      expect.objectContaining({ answer: localAnswer, question: sharedQuestion }),
+    ]);
   } finally {
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identity);

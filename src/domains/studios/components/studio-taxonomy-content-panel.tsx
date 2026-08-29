@@ -351,6 +351,28 @@ function ConflictRecoveryFeedback({
   );
 }
 
+function ConflictValue({ label, value }: Readonly<{ label: string; value: string }>) {
+  return (
+    <span role="cell">
+      <span aria-hidden="true" className={styles.mobileConflictLabel}>
+        {label}
+      </span>
+      <span>{value}</span>
+    </span>
+  );
+}
+
+function faqComparisonText(faqs: readonly { answer: string; question: string }[]) {
+  if (faqs.length === 0) return "Nenhuma";
+  return faqs
+    .map((faq, index) => {
+      const question = faq.question.trim() || "Pergunta sem texto";
+      const answer = faq.answer.trim() || "Resposta sem texto";
+      return `${index + 1}. ${question}\nResposta: ${answer}`;
+    })
+    .join("\n\n");
+}
+
 function TaxonomyConflictComparison({
   amenityChoices,
   localAmenityIds,
@@ -387,15 +409,19 @@ function TaxonomyConflictComparison({
         </div>
         <div className={styles.conflictRow} role="row">
           <strong role="cell">Tags</strong>
-          <span role="cell">{taxonomyNames(localTagIds, allTags)}</span>
-          <span role="cell">{taxonomyNames(taxonomyIds(remote.revision.tags), allTags)}</span>
+          <ConflictValue label="Sua versão" value={taxonomyNames(localTagIds, allTags)} />
+          <ConflictValue
+            label="Versão salva"
+            value={taxonomyNames(taxonomyIds(remote.revision.tags), allTags)}
+          />
         </div>
         <div className={styles.conflictRow} role="row">
           <strong role="cell">Comodidades</strong>
-          <span role="cell">{taxonomyNames(localAmenityIds, allAmenities)}</span>
-          <span role="cell">
-            {taxonomyNames(taxonomyIds(remote.revision.amenities), allAmenities)}
-          </span>
+          <ConflictValue label="Sua versão" value={taxonomyNames(localAmenityIds, allAmenities)} />
+          <ConflictValue
+            label="Versão salva"
+            value={taxonomyNames(taxonomyIds(remote.revision.amenities), allAmenities)}
+          />
         </div>
       </div>
       <div className={styles.actions}>
@@ -423,8 +449,8 @@ function ContentConflictComparison({
   usageRules: string;
   youtubeInput: string;
 }>) {
-  const localQuestions = faqs.map((faq) => faq.question || "Pergunta sem texto").join("; ");
-  const remoteQuestions = remote.revision.faqs.map((faq) => faq.question).join("; ");
+  const localFaqs = faqComparisonText(faqs);
+  const remoteFaqs = faqComparisonText(remote.revision.faqs);
   return (
     <section aria-labelledby="studio-content-conflict-title" className={styles.conflict}>
       <h3 className={styles.sectionTitle} id="studio-content-conflict-title">
@@ -441,18 +467,21 @@ function ContentConflictComparison({
         </div>
         <div className={styles.conflictRow} role="row">
           <strong role="cell">Regras</strong>
-          <span role="cell">{usageRules || "Sem regras"}</span>
-          <span role="cell">{remote.revision.usageRules || "Sem regras"}</span>
+          <ConflictValue label="Sua versão" value={usageRules || "Sem regras"} />
+          <ConflictValue label="Versão salva" value={remote.revision.usageRules || "Sem regras"} />
         </div>
         <div className={styles.conflictRow} role="row">
           <strong role="cell">Vídeo</strong>
-          <span role="cell">{youtubeInput || "Sem vídeo"}</span>
-          <span role="cell">{remote.revision.youtubeVideoId ?? "Sem vídeo"}</span>
+          <ConflictValue label="Sua versão" value={youtubeInput || "Sem vídeo"} />
+          <ConflictValue
+            label="Versão salva"
+            value={remote.revision.youtubeVideoId ?? "Sem vídeo"}
+          />
         </div>
         <div className={styles.conflictRow} role="row">
-          <strong role="cell">Perguntas</strong>
-          <span role="cell">{localQuestions || "Nenhuma"}</span>
-          <span role="cell">{remoteQuestions || "Nenhuma"}</span>
+          <strong role="cell">Perguntas e respostas</strong>
+          <ConflictValue label="Sua versão" value={localFaqs} />
+          <ConflictValue label="Versão salva" value={remoteFaqs} />
         </div>
       </div>
       <div className={styles.actions}>

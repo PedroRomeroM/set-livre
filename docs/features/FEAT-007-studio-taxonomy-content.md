@@ -51,6 +51,8 @@ feature são o contrato bootstrap definido no ADR-017 e não bloqueiam seu iníc
 - Vídeo é ID validado.
 - Textos são plain text renderizados com escape.
 - A alteração ocorre apenas no rascunho.
+- Cada formulário conserva o token da revisão que originou seus valores visíveis; um save irmão só
+  avança esse token quando ambos ainda partiam da mesma revisão, preservando o `409` após rebases.
 
 ## Dados canônicos afetados
 
@@ -95,19 +97,19 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 
 ## Playwright obrigatório
 
-| ID              | Prioridade | Suíte         | Viewport                | Cenário                                      | Spec                                                               |
-| --------------- | ---------- | ------------- | ----------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
-| SL-F007-E2E-001 | P0         | critical      | desktop                 | salvar tags, comodidades, regras e FAQ       | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
-| SL-F007-E2E-002 | P1         | regression    | mobile                  | reordenar FAQ e preservar conteúdo           | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
-| SL-F007-E2E-003 | P0         | critical      | desktop                 | tag inativa/externa é rejeitada              | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
-| SL-F007-E2E-004 | P1         | regression    | desktop                 | YouTube válido renderiza e inválido falha    | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
-| SL-F007-E2E-005 | P0         | critical      | desktop                 | texto malicioso não executa script           | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
-| SL-F007-E2E-006 | P1         | accessibility | desktop/mobile/320/dark | axe, teclado, toque e alvos                  | `tests/e2e/accessibility/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-007 | P2         | reflow        | zoom 200%               | controles sem overflow nos três engines      | `tests/e2e/reflow/feat-007-studio-taxonomy-content.spec.ts`        |
-| SL-F007-E2E-008 | P1         | regression    | desktop/mobile/320/low  | painéis sincronizam e descarte restaura tudo | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
-| SL-F007-E2E-009 | P0         | critical      | desktop                 | troca de sessão oculta conteúdo privado      | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
-| SL-F007-E2E-010 | P1         | regression    | desktop/mobile/320/low  | retry ambíguo congela ambos os formulários   | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
-| SL-F007-E2E-011 | P1         | regression    | desktop/mobile/320/low  | refetch preserva o conflito otimista         | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| ID              | Prioridade | Suíte         | Viewport                | Cenário                                            | Spec                                                               |
+| --------------- | ---------- | ------------- | ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------ |
+| SL-F007-E2E-001 | P0         | critical      | desktop                 | salvar tags, comodidades, regras e FAQ             | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-002 | P1         | regression    | mobile                  | reordenar FAQ e preservar conteúdo                 | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-003 | P0         | critical      | desktop                 | tag inativa/externa é rejeitada                    | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-004 | P1         | regression    | desktop                 | YouTube válido renderiza e inválido falha          | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-005 | P0         | critical      | desktop                 | texto malicioso não executa script                 | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-006 | P1         | accessibility | desktop/mobile/320/dark | axe, teclado, toque e alvos                        | `tests/e2e/accessibility/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-007 | P2         | reflow        | zoom 200%               | controles sem overflow nos três engines            | `tests/e2e/reflow/feat-007-studio-taxonomy-content.spec.ts`        |
+| SL-F007-E2E-008 | P1         | regression    | desktop/mobile/320/low  | painéis sincronizam e descarte restaura tudo       | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-009 | P0         | critical      | desktop                 | troca de sessão oculta conteúdo privado            | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-010 | P1         | regression    | desktop/mobile/320/low  | retry ambíguo congela ambos os formulários         | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-011 | P1         | regression    | desktop/mobile/320/low  | tokens, FAQ e comparação mobile preservam conflito | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
 
 Regras:
 

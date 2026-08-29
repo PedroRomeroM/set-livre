@@ -106,7 +106,7 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 | SL-F006-E2E-002 | P0         | critical      | 3 engines                  | editar publicado clona draft e preserva a revisão aprovada      | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 | SL-F006-E2E-003 | P0         | critical      | 3 engines                  | dono B não lê nem altera estúdio A e a rota não revela dados    | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 | SL-F006-E2E-004 | P1         | regression    | desktop/mobile/320/compact | validação preserva dados inválidos e não envia POST             | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
-| SL-F006-E2E-005 | P1         | regression    | desktop/mobile/320/compact | falha de refetch não usa cache stale; retry exige comparação    | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-005 | P1         | regression    | desktop/mobile/320/compact | retry compara valores e nomes de tipos, sem UUID ou cache stale | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-006 | P1         | accessibility | desktop/mobile/320/dark    | axe, teclado, toque e alvos de 44 px                            | `tests/e2e/accessibility/feat-006-studio-core-revision.spec.ts` |
 | SL-F006-E2E-007 | P2         | reflow        | 3 engines                  | criação e editor sem overflow no viewport equivalente a 200%    | `tests/e2e/reflow/feat-006-studio-core-revision.spec.ts`        |
 | SL-F006-E2E-008 | P0         | critical      | 3 engines                  | troca de sessão oculta o editor antes da releitura              | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |

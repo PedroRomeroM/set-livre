@@ -115,6 +115,16 @@ test("SL-F007-E2E-003 @p0 rejeita taxonomia desativada ou externa e recupera a U
     await expect(
       page.getByRole("heading", { level: 3, name: "Compare as taxonomias antes de continuar" }),
     ).toBeVisible();
+    const taxonomyComparison = page.getByRole("table", { name: "Comparação de taxonomias" });
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ height: 720, width: 320 });
+    await expect(
+      taxonomyComparison.locator('[aria-hidden="true"]', { hasText: "Sua versão" }).first(),
+    ).toBeVisible();
+    await expect(
+      taxonomyComparison.locator('[aria-hidden="true"]', { hasText: "Versão salva" }).first(),
+    ).toBeVisible();
+    if (originalViewport !== null) await page.setViewportSize(originalViewport);
     const archivedTag = page.getByRole("checkbox", { name: `${qaTag.name} — arquivada` });
     await expect(archivedTag).toBeChecked();
     await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toBeChecked();

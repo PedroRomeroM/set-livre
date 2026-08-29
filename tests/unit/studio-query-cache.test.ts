@@ -10,6 +10,7 @@ import {
   studioQueryKeys,
 } from "../../src/domains/studios/components/studio-query-keys";
 import { studioCorePanelInternals } from "../../src/domains/studios/components/studio-core-panel";
+import { studioEditorPanelsInternals } from "../../src/domains/studios/components/studio-editor-panels";
 import { studioEditorFixture, studioTestIds } from "./studio-test-fixture";
 
 function editorFor(scope: string, studioId: string, revisionId: string): StudioEditor {
@@ -140,11 +141,15 @@ describe("studio private query cache", () => {
     expect(parsed.success && parsed.data).toMatchObject({ capacity: 24, postalCode: "80010000" });
 
     expect(
-      studioCorePanelInternals.conflictRows(local, {
-        ...local,
-        name: "Nome remoto",
-        streetNumber: "200",
-      }),
+      studioCorePanelInternals.conflictRows(
+        local,
+        {
+          ...local,
+          name: "Nome remoto",
+          streetNumber: "200",
+        },
+        [],
+      ),
     ).toEqual([
       { field: "name", label: "Nome", local: local.name, remote: "Nome remoto" },
       { field: "streetNumber", label: "Número", local: local.streetNumber, remote: "200" },
@@ -153,5 +158,68 @@ describe("studio private query cache", () => {
     expect(
       studioCorePanelInternals.includeCurrentStudioType([], studioEditorFixture.studioType),
     ).toEqual([{ ...studioEditorFixture.studioType, sortOrder: 0 }]);
+  });
+
+  it("keeps stale sibling form tokens bound to their visible values", () => {
+    const revision1 = { id: studioTestIds.revisionId, number: 1, version: 1 };
+    const revision2 = { ...revision1, version: 2 };
+    const revision3 = { ...revision1, version: 3 };
+    const synchronized = studioEditorPanelsInternals.advanceEditorRevisions(
+      {
+        content: revision1,
+        core: revision1,
+        discard: revision1,
+        taxonomy: revision1,
+      },
+      "core",
+      revision2,
+    );
+    expect(synchronized).toEqual({
+      content: revision2,
+      core: revision2,
+      discard: revision2,
+      taxonomy: revision2,
+    });
+
+    expect(
+      studioEditorPanelsInternals.advanceEditorRevisions(
+        {
+          content: revision1,
+          core: revision2,
+          discard: revision2,
+          taxonomy: revision1,
+        },
+        "core",
+        revision3,
+      ),
+    ).toEqual({
+      content: revision1,
+      core: revision3,
+      discard: revision3,
+      taxonomy: revision1,
+    });
+  });
+
+  it("renders active and historical studio type descriptors instead of UUIDs in conflicts", () => {
+    const local = studioCorePanelInternals.editorFormState(studioEditorFixture);
+    const remoteType = {
+      id: "60000000-0000-4000-8000-000000000002",
+      name: "Estúdio fotográfico",
+      sortOrder: 20,
+    };
+
+    expect(
+      studioCorePanelInternals.conflictRows(local, { ...local, studioTypeId: remoteType.id }, [
+        { ...studioEditorFixture.studioType, sortOrder: 10 },
+        remoteType,
+      ]),
+    ).toEqual([
+      {
+        field: "studioTypeId",
+        label: "Tipo de estúdio",
+        local: studioEditorFixture.studioType.name,
+        remote: remoteType.name,
+      },
+    ]);
   });
 });
