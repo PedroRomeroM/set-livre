@@ -300,6 +300,22 @@ export async function setFeat006StudioStatus(
   });
 }
 
+export async function setFeat006ProfileStatus(userId: string, status: "active" | "suspended") {
+  const parsedUserId = z.uuid().parse(userId);
+  await withFeat006AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.profiles as profile
+          set status = $2
+        where profile.id = $1::uuid
+      returning profile.id`,
+      [parsedUserId, status],
+    );
+    if (result.rows.length !== 1) {
+      throw new Error("A fixture FEAT-006 não alterou exatamente um status de perfil.");
+    }
+  });
+}
+
 export async function setFeat006StudioTypeActive(studioTypeId: string, active: boolean) {
   const parsedStudioTypeId = z.uuid().parse(studioTypeId);
   await withFeat006AdminPool(async (pool) => {

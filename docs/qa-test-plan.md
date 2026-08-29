@@ -99,12 +99,14 @@ efetivo e modo `0600` também são obrigatórios.
 
 ## Matriz da FEAT-006 em andamento
 
-Os quatorze cenários estáveis `SL-F006-E2E-001..014` expandem para 51 execuções:
+Os quinze cenários estáveis `SL-F006-E2E-001..015` expandem para 55 execuções:
 
 - P0 de criação, clone de publicado, isolamento entre donos e troca de sessão nos três engines;
 - validação, tokens locais independentes de update/descarte preservados após refetch, estado terminal
   de criação, retry ambíguo, reconfirmação de descarte sem liberar save stale, bloqueio administrativo
-  e arquivamento concorrente do tipo em criação/edição em desktop, mobile, 320 px e altura compacta;
+  arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,
+  navegação terminal explícita após descarte e revogação de conta em desktop, mobile, 320 px e altura
+  compacta;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 

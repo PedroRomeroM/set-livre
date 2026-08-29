@@ -13,6 +13,7 @@ import {
   provisionFeat006Owner,
   readFeat006StudioEvidence,
   saveFeat006StudioThroughUi,
+  setFeat006ProfileStatus,
   setFeat006StudioStatus,
   setFeat006StudioTypeActive,
 } from "../../helpers/feat-006-studio-core-revision";
@@ -115,8 +116,31 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
     await expect(page.getByText("Versão de edição 1", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(localName);
 
+    let failedRecoveryReads = 0;
+    await page.route(`**/api/owner/studios/${editor.studioId}`, async (route) => {
+      if (route.request().method() === "GET" && failedRecoveryReads === 0) {
+        failedRecoveryReads += 1;
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
     const conflict = await saveFeat006StudioThroughUi(page);
     expect(conflict.response.status()).toBe(409);
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Compare antes de continuar" }),
+    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Verificar novamente" })).toBeVisible();
+    const recoveredRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api/owner/studios/${editor.studioId}` &&
+        response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Verificar novamente" }).click();
+    await recoveredRead;
+    expect(failedRecoveryReads).toBe(1);
     await expect(
       page.getByRole("heading", { level: 2, name: "Compare antes de continuar" }),
     ).toBeVisible();
@@ -341,9 +365,28 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
       const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
       return body.success && body.data.action === "studio.draft.discard";
     });
+    let failedDiscardRecoveryReads = 0;
+    await page.route(`**/api/owner/studios/${editor.studioId}`, async (route) => {
+      if (route.request().method() === "GET" && failedDiscardRecoveryReads === 0) {
+        failedDiscardRecoveryReads += 1;
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     expect((await conflictResponse).status()).toBe(409);
     await expect(page.getByRole("group", { name: "Confirmar descarte" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Verificar novamente" })).toBeVisible();
+    const recoveredDiscardRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api/owner/studios/${editor.studioId}` &&
+        response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Verificar novamente" }).click();
+    await recoveredDiscardRead;
+    expect(failedDiscardRecoveryReads).toBe(1);
     await expect(page.getByText("Versão de edição 1", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
       feat006DefaultCore.name,
@@ -372,6 +415,10 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
     });
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     expect((await successResponse).status()).toBe(200);
+    await expect(page.getByText("Rascunho descartado", { exact: true })).toBeVisible();
+    const newFormLink = page.getByRole("link", { name: "Abrir novo formulário" });
+    await expect(newFormLink).toBeVisible();
+    await newFormLink.click();
     await expect(page).toHaveURL(/\/dono\/estudios\/novo$/u);
     expect(discardCommands).toHaveLength(2);
     expect(discardCommands.map((command) => command.expectedRevisionVersion)).toEqual([1, 2]);
@@ -486,6 +533,42 @@ test("SL-F006-E2E-014 @p1 arquivamento concorrente recupera criação sem repeti
   } finally {
     if (typeArchived) {
       await setFeat006StudioTypeActive(feat006DefaultCore.studioTypeId, true);
+    }
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
+test("SL-F006-E2E-015 @p1 revogação de conta recompõe o editor antes de nova ação", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(170_000);
+  const identity = createFeat006QaIdentity(testInfo, "015_revoked_account");
+  let profileSuspended = false;
+  try {
+    await provisionFeat006Owner(page, identity, "015");
+    await fillFeat006Core(page);
+    const editor = await createFeat006StudioThroughUi(page);
+    if (identity.userId === undefined) throw new Error("A identidade FEAT-006 não possui escopo.");
+    await setFeat006ProfileStatus(identity.userId, "suspended");
+    profileSuspended = true;
+
+    const rejectedRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api/owner/studios/${editor.studioId}` &&
+        response.status() === 403,
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    const response = await rejectedRead;
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "ACCOUNT_SUSPENDED" },
+    });
+    await expect(page.getByText("Conta suspensa", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+  } finally {
+    if (profileSuspended && identity.userId !== undefined) {
+      await setFeat006ProfileStatus(identity.userId, "active");
     }
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identity);

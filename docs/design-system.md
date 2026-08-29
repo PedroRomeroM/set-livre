@@ -176,6 +176,8 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
 
 ### 3.4 Extensão da FEAT-006
 
+- `ButtonLink`: âncora nativa para transições de rota com as variantes e dimensões de `Button`;
+  preserva `href`, foco e o retry do navegador sem aninhar controles interativos;
 - `Textarea`: textarea nativo que preserva toda a API HTML, herda borda, erro, disabled, foco e forced
   colors de `Input`, possui altura mínima de 9 rem e resize vertical. O contador de descrição pertence
   ao `Field`, não à primitive;

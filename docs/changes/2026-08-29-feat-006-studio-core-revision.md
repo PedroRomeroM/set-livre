@@ -18,6 +18,11 @@
 - mantém tokens otimistas independentes para edição e descarte mesmo após refetch; update só adota o
   token remoto após escolha explícita na comparação, e conflito de descarte avança apenas seu próprio
   token, exigindo nova confirmação sem liberar save stale;
+- só aceita uma releitura de conflito quando o GET termina com sucesso, preserva o estado pendente
+  após falha transitória e sincroniza update/descarte no retry manual sem usar dados stale do cache;
+- revalida conta, perfil, autoridade de dono e contrato em cada GET do editor; uma revogação recompõe
+  a rota SSR, e descarte concluído elimina o redirect one-shot e mantém uma `ButtonLink` nativa para
+  navegação explícita e repetível;
 - classifica `studio_type_inactive` sem expor detalhe SQL, relê a taxonomia e exige uma seleção ativa
   tanto na criação quanto na edição quando o tipo é arquivado durante o preenchimento;
 - adiciona `Textarea` à UI compartilhada e invalidação/cache privado por usuário + estúdio;

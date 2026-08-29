@@ -1,5 +1,5 @@
-export { Button } from "./button";
-export type { ButtonProps, ButtonVariant } from "./button";
+export { Button, ButtonLink } from "./button";
+export type { ButtonLinkProps, ButtonProps, ButtonVariant } from "./button";
 export { Alert } from "./feedback";
 export type { AlertProps, AlertVariant } from "./feedback";
 export { FoundationStatus } from "./foundation-status";

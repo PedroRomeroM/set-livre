@@ -12,6 +12,7 @@
   font-weight: 750;
   line-height: 1.2;
   text-align: center;
+  text-decoration: none;
   overflow-wrap: anywhere;
   cursor: pointer;
 }

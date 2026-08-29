@@ -70,9 +70,9 @@
                 FEAT-002, FEAT-003 e FEAT-004 concluídas. A FEAT-006 está em andamento nesta branch:
                 núcleo/revisões de estúdio, editor privado com fronteira autoritativa de sessão,
                 replay exato, tokens otimistas isolados por operação, recuperação de tipo arquivado,
-                taxonomia histórica, RLS e regressões de navegador foram implementados localmente,
-                mas ainda dependem de review limpo, merge e deploy. Outras 30 features permanecem
-                planejadas.
+                revogação em cada leitura, retry nativo após descarte, taxonomia histórica, RLS e
+                regressões de navegador foram implementados localmente, mas ainda dependem de review
+                limpo, merge e deploy. Outras 30 features permanecem planejadas.
               </td>
             </tr>
             <tr>
@@ -143,8 +143,11 @@
         <p>
           Cada feature usa branch própria. Antes do merge passam format, lint, tipos, Vitest, banco,
           documentação, Playwright, build, audit e Knip conforme o risco. Todo PR recebe
-          <code>@codex review</code>, espera real mínima de 60 minutos e novos ciclos depois de cada
-          correção até uma declaração explícita de review limpo no SHA atual.
+          <code>@codex review</code>, polling a cada 10 minutos até o status
+          <code>Completed</code> no SHA exato e novos ciclos depois de cada correção até uma
+          declaração explícita de review limpo. Antes do merge, uma execução adicional revisa
+          holisticamente todo o diff contra <code>main</code>. Sessenta minutos sem conclusão geram
+          alerta, nunca aprovação.
         </p>
         <p>
           O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright

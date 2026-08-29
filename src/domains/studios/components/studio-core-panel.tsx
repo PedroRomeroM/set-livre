@@ -6,7 +6,7 @@ import {
   type StudioEditor,
   type StudioTypeOption,
 } from "@set-livre/contracts";
-import { Alert, Button, Field, Input, Select, Stack, Textarea } from "@set-livre/ui";
+import { Alert, Button, ButtonLink, Field, Input, Select, Stack, Textarea } from "@set-livre/ui";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -600,7 +600,6 @@ function EditStudioForm({
   initialTypes: readonly StudioTypeOption[];
   userId: string;
 }>) {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const typesQuery = useStudioTypes(initialTypes);
   const editorQueryKey = useMemo(
@@ -608,6 +607,7 @@ function EditStudioForm({
     [initialEditor.studioId, userId],
   );
   const [studioDeleted, setStudioDeleted] = useState(false);
+  const [pendingConflictRecovery, setPendingConflictRecovery] = useState<"discard" | "update">();
   const editorQuery = useQuery({
     enabled: !studioDeleted,
     initialData: initialEditor,
@@ -619,7 +619,8 @@ function EditStudioForm({
       ),
     queryKey: editorQueryKey,
     refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
+    refetchOnReconnect: pendingConflictRecovery === undefined,
+    refetchOnWindowFocus: pendingConflictRecovery === undefined ? "always" : false,
     retry: false,
     staleTime: 0,
   });
@@ -642,21 +643,6 @@ function EditStudioForm({
     }
   }, [editorQuery.error, queryClient]);
 
-  useEffect(() => {
-    if (!studioDeleted) return;
-
-    let redirectPending = true;
-    void queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey }).then(() => {
-      if (!redirectPending) return;
-      queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });
-      router.replace("/dono/estudios/novo");
-    });
-
-    return () => {
-      redirectPending = false;
-    };
-  }, [editorQueryKey, queryClient, router, studioDeleted]);
-
   const updateMutation = useMutation({
     mutationFn: () => {
       if (pendingUpdate.current === undefined) {
@@ -672,6 +658,7 @@ function EditStudioForm({
       }
       if (isStudioTypeUnavailableError(error)) {
         pendingUpdate.current = undefined;
+        setPendingConflictRecovery(undefined);
         setConflictRemote(undefined);
         setFormState((current) => ({ ...current, studioTypeId: "" }));
         await typesQuery.refetch();
@@ -679,12 +666,15 @@ function EditStudioForm({
       }
       if (error instanceof StudioApiError && error.code === "CONFLICT") {
         pendingUpdate.current = undefined;
+        setPendingConflictRecovery("update");
+        setConflictRemote(undefined);
         const refreshed = await editorQuery.refetch();
-        if (refreshed.data !== undefined) setConflictRemote(refreshed.data);
+        if (refreshed.isSuccess) recoverVerifiedConflict("update", refreshed.data);
       }
     },
     onSuccess: async (editor) => {
       pendingUpdate.current = undefined;
+      setPendingConflictRecovery(undefined);
       setConflictRemote(undefined);
       setFieldErrors({});
       setFormState(editorFormState(editor));
@@ -723,16 +713,18 @@ function EditStudioForm({
       if (error instanceof StudioApiError && error.code === "CONFLICT") {
         pendingDiscard.current = undefined;
         setConfirmDiscard(false);
+        setPendingConflictRecovery("discard");
         const refreshed = await editorQuery.refetch();
-        if (refreshed.data !== undefined) {
-          setDiscardRevision(editorRevisionState(refreshed.data));
-        }
+        if (refreshed.isSuccess) recoverVerifiedConflict("discard", refreshed.data);
       }
     },
     onSuccess: async (result) => {
       pendingDiscard.current = undefined;
+      setPendingConflictRecovery(undefined);
       setConfirmDiscard(false);
       if (result.studioDeleted) {
+        await queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey });
+        queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });
         setStudioDeleted(true);
         return;
       }
@@ -758,6 +750,23 @@ function EditStudioForm({
 
   function updateField(field: keyof StudioCoreFormState, value: string) {
     setFormState((current) => ({ ...current, [field]: value }));
+  }
+
+  function recoverVerifiedConflict(kind: "discard" | "update", editor: StudioEditor) {
+    const revision = editorRevisionState(editor);
+    if (kind === "update") {
+      setConflictRemote(editor);
+    } else {
+      setDiscardRevision(revision);
+    }
+    setPendingConflictRecovery(undefined);
+  }
+
+  async function verifyEditor() {
+    const refreshed = await editorQuery.refetch();
+    if (pendingConflictRecovery !== undefined && refreshed.isSuccess) {
+      recoverVerifiedConflict(pendingConflictRecovery, refreshed.data);
+    }
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -809,7 +818,15 @@ function EditStudioForm({
   if (studioDeleted) {
     return (
       <Alert title="Rascunho descartado" variant="status">
-        O cadastro removido não permanecerá no histórico de navegação. Abrindo um novo formulário.
+        <Stack space={3}>
+          <span>
+            O cadastro removido não permanecerá no histórico de navegação. Abra um novo formulário
+            para continuar.
+          </span>
+          <ButtonLink href="/dono/estudios/novo" variant="secondary">
+            Abrir novo formulário
+          </ButtonLink>
+        </Stack>
       </Alert>
     );
   }
@@ -819,13 +836,15 @@ function EditStudioForm({
   const visibleErrors = updateError?.fieldErrors ?? fieldErrors;
   const types = typesQuery.data;
   const editor = editorQuery.data;
-  const editorIsVerified = studioEditorCanRender(
-    editor,
-    userId,
-    initialEditor.studioId,
-    editorQuery.fetchStatus,
-    editorQuery.isError,
-  );
+  const editorIsVerified =
+    pendingConflictRecovery === undefined &&
+    studioEditorCanRender(
+      editor,
+      userId,
+      initialEditor.studioId,
+      editorQuery.fetchStatus,
+      editorQuery.isError,
+    );
   const canEdit =
     editor.studioStatus !== "disabled" &&
     (editor.revision.status === "draft" ||
@@ -846,6 +865,7 @@ function EditStudioForm({
     discardMutation.isPending ||
     hasAmbiguousUpdate ||
     hasAmbiguousDiscard ||
+    pendingConflictRecovery !== undefined ||
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
 
@@ -863,7 +883,7 @@ function EditStudioForm({
               : "Os dados privados continuam ocultos. Verifique novamente a sessão antes de editar."}
           </span>
           {verifying ? null : (
-            <Button onClick={() => void editorQuery.refetch()} variant="secondary">
+            <Button onClick={() => void verifyEditor()} variant="secondary">
               Verificar novamente
             </Button>
           )}

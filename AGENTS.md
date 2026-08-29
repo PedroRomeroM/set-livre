@@ -233,8 +233,11 @@ Mudança operacional executa também `actionlint`, `bash -n`, ShellCheck e, quan
 ## 14. Ciclo obrigatório de review e deploy
 
 Toda mudança destinada a `main` segue `docs/review-deploy-cycle.md`. Branch protection e checks
-nativos são guardrails; não substituem o pedido `@codex review`, a espera mínima de 60 minutos, a
-correção dos findings e a resposta explicitamente limpa no SHA final. Novo push reinicia o ciclo.
+nativos são guardrails; não substituem o pedido `@codex review`, o polling a cada 10 minutos até o
+status terminal `Completed` no SHA exato, a correção dos findings e a resposta explicitamente limpa
+no SHA final. Sessenta minutos sem conclusão é alerta operacional, nunca aprovação. Novo push
+reinicia o ciclo. Antes do merge, o mesmo SHA recebe ainda a revisão geral holística obrigatória de
+todo o diff contra `main`; finding nessa etapa reinicia também o ciclo integral.
 Somente depois dessa evidência, uma credencial confiável do mantenedor publica o status
 `Codex review contract` no SHA atual com link para o review limpo; workflows não publicam esse status.
 A branch protection o exige, portanto qualquer push volta a bloquear o merge. Falha pós-merge é

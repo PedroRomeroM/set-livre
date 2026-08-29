@@ -223,8 +223,10 @@ classifica isso como conflito de conteúdo. Outros `42501` permanecem `403 FORBI
 Leituras implementadas:
 
 - `GET /api/studio-types`: sessão autenticada e lista estrita de tipos ativos;
-- `GET /api/owner/studios/[studioId]`: sessão autenticada, UUID estrito e 0/1 editor do próprio dono;
-  UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem revelar existência.
+- `GET /api/owner/studios/[studioId]`: sessão autenticada, conta ativa, perfil completo, autoridade de
+  dono ativa e contrato vigente são revalidados em toda leitura; depois disso, UUID estrito e 0/1
+  editor do próprio dono. UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem
+  revelar existência. Revogação durante uma sessão aberta recompõe a rota SSR antes de nova edição.
 
 Ambas usam deadline server-side de 2 segundos, resposta sem cache e evento operacional redigido.
 
