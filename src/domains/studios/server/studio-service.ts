@@ -74,6 +74,13 @@ function handleStudioDatabaseError(error: unknown): never {
   if (databaseError?.code === "22023") {
     throw new ApiRouteError(422, "VALIDATION_FAILED", "Revise os dados do estúdio.");
   }
+  if (databaseError?.code === "23514" && databaseError.message === "studio_type_inactive") {
+    throw new ApiRouteError(
+      409,
+      "STUDIO_TYPE_UNAVAILABLE",
+      "O tipo de estúdio foi arquivado. Atualize as opções e escolha um tipo ativo.",
+    );
+  }
   if (
     databaseError?.code === "23505" ||
     databaseError?.code === "23514" ||

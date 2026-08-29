@@ -105,6 +105,20 @@ describe("studio service", () => {
     ).rejects.toMatchObject({ code: "OWNER_CONTRACT_CHANGED", status: 409 });
   });
 
+  it("maps an archived studio type to the recoverable taxonomy contract", async () => {
+    dependencies.createStudioDraft.mockRejectedValueOnce({
+      code: "23514",
+      message: "studio_type_inactive",
+    });
+    await expect(
+      createStudioService(dependencies).create(createCommand, context),
+    ).rejects.toMatchObject({
+      code: "STUDIO_TYPE_UNAVAILABLE",
+      message: "O tipo de estúdio foi arquivado. Atualize as opções e escolha um tipo ativo.",
+      status: 409,
+    });
+  });
+
   it("does not mask an unknown infrastructure failure", async () => {
     const failure = new Error("pool unavailable");
     dependencies.createStudioDraft.mockRejectedValueOnce(failure);

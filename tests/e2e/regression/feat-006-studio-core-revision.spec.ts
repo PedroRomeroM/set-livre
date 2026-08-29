@@ -80,7 +80,7 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
   const remoteName = "Nome salvo por outra sessão";
   const remoteDescription =
     "Descrição atualizada por outra sessão para produzir um conflito otimista verificável.";
-  let updatePosts = 0;
+  const submittedVersions: number[] = [];
   try {
     await provisionFeat006Owner(page, identity, "005");
     await fillFeat006Core(page);
@@ -88,8 +88,13 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
     page.on("request", (request) => {
       if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands")
         return;
-      const action = z.object({ action: z.string() }).safeParse(request.postDataJSON());
-      if (action.success && action.data.action === "studio.revision.updateCore") updatePosts += 1;
+      const command = z
+        .object({
+          action: z.literal("studio.revision.updateCore"),
+          payload: z.object({ expectedRevisionVersion: z.number().int().positive() }),
+        })
+        .safeParse(request.postDataJSON());
+      if (command.success) submittedVersions.push(command.data.payload.expectedRevisionVersion);
     });
 
     await page.getByRole("textbox", { name: "Nome do estúdio" }).fill(localName);
@@ -98,6 +103,17 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
       description: remoteDescription,
       name: remoteName,
     });
+
+    const backgroundRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api/owner/studios/${editor.studioId}` &&
+        response.status() === 200,
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await backgroundRead;
+    await expect(page.getByText("Versão de edição 1", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(localName);
 
     const conflict = await saveFeat006StudioThroughUi(page);
     expect(conflict.response.status()).toBe(409);
@@ -117,19 +133,19 @@ test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolh
       ).toBeVisible();
     }
     await expectNoHorizontalOverflow(page);
-    expect(updatePosts).toBe(1);
+    expect(submittedVersions).toEqual([1]);
 
     await page.getByRole("button", { name: "Continuar com minhas alterações" }).click();
     await expect(
       page.getByRole("heading", { level: 2, name: "Compare antes de continuar" }),
     ).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(localName);
-    expect(updatePosts).toBe(1);
+    expect(submittedVersions).toEqual([1]);
 
     const saved = await saveFeat006StudioThroughUi(page);
     expect(saved.response.status()).toBe(200);
     expect(saved.editor?.revision).toMatchObject({ name: localName, version: 3 });
-    expect(updatePosts).toBe(2);
+    expect(submittedVersions).toEqual([1, 2]);
     await expect(
       page.getByText("Rascunho salvo com a versão canônica mais recente."),
     ).toBeVisible();
@@ -276,7 +292,8 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
 }, testInfo) => {
   test.setTimeout(180_000);
   const identity = createFeat006QaIdentity(testInfo, "011_discard_conflict");
-  const discardCommands: Array<{ idempotencyKey: string }> = [];
+  const discardCommands: Array<{ expectedRevisionVersion: number; idempotencyKey: string }> = [];
+  const updateVersions: number[] = [];
   try {
     await provisionFeat006Owner(page, identity, "011");
     await fillFeat006Core(page);
@@ -286,10 +303,20 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
         return;
       }
       const body = z
-        .object({ action: z.string(), idempotencyKey: z.string() })
+        .object({
+          action: z.string(),
+          idempotencyKey: z.string(),
+          payload: z.object({ expectedRevisionVersion: z.number().int().positive() }),
+        })
         .safeParse(request.postDataJSON());
       if (body.success && body.data.action === "studio.draft.discard") {
-        discardCommands.push({ idempotencyKey: body.data.idempotencyKey });
+        discardCommands.push({
+          expectedRevisionVersion: body.data.payload.expectedRevisionVersion,
+          idempotencyKey: body.data.idempotencyKey,
+        });
+      }
+      if (body.success && body.data.action === "studio.revision.updateCore") {
+        updateVersions.push(body.data.payload.expectedRevisionVersion);
       }
     });
 
@@ -298,6 +325,18 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
       description: "Versão concorrente usada para invalidar a primeira confirmação de descarte.",
       name: "Rascunho concorrente para descarte",
     });
+    const backgroundRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname === `/api/owner/studios/${editor.studioId}` &&
+        response.status() === 200,
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    const backgroundPayload = z
+      .object({ data: z.object({ revision: z.object({ version: z.number().int().positive() }) }) })
+      .parse(await (await backgroundRead).json());
+    expect(backgroundPayload.data.revision.version).toBe(2);
+    await expect(page.getByText("Versão de edição 1", { exact: true })).toBeVisible();
     const conflictResponse = page.waitForResponse((response) => {
       const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
       return body.success && body.data.action === "studio.draft.discard";
@@ -305,9 +344,25 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     expect((await conflictResponse).status()).toBe(409);
     await expect(page.getByRole("group", { name: "Confirmar descarte" })).toHaveCount(0);
-    await expect(page.getByText("Versão de edição 2", { exact: true })).toBeVisible();
+    await expect(page.getByText("Versão de edição 1", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
       feat006DefaultCore.name,
+    );
+
+    const updateConflict = page.waitForResponse((response) => {
+      const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
+      return body.success && body.data.action === "studio.revision.updateCore";
+    });
+    await page.getByRole("button", { name: "Salvar rascunho" }).click();
+    expect((await updateConflict).status()).toBe(409);
+    expect(updateVersions).toEqual([1]);
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Compare antes de continuar" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Usar versão salva" }).click();
+    await expect(page.getByText("Versão de edição 2", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+      "Rascunho concorrente para descarte",
     );
 
     await page.getByRole("button", { name: "Descartar rascunho" }).click();
@@ -319,6 +374,7 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
     expect((await successResponse).status()).toBe(200);
     await expect(page).toHaveURL(/\/dono\/estudios\/novo$/u);
     expect(discardCommands).toHaveLength(2);
+    expect(discardCommands.map((command) => command.expectedRevisionVersion)).toEqual([1, 2]);
     expect(discardCommands[1]?.idempotencyKey).not.toBe(discardCommands[0]?.idempotencyKey);
   } finally {
     await closeFeat006PageBeforeCleanup(page);
@@ -352,7 +408,7 @@ test("SL-F006-E2E-012 @p1 estúdio desabilitado permanece estritamente somente l
   }
 });
 
-test("SL-F006-E2E-013 @p1 tipo arquivado preserva histórico mas exige seleção ativa", async ({
+test("SL-F006-E2E-013 @p1 arquivamento concorrente recupera editor e exige seleção ativa", async ({
   page,
 }, testInfo) => {
   test.setTimeout(170_000);
@@ -364,19 +420,69 @@ test("SL-F006-E2E-013 @p1 tipo arquivado preserva histórico mas exige seleção
     await createFeat006StudioThroughUi(page);
     await setFeat006StudioTypeActive(feat006DefaultCore.studioTypeId, false);
     typeArchived = true;
-    await page.reload({ waitUntil: "domcontentloaded" });
 
-    await expect(page.getByText("Tipo de estúdio arquivado", { exact: true })).toBeVisible();
+    const rejected = await saveFeat006StudioThroughUi(page);
+    expect(rejected.response.status()).toBe(409);
+    expect(rejected.payload).toMatchObject({ error: { code: "STUDIO_TYPE_UNAVAILABLE" } });
+    await expect(
+      page.getByText(
+        "O tipo de estúdio foi arquivado. Atualize as opções e escolha um tipo ativo.",
+      ),
+    ).toBeVisible();
+
     const typeSelect = page.getByRole("combobox", { name: "Tipo de estúdio" });
-    await expect(typeSelect).toHaveValue(feat006DefaultCore.studioTypeId);
+    await expect(typeSelect).toHaveValue("");
     await expect(typeSelect.getByRole("option", { name: /arquivado/iu })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
 
     await typeSelect.selectOption("60000000-0000-4000-8000-000000000002");
-    await expect(page.getByText("Tipo de estúdio arquivado", { exact: true })).toHaveCount(0);
     const saved = await saveFeat006StudioThroughUi(page);
     expect(saved.response.status()).toBe(200);
     expect(saved.editor?.revision.studioTypeId).toBe("60000000-0000-4000-8000-000000000002");
+  } finally {
+    if (typeArchived) {
+      await setFeat006StudioTypeActive(feat006DefaultCore.studioTypeId, true);
+    }
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
+test("SL-F006-E2E-014 @p1 arquivamento concorrente recupera criação sem repetir falha", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(170_000);
+  const identity = createFeat006QaIdentity(testInfo, "014_create_archived_type");
+  let typeArchived = false;
+  try {
+    await provisionFeat006Owner(page, identity, "014");
+    await fillFeat006Core(page);
+    await setFeat006StudioTypeActive(feat006DefaultCore.studioTypeId, false);
+    typeArchived = true;
+
+    const rejectedResponse = page.waitForResponse((response) => {
+      if (
+        response.request().method() !== "POST" ||
+        new URL(response.url()).pathname !== "/api/commands"
+      ) {
+        return false;
+      }
+      const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
+      return body.success && body.data.action === "studio.create";
+    });
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    const rejected = await rejectedResponse;
+    expect(rejected.status()).toBe(409);
+    await expect(rejected.json()).resolves.toMatchObject({
+      error: { code: "STUDIO_TYPE_UNAVAILABLE" },
+    });
+
+    const typeSelect = page.getByRole("combobox", { name: "Tipo de estúdio" });
+    await expect(typeSelect).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toBeDisabled();
+    await typeSelect.selectOption("60000000-0000-4000-8000-000000000002");
+    const editor = await createFeat006StudioThroughUi(page);
+    expect(editor.revision.studioTypeId).toBe("60000000-0000-4000-8000-000000000002");
   } finally {
     if (typeArchived) {
       await setFeat006StudioTypeActive(feat006DefaultCore.studioTypeId, true);

@@ -15,6 +15,11 @@
   conflito comparável, descarte confirmado e boundary integral de hidratação e sessão;
 - torna criação aceita um estado terminal com navegação explícita, congela payloads de resultado
   ambíguo, recupera conflitos de descarte por releitura e mantém estúdio desabilitado somente leitura;
+- mantém tokens otimistas independentes para edição e descarte mesmo após refetch; update só adota o
+  token remoto após escolha explícita na comparação, e conflito de descarte avança apenas seu próprio
+  token, exigindo nova confirmação sem liberar save stale;
+- classifica `studio_type_inactive` sem expor detalhe SQL, relê a taxonomia e exige uma seleção ativa
+  tanto na criação quanto na edição quando o tipo é arquivado durante o preenchimento;
 - adiciona `Textarea` à UI compartilhada e invalidação/cache privado por usuário + estúdio;
 - habilita runner pgTAP efêmero sem bind mount no Windows e restaura artefatos Playwright em falhas.
 

@@ -96,6 +96,14 @@ function editorFormState(editor: StudioEditor): StudioCoreFormState {
   };
 }
 
+function editorRevisionState(editor: StudioEditor) {
+  return {
+    id: editor.revision.id,
+    number: editor.revision.number,
+    version: editor.revision.version,
+  };
+}
+
 function firstFieldErrors(error: { issues: readonly { message: string; path: PropertyKey[] }[] }) {
   const fieldErrors: Record<string, string> = {};
   for (const issue of error.issues) {
@@ -124,6 +132,10 @@ function fieldErrorProp(errors: FieldErrors, field: keyof StudioCoreFormState) {
 
 function apiError(error: unknown) {
   return error instanceof StudioApiError ? error : undefined;
+}
+
+function isStudioTypeUnavailableError(error: unknown) {
+  return error instanceof StudioApiError && error.code === "STUDIO_TYPE_UNAVAILABLE";
 }
 
 function recomposeStudioClientBoundary(queryClient: QueryClient) {
@@ -365,6 +377,26 @@ function useStudioTypes(initialTypes: readonly StudioTypeOption[]) {
   });
 }
 
+function StudioTypesFeedback({
+  loading,
+  onRetry,
+  unavailable,
+}: Readonly<{ loading: boolean; onRetry: () => void; unavailable: boolean }>) {
+  if (!unavailable) return null;
+  return (
+    <Alert title="Não foi possível confirmar os tipos ativos" variant="error">
+      <Stack space={3}>
+        <span>
+          As opções antigas permanecem bloqueadas até uma nova confirmação do catálogo ativo.
+        </span>
+        <Button loading={loading} onClick={onRetry} variant="secondary">
+          Atualizar tipos de estúdio
+        </Button>
+      </Stack>
+    </Alert>
+  );
+}
+
 function CreateStudioForm({
   initialTypes,
   userId,
@@ -385,8 +417,15 @@ function CreateStudioForm({
       return createStudio(pendingCommand.current);
     },
     networkMode: "always",
-    onError: (error) => {
-      if (isStudioBoundaryChangedError(error)) recomposeStudioClientBoundary(queryClient);
+    onError: async (error) => {
+      if (isStudioBoundaryChangedError(error)) {
+        recomposeStudioClientBoundary(queryClient);
+        return;
+      }
+      if (isStudioTypeUnavailableError(error)) {
+        setFormState((current) => ({ ...current, studioTypeId: "" }));
+        await typesQuery.refetch();
+      }
     },
     onSuccess: (editor) => {
       setCreatedStudioId(editor.studioId);
@@ -423,11 +462,21 @@ function CreateStudioForm({
   const hasAmbiguousRequest = error !== undefined && isAmbiguousStudioError(error);
   const retry = hasAmbiguousRequest ? () => mutation.mutate() : undefined;
   const types = typesQuery.data;
-  const formLocked = mutation.isPending || hasAmbiguousRequest || createdStudioId !== undefined;
+  const formLocked =
+    mutation.isPending ||
+    hasAmbiguousRequest ||
+    createdStudioId !== undefined ||
+    typesQuery.fetchStatus === "fetching" ||
+    typesQuery.isError;
 
   return (
     <div className={styles.editorLayout}>
       <form className={styles.form} noValidate onSubmit={submit}>
+        <StudioTypesFeedback
+          loading={typesQuery.fetchStatus === "fetching"}
+          onRetry={() => void typesQuery.refetch()}
+          unavailable={typesQuery.isError}
+        />
         {types.length === 0 ? (
           <Alert title="Nenhum tipo de estúdio está disponível" variant="error">
             A taxonomia precisa ser reativada por um administrador antes de criar um estúdio.
@@ -458,7 +507,7 @@ function CreateStudioForm({
         />
         <div className={styles.actions}>
           <Button
-            disabled={types.length === 0 || formLocked}
+            disabled={formLocked || !types.some((type) => type.id === formState.studioTypeId)}
             loading={mutation.isPending}
             loadingLabel="Criando rascunho"
             type="submit"
@@ -580,6 +629,8 @@ function EditStudioForm({
   const [conflictRemote, setConflictRemote] = useState<StudioEditor>();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
+  const [formRevision, setFormRevision] = useState(() => editorRevisionState(initialEditor));
+  const [discardRevision, setDiscardRevision] = useState(() => editorRevisionState(initialEditor));
   const [successMessage, setSuccessMessage] = useState<string>();
 
   useEffect(() => {
@@ -619,6 +670,13 @@ function EditStudioForm({
         recomposeStudioClientBoundary(queryClient);
         return;
       }
+      if (isStudioTypeUnavailableError(error)) {
+        pendingUpdate.current = undefined;
+        setConflictRemote(undefined);
+        setFormState((current) => ({ ...current, studioTypeId: "" }));
+        await typesQuery.refetch();
+        return;
+      }
       if (error instanceof StudioApiError && error.code === "CONFLICT") {
         pendingUpdate.current = undefined;
         const refreshed = await editorQuery.refetch();
@@ -630,6 +688,9 @@ function EditStudioForm({
       setConflictRemote(undefined);
       setFieldErrors({});
       setFormState(editorFormState(editor));
+      const revision = editorRevisionState(editor);
+      setFormRevision(revision);
+      setDiscardRevision(revision);
       await queryClient.cancelQueries({
         queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
       });
@@ -662,7 +723,10 @@ function EditStudioForm({
       if (error instanceof StudioApiError && error.code === "CONFLICT") {
         pendingDiscard.current = undefined;
         setConfirmDiscard(false);
-        await editorQuery.refetch();
+        const refreshed = await editorQuery.refetch();
+        if (refreshed.data !== undefined) {
+          setDiscardRevision(editorRevisionState(refreshed.data));
+        }
       }
     },
     onSuccess: async (result) => {
@@ -685,6 +749,9 @@ function EditStudioForm({
         throw error;
       }
       setFormState(editorFormState(result.editor));
+      const revision = editorRevisionState(result.editor);
+      setFormRevision(revision);
+      setDiscardRevision(revision);
       setSuccessMessage("O rascunho foi descartado; a versão publicada permaneceu intacta.");
     },
   });
@@ -703,32 +770,30 @@ function EditStudioForm({
       setFieldErrors(firstFieldErrors(parsed.error));
       return;
     }
-    const editor = editorQuery.data;
     pendingUpdate.current = {
       action: "studio.revision.updateCore",
       expectedScope: userId,
       idempotencyKey: crypto.randomUUID(),
       payload: {
         ...parsed.data,
-        expectedRevisionId: editor.revision.id,
-        expectedRevisionVersion: editor.revision.version,
-        studioId: editor.studioId,
+        expectedRevisionId: formRevision.id,
+        expectedRevisionVersion: formRevision.version,
+        studioId: initialEditor.studioId,
       },
     };
     updateMutation.mutate();
   }
 
   function beginDiscard() {
-    const editor = editorQuery.data;
     if (pendingDiscard.current === undefined) {
       pendingDiscard.current = {
         action: "studio.draft.discard",
         expectedScope: userId,
         idempotencyKey: crypto.randomUUID(),
         payload: {
-          expectedRevisionId: editor.revision.id,
-          expectedRevisionVersion: editor.revision.version,
-          studioId: editor.studioId,
+          expectedRevisionId: discardRevision.id,
+          expectedRevisionVersion: discardRevision.version,
+          studioId: initialEditor.studioId,
         },
       };
     }
@@ -773,13 +838,16 @@ function EditStudioForm({
   const unavailableTypeId = types.some((type) => type.id === editor.studioType.id)
     ? undefined
     : editor.studioType.id;
-  const selectedTypeIsUnavailable = formState.studioTypeId === unavailableTypeId;
+  const selectedTypeIsUnavailable =
+    formState.studioTypeId !== "" && !types.some((type) => type.id === formState.studioTypeId);
   const formLocked =
     !canEdit ||
     updateMutation.isPending ||
     discardMutation.isPending ||
     hasAmbiguousUpdate ||
-    hasAmbiguousDiscard;
+    hasAmbiguousDiscard ||
+    typesQuery.fetchStatus === "fetching" ||
+    typesQuery.isError;
 
   if (!editorIsVerified) {
     const verifying = editorQuery.fetchStatus === "fetching";
@@ -807,9 +875,14 @@ function EditStudioForm({
   return (
     <div className={styles.editorLayout}>
       <form className={styles.form} noValidate onSubmit={submit}>
+        <StudioTypesFeedback
+          loading={typesQuery.fetchStatus === "fetching"}
+          onRetry={() => void typesQuery.refetch()}
+          unavailable={typesQuery.isError}
+        />
         <div className={styles.revisionSummary}>
-          <strong>Revisão {editor.revision.number}</strong>
-          <span>Versão de edição {editor.revision.version}</span>
+          <strong>Revisão {formRevision.number}</strong>
+          <span>Versão de edição {formRevision.version}</span>
           <span>{editor.hasDraft ? "Rascunho privado" : "Versão publicada aprovada"}</span>
         </div>
         {editor.studioStatus === "disabled" ? (
@@ -833,9 +906,17 @@ function EditStudioForm({
         {conflictRemote === undefined ? null : (
           <StudioConflictComparison
             local={formState}
-            onKeepLocal={() => setConflictRemote(undefined)}
+            onKeepLocal={() => {
+              const revision = editorRevisionState(conflictRemote);
+              setFormRevision(revision);
+              setDiscardRevision(revision);
+              setConflictRemote(undefined);
+            }}
             onUseRemote={() => {
               setFormState(editorFormState(conflictRemote));
+              const revision = editorRevisionState(conflictRemote);
+              setFormRevision(revision);
+              setDiscardRevision(revision);
               setConflictRemote(undefined);
             }}
             remote={editorFormState(conflictRemote)}
@@ -857,7 +938,12 @@ function EditStudioForm({
         />
         <div className={styles.actions}>
           <Button
-            disabled={formLocked || types.length === 0 || selectedTypeIsUnavailable}
+            disabled={
+              formLocked ||
+              types.length === 0 ||
+              formState.studioTypeId === "" ||
+              selectedTypeIsUnavailable
+            }
             loading={updateMutation.isPending}
             loadingLabel="Salvando revisão"
             type="submit"

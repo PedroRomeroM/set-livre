@@ -108,6 +108,12 @@ Medir; não usar Infinity em dado operacional.
 - tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; editores usam
   `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
   logout/troca de sessão remove toda a família `owner/private/studio-editor`;
+- o token otimista do editor permanece ligado aos valores visíveis durante refetch em foco; update só
+  adota o token remoto após escolha explícita na comparação. Descarte mantém token independente e,
+  depois de conflito rejeitado, avança apenas esse token e exige nova confirmação antes de agir; isso
+  não rebaseia silenciosamente um save pendente.
+  `STUDIO_TYPE_UNAVAILABLE` limpa a seleção arquivada e refaz `studio/taxonomies/types`; erro nessa
+  releitura mantém os controles bloqueados e oferece retry somente do GET;
 - o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
   até o GET autoritativo do mesmo usuário/estúdio terminar em `idle` sem erro. Refetch de montagem,
   foco ou conflito volta ao boundary neutro; erro de sessão/acesso limpa o cliente inteiro e recompõe

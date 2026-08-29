@@ -104,15 +104,16 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 | SL-F006-E2E-002 | P0         | critical      | 3 engines                  | editar publicado clona draft e preserva a revisão aprovada   | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 | SL-F006-E2E-003 | P0         | critical      | 3 engines                  | dono B não lê nem altera estúdio A e a rota não revela dados | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 | SL-F006-E2E-004 | P1         | regression    | desktop/mobile/320/compact | validação preserva dados inválidos e não envia POST          | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
-| SL-F006-E2E-005 | P1         | regression    | desktop/mobile/320/compact | conflito compara versões, preserva local e exige novo submit | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-005 | P1         | regression    | desktop/mobile/320/compact | refetch preserva token local e exige comparação              | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-006 | P1         | accessibility | desktop/mobile/320/dark    | axe, teclado, toque e alvos de 44 px                         | `tests/e2e/accessibility/feat-006-studio-core-revision.spec.ts` |
 | SL-F006-E2E-007 | P2         | reflow        | 3 engines                  | criação e editor sem overflow no viewport equivalente a 200% | `tests/e2e/reflow/feat-006-studio-core-revision.spec.ts`        |
 | SL-F006-E2E-008 | P0         | critical      | 3 engines                  | troca de sessão oculta o editor antes da releitura           | `tests/e2e/critical/feat-006-studio-core-revision.spec.ts`      |
 | SL-F006-E2E-009 | P1         | regression    | desktop/mobile/320/compact | criação aceita fica terminal antes da navegação              | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-010 | P1         | regression    | desktop/mobile/320/compact | retry ambíguo congela e reutiliza payload/chave              | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
-| SL-F006-E2E-011 | P1         | regression    | desktop/mobile/320/compact | conflito de descarte exige releitura e nova confirmação      | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-011 | P1         | regression    | desktop/mobile/320/compact | tokens de save/descarte isolados; exige reconfirmação        | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 | SL-F006-E2E-012 | P1         | regression    | desktop/mobile/320/compact | estúdio desabilitado fica estritamente somente leitura       | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
-| SL-F006-E2E-013 | P1         | regression    | desktop/mobile/320/compact | tipo arquivado preserva histórico e bloqueia novo save       | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-013 | P1         | regression    | desktop/mobile/320/compact | arquivamento concorrente recupera o editor                   | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
+| SL-F006-E2E-014 | P1         | regression    | desktop/mobile/320/compact | arquivamento concorrente recupera a criação                  | `tests/e2e/regression/feat-006-studio-core-revision.spec.ts`    |
 
 Regras:
 
@@ -132,8 +133,8 @@ Regras:
 - unitário: contratos Zod, DAL, serviço, registry, rotas, read models, API browser, cache privado,
   conflito e boundary de hidratação;
 - integração/Playwright: clone de revisão aprovada, isolamento entre donos e sessões, validação,
-  recuperação de conflito/update/descarte, retry ambíguo, estados terminal/desabilitado/arquivado,
-  acessibilidade e reflow.
+  recuperação de conflito/update/descarte, refetch concorrente, retry ambíguo, estados
+  terminal/desabilitado e arquivamento concorrente em criação/edição, acessibilidade e reflow.
 
 ## Documentação viva afetada
 

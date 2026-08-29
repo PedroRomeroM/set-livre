@@ -92,6 +92,7 @@ independentemente de `Content-Length`.
 | `VALIDATION_FAILED`             |  422 | campos; sem `fieldErrors`, exige releitura    |
 | `NOT_FOUND`                     |  404 | recurso não visível                           |
 | `CONFLICT`                      |  409 | estado concorrente ou contrato superado       |
+| `STUDIO_TYPE_UNAVAILABLE`       |  409 | tipo arquivado durante criação ou edição      |
 | `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
 | `QUOTE_EXPIRED`                 |  409 | cotação                                       |
 | `PAYMENT_PROVIDER_UNAVAILABLE`  |  503 | integração                                    |
@@ -205,11 +206,16 @@ hash foi registrado; se uma mudança posterior impedir reconstruir esse resultad
 fechado como conflito em vez de devolver o estado atual. Chave reutilizada com payload divergente
 também falha `409 CONFLICT`.
 
-Concorrência otimista usa o token `{revisionId, revisionVersion}`. Conflito de update relê
-`GET /api/owner/studios/[studioId]` e só um novo submit salva os valores locais escolhidos. Conflito de
-descarte fecha a confirmação, relê o token e exige nova confirmação explícita. Resultado de transporte
-ambíguo mantém campos e ações concorrentes bloqueados; somente o retry do mesmo payload/chave fica
-disponível. A combinação
+Concorrência otimista usa o token `{revisionId, revisionVersion}` ligado à cópia visível do formulário;
+refetch em segundo plano nunca troca esse token silenciosamente. Conflito de update relê
+`GET /api/owner/studios/[studioId]` e só a escolha explícita entre valores locais/remotos libera um novo
+submit com o token atualizado. Descarte mantém token próprio, que também não acompanha refetch em
+segundo plano; conflito fecha a confirmação e avança somente o token de descarte, sem liberar um save
+stale, exigindo nova confirmação explícita antes de agir. `23514 + studio_type_inactive` vira `409
+STUDIO_TYPE_UNAVAILABLE`, limpa a
+seleção arquivada, relê `/api/studio-types` e exige opção ativa sem tratar a corrida como conflito de
+conteúdo. Resultado de transporte ambíguo mantém campos e ações concorrentes bloqueados; somente o
+retry do mesmo payload/chave fica disponível. A combinação
 interna `42501 + owner_contract_not_current` da guarda de estúdio vira
 `409 OWNER_CONTRACT_CHANGED`: o cliente recompõe a rota SSR para exigir o contrato vigente e não
 classifica isso como conflito de conteúdo. Outros `42501` permanecem `403 FORBIDDEN`.
