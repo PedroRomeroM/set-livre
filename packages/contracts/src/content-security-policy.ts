@@ -15,6 +15,7 @@ export function createContentSecurityPolicy(nonce: string, isDevelopment: boolea
     "form-action 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
+    "frame-src https://www.youtube-nocookie.com",
     "object-src 'none'",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDevelopment ? " 'unsafe-eval'" : ""}`,

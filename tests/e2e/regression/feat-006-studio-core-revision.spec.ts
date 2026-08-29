@@ -287,6 +287,9 @@ test("SL-F006-E2E-010 @p1 retry ambíguo congela campos e reutiliza o payload or
     ).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Salvar regras, FAQ e vídeo" })).toBeDisabled();
 
     const retryResponse = page.waitForResponse((response) => {
       const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
@@ -302,6 +305,7 @@ test("SL-F006-E2E-010 @p1 retry ambíguo congela campos e reutiliza o payload or
     await expect.poll(() => submittedCommands.length).toBe(2);
     expect(submittedCommands[1]).toEqual(submittedCommands[0]);
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(savedName);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeEnabled();
     await expect(
       page.getByText("Rascunho salvo com a versão canônica mais recente."),
     ).toBeVisible();
@@ -445,6 +449,9 @@ test("SL-F006-E2E-012 @p1 estúdio desabilitado permanece estritamente somente l
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Descartar rascunho" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Salvar regras, FAQ e vídeo" })).toBeDisabled();
     await expect(page.getByRole("link", { exact: true, name: "Novo estúdio" })).not.toHaveAttribute(
       "aria-current",
       "page",

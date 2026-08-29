@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   createStudio: vi.fn(),
   discardStudio: vi.fn(),
   readRouteIdentitySession: vi.fn(),
+  updateStudioContent: vi.fn(),
   updateStudioCore: vi.fn(),
+  updateStudioTaxonomy: vi.fn(),
 }));
 
 vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
@@ -16,7 +18,9 @@ vi.mock("../../src/domains/identity/server/identity-read-model", () => ({
 vi.mock("../../src/domains/studios/server/studio-service", () => ({
   createStudio: mocks.createStudio,
   discardStudio: mocks.discardStudio,
+  updateStudioContent: mocks.updateStudioContent,
   updateStudioCore: mocks.updateStudioCore,
+  updateStudioTaxonomy: mocks.updateStudioTaxonomy,
 }));
 
 import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-test-fixture";
@@ -53,6 +57,8 @@ describe("studio command route", () => {
     });
     mocks.createStudio.mockResolvedValue(studioEditorFixture);
     mocks.updateStudioCore.mockResolvedValue(studioEditorFixture);
+    mocks.updateStudioContent.mockResolvedValue(studioEditorFixture);
+    mocks.updateStudioTaxonomy.mockResolvedValue(studioEditorFixture);
     mocks.discardStudio.mockResolvedValue({
       scope: studioTestIds.userId,
       studioDeleted: true,
@@ -128,11 +134,41 @@ describe("studio command route", () => {
     );
 
     const { POST, privateCommandMaximumBytes } = await import("../../src/app/api/commands/route");
-    expect(privateCommandMaximumBytes).toBe(32 * 1024);
+    expect(privateCommandMaximumBytes).toBe(384 * 1024);
     const response = await POST(request);
 
     expect(response.status).toBe(200);
     expect(mocks.createStudio).toHaveBeenCalledWith(command, expect.any(Object));
+  });
+
+  it("accepts the largest valid studio content envelope encoded with multibyte characters", async () => {
+    const command = {
+      action: "studio.revision.updateContent",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: {
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 3,
+        faqs: Array.from({ length: 20 }, () => ({
+          answer: "界".repeat(2_000),
+          question: "界".repeat(160),
+        })),
+        studioId: studioTestIds.studioId,
+        usageRules: "界".repeat(5_000),
+        youtubeVideoId: null,
+      },
+    } as const;
+    const request = commandRequest(command);
+    expect(new TextEncoder().encode(await request.clone().text()).byteLength).toBeGreaterThan(
+      128 * 1024,
+    );
+
+    const { POST, privateCommandMaximumBytes } = await import("../../src/app/api/commands/route");
+    expect(privateCommandMaximumBytes).toBe(384 * 1024);
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateStudioContent).toHaveBeenCalledWith(command, expect.any(Object));
   });
 
   it("rejects a stale scope before the studio service", async () => {
@@ -173,4 +209,43 @@ describe("studio command route", () => {
     });
     expect(mocks.updateStudioCore).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "studio.revision.updateTaxonomy",
+      { amenityIds: [studioTestIds.amenityId], tagIds: [studioTestIds.tagId] },
+      mocks.updateStudioTaxonomy,
+    ],
+    [
+      "studio.revision.updateContent",
+      {
+        faqs: [{ answer: "Resposta.", question: "Pergunta?" }],
+        usageRules: "Regras seguras.",
+        youtubeVideoId: null,
+      },
+      mocks.updateStudioContent,
+    ],
+  ] as const)(
+    "dispatches %s only after strict revision validation",
+    async (action, payload, handler) => {
+      const command = {
+        action,
+        expectedScope: studioTestIds.userId,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        payload: {
+          ...payload,
+          expectedRevisionId: studioTestIds.revisionId,
+          expectedRevisionVersion: 3,
+          studioId: studioTestIds.studioId,
+        },
+      };
+      const { POST } = await import("../../src/app/api/commands/route");
+      const response = await POST(commandRequest(command));
+      expect(response.status).toBe(200);
+      expect(handler).toHaveBeenCalledWith(
+        command,
+        expect.objectContaining({ requestId: studioTestIds.requestId }),
+      );
+    },
+  );
 });

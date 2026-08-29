@@ -7,7 +7,13 @@ import type { PrivateCommandContext } from "@/domains/commands/server/private-co
 import { ApiRouteError, hashPrivateRateLimitValue } from "@/lib/server/api-route";
 import { enforceIdentityRateLimit } from "@/lib/server/rate-limit";
 
-import { createStudioDraft, discardStudioDraft, updateStudioRevisionCore } from "./studio-dal";
+import {
+  createStudioDraft,
+  discardStudioDraft,
+  updateStudioRevisionContent,
+  updateStudioRevisionCore,
+  updateStudioRevisionTaxonomy,
+} from "./studio-dal";
 
 const databaseErrorSchema = z.object({
   code: z.string().optional(),
@@ -16,18 +22,24 @@ const databaseErrorSchema = z.object({
 
 type StudioCreateCommand = Extract<StudioCommand, { action: "studio.create" }>;
 type StudioUpdateCommand = Extract<StudioCommand, { action: "studio.revision.updateCore" }>;
+type StudioContentCommand = Extract<StudioCommand, { action: "studio.revision.updateContent" }>;
+type StudioTaxonomyCommand = Extract<StudioCommand, { action: "studio.revision.updateTaxonomy" }>;
 type StudioDiscardCommand = Extract<StudioCommand, { action: "studio.draft.discard" }>;
 
 export type StudioServiceDependencies = Readonly<{
   createStudioDraft: typeof createStudioDraft;
   discardStudioDraft: typeof discardStudioDraft;
   updateStudioRevisionCore: typeof updateStudioRevisionCore;
+  updateStudioRevisionContent: typeof updateStudioRevisionContent;
+  updateStudioRevisionTaxonomy: typeof updateStudioRevisionTaxonomy;
 }>;
 
 const studioServiceDefaults: StudioServiceDependencies = {
   createStudioDraft,
   discardStudioDraft,
   updateStudioRevisionCore,
+  updateStudioRevisionContent,
+  updateStudioRevisionTaxonomy,
 };
 
 function assertMutableAccount(context: PrivateCommandContext) {
@@ -81,11 +93,14 @@ function handleStudioDatabaseError(error: unknown): never {
       "O tipo de estúdio foi arquivado. Atualize as opções e escolha um tipo ativo.",
     );
   }
-  if (
-    databaseError?.code === "23505" ||
-    databaseError?.code === "23514" ||
-    databaseError?.code === "40001"
-  ) {
+  if (databaseError?.code === "23514" && databaseError.message === "studio_taxonomy_inactive") {
+    throw new ApiRouteError(
+      409,
+      "STUDIO_TAXONOMY_UNAVAILABLE",
+      "Uma tag ou comodidade foi arquivada. Atualize as opções antes de continuar.",
+    );
+  }
+  if (databaseError?.code === "23505" || databaseError?.code === "40001") {
     throw new ApiRouteError(
       409,
       "CONFLICT",
@@ -150,7 +165,48 @@ export function createStudioService(
     }
   }
 
-  return { create, discard, updateCore };
+  async function updateTaxonomy(command: StudioTaxonomyCommand, context: PrivateCommandContext) {
+    assertMutableAccount(context);
+    enforceStudioMutationRateLimit(command.action, context.session.userId);
+    try {
+      const { expectedRevisionId, expectedRevisionVersion, studioId, ...taxonomy } =
+        command.payload;
+      return await dependencies.updateStudioRevisionTaxonomy({
+        expectedRevisionId,
+        expectedRevisionVersion,
+        idempotencyKey: command.idempotencyKey,
+        requestId: context.requestId,
+        studioId,
+        taxonomy,
+        userId: context.session.userId,
+      });
+    } catch (error) {
+      if (error instanceof ApiRouteError) throw error;
+      return handleStudioDatabaseError(error);
+    }
+  }
+
+  async function updateContent(command: StudioContentCommand, context: PrivateCommandContext) {
+    assertMutableAccount(context);
+    enforceStudioMutationRateLimit(command.action, context.session.userId);
+    try {
+      const { expectedRevisionId, expectedRevisionVersion, studioId, ...content } = command.payload;
+      return await dependencies.updateStudioRevisionContent({
+        content,
+        expectedRevisionId,
+        expectedRevisionVersion,
+        idempotencyKey: command.idempotencyKey,
+        requestId: context.requestId,
+        studioId,
+        userId: context.session.userId,
+      });
+    } catch (error) {
+      if (error instanceof ApiRouteError) throw error;
+      return handleStudioDatabaseError(error);
+    }
+  }
+
+  return { create, discard, updateContent, updateCore, updateTaxonomy };
 }
 
 const studioService = createStudioService();
@@ -158,3 +214,5 @@ const studioService = createStudioService();
 export const createStudio = studioService.create;
 export const discardStudio = studioService.discard;
 export const updateStudioCore = studioService.updateCore;
+export const updateStudioContent = studioService.updateContent;
+export const updateStudioTaxonomy = studioService.updateTaxonomy;

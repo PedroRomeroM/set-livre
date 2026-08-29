@@ -111,15 +111,34 @@ Os quinze cenários estáveis `SL-F006-E2E-001..015` expandem para 55 execuçõe
 - reflow a 200% em Chromium, Firefox e WebKit.
 
 O helper cria dono real pelo fluxo UI, prova pré-requisitos no banco e limita queries administrativas
-ao ambiente E2E já validado. O teardown aguarda quiescência real da rede e fecha a página antes da
-remoção transacional das fixtures, evitando que refetches de fundo produzam `404/503` artificiais no
-log. A criação só retorna ao cenário depois da leitura inicial do editor responder `200`; assim a
+ao ambiente E2E já validado. O teardown aguarda o documento carregado e fecha a página antes da
+remoção transacional das fixtures; cada helper de comando já aguarda a resposta específica que gerou o
+estado observado. A criação só retorna ao cenário depois da leitura inicial do editor responder `200`; assim a
 fixture de conflito avança uma versão já observada, sem competir com o refetch de montagem. As specs
 herdam a retenção global de
 trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência localmente.
 
-No banco, `0005_studio_core_revision.sql` possui 41 asserções de domínio/segurança e integra a suíte
-total de 275 testes. O setup `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
+No banco, `0005_studio_core_revision.sql` possui 41 asserções de domínio/segurança. O setup
+`0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
+
+## Matriz da FEAT-007 em andamento
+
+Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
+
+- P0 salva conteúdo/taxonomia, rejeita catálogo inativo/externo e prova plain text nos três engines;
+- FAQ mobile, YouTube permitido/bloqueado, handoff de revisão confirmada entre os painéis e reset
+  integral após descarte em desktop, 390 px, 320 px e altura compacta;
+- troca de sessão oculta editor e conteúdo comercial privados antes da releitura nos três engines;
+- resposta ambígua congela ambos os formulários e repete o comando idempotente intacto nas quatro
+  composições de regressão;
+- refetch preserva a versão otimista associada aos valores locais, exige conflito explícito antes do
+  rebase e impede sobrescrita concorrente silenciosa nas quatro composições de regressão;
+- axe, teclado, toque e alvos em desktop, mobile, 320 px e tema escuro;
+- reflow a 200% em Chromium, Firefox e WebKit.
+
+`0006_studio_taxonomy_content.sql` acrescenta 35 asserções para schema, grants/RLS, isolamento entre
+donos, idempotência, concorrência, clone de publicado, taxonomia ativa, FAQ/vídeo e auditoria
+redigida. As seis suítes totalizam 310 testes.
 
 ## Contrato por feature
 

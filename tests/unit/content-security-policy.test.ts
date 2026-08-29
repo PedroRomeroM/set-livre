@@ -21,6 +21,7 @@ describe("Content Security Policy nonce contract", () => {
     expect(policy.get("script-src")).not.toContain("'unsafe-inline'");
     expect(policy.get("script-src")).not.toContain("'unsafe-eval'");
     expect(policy.get("connect-src")).toEqual(["'self'"]);
+    expect(policy.get("frame-src")).toEqual(["https://www.youtube-nocookie.com"]);
     expect(policy.get("frame-ancestors")).toEqual(["'none'"]);
     expect(policy.get("object-src")).toEqual(["'none'"]);
   });

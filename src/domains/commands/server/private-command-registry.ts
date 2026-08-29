@@ -49,6 +49,8 @@ export function createPrivateCommandRegistry(dependencies: PrivateCommandDepende
         return dependencies.executeOwnerCommand(command, context);
       case "studio.create":
       case "studio.revision.updateCore":
+      case "studio.revision.updateTaxonomy":
+      case "studio.revision.updateContent":
       case "studio.draft.discard":
         return dependencies.executeStudioCommand(command, context);
     }

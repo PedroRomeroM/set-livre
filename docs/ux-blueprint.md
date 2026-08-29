@@ -279,10 +279,17 @@ Editor de estúdio:
   e exige escolher remoto ou novo submit sobre o token atual. Conflito de descarte fecha a confirmação,
   relê e exige nova confirmação. Contrato alterado recompõe a rota e volta ao aceite vigente;
 - descartar exige confirmação: remove o cadastro ainda inédito ou somente o draft quando há publicação.
-  A revisão aprovada nunca é alterada pelo editor;
+  A revisão aprovada nunca é alterada pelo editor; depois do descarte, os campos centrais e comerciais
+  voltam juntos aos valores publicados, sem conservar estado local da revisão removida;
 - criação aceita não reabilita o formulário: mostra estado terminal e ação única para abrir o editor.
   Estúdio `disabled` é somente leitura. Tipo arquivado permanece identificável no histórico, mas salvar
   exige escolher uma opção ativa;
+- a mesma rota inclui conteúdo comercial da revisão: dois seletores com busca local para tags e
+  comodidades, regras plain text, FAQ adicionável/reordenável/excluível e vídeo YouTube com prévia de
+  privacidade aprimorada. Taxonomia vazia orienta correção administrativa, sem opções falsas;
+- taxonomia e conteúdo têm saves explícitos separados. Catálogo arquivado durante a edição produz
+  conflito, relê editor/catálogo, preserva texto e seleções válidas, remove a opção indisponível e exige
+  nova confirmação; URL de vídeo inválida não envia POST;
 - mobile, 320 px e zoom 200% usam uma coluna, sem overflow; axe, teclado, toque e alvos de 44 px fazem
   parte da matriz da feature.
 

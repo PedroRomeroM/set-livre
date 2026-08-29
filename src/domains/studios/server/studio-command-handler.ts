@@ -5,7 +5,13 @@ import type { StudioCommand } from "@set-livre/contracts";
 import type { PrivateCommandContext } from "@/domains/commands/server/private-command-context";
 import { ApiRouteError } from "@/lib/server/api-route";
 
-import { createStudio, discardStudio, updateStudioCore } from "./studio-service";
+import {
+  createStudio,
+  discardStudio,
+  updateStudioContent,
+  updateStudioCore,
+  updateStudioTaxonomy,
+} from "./studio-service";
 
 function assertExpectedScope(context: PrivateCommandContext, expectedScope: string) {
   if (context.session.userId !== expectedScope) {
@@ -24,6 +30,10 @@ export async function executeStudioCommand(command: StudioCommand, context: Priv
       return createStudio(command, context);
     case "studio.revision.updateCore":
       return updateStudioCore(command, context);
+    case "studio.revision.updateTaxonomy":
+      return updateStudioTaxonomy(command, context);
+    case "studio.revision.updateContent":
+      return updateStudioContent(command, context);
     case "studio.draft.discard":
       return discardStudio(command, context);
   }

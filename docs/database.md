@@ -13,23 +13,25 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot e tipos são gerados.
 
-### 1.1 Estado versionado até a FEAT-006 em andamento
+### 1.1 Estado versionado até a FEAT-007 em andamento
 
 A árvore possui a baseline inicial `20260824000100`, a migration de role de produção
 `20260828174500_default_production_dal_role` e a migration append-only
-`20260829103831_feat_006_studio_core_revision`, que é o head da branch atual. Antes do primeiro deploy, enquanto o
+`20260829103831_feat_006_studio_core_revision` e a migration
+`20260829124200_feat_007_studio_taxonomy_content`, que é o head da branch atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. O runner executa um setup idempotente e cinco suítes pgTAP; o recorte atual totaliza
-275 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e núcleo de estúdio.
+dump de schema. O runner executa um setup idempotente e seis suítes pgTAP; o recorte atual totaliza
+310 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e estúdios.
 
 A baseline implementada inclui:
 
 - schemas `private` e `audit`, `app_dal NOLOGIN NOINHERIT`, grants mínimos e RLS;
 - identidade mínima, termos/aceites, recovery one-shot e perfil privado;
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
-- núcleo de estúdio/revisão, taxonomia mínima, concorrência otimista, ownership e descarte seguro;
+- núcleo de estúdio/revisão, taxonomias ativas, conteúdo comercial, concorrência otimista, ownership e
+  descarte seguro;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
@@ -189,7 +191,7 @@ Sem escrita pelo browser.
 
 ### 4.6 Taxonomias
 
-O recorte implementado possui somente `studio_types`:
+O recorte implementado possui `studio_types`, `tags` e `amenities`, todos com:
 
 - UUID;
 - nome;
@@ -199,11 +201,12 @@ O recorte implementado possui somente `studio_types`:
 - timestamps;
 - slug único.
 
-Quatro tipos mínimos são seedados deterministicamente. `list_active_studio_types()` oferece somente
-ativos para novas escolhas. A policy também conserva legível um tipo arquivado quando ele é
-referenciado por revisão pertencente ao `auth.uid()`, permitindo abrir o histórico sem expor esse tipo
-a outro dono nem aceitá-lo em nova mutação. Escrita runtime permanece revogada. Amenities e tags não
-são criadas antecipadamente e pertencem à feature própria.
+Quatro tipos, oito tags e oito comodidades mínimas são seedados deterministicamente. Browser
+autenticado recebe somente opções ativas para novas escolhas por `list_active_studio_types()` e
+`list_active_studio_taxonomies()`. As policies também conservam legíveis tipo, tags e comodidades
+arquivados quando são referenciados por revisão pertencente ao `auth.uid()`, permitindo abrir o
+histórico sem expor esses itens a outro dono nem aceitá-los em nova mutação. Escrita runtime permanece
+revogada. A administração pertence à FEAT-031, sem antecipar permissões de backoffice nesta feature.
 
 ### 4.7 `studios`
 
@@ -234,6 +237,8 @@ Campos públicos versionados:
 - `postal_code`;
 - `capacity` 1–500;
 - `studio_type_id`;
+- `usage_rules` plain text, aparado e limitado a 5.000 caracteres;
+- `youtube_video_id` nulo ou ID allowlisted de 11 caracteres;
 - timestamps;
 - unique `(studio_id, revision_number)`.
 
@@ -246,7 +251,15 @@ Somente `draft` pode ser atualizada ou removida, e cada atualização incrementa
 - `studio_revision_tags(revision_id, tag_id)`;
 - `studio_faqs(id, revision_id, question, answer, position)`;
 - unique de posição por revisão;
-- limites de 20 FAQs e 20 tags validados no comando.
+- limites de 20 FAQs, 20 tags e 20 comodidades validados no comando;
+- trigger impede escrita nas relações de revisão não draft;
+- ao abrir draft a partir de uma revisão aprovada, colunas, tags, comodidades e FAQs são clonadas na
+  mesma transação antes da alteração solicitada.
+
+RLS permite leitura dessas relações somente ao dono da revisão; grants autenticados são apenas por
+coluna e toda escrita direta permanece revogada. Os comandos privados revalidam taxonomia ativa,
+ownership, fence otimista e idempotência; auditoria registra somente contagens, versão e presença de
+vídeo, nunca regras ou FAQ.
 
 ### 4.10 `studio_media`
 
@@ -649,7 +662,7 @@ Planejado para domínios futuros, `private.idempotency_keys`:
 
 ## 5. Read models
 
-Implementados nas FEAT-002/003/004/006:
+Implementados nas FEAT-002/003/004/006/007:
 
 - `public.get_current_legal_terms()`: retorna somente `id`, tipo, versão, título, Markdown, hash, origem e vigência atuais; `anon` e `authenticated` podem executar;
 - `public.get_own_identity_context()`: retorna 0/1 linha com usuário, tipo de pessoa, status e conclusão derivada; somente `authenticated` pode executar;
@@ -660,9 +673,11 @@ Implementados nas FEAT-002/003/004/006:
 - `public.get_owner_recipient_status()`: não recebe UUID, filtra `auth.uid()`, repete o `scope` e retorna 16 colunas com somente a referência mínima do contrato, status internos, requisitos allowlisted, próxima ação, versões e elegibilidade derivada; nunca retorna título, versão textual, hash, corpo Markdown, PII, provider ou referência externa.
 - `public.list_active_studio_types()`: retorna somente `id`, nome e ordem dos tipos ativos para
   `authenticated`;
+- `public.list_active_studio_taxonomies()`: retorna somente `id`, nome e ordem de tags e comodidades
+  ativas para `authenticated`;
 - `public.get_owner_studio_editor(uuid)`: retorna 0/1 editor do próprio `auth.uid()`, escolhe o draft
-  atual ou a revisão publicada, preserva o nome do tipo histórico arquivado e nunca revela a existência
-  do estúdio de outro dono.
+  atual ou a revisão publicada, preserva descritores de tipo, tags e comodidades históricas arquivadas
+  e nunca revela a existência do estúdio de outro dono.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -672,7 +687,6 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `public.get_studio_detail(uuid, date)`;
 - `public.get_studio_availability(uuid, date, date)`;
 - `public.get_reservation_quote(...)`;
-- `public.list_active_taxonomies()`.
 
 ### Autenticados planejados
 
@@ -764,9 +778,9 @@ Usuário lê somente as colunas seguras necessárias aos read models invoker do 
 
 Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões;
 as policies usam `auth.uid()` e outro dono obtém zero linhas. `anon`, `service_role` e `app_dal` não
-recebem acesso às tabelas; a DAL executa apenas três funções privadas. A policy de tipo permite ativo
-ou referência histórica do próprio dono, enquanto o read model de seleção continua filtrando somente
-ativos. Conteúdo ainda não aprovado não possui read model público.
+recebem acesso às tabelas; a DAL executa apenas cinco funções privadas. As policies de tipo, tags e
+comodidades permitem item ativo ou referência histórica do próprio dono, enquanto os read models de
+seleção continuam filtrando somente ativos. Conteúdo ainda não aprovado não possui read model público.
 
 ### 8.3 Reservas
 
@@ -782,9 +796,10 @@ Upload permitido somente por URL assinada. Leitura pública de mídia passa por 
 
 ## 9. Índices estruturais iniciais
 
-Implementados até a FEAT-006: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
-de revisão não nulos, a FK de tipo e os uniques `(studio_id, revision_number)` e de um único draft
-ativo. Todos sustentam FK ou invariantes; nenhum índice de busca pública foi antecipado.
+Implementados até a FEAT-007: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
+de revisão não nulos, a FK de tipo, as FKs reversas de tag/comodidade e os uniques
+`(studio_id, revision_number)`, de um único draft ativo e de posição da FAQ por revisão. Todos
+sustentam FK ou invariantes; nenhum índice de busca pública foi antecipado.
 
 Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor definido:
 

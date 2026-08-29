@@ -124,6 +124,31 @@ describe("modular private command registry", () => {
           studioId: "44444444-4444-4444-8444-444444444444",
         },
       },
+      {
+        action: "studio.revision.updateTaxonomy",
+        expectedScope: userId,
+        idempotencyKey,
+        payload: {
+          amenityIds: ["63000000-0000-4000-8000-000000000001"],
+          expectedRevisionId: "55555555-5555-4555-8555-555555555555",
+          expectedRevisionVersion: 1,
+          studioId: "44444444-4444-4444-8444-444444444444",
+          tagIds: ["62000000-0000-4000-8000-000000000001"],
+        },
+      },
+      {
+        action: "studio.revision.updateContent",
+        expectedScope: userId,
+        idempotencyKey,
+        payload: {
+          expectedRevisionId: "55555555-5555-4555-8555-555555555555",
+          expectedRevisionVersion: 1,
+          faqs: [],
+          studioId: "44444444-4444-4444-8444-444444444444",
+          usageRules: "",
+          youtubeVideoId: null,
+        },
+      },
     ] as const;
 
     for (const raw of commands) {
@@ -131,7 +156,7 @@ describe("modular private command registry", () => {
       await expect(execute(command, context)).resolves.toEqual({ scope: userId });
       expect(mocks.executeStudioCommand).toHaveBeenLastCalledWith(command, context);
     }
-    expect(mocks.executeStudioCommand).toHaveBeenCalledTimes(3);
+    expect(mocks.executeStudioCommand).toHaveBeenCalledTimes(5);
   });
 
   it("does not turn the registry into browser-controlled generic dispatch", () => {

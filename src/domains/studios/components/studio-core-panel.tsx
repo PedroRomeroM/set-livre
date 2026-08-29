@@ -7,7 +7,7 @@ import {
   type StudioTypeOption,
 } from "@set-livre/contracts";
 import { Alert, Button, ButtonLink, Field, Input, Select, Stack, Textarea } from "@set-livre/ui";
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
@@ -26,9 +26,12 @@ import {
 import {
   assertStudioEditorBoundary,
   publishStudioEditor,
+  recomposeStudioClientBoundary,
   studioEditorCanRender,
+  studioRevisionToken,
   StudioScopeChangedError,
   studioQueryKeys,
+  type StudioRevisionToken,
 } from "./studio-query-keys";
 import styles from "./studio.module.css";
 
@@ -96,14 +99,6 @@ function editorFormState(editor: StudioEditor): StudioCoreFormState {
   };
 }
 
-function editorRevisionState(editor: StudioEditor) {
-  return {
-    id: editor.revision.id,
-    number: editor.revision.number,
-    version: editor.revision.version,
-  };
-}
-
 function firstFieldErrors(error: { issues: readonly { message: string; path: PropertyKey[] }[] }) {
   const fieldErrors: Record<string, string> = {};
   for (const issue of error.issues) {
@@ -136,11 +131,6 @@ function apiError(error: unknown) {
 
 function isStudioTypeUnavailableError(error: unknown) {
   return error instanceof StudioApiError && error.code === "STUDIO_TYPE_UNAVAILABLE";
-}
-
-function recomposeStudioClientBoundary(queryClient: QueryClient) {
-  queryClient.clear();
-  window.location.reload();
 }
 
 function includeCurrentStudioType(
@@ -592,12 +582,32 @@ function StudioConflictComparison({
 }
 
 function EditStudioForm({
+  discardRevision,
+  externalCommandLocked,
+  formRevision,
   initialEditor,
   initialTypes,
+  onAuthoritativeRevisionAdvance,
+  onAuthoritativeRevisionReplacement,
+  onCommandFinish,
+  onCommandStart,
+  onDiscardRevisionChange,
+  onFormRevisionChange,
+  onStudioDeleted,
   userId,
 }: Readonly<{
+  discardRevision: StudioRevisionToken;
+  externalCommandLocked: boolean;
+  formRevision: StudioRevisionToken;
   initialEditor: StudioEditor;
   initialTypes: readonly StudioTypeOption[];
+  onAuthoritativeRevisionAdvance: ((editor: StudioEditor) => void) | undefined;
+  onAuthoritativeRevisionReplacement: ((editor: StudioEditor) => void) | undefined;
+  onCommandFinish: () => void;
+  onCommandStart: () => void;
+  onDiscardRevisionChange: (revision: StudioRevisionToken) => void;
+  onFormRevisionChange: (revision: StudioRevisionToken) => void;
+  onStudioDeleted: (() => void) | undefined;
   userId: string;
 }>) {
   const queryClient = useQueryClient();
@@ -630,8 +640,6 @@ function EditStudioForm({
   const [conflictRemote, setConflictRemote] = useState<StudioEditor>();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
-  const [formRevision, setFormRevision] = useState(() => editorRevisionState(initialEditor));
-  const [discardRevision, setDiscardRevision] = useState(() => editorRevisionState(initialEditor));
   const [successMessage, setSuccessMessage] = useState<string>();
 
   useEffect(() => {
@@ -652,48 +660,54 @@ function EditStudioForm({
     },
     networkMode: "always",
     onError: async (error) => {
-      if (isStudioBoundaryChangedError(error)) {
-        recomposeStudioClientBoundary(queryClient);
-        return;
-      }
-      if (isStudioTypeUnavailableError(error)) {
-        pendingUpdate.current = undefined;
-        setPendingConflictRecovery(undefined);
-        setConflictRemote(undefined);
-        setFormState((current) => ({ ...current, studioTypeId: "" }));
-        await typesQuery.refetch();
-        return;
-      }
-      if (error instanceof StudioApiError && error.code === "CONFLICT") {
-        pendingUpdate.current = undefined;
-        setPendingConflictRecovery("update");
-        setConflictRemote(undefined);
-        const refreshed = await editorQuery.refetch();
-        if (refreshed.isSuccess) recoverVerifiedConflict("update", refreshed.data);
-      }
-    },
-    onSuccess: async (editor) => {
+      if (isAmbiguousStudioError(error)) return;
       pendingUpdate.current = undefined;
-      setPendingConflictRecovery(undefined);
-      setConflictRemote(undefined);
-      setFieldErrors({});
-      setFormState(editorFormState(editor));
-      const revision = editorRevisionState(editor);
-      setFormRevision(revision);
-      setDiscardRevision(revision);
-      await queryClient.cancelQueries({
-        queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
-      });
       try {
-        publishStudioEditor(queryClient, editor, userId, initialEditor.studioId);
-      } catch (error) {
-        if (error instanceof StudioScopeChangedError) {
+        if (isStudioBoundaryChangedError(error)) {
           recomposeStudioClientBoundary(queryClient);
           return;
         }
-        throw error;
+        if (isStudioTypeUnavailableError(error)) {
+          setPendingConflictRecovery(undefined);
+          setConflictRemote(undefined);
+          setFormState((current) => ({ ...current, studioTypeId: "" }));
+          await typesQuery.refetch();
+          return;
+        }
+        if (error instanceof StudioApiError && error.code === "CONFLICT") {
+          setPendingConflictRecovery("update");
+          setConflictRemote(undefined);
+          const refreshed = await editorQuery.refetch();
+          if (refreshed.isSuccess) recoverVerifiedConflict("update", refreshed.data);
+        }
+      } finally {
+        onCommandFinish();
       }
-      setSuccessMessage("Rascunho salvo com a versão canônica mais recente.");
+    },
+    onSuccess: async (editor) => {
+      try {
+        pendingUpdate.current = undefined;
+        setPendingConflictRecovery(undefined);
+        setConflictRemote(undefined);
+        setFieldErrors({});
+        setFormState(editorFormState(editor));
+        await queryClient.cancelQueries({
+          queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
+        });
+        try {
+          publishStudioEditor(queryClient, editor, userId, initialEditor.studioId);
+        } catch (error) {
+          if (error instanceof StudioScopeChangedError) {
+            recomposeStudioClientBoundary(queryClient);
+            return;
+          }
+          throw error;
+        }
+        setSuccessMessage("Rascunho salvo com a versão canônica mais recente.");
+        onAuthoritativeRevisionAdvance?.(editor);
+      } finally {
+        onCommandFinish();
+      }
     },
   });
 
@@ -706,58 +720,67 @@ function EditStudioForm({
     },
     networkMode: "always",
     onError: async (error) => {
-      if (isStudioBoundaryChangedError(error)) {
-        recomposeStudioClientBoundary(queryClient);
-        return;
-      }
-      if (error instanceof StudioApiError && error.code === "CONFLICT") {
-        pendingDiscard.current = undefined;
-        setConfirmDiscard(false);
-        setPendingConflictRecovery("discard");
-        const refreshed = await editorQuery.refetch();
-        if (refreshed.isSuccess) recoverVerifiedConflict("discard", refreshed.data);
-      }
-    },
-    onSuccess: async (result) => {
+      if (isAmbiguousStudioError(error)) return;
       pendingDiscard.current = undefined;
-      setPendingConflictRecovery(undefined);
-      setConfirmDiscard(false);
-      if (result.studioDeleted) {
-        await queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey });
-        queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });
-        setStudioDeleted(true);
-        return;
-      }
-      await queryClient.cancelQueries({
-        queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
-      });
       try {
-        publishStudioEditor(queryClient, result.editor, userId, initialEditor.studioId);
-      } catch (error) {
-        if (error instanceof StudioScopeChangedError) {
+        if (isStudioBoundaryChangedError(error)) {
           recomposeStudioClientBoundary(queryClient);
           return;
         }
-        throw error;
+        if (error instanceof StudioApiError && error.code === "CONFLICT") {
+          setConfirmDiscard(false);
+          setPendingConflictRecovery("discard");
+          const refreshed = await editorQuery.refetch();
+          if (refreshed.isSuccess) recoverVerifiedConflict("discard", refreshed.data);
+        }
+      } finally {
+        onCommandFinish();
       }
-      setFormState(editorFormState(result.editor));
-      const revision = editorRevisionState(result.editor);
-      setFormRevision(revision);
-      setDiscardRevision(revision);
-      setSuccessMessage("O rascunho foi descartado; a versão publicada permaneceu intacta.");
+    },
+    onSuccess: async (result) => {
+      try {
+        pendingDiscard.current = undefined;
+        setPendingConflictRecovery(undefined);
+        setConfirmDiscard(false);
+        if (result.studioDeleted) {
+          await queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey });
+          queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });
+          setStudioDeleted(true);
+          onStudioDeleted?.();
+          return;
+        }
+        await queryClient.cancelQueries({
+          queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
+        });
+        try {
+          publishStudioEditor(queryClient, result.editor, userId, initialEditor.studioId);
+        } catch (error) {
+          if (error instanceof StudioScopeChangedError) {
+            recomposeStudioClientBoundary(queryClient);
+            return;
+          }
+          throw error;
+        }
+        setFormState(editorFormState(result.editor));
+        setSuccessMessage("O rascunho foi descartado; a versão publicada permaneceu intacta.");
+        onAuthoritativeRevisionReplacement?.(result.editor);
+      } finally {
+        onCommandFinish();
+      }
     },
   });
 
   function updateField(field: keyof StudioCoreFormState, value: string) {
+    setSuccessMessage(undefined);
     setFormState((current) => ({ ...current, [field]: value }));
   }
 
   function recoverVerifiedConflict(kind: "discard" | "update", editor: StudioEditor) {
-    const revision = editorRevisionState(editor);
+    const revision = studioRevisionToken(editor);
     if (kind === "update") {
       setConflictRemote(editor);
     } else {
-      setDiscardRevision(revision);
+      onDiscardRevisionChange(revision);
     }
     setPendingConflictRecovery(undefined);
   }
@@ -790,6 +813,7 @@ function EditStudioForm({
         studioId: initialEditor.studioId,
       },
     };
+    onCommandStart();
     updateMutation.mutate();
   }
 
@@ -806,6 +830,7 @@ function EditStudioForm({
         },
       };
     }
+    onCommandStart();
     discardMutation.mutate();
   }
 
@@ -866,6 +891,7 @@ function EditStudioForm({
     hasAmbiguousUpdate ||
     hasAmbiguousDiscard ||
     pendingConflictRecovery !== undefined ||
+    externalCommandLocked ||
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
 
@@ -927,16 +953,14 @@ function EditStudioForm({
           <StudioConflictComparison
             local={formState}
             onKeepLocal={() => {
-              const revision = editorRevisionState(conflictRemote);
-              setFormRevision(revision);
-              setDiscardRevision(revision);
+              const revision = studioRevisionToken(conflictRemote);
+              onFormRevisionChange(revision);
               setConflictRemote(undefined);
             }}
             onUseRemote={() => {
               setFormState(editorFormState(conflictRemote));
-              const revision = editorRevisionState(conflictRemote);
-              setFormRevision(revision);
-              setDiscardRevision(revision);
+              const revision = studioRevisionToken(conflictRemote);
+              onFormRevisionChange(revision);
               setConflictRemote(undefined);
             }}
             remote={editorFormState(conflictRemote)}
@@ -1013,9 +1037,19 @@ export function StudioCorePanel(
   props: Readonly<
     | { initialTypes: readonly StudioTypeOption[]; mode: "create"; userId: string }
     | {
+        discardRevision: StudioRevisionToken;
+        externalCommandLocked: boolean;
+        formRevision: StudioRevisionToken;
         initialEditor: StudioEditor;
         initialTypes: readonly StudioTypeOption[];
         mode: "edit";
+        onAuthoritativeRevisionAdvance?: (editor: StudioEditor) => void;
+        onAuthoritativeRevisionReplacement?: (editor: StudioEditor) => void;
+        onCommandFinish: () => void;
+        onCommandStart: () => void;
+        onDiscardRevisionChange: (revision: StudioRevisionToken) => void;
+        onFormRevisionChange: (revision: StudioRevisionToken) => void;
+        onStudioDeleted?: () => void;
         userId: string;
       }
   >,
@@ -1032,8 +1066,18 @@ export function StudioCorePanel(
     <CreateStudioForm initialTypes={props.initialTypes} userId={props.userId} />
   ) : (
     <EditStudioForm
+      discardRevision={props.discardRevision}
+      externalCommandLocked={props.externalCommandLocked}
+      formRevision={props.formRevision}
       initialEditor={props.initialEditor}
       initialTypes={props.initialTypes}
+      onAuthoritativeRevisionAdvance={props.onAuthoritativeRevisionAdvance}
+      onAuthoritativeRevisionReplacement={props.onAuthoritativeRevisionReplacement}
+      onCommandFinish={props.onCommandFinish}
+      onCommandStart={props.onCommandStart}
+      onDiscardRevisionChange={props.onDiscardRevisionChange}
+      onFormRevisionChange={props.onFormRevisionChange}
+      onStudioDeleted={props.onStudioDeleted}
       userId={props.userId}
     />
   );

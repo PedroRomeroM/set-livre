@@ -13,7 +13,7 @@ const executePrivateCommand = createPrivateCommandRegistry({
   executeStudioCommand,
 });
 
-export const privateCommandMaximumBytes = 32 * 1024;
+export const privateCommandMaximumBytes = 384 * 1024;
 
 export async function POST(request: Request) {
   return runPrivateCommandPostRoute(request, async (requestId, setAction, setResponseHeaders) => {

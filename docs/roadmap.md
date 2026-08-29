@@ -10,7 +10,7 @@ O comportamento concluído fica no código, nos testes e nos documentos permanen
 |     2 | FEAT-003 | Perfil, conta e preferências        | Concluída    | FEAT-002                                         | —                                                             |
 |     3 | FEAT-004 | Ativação de dono e recebedor        | Concluída    | FEAT-003                                         | —                                                             |
 |     4 | FEAT-006 | Núcleo e revisões de estúdio        | Em andamento | FEAT-003, FEAT-004                               | [plano](features/FEAT-006-studio-core-revision.md)            |
-|     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Planejada    | FEAT-006                                         | [plano](features/FEAT-007-studio-taxonomy-content.md)         |
+|     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Em andamento | FEAT-006                                         | [plano](features/FEAT-007-studio-taxonomy-content.md)         |
 |     6 | FEAT-031 | Backoffice de usuários e taxonomias | Planejada    | FEAT-003, FEAT-007                               | [plano](features/FEAT-031-backoffice-users-taxonomy.md)       |
 |     7 | FEAT-008 | Mídia de estúdio                    | Planejada    | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
 |     8 | FEAT-009 | Publicação e revisão de estúdio     | Planejada    | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |

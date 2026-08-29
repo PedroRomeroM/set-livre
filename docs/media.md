@@ -93,14 +93,18 @@ Regras:
 
 ## 8. YouTube
 
-Aceitar URL e extrair ID de formatos permitidos. Persistir apenas `youtube_video_id`.
+Aceitar ID de 11 caracteres ou URL HTTPS exata de `youtube.com`, `www.youtube.com`, `m.youtube.com`,
+`youtu.be` e `www.youtube-nocookie.com`. São suportados somente `watch?v=`, `shorts/`, `embed/` e o
+path único de `youtu.be`; userinfo, HTTP, sufixos de host e caminhos extras falham. Persistir apenas
+`youtube_video_id`.
 
 - validar host/ID;
-- embed com domínio de privacidade aprimorada quando possível;
+- embed sempre em `https://www.youtube-nocookie.com/embed/<id>`, allowlisted no CSP;
 - lazy load;
 - título acessível;
 - sem autoplay;
-- erro mostra fallback e link seguro;
+- sandbox limitado a scripts, mesma origem e apresentação;
+- a prévia mantém um link seguro para abrir o vídeo fora do iframe, inclusive quando o embed falhar;
 - nenhum HTML arbitrário.
 
 ## 9. Moderação

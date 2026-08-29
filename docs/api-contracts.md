@@ -35,7 +35,7 @@ type LogoutRequest = {
 
 Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No
 registry implementado, `expectedScope` pertence aos dois comandos de perfil, aos três comandos de
-dono/recebedor e aos três comandos de estúdio; os seis últimos também exigem `idempotencyKey`. A rota
+dono/recebedor e aos cinco comandos de estúdio; os oito últimos também exigem `idempotencyKey`. A rota
 Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID
 estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
@@ -46,13 +46,14 @@ Headers:
 - cookie de sessão;
 - `Origin` confiável;
 - `Idempotency-Key` pode ser header ou envelope, mas uma política única deve ser escolhida no código;
-  os comandos FEAT-004 e FEAT-006 usam exclusivamente `idempotencyKey` no envelope.
+  os comandos FEAT-004, FEAT-006 e FEAT-007 usam exclusivamente `idempotencyKey` no envelope.
 
 `X-Request-Id`/`requestId` identifica a request HTTP e nunca substitui `idempotencyKey`. A chave de idempotência identifica a tentativa lógica repetível e pode atravessar retries com novos request IDs; ela não é copiada para o campo público de correlação.
 
 Limite padrão planejado: 128 KiB. A superfície Auth já implementada na FEAT-002 usa o limite mais
-restritivo de 16 KiB. `/api/commands` usa 32 KiB no recorte da FEAT-006, suficiente para o maior
-payload válido do núcleo de estúdio mesmo em UTF-8 multibyte; todo limite consome o stream
+restritivo de 16 KiB. `/api/commands` usa 384 KiB: o teto é derivado do envelope estrito com até vinte
+FAQs, respostas de 2.000 caracteres e regras de 5.000 caracteres, incluindo a expansão máxima da
+serialização JSON/UTF-8. Assim, todo payload válido cabe sem tornar a rota ilimitada; todo limite consome o stream
 independentemente de `Content-Length`.
 
 ### 2.1 Superfície implementada na FEAT-002
@@ -92,6 +93,7 @@ independentemente de `Content-Length`.
 | `VALIDATION_FAILED`             |  422 | campos; sem `fieldErrors`, exige releitura    |
 | `NOT_FOUND`                     |  404 | recurso não visível                           |
 | `CONFLICT`                      |  409 | estado concorrente ou contrato superado       |
+| `STUDIO_TAXONOMY_UNAVAILABLE`   |  409 | tag/comodidade arquivada durante a gravação   |
 | `STUDIO_TYPE_UNAVAILABLE`       |  409 | tipo arquivado durante criação ou edição      |
 | `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
 | `QUOTE_EXPIRED`                 |  409 | cotação                                       |
@@ -170,34 +172,38 @@ Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo s
 
 ### 5.3 Estúdio e revisão
 
-Implementados na FEAT-006:
+Implementados nas FEAT-006 e FEAT-007:
 
-| Action                       | Efeito                                             |
-| ---------------------------- | -------------------------------------------------- |
-| `studio.create`              | cria studio + revisão draft                        |
-| `studio.revision.updateCore` | dados, endereço, capacidade, tipo                  |
-| `studio.draft.discard`       | remove draft; preserva publicado ou exclui inédito |
+| Action                           | Efeito                                             |
+| -------------------------------- | -------------------------------------------------- |
+| `studio.create`                  | cria studio + revisão draft                        |
+| `studio.revision.updateCore`     | dados, endereço, capacidade, tipo                  |
+| `studio.revision.updateTaxonomy` | tags e comodidades ativas                          |
+| `studio.revision.updateContent`  | regras, FAQ ordenada e YouTube ID                  |
+| `studio.draft.discard`           | remove draft; preserva publicado ou exclui inédito |
 
 Planejados para features posteriores:
 
-| Action                           | Efeito                       |
-| -------------------------------- | ---------------------------- |
-| `studio.revision.updateTaxonomy` | tags/amenities               |
-| `studio.revision.updateContent`  | descrição/regras/FAQ/YouTube |
-| `studio.revision.submit`         | valida completude e envia    |
-| `studio.pause`                   | pausa novas reservas         |
-| `studio.resume`                  | retoma se elegível           |
-| `studio.media.upload.prepare`    | emite upload assinado        |
-| `studio.media.upload.finalize`   | valida objeto/metadados      |
-| `studio.media.reorder`           | posição                      |
-| `studio.media.cover.set`         | capa                         |
-| `studio.media.delete`            | remove se seguro             |
+| Action                         | Efeito                    |
+| ------------------------------ | ------------------------- |
+| `studio.revision.submit`       | valida completude e envia |
+| `studio.pause`                 | pausa novas reservas      |
+| `studio.resume`                | retoma se elegível        |
+| `studio.media.upload.prepare`  | emite upload assinado     |
+| `studio.media.upload.finalize` | valida objeto/metadados   |
+| `studio.media.reorder`         | posição                   |
+| `studio.media.cover.set`       | capa                      |
+| `studio.media.delete`          | remove se seguro          |
 
-Os três envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
+Os cinco envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
 payload de criação contém somente os dados centrais. Update e descarte recebem `studioId`,
 `expectedRevisionId` e `expectedRevisionVersion`; status e número de revisão nunca são aceitos do
 browser. Curitiba/PR, CEP, capacidade, tipo ativo e limites textuais são validados por Zod e pelo
 banco.
+
+Taxonomia recebe listas únicas de no máximo 20 UUIDs por grupo e o banco aceita somente registros
+ativos. Conteúdo recebe plain text aparado, até 20 FAQs ordenadas e `youtubeVideoId` nulo ou com 11
+caracteres allowlisted; URLs são interpretadas apenas na fronteira do browser e nunca persistidas.
 
 O retorno de create/update é o `StudioEditor` autoritativo. Discard retorna união discriminada:
 `studioDeleted=true` sem editor para estúdio inédito ou `studioDeleted=false` com editor da revisão
@@ -209,12 +215,18 @@ também falha `409 CONFLICT`.
 Concorrência otimista usa o token `{revisionId, revisionVersion}` ligado à cópia visível do formulário;
 refetch em segundo plano nunca troca esse token silenciosamente. Conflito de update relê
 `GET /api/owner/studios/[studioId]` e só a escolha explícita entre valores locais/remotos libera um novo
-submit com o token atualizado. Descarte mantém token próprio, que também não acompanha refetch em
+submit com o token atualizado. Uma mutação própria confirmada pelo servidor avança os tokens de todas
+as superfícies e do descarte para a revisão retornada, sem substituir valores irmãos ainda não
+submetidos; isso evita falso conflito entre saves locais sequenciais sem aceitar mudança externa.
+Descarte mantém token próprio, que também não acompanha refetch em
 segundo plano; conflito fecha a confirmação e avança somente o token de descarte, sem liberar um save
 stale, exigindo nova confirmação explícita antes de agir. `23514 + studio_type_inactive` vira `409
 STUDIO_TYPE_UNAVAILABLE`, limpa a
 seleção arquivada, relê `/api/studio-types` e exige opção ativa sem tratar a corrida como conflito de
-conteúdo. Resultado de transporte ambíguo mantém campos e ações concorrentes bloqueados; somente o
+conteúdo. `23514 + studio_taxonomy_inactive` vira `409 STUDIO_TAXONOMY_UNAVAILABLE`, relê editor e
+`/api/studio-taxonomies` e exige remover qualquer item arquivado antes de nova gravação; outros
+`23514` preservam o erro interno para resposta `500` redigida, sem falso rebase. Resultado de
+transporte ambíguo mantém campos e ações concorrentes bloqueados; somente o
 retry do mesmo payload/chave fica disponível. A combinação
 interna `42501 + owner_contract_not_current` da guarda de estúdio vira
 `409 OWNER_CONTRACT_CHANGED`: o cliente recompõe a rota SSR para exigir o contrato vigente e não
@@ -223,12 +235,13 @@ classifica isso como conflito de conteúdo. Outros `42501` permanecem `403 FORBI
 Leituras implementadas:
 
 - `GET /api/studio-types`: sessão autenticada e lista estrita de tipos ativos;
+- `GET /api/studio-taxonomies`: sessão autenticada e projeção estrita de tags/comodidades ativas;
 - `GET /api/owner/studios/[studioId]`: sessão autenticada, conta ativa, perfil completo, autoridade de
   dono ativa e contrato vigente são revalidados em toda leitura; depois disso, UUID estrito e 0/1
   editor do próprio dono. UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem
   revelar existência. Revogação durante uma sessão aberta recompõe a rota SSR antes de nova edição.
 
-Ambas usam deadline server-side de 2 segundos, resposta sem cache e evento operacional redigido.
+As três usam deadline server-side de 2 segundos, resposta sem cache e evento operacional redigido.
 
 ### 5.4 Calendário
 

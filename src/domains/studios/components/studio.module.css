@@ -9,6 +9,125 @@
   min-width: 0;
 }
 
+.contentPanel,
+.contentForms,
+.formCard,
+.taxonomyGroup,
+.taxonomyOptions,
+.faqItem,
+.safePreview,
+.previewFaqs,
+.previewFaqs > div {
+  display: grid;
+  min-width: 0;
+}
+
+.contentPanel {
+  gap: var(--sl-space-6);
+  padding-top: var(--sl-space-6);
+  border-top: 1px solid var(--sl-color-line);
+}
+
+.contentForms {
+  gap: var(--sl-space-6);
+}
+
+.formCard,
+.taxonomyGroup,
+.faqItem,
+.safePreview {
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  background: var(--sl-color-surface);
+}
+
+.formCard {
+  gap: var(--sl-space-6);
+  padding: var(--sl-space-5);
+}
+
+.taxonomyGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sl-space-5);
+  min-width: 0;
+}
+
+.taxonomyGroup {
+  align-content: start;
+  gap: var(--sl-space-3);
+  margin: 0;
+  padding: var(--sl-space-4);
+}
+
+.taxonomyOptions {
+  gap: var(--sl-space-2);
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.faqItem {
+  gap: var(--sl-space-4);
+  padding: var(--sl-space-4);
+}
+
+.faqHeader,
+.compactActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sl-space-2);
+}
+
+.faqHeader {
+  justify-content: space-between;
+}
+
+.videoFrame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  background: var(--sl-color-surface-soft);
+}
+
+.videoFrame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.safePreview {
+  gap: var(--sl-space-4);
+  padding: var(--sl-space-4);
+  background: var(--sl-color-surface-soft);
+}
+
+.previewFaqs {
+  gap: var(--sl-space-4);
+  margin: 0;
+}
+
+.previewFaqs > div {
+  gap: var(--sl-space-2);
+}
+
+.previewFaqs dt {
+  color: var(--sl-color-ink-strong);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.previewFaqs dd {
+  margin: 0;
+  color: var(--sl-color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .editorLayout {
   grid-template-columns: minmax(0, 1.45fr) minmax(17rem, 0.75fr);
   gap: var(--sl-space-6);
@@ -188,6 +307,7 @@
 
 @media (max-width: 36rem) {
   .formGrid,
+  .taxonomyGrid,
   .conflictHeader,
   .conflictRow {
     grid-template-columns: minmax(0, 1fr);
@@ -236,6 +356,18 @@
     width: 100%;
     flex: 0 1 auto;
   }
+
+  .formCard {
+    padding: var(--sl-space-4);
+  }
+
+  .compactActions {
+    width: 100%;
+  }
+
+  .compactActions > button {
+    flex: 1 1 7rem;
+  }
 }
 
 @media (forced-colors: active) {
@@ -244,6 +376,15 @@
   .conflict,
   .discardConfirmation,
   .conflictTable {
+    border-color: CanvasText;
+  }
+
+  .contentPanel,
+  .formCard,
+  .taxonomyGroup,
+  .faqItem,
+  .videoFrame,
+  .safePreview {
     border-color: CanvasText;
   }
 }

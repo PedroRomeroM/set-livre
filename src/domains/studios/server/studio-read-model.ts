@@ -2,8 +2,12 @@ import "server-only";
 
 import {
   studioEditorSchema,
+  studioFaqSchema,
+  studioTaxonomyReferenceSchema,
+  studioTaxonomiesSchema,
   studioTypeOptionsSchema,
   type StudioEditor,
+  type StudioTaxonomies,
   type StudioTypeOption,
 } from "@set-livre/contracts";
 import { z } from "zod";
@@ -22,10 +26,12 @@ const databasePositiveIntegerSchema = z.union([
 
 const studioEditorRowSchema = z.strictObject({
   address_complement: z.string().nullable(),
+  amenities: z.array(studioTaxonomyReferenceSchema).max(20),
   capacity: z.number().int(),
   city: z.string(),
   description: z.string(),
   draft_revision_id: z.uuid().nullable(),
+  faqs: z.array(studioFaqSchema).max(20),
   has_draft: z.boolean(),
   name: z.string(),
   neighborhood: z.string(),
@@ -43,6 +49,9 @@ const studioEditorRowSchema = z.strictObject({
   studio_status: z.string(),
   studio_type_id: z.uuid(),
   studio_type_name: z.string(),
+  tags: z.array(studioTaxonomyReferenceSchema).max(20),
+  usage_rules: z.string(),
+  youtube_video_id: z.string().nullable(),
 });
 
 const studioTypeRowSchema = z.strictObject({
@@ -68,9 +77,11 @@ function mapStudioEditorRow(row: unknown, expectedUserId: string): StudioEditor 
     publishedRevisionId: parsed.published_revision_id,
     revision: {
       addressComplement: parsed.address_complement,
+      amenities: parsed.amenities,
       capacity: parsed.capacity,
       city: parsed.city,
       description: parsed.description,
+      faqs: parsed.faqs,
       id: parsed.revision_id,
       name: parsed.name,
       neighborhood: parsed.neighborhood,
@@ -81,7 +92,10 @@ function mapStudioEditorRow(row: unknown, expectedUserId: string): StudioEditor 
       street: parsed.street,
       streetNumber: parsed.street_number,
       studioTypeId: parsed.studio_type_id,
+      tags: parsed.tags,
+      usageRules: parsed.usage_rules,
       version: parsed.revision_version,
+      youtubeVideoId: parsed.youtube_video_id,
     },
     scope: parsed.scope,
     studioId: parsed.studio_id,
@@ -166,6 +180,22 @@ export async function readActiveStudioTypesWithClient(
   }, signal);
 }
 
+export async function readActiveStudioTaxonomiesWithClient(
+  client: ComponentSupabaseClient,
+  signal?: AbortSignal,
+): Promise<StudioTaxonomies> {
+  return withReadDeadline(async (deadlineSignal) => {
+    const { data, error } = await client
+      .rpc("list_active_studio_taxonomies")
+      .abortSignal(deadlineSignal)
+      .maybeSingle();
+    if (error !== null || data === null) {
+      throw new Error("Não foi possível carregar as taxonomias ativas de estúdio.");
+    }
+    return studioTaxonomiesSchema.parse(data);
+  }, signal);
+}
+
 export async function readOwnerStudioEditor(
   userId: string,
   studioId: string,
@@ -181,4 +211,8 @@ export async function readOwnerStudioEditor(
 
 export async function readActiveStudioTypes(signal?: AbortSignal) {
   return readActiveStudioTypesWithClient(await createComponentSupabaseClient(), signal);
+}
+
+export async function readActiveStudioTaxonomies(signal?: AbortSignal) {
+  return readActiveStudioTaxonomiesWithClient(await createComponentSupabaseClient(), signal);
 }

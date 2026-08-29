@@ -5,8 +5,11 @@ import {
   isAmbiguousStudioError,
   isStudioBoundaryChangedError,
   readStudioEditor,
+  readStudioTaxonomies,
   readStudioTypes,
   StudioApiError,
+  updateStudioContent,
+  updateStudioTaxonomy,
 } from "../../src/domains/studios/components/studio-api";
 import {
   studioCoreFixture,
@@ -24,6 +27,10 @@ describe("studio browser API", () => {
   });
 
   it("reads strict private editor and taxonomy responses", async () => {
+    const taxonomies = {
+      amenities: [{ id: studioTestIds.amenityId, name: "Wi-Fi", sortOrder: 10 }],
+      tags: [{ id: studioTestIds.tagId, name: "Podcast", sortOrder: 10 }],
+    };
     const fetchMock = vi
       .fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
       .mockResolvedValueOnce(
@@ -31,14 +38,17 @@ describe("studio browser API", () => {
       )
       .mockResolvedValueOnce(
         Response.json({ data: [studioTypeFixture], requestId: responseRequestId }),
-      );
+      )
+      .mockResolvedValueOnce(Response.json({ data: taxonomies, requestId: responseRequestId }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
 
     await expect(readStudioEditor(studioTestIds.studioId)).resolves.toEqual(studioEditorFixture);
     await expect(readStudioTypes()).resolves.toEqual([studioTypeFixture]);
+    await expect(readStudioTaxonomies()).resolves.toEqual(taxonomies);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/owner/studios/${studioTestIds.studioId}`);
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/studio-types");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/studio-taxonomies");
   });
 
   it("serializes the strict idempotent create command", async () => {
@@ -52,11 +62,50 @@ describe("studio browser API", () => {
       expectedScope: studioTestIds.userId,
       idempotencyKey: studioTestIds.idempotencyKey,
       payload: studioCoreFixture,
-    } as const;
+    } satisfies Parameters<typeof createStudio>[0];
 
     await expect(createStudio(command)).resolves.toEqual(studioEditorFixture);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(command);
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+  });
+
+  it("serializes taxonomy and content commands without translating their payload", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => Response.json({ data: studioEditorFixture, requestId: responseRequestId }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+    const boundary = {
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      studioId: studioTestIds.studioId,
+    };
+    const taxonomy = {
+      action: "studio.revision.updateTaxonomy",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: {
+        ...boundary,
+        amenityIds: [studioTestIds.amenityId],
+        tagIds: [studioTestIds.tagId],
+      },
+    } satisfies Parameters<typeof updateStudioTaxonomy>[0];
+    const content = {
+      action: "studio.revision.updateContent",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: {
+        ...boundary,
+        faqs: [{ answer: "Resposta.", question: "Pergunta?" }],
+        usageRules: "Regras seguras.",
+        youtubeVideoId: null,
+      },
+    } satisfies Parameters<typeof updateStudioContent>[0];
+
+    await updateStudioTaxonomy(taxonomy);
+    await updateStudioContent(content);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(taxonomy);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(content);
   });
 
   it("rejects extra private response fields and classifies verification-first failures", async () => {

@@ -155,6 +155,12 @@ registrada ou falha fechado quando uma mudança posterior impede reconstruí-la.
 Tipo arquivado continua legível somente ao dono de revisão que o referencia, preservando o histórico.
 Ele não reaparece na lista ativa e nenhuma nova mutação pode selecioná-lo.
 
+Regras de uso e YouTube ID pertencem à revisão. Tags, comodidades e FAQ ordenada são relações filhas
+do mesmo `revision_id`; só uma revisão draft pode alterá-las. Taxonomia precisa estar ativa no instante
+do comando, e uma corrida de arquivamento falha sem efeito parcial. Ao editar conteúdo aprovado sem
+draft, a nova revisão clona integralmente esse conjunto antes de aplicar a mudança, preservando a
+fonte pública aprovada.
+
 ### 4.4 Reserva
 
 `reservations.renter_user_id` identifica o locatário. `reservations.studio_id` e snapshots preservam o dono/estúdio do momento.

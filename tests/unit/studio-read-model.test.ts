@@ -10,6 +10,7 @@ vi.mock("../../src/lib/supabase/server", () => ({
 }));
 
 import {
+  readActiveStudioTaxonomiesWithClient,
   readActiveStudioTypesWithClient,
   readOwnerStudioEditorWithClient,
   StudioNotFoundError,
@@ -18,10 +19,12 @@ import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-
 
 const editorRow = {
   address_complement: studioCoreFixture.addressComplement,
+  amenities: studioEditorFixture.revision.amenities,
   capacity: studioCoreFixture.capacity,
   city: studioCoreFixture.city,
   description: studioCoreFixture.description,
   draft_revision_id: studioTestIds.revisionId,
+  faqs: studioEditorFixture.revision.faqs,
   has_draft: true,
   name: studioCoreFixture.name,
   neighborhood: studioCoreFixture.neighborhood,
@@ -39,6 +42,9 @@ const editorRow = {
   studio_status: "draft",
   studio_type_id: studioTestIds.studioTypeId,
   studio_type_name: studioEditorFixture.studioType.name,
+  tags: studioEditorFixture.revision.tags,
+  usage_rules: studioEditorFixture.revision.usageRules,
+  youtube_video_id: studioEditorFixture.revision.youtubeVideoId,
 };
 
 describe("studio read model", () => {
@@ -109,5 +115,17 @@ describe("studio read model", () => {
       { id: rows[1]?.id, name: "Fotográfico", sortOrder: 20 },
     ]);
     expect(mocks.rpc).toHaveBeenCalledWith("list_active_studio_types");
+  });
+
+  it("maps the ordered active tags and amenities projection", async () => {
+    const taxonomies = {
+      amenities: [{ id: studioTestIds.amenityId, name: "Wi-Fi", sortOrder: 10 }],
+      tags: [{ id: studioTestIds.tagId, name: "Podcast", sortOrder: 10 }],
+    };
+    mocks.maybeSingle.mockResolvedValueOnce({ data: taxonomies, error: null });
+    await expect(readActiveStudioTaxonomiesWithClient(client as never)).resolves.toEqual(
+      taxonomies,
+    );
+    expect(mocks.rpc).toHaveBeenCalledWith("list_active_studio_taxonomies");
   });
 });

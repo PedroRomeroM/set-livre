@@ -105,7 +105,8 @@ Medir; não usar Infinity em dado operacional.
 - `CONFLICT` e `VALIDATION_FAILED` sem `fieldErrors` desabilitam a ação até um GET autoritativo explícito e nunca repetem o POST. `VALIDATION_FAILED` com erro de campo continua no formulário e pode ser corrigido sem forçar releitura. A combinação privada exata `42501 + owner_contract_not_current` vira `409 CONFLICT` para usar esse fence; outros `42501`, inclusive bloqueios, permanecem `403 FORBIDDEN` e não são reclassificados como recuperáveis;
 - conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;
 - alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
-- tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; editores usam
+- tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; tags e comodidades ativas
+  usam `studio/taxonomies/content`; editores usam
   `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
   logout/troca de sessão remove toda a família `owner/private/studio-editor`;
 - o token otimista do editor permanece ligado aos valores visíveis durante refetch em foco; update só
@@ -122,16 +123,22 @@ Medir; não usar Infinity em dado operacional.
   são preservados e scopes de outro usuário são removidos;
 - create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
   mesma chave quando o resultado é ambíguo. Campos e ações concorrentes ficam bloqueados durante esse
-  retry. Criação aceita entra em estado terminal e exige a navegação explícita para o editor, sem gerar
+  retry. Criação aceita entra em estado terminal e exige navegação explícita para o editor, sem gerar
   uma segunda chave. Update/discard seguem o mesmo contrato. Sucesso de update substitui o editor
-  autoritativo; descarte remove toda a família se o estúdio inédito foi excluído ou publica o editor da
-  revisão aprovada preservada;
+  autoritativo. Se o descarte excluir um estúdio inédito, o observer é desabilitado, a key exata é
+  cancelada/removida e a rota excluída é substituída pelo novo formulário; se houver publicação, o
+  editor aprovado é publicado e a fronteira coordenadora reinicializa somente o painel comercial com
+  essa revisão, eliminando valores do draft removido sem apagar edições locais em refetches ordinários;
 - conflito otimista de update faz GET do editor, conserva o formulário local e mostra comparação;
-  `Usar versão salva` troca os valores sem POST, e `Continuar com minhas alterações` exige um novo
-  submit com o token recente. Conflito de descarte fecha o diálogo, descarta o comando vencido, relê o
-  editor e exige nova confirmação. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED`, `UNAUTHENTICATED`,
-  `FORBIDDEN`, `ACCOUNT_SUSPENDED` e `NOT_FOUND` recompõem a rota SSR em vez
-  de entrar nessa comparação;
+  `Usar versão salva` troca os valores sem POST, e `Continuar com minhas alterações` exige novo submit
+  com o token recente. Conflito de descarte fecha o diálogo, descarta o comando vencido, relê o editor
+  e exige nova confirmação. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED`, `UNAUTHENTICATED`,
+  `FORBIDDEN`, `ACCOUNT_SUSPENDED` e `NOT_FOUND` recompõem a rota SSR em vez de entrar nessa comparação;
+- conflito de taxonomia relê editor e catálogo ativo em paralelo, preserva texto e seleções ainda
+  válidas, remove somente IDs arquivados e exige novo submit. Sucesso de core, taxonomia ou conteúdo
+  publica o `StudioEditor` autoritativo e propaga seu token aos painéis irmãos sem apagar inputs
+  locais; refetch ordinário não participa desse handoff. Retry existe apenas para a mesma tentativa
+  idempotente ambígua;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

@@ -2,11 +2,15 @@ import "server-only";
 
 import {
   studioCorePayloadSchema,
+  studioContentPayloadSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
+  studioTaxonomyPayloadSchema,
+  type StudioContentPayload,
   type StudioCorePayload,
   type StudioDraftDiscardResult,
   type StudioEditor,
+  type StudioTaxonomyPayload,
 } from "@set-livre/contracts";
 import { z } from "zod";
 
@@ -150,4 +154,83 @@ export async function discardStudioDraft(input: {
     ],
   );
   return exactlyOneResult(result.rows, studioDraftDiscardResultSchema);
+}
+
+export async function updateStudioRevisionTaxonomy(input: {
+  expectedRevisionId: string;
+  expectedRevisionVersion: number;
+  idempotencyKey: string;
+  requestId: string;
+  studioId: string;
+  taxonomy: StudioTaxonomyPayload;
+  userId: string;
+}): Promise<StudioEditor> {
+  const identity = commandIdentitySchema.parse({
+    idempotencyKey: input.idempotencyKey,
+    requestId: input.requestId,
+    userId: input.userId,
+  });
+  const revision = revisionIdentitySchema.parse({
+    expectedRevisionId: input.expectedRevisionId,
+    expectedRevisionVersion: input.expectedRevisionVersion,
+    studioId: input.studioId,
+  });
+  const taxonomy = studioTaxonomyPayloadSchema.parse(input.taxonomy);
+  const result = await commandDalPool().query(
+    `select private.update_studio_revision_taxonomy(
+       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
+       $7::uuid[], $8::uuid[]
+     ) as result`,
+    [
+      identity.userId,
+      revision.studioId,
+      revision.expectedRevisionId,
+      revision.expectedRevisionVersion,
+      identity.idempotencyKey,
+      identity.requestId,
+      taxonomy.tagIds,
+      taxonomy.amenityIds,
+    ],
+  );
+  return exactlyOneResult(result.rows, studioEditorSchema);
+}
+
+export async function updateStudioRevisionContent(input: {
+  content: StudioContentPayload;
+  expectedRevisionId: string;
+  expectedRevisionVersion: number;
+  idempotencyKey: string;
+  requestId: string;
+  studioId: string;
+  userId: string;
+}): Promise<StudioEditor> {
+  const identity = commandIdentitySchema.parse({
+    idempotencyKey: input.idempotencyKey,
+    requestId: input.requestId,
+    userId: input.userId,
+  });
+  const revision = revisionIdentitySchema.parse({
+    expectedRevisionId: input.expectedRevisionId,
+    expectedRevisionVersion: input.expectedRevisionVersion,
+    studioId: input.studioId,
+  });
+  const content = studioContentPayloadSchema.parse(input.content);
+  const result = await commandDalPool().query(
+    `select private.update_studio_revision_content(
+       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
+       $7::text, $8::text, $9::jsonb
+     ) as result`,
+    [
+      identity.userId,
+      revision.studioId,
+      revision.expectedRevisionId,
+      revision.expectedRevisionVersion,
+      identity.idempotencyKey,
+      identity.requestId,
+      content.usageRules,
+      content.youtubeVideoId,
+      JSON.stringify(content.faqs),
+    ],
+  );
+  return exactlyOneResult(result.rows, studioEditorSchema);
 }

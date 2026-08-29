@@ -2,12 +2,12 @@
 
 ## Metadados
 
-| Campo            | Valor                                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Status           | Planejada                                                                                                                        |
-| Prioridade       | P0                                                                                                                               |
-| Domínio          | `studios`                                                                                                                        |
-| Specs Playwright | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
+| Campo            | Valor                                                                                                                                                                                                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Em andamento                                                                                                                                                                                                                                                          |
+| Prioridade       | P0                                                                                                                                                                                                                                                                    |
+| Domínio          | `studios`                                                                                                                                                                                                                                                             |
+| Specs Playwright | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/accessibility/feat-007-studio-taxonomy-content.spec.ts`<br>`tests/e2e/reflow/feat-007-studio-taxonomy-content.spec.ts` |
 
 ## Objetivo
 
@@ -24,7 +24,9 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 ## Dependências
 
 - FEAT-006
-- FEAT-031
+
+A administração posterior das taxonomias pertence à FEAT-031; os seeds mínimos consumidos nesta
+feature são o contrato bootstrap definido no ADR-017 e não bloqueiam seu início.
 
 ## Incluído
 
@@ -44,7 +46,7 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 ## Regras de produto e domínio
 
 - Somente taxonomia ativa pode ser selecionada.
-- Máximo 20 tags e 20 FAQs.
+- Máximo 20 tags, 20 comodidades e 20 FAQs.
 - FAQ question 160/answer 2000.
 - Vídeo é ID validado.
 - Textos são plain text renderizados com escape.
@@ -60,7 +62,7 @@ Completar o conteúdo comercial da revisão com taxonomias administradas e texto
 ## Read models
 
 - get_owner_studio_editor
-- list_active_taxonomies
+- list_active_studio_taxonomies
 
 ## Comandos e integrações
 
@@ -93,13 +95,19 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 
 ## Playwright obrigatório
 
-| ID              | Prioridade | Suíte      | Viewport | Cenário                                   | Spec                                                            |
-| --------------- | ---------- | ---------- | -------- | ----------------------------------------- | --------------------------------------------------------------- |
-| SL-F007-E2E-001 | P0         | critical   | desktop  | salvar tags, comodidades, regras e FAQ    | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
-| SL-F007-E2E-002 | P1         | regression | mobile   | reordenar FAQ e preservar conteúdo        | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-003 | P0         | critical   | desktop  | tag inativa/externa é rejeitada           | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
-| SL-F007-E2E-004 | P1         | regression | desktop  | YouTube válido renderiza e inválido falha | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts` |
-| SL-F007-E2E-005 | P0         | critical   | desktop  | texto malicioso não executa script        | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`   |
+| ID              | Prioridade | Suíte         | Viewport                | Cenário                                      | Spec                                                               |
+| --------------- | ---------- | ------------- | ----------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
+| SL-F007-E2E-001 | P0         | critical      | desktop                 | salvar tags, comodidades, regras e FAQ       | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-002 | P1         | regression    | mobile                  | reordenar FAQ e preservar conteúdo           | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-003 | P0         | critical      | desktop                 | tag inativa/externa é rejeitada              | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-004 | P1         | regression    | desktop                 | YouTube válido renderiza e inválido falha    | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-005 | P0         | critical      | desktop                 | texto malicioso não executa script           | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-006 | P1         | accessibility | desktop/mobile/320/dark | axe, teclado, toque e alvos                  | `tests/e2e/accessibility/feat-007-studio-taxonomy-content.spec.ts` |
+| SL-F007-E2E-007 | P2         | reflow        | zoom 200%               | controles sem overflow nos três engines      | `tests/e2e/reflow/feat-007-studio-taxonomy-content.spec.ts`        |
+| SL-F007-E2E-008 | P1         | regression    | desktop/mobile/320/low  | painéis sincronizam e descarte restaura tudo | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-009 | P0         | critical      | desktop                 | troca de sessão oculta conteúdo privado      | `tests/e2e/critical/feat-007-studio-taxonomy-content.spec.ts`      |
+| SL-F007-E2E-010 | P1         | regression    | desktop/mobile/320/low  | retry ambíguo congela ambos os formulários   | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
+| SL-F007-E2E-011 | P1         | regression    | desktop/mobile/320/low  | refetch preserva o conflito otimista         | `tests/e2e/regression/feat-007-studio-taxonomy-content.spec.ts`    |
 
 Regras:
 

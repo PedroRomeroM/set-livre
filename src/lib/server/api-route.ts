@@ -31,6 +31,7 @@ export type ApiRouteErrorCode =
   | "RECOVERY_RESTART_REQUIRED"
   | "SERVICE_UNAVAILABLE"
   | "SESSION_CHANGED"
+  | "STUDIO_TAXONOMY_UNAVAILABLE"
   | "STUDIO_TYPE_UNAVAILABLE"
   | "UNAUTHENTICATED"
   | "VALIDATION_FAILED";
@@ -281,7 +282,10 @@ const observableActionSchema = z.enum([
   "studio.create",
   "studio.draft.discard",
   "studio.read",
+  "studio.revision.updateContent",
   "studio.revision.updateCore",
+  "studio.revision.updateTaxonomy",
+  "studio.taxonomies.read",
   "studio.types.read",
 ]);
 const observableOutcomeSchema = z.enum(["accepted", "rejected", "unavailable"]);

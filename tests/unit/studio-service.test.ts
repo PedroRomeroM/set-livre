@@ -13,7 +13,9 @@ import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-
 const dependencies = {
   createStudioDraft: vi.fn(),
   discardStudioDraft: vi.fn(),
+  updateStudioRevisionContent: vi.fn(),
   updateStudioRevisionCore: vi.fn(),
+  updateStudioRevisionTaxonomy: vi.fn(),
 };
 const context = {
   requestId: studioTestIds.requestId,
@@ -39,6 +41,8 @@ describe("studio service", () => {
     vi.clearAllMocks();
     dependencies.createStudioDraft.mockResolvedValue(studioEditorFixture);
     dependencies.updateStudioRevisionCore.mockResolvedValue(studioEditorFixture);
+    dependencies.updateStudioRevisionContent.mockResolvedValue(studioEditorFixture);
+    dependencies.updateStudioRevisionTaxonomy.mockResolvedValue(studioEditorFixture);
     dependencies.discardStudioDraft.mockResolvedValue({
       scope: studioTestIds.userId,
       studioDeleted: true,
@@ -57,6 +61,60 @@ describe("studio service", () => {
       userId: studioTestIds.userId,
     });
     expect(mocks.enforceIdentityRateLimit).toHaveBeenCalledOnce();
+  });
+
+  it("derives revision content identities and separates both canonical payloads", async () => {
+    const boundary = {
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      studioId: studioTestIds.studioId,
+    };
+    const service = createStudioService(dependencies);
+    await service.updateTaxonomy(
+      {
+        action: "studio.revision.updateTaxonomy",
+        expectedScope: studioTestIds.userId,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        payload: {
+          ...boundary,
+          amenityIds: [studioTestIds.amenityId],
+          tagIds: [studioTestIds.tagId],
+        },
+      },
+      context,
+    );
+    expect(dependencies.updateStudioRevisionTaxonomy).toHaveBeenCalledWith({
+      ...boundary,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      requestId: studioTestIds.requestId,
+      taxonomy: {
+        amenityIds: [studioTestIds.amenityId],
+        tagIds: [studioTestIds.tagId],
+      },
+      userId: studioTestIds.userId,
+    });
+
+    const content = {
+      faqs: [{ answer: "Resposta.", question: "Pergunta?" }],
+      usageRules: "Regras seguras.",
+      youtubeVideoId: null,
+    };
+    await service.updateContent(
+      {
+        action: "studio.revision.updateContent",
+        expectedScope: studioTestIds.userId,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        payload: { ...boundary, ...content },
+      },
+      context,
+    );
+    expect(dependencies.updateStudioRevisionContent).toHaveBeenCalledWith({
+      ...boundary,
+      content,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      requestId: studioTestIds.requestId,
+      userId: studioTestIds.userId,
+    });
   });
 
   it.each([
@@ -80,7 +138,6 @@ describe("studio service", () => {
     ["42501", "FORBIDDEN", 403],
     ["22023", "VALIDATION_FAILED", 422],
     ["23505", "CONFLICT", 409],
-    ["23514", "CONFLICT", 409],
     ["40001", "CONFLICT", 409],
   ] as const)("maps SQLSTATE %s to the safe API contract", async (sqlstate, code, status) => {
     dependencies.createStudioDraft.mockRejectedValueOnce({
@@ -117,6 +174,57 @@ describe("studio service", () => {
       message: "O tipo de estúdio foi arquivado. Atualize as opções e escolha um tipo ativo.",
       status: 409,
     });
+  });
+
+  it("maps an archived tag or amenity to its recoverable taxonomy contract", async () => {
+    dependencies.updateStudioRevisionTaxonomy.mockRejectedValueOnce({
+      code: "23514",
+      message: "studio_taxonomy_inactive",
+    });
+    await expect(
+      createStudioService(dependencies).updateTaxonomy(
+        {
+          action: "studio.revision.updateTaxonomy",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            amenityIds: [studioTestIds.amenityId],
+            expectedRevisionId: studioTestIds.revisionId,
+            expectedRevisionVersion: 3,
+            studioId: studioTestIds.studioId,
+            tagIds: [studioTestIds.tagId],
+          },
+        },
+        context,
+      ),
+    ).rejects.toMatchObject({
+      code: "STUDIO_TAXONOMY_UNAVAILABLE",
+      message: "Uma tag ou comodidade foi arquivada. Atualize as opções antes de continuar.",
+      status: 409,
+    });
+  });
+
+  it("does not relabel an unknown constraint violation as a recoverable conflict", async () => {
+    const failure = { code: "23514", message: "studio_revision_relation_immutable" };
+    dependencies.updateStudioRevisionContent.mockRejectedValueOnce(failure);
+    await expect(
+      createStudioService(dependencies).updateContent(
+        {
+          action: "studio.revision.updateContent",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            expectedRevisionId: studioTestIds.revisionId,
+            expectedRevisionVersion: 3,
+            faqs: [],
+            studioId: studioTestIds.studioId,
+            usageRules: "",
+            youtubeVideoId: null,
+          },
+        },
+        context,
+      ),
+    ).rejects.toBe(failure);
   });
 
   it("does not mask an unknown infrastructure failure", async () => {

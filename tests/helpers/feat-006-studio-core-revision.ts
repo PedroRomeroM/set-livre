@@ -72,7 +72,7 @@ export const feat006DefaultCore: Feat006CoreForm = {
 
 export async function closeFeat006PageBeforeCleanup(page: Page) {
   if (page.isClosed()) return;
-  await page.waitForLoadState("networkidle", { timeout: 10_000 });
+  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
   await page.close();
 }
 
@@ -175,7 +175,7 @@ export function saveFeat006StudioThroughUi(page: Page) {
   );
 }
 
-async function withFeat006AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
+export async function withFeat006AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
   const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
     import("./e2e-database-preflight"),
     import("./e2e-environment"),

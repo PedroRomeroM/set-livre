@@ -3,6 +3,36 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      amenities: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       owner_payment_recipients: {
         Row: {
           created_at: string;
@@ -134,6 +164,104 @@ export type Database = {
         };
         Relationships: [];
       };
+      studio_faqs: {
+        Row: {
+          answer: string;
+          created_at: string;
+          id: string;
+          position: number;
+          question: string;
+          revision_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          answer: string;
+          created_at?: string;
+          id?: string;
+          position: number;
+          question: string;
+          revision_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          answer?: string;
+          created_at?: string;
+          id?: string;
+          position?: number;
+          question?: string;
+          revision_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_faqs_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_amenities: {
+        Row: {
+          amenity_id: string;
+          revision_id: string;
+        };
+        Insert: {
+          amenity_id: string;
+          revision_id: string;
+        };
+        Update: {
+          amenity_id?: string;
+          revision_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_amenities_amenity_id_fkey";
+            columns: ["amenity_id"];
+            isOneToOne: false;
+            referencedRelation: "amenities";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_amenities_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_tags: {
+        Row: {
+          revision_id: string;
+          tag_id: string;
+        };
+        Insert: {
+          revision_id: string;
+          tag_id: string;
+        };
+        Update: {
+          revision_id?: string;
+          tag_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_tags_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_tags_tag_id_fkey";
+            columns: ["tag_id"];
+            isOneToOne: false;
+            referencedRelation: "tags";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       studio_revisions: {
         Row: {
           address_complement: string | null;
@@ -154,6 +282,8 @@ export type Database = {
           studio_id: string;
           studio_type_id: string;
           updated_at: string;
+          usage_rules: string;
+          youtube_video_id: string | null;
         };
         Insert: {
           address_complement?: string | null;
@@ -174,6 +304,8 @@ export type Database = {
           studio_id: string;
           studio_type_id: string;
           updated_at?: string;
+          usage_rules?: string;
+          youtube_video_id?: string | null;
         };
         Update: {
           address_complement?: string | null;
@@ -194,6 +326,8 @@ export type Database = {
           studio_id?: string;
           studio_type_id?: string;
           updated_at?: string;
+          usage_rules?: string;
+          youtube_video_id?: string | null;
         };
         Relationships: [
           {
@@ -293,6 +427,36 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      tags: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
       };
       terms_acceptances: {
         Row: {
@@ -517,10 +681,12 @@ export type Database = {
         Args: { p_studio_id: string };
         Returns: {
           address_complement: string;
+          amenities: Json;
           capacity: number;
           city: string;
           description: string;
           draft_revision_id: string;
+          faqs: Json;
           has_draft: boolean;
           name: string;
           neighborhood: string;
@@ -538,8 +704,12 @@ export type Database = {
           studio_status: string;
           studio_type_id: string;
           studio_type_name: string;
+          tags: Json;
+          usage_rules: string;
+          youtube_video_id: string;
         }[];
       };
+      list_active_studio_taxonomies: { Args: never; Returns: Json };
       list_active_studio_types: {
         Args: never;
         Returns: {

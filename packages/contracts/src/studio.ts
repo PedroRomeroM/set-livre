@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+import {
+  studioContentPayloadSchema,
+  studioFaqSchema,
+  studioTaxonomyPayloadSchema,
+  studioTaxonomyReferenceSchema,
+  studioYoutubeVideoIdSchema,
+} from "./studio-taxonomy-content";
+
 export const studioStatusSchema = z.enum([
   "draft",
   "pending_review",
@@ -93,15 +101,42 @@ export const studioTypeOptionSchema = studioTypeSchema.extend({
   sortOrder: z.number().int().nonnegative(),
 });
 
-export const studioTypeOptionsSchema = z.array(studioTypeOptionSchema).max(100);
+export const studioTypeOptionsSchema = z.array(studioTypeOptionSchema);
 
-export const studioRevisionSchema = z.strictObject({
-  ...studioCorePayloadSchema.shape,
-  id: z.uuid(),
-  number: z.number().int().positive(),
-  status: studioRevisionStatusSchema,
-  version: z.number().int().positive(),
-});
+const studioTaxonomyReferencesSchema = z
+  .array(studioTaxonomyReferenceSchema)
+  .max(20)
+  .refine(
+    (references) => new Set(references.map((reference) => reference.id)).size === references.length,
+    {
+      message: "A revisão não pode repetir a mesma taxonomia.",
+    },
+  );
+
+export const studioRevisionSchema = z
+  .strictObject({
+    ...studioCorePayloadSchema.shape,
+    amenities: studioTaxonomyReferencesSchema,
+    faqs: z.array(studioFaqSchema).max(20),
+    id: z.uuid(),
+    number: z.number().int().positive(),
+    status: studioRevisionStatusSchema,
+    tags: studioTaxonomyReferencesSchema,
+    usageRules: z.string().max(5000),
+    version: z.number().int().positive(),
+    youtubeVideoId: studioYoutubeVideoIdSchema.nullable(),
+  })
+  .superRefine((value, context) => {
+    value.faqs.forEach((faq, index) => {
+      if (faq.position !== index + 1) {
+        context.addIssue({
+          code: "custom",
+          message: "A ordem da FAQ não é contínua.",
+          path: ["faqs", index, "position"],
+        });
+      }
+    });
+  });
 
 export const studioEditorSchema = z
   .strictObject({
@@ -170,15 +205,37 @@ export const studioDraftDiscardCommandSchema = z.strictObject({
   }),
 });
 
+const studioRevisionMutationBoundarySchema = z.strictObject({
+  expectedRevisionId: z.uuid(),
+  expectedRevisionVersion: z.number().int().positive(),
+  studioId: z.uuid(),
+});
+
+export const studioRevisionUpdateTaxonomyCommandSchema = z.strictObject({
+  action: z.literal("studio.revision.updateTaxonomy"),
+  ...privateStudioCommandEnvelope,
+  payload: studioRevisionMutationBoundarySchema.extend(studioTaxonomyPayloadSchema.shape),
+});
+
+export const studioRevisionUpdateContentCommandSchema = z.strictObject({
+  action: z.literal("studio.revision.updateContent"),
+  ...privateStudioCommandEnvelope,
+  payload: studioRevisionMutationBoundarySchema.extend(studioContentPayloadSchema.shape),
+});
+
 export const studioCommandActionSchema = z.enum([
   "studio.create",
   "studio.revision.updateCore",
+  "studio.revision.updateTaxonomy",
+  "studio.revision.updateContent",
   "studio.draft.discard",
 ]);
 
 export const studioCommandSchema = z.discriminatedUnion("action", [
   studioCreateCommandSchema,
   studioRevisionUpdateCoreCommandSchema,
+  studioRevisionUpdateTaxonomyCommandSchema,
+  studioRevisionUpdateContentCommandSchema,
   studioDraftDiscardCommandSchema,
 ]);
 

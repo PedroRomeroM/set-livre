@@ -14,7 +14,9 @@ vi.mock("pg", () => ({
 import {
   createStudioDraft,
   discardStudioDraft,
+  updateStudioRevisionContent,
   updateStudioRevisionCore,
+  updateStudioRevisionTaxonomy,
 } from "../../src/domains/studios/server/studio-dal";
 import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-test-fixture";
 
@@ -130,5 +132,58 @@ describe("studio DAL", () => {
         userId: studioTestIds.userId,
       }),
     ).rejects.toThrow();
+  });
+
+  it("binds taxonomy sets and serializes ordered FAQ only at the JSONB boundary", async () => {
+    await updateStudioRevisionTaxonomy({
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      requestId: studioTestIds.requestId,
+      studioId: studioTestIds.studioId,
+      taxonomy: {
+        amenityIds: [studioTestIds.amenityId],
+        tagIds: [studioTestIds.tagId],
+      },
+      userId: studioTestIds.userId,
+    });
+    expect(mocks.query).toHaveBeenLastCalledWith(
+      expect.stringContaining("private.update_studio_revision_taxonomy"),
+      [
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        studioTestIds.revisionId,
+        3,
+        studioTestIds.idempotencyKey,
+        studioTestIds.requestId,
+        [studioTestIds.tagId],
+        [studioTestIds.amenityId],
+      ],
+    );
+
+    const faqs = [{ answer: "Resposta.", question: "Pergunta?" }];
+    await updateStudioRevisionContent({
+      content: { faqs, usageRules: "Regras seguras.", youtubeVideoId: "dQw4w9WgXcQ" },
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 4,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      requestId: studioTestIds.requestId,
+      studioId: studioTestIds.studioId,
+      userId: studioTestIds.userId,
+    });
+    expect(mocks.query).toHaveBeenLastCalledWith(
+      expect.stringContaining("private.update_studio_revision_content"),
+      [
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        studioTestIds.revisionId,
+        4,
+        studioTestIds.idempotencyKey,
+        studioTestIds.requestId,
+        "Regras seguras.",
+        "dQw4w9WgXcQ",
+        JSON.stringify(faqs),
+      ],
+    );
   });
 });

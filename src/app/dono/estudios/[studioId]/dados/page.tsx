@@ -10,8 +10,9 @@ import {
   StudioOwnerActivationRequiredState,
   StudioSuspendedState,
 } from "@/domains/studios/components/studio-access-state";
-import { StudioCorePanel } from "@/domains/studios/components/studio-core-panel";
+import { StudioEditorPanels } from "@/domains/studios/components/studio-editor-panels";
 import {
+  readActiveStudioTaxonomies,
   readActiveStudioTypes,
   readOwnerStudioEditor,
   StudioNotFoundError,
@@ -20,13 +21,18 @@ import {
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  description: "Edite os dados centrais versionados do seu estúdio sem alterar a versão pública.",
+  description:
+    "Edite os dados centrais e o conteúdo comercial do estúdio sem alterar a versão pública.",
   title: "Dados do estúdio",
 };
 
 async function readStudioPageData(userId: string, studioId: string) {
   try {
-    return await Promise.all([readOwnerStudioEditor(userId, studioId), readActiveStudioTypes()]);
+    return await Promise.all([
+      readOwnerStudioEditor(userId, studioId),
+      readActiveStudioTypes(),
+      readActiveStudioTaxonomies(),
+    ]);
   } catch (error) {
     if (error instanceof StudioNotFoundError) notFound();
     throw error;
@@ -57,12 +63,15 @@ export default async function StudioCorePage({
     if (owner.ownerStatus !== "active" || !owner.ownerContractAccepted) {
       content = <StudioOwnerActivationRequiredState />;
     } else {
-      const [editor, studioTypes] = await readStudioPageData(session.userId, parsedStudioId.data);
+      const [editor, studioTypes, taxonomies] = await readStudioPageData(
+        session.userId,
+        parsedStudioId.data,
+      );
       content = (
-        <StudioCorePanel
+        <StudioEditorPanels
           initialEditor={editor}
+          initialTaxonomies={taxonomies}
           initialTypes={studioTypes}
-          mode="edit"
           userId={session.userId}
         />
       );

@@ -196,6 +196,18 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   o GET autoritativo está em curso ou falha. Criação aceita, retry ambíguo, bloqueio administrativo e
   taxonomia arquivada usam estados factuais e controles realmente desabilitados, não apenas aparência.
 
+### 3.5 Extensão da FEAT-007
+
+- taxonomias usam `fieldset`/`legend`, busca local por `Input type=search` e `Checkbox`; seleção mostra
+  contagem factual e nunca cria opção improvisada;
+- FAQ usa cards em fluxo normal e botões explícitos `Subir`, `Descer` e `Excluir`, todos com nome
+  contextual. Arrastar não é requisito e a ordem continua operável por teclado e toque;
+- regras, FAQ e vídeo ficam em um segundo formulário para não misturar intents idempotentes. A prévia
+  renderiza nós React de plain text, sem HTML arbitrário;
+- grids colapsam para uma coluna conforme o espaço disponível; iframe mantém proporção, título e
+  largura máxima. A composição passou pela mesma matriz de 320 px, alvos de 44 px, tema escuro, axe e
+  reflow a 160 CSS px.
+
 ## 4. Contratos
 
 ### 4.1 Botões

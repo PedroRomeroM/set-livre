@@ -3,10 +3,12 @@ import {
   apiSuccessSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
+  studioTaxonomiesSchema,
   studioTypeOptionsSchema,
   type StudioCommand,
   type StudioDraftDiscardResult,
   type StudioEditor,
+  type StudioTaxonomies,
   type StudioTypeOption,
 } from "@set-livre/contracts";
 import { z } from "zod";
@@ -117,6 +119,14 @@ export function readStudioTypes(signal?: AbortSignal): Promise<StudioTypeOption[
   );
 }
 
+export function readStudioTaxonomies(signal?: AbortSignal): Promise<StudioTaxonomies> {
+  return requestStudio(
+    "/api/studio-taxonomies",
+    studioTaxonomiesSchema,
+    signal === undefined ? undefined : { signal },
+  );
+}
+
 export function createStudio(command: Extract<StudioCommand, { action: "studio.create" }>) {
   return requestStudio("/api/commands", studioEditorSchema, {
     body: JSON.stringify(command),
@@ -126,6 +136,24 @@ export function createStudio(command: Extract<StudioCommand, { action: "studio.c
 
 export function updateStudioCore(
   command: Extract<StudioCommand, { action: "studio.revision.updateCore" }>,
+) {
+  return requestStudio("/api/commands", studioEditorSchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function updateStudioTaxonomy(
+  command: Extract<StudioCommand, { action: "studio.revision.updateTaxonomy" }>,
+) {
+  return requestStudio("/api/commands", studioEditorSchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function updateStudioContent(
+  command: Extract<StudioCommand, { action: "studio.revision.updateContent" }>,
 ) {
   return requestStudio("/api/commands", studioEditorSchema, {
     body: JSON.stringify(command),

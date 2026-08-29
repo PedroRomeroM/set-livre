@@ -6,8 +6,26 @@ const studioPrivateRoot = ["owner", "private", "studio-editor"] as const;
 export const studioQueryKeys = {
   editor: (userId: string, studioId: string) => [...studioPrivateRoot, userId, studioId] as const,
   privateEditors: studioPrivateRoot,
+  taxonomies: ["studio", "taxonomies", "content"] as const,
   types: ["studio", "taxonomies", "types"] as const,
 };
+
+export type StudioRevisionToken = Readonly<
+  Pick<StudioEditor["revision"], "id" | "number" | "version">
+>;
+
+export function studioRevisionToken(editor: StudioEditor): StudioRevisionToken {
+  return {
+    id: editor.revision.id,
+    number: editor.revision.number,
+    version: editor.revision.version,
+  };
+}
+
+export function recomposeStudioClientBoundary(queryClient: QueryClient) {
+  queryClient.clear();
+  window.location.reload();
+}
 
 export class StudioScopeChangedError extends Error {
   constructor() {
