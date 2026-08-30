@@ -17,7 +17,9 @@ import {
   unlockFeat031Backoffice,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
 import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
-import { safeE2EEnvironment } from "../../helpers/e2e-environment";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
+
+const safeE2EEnvironment = readSafeE2EEnvironment();
 
 async function searchUser(page: Page, query: string, userId: string | undefined) {
   if (userId === undefined) throw new Error("A busca FEAT-031 exige o UUID do usuário-alvo.");

@@ -3,13 +3,14 @@ import { resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
-import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
+import { readSafeE2EEnvironment } from "./tests/helpers/e2e-environment";
 import {
   createPlaywrightNextCommand,
   createPlaywrightWebServerEnvironmentOverlay,
 } from "./tests/helpers/playwright-web-server";
 
 const repositoryRoot = import.meta.dirname;
+const safeEnvironment = readSafeE2EEnvironment();
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);

@@ -23,7 +23,7 @@ import {
 } from "./feat-002-authentication";
 import { cleanupLocalAuthUser } from "./local-auth-cleanup";
 import { assertQaAuthEmail } from "./local-auth-mailpit";
-import { safeE2EEnvironment } from "./e2e-environment";
+import { readSafeE2EEnvironment } from "./e2e-environment";
 
 const directIdentitySchema = z.strictObject({
   email: z.email(),
@@ -101,6 +101,7 @@ export async function loginFeat031Backoffice(
   operator: Feat031Operator,
   options: { unlockRuntime?: boolean } = {},
 ) {
+  const safeE2EEnvironment = readSafeE2EEnvironment();
   const login = await page.goto(`${safeE2EEnvironment.backofficeBaseUrl}/entrar`);
   expect(login?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Operação Set Livre" })).toBeVisible();
@@ -117,6 +118,7 @@ export async function loginFeat031Backoffice(
 }
 
 export async function unlockFeat031Backoffice(page: Page) {
+  const safeE2EEnvironment = readSafeE2EEnvironment();
   await stageFeat002PasswordForSubmission(
     page.getByLabel("Chave local de desbloqueio"),
     safeE2EEnvironment.backofficeRuntimeUnlockKey,

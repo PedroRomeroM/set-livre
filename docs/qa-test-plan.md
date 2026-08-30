@@ -102,6 +102,12 @@ potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é 
 provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
 efetivo e modo `0600` também são obrigatórios.
 
+A leitura desse ambiente é explícita e lazy: importar um helper Playwright para testar suas funções
+puras não lê credencial nem exige que o processo Vitest possua configuração destrutiva. A validação
+fail-closed ocorre ao carregar a configuração Playwright ou imediatamente antes da primeira operação
+real de banco. Assim, runners unitários limpos continuam independentes sem criar valor padrão,
+fallback ou caminho que permita executar E2E sem o contrato completo.
+
 O preflight global também exige zero identidades `qa_*@example.test`; resíduo de execução
 interrompida exige `npm run supabase:reset` e nunca é tratado como fixture válida. Durante cada
 processo worker, a primeira operação destrutiva revalida o mesmo marcador local; o resultado seguro é

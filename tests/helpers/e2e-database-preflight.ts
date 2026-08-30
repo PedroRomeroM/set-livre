@@ -1,7 +1,7 @@
 import { Pool, type PoolClient } from "pg";
 import { z } from "zod";
 
-import { safeE2EEnvironment } from "./e2e-environment";
+import { readSafeE2EEnvironment } from "./e2e-environment";
 
 const identitySchema = z
   .array(
@@ -25,6 +25,7 @@ function databasePool(scope: DatabaseScope) {
   const existing = pools[scope];
   if (existing !== undefined) return existing;
 
+  const safeE2EEnvironment = readSafeE2EEnvironment();
   const pool = new Pool({
     allowExitOnIdle: true,
     application_name: `set-livre-e2e-${scope}`,
@@ -78,6 +79,7 @@ async function inspectE2EDatabase() {
 
 async function assertE2EDatabaseSafety() {
   const identity = await inspectE2EDatabase();
+  const safeE2EEnvironment = readSafeE2EEnvironment();
   if (identity?.marker !== `set-livre-e2e:${safeE2EEnvironment.databaseMarker}`) {
     throw new Error("O banco E2E não possui o marcador efêmero da instância local atual.");
   }

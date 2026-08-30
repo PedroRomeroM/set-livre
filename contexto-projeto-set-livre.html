@@ -174,9 +174,11 @@
           limites de produção, e o preflight rejeita qualquer identidade QA residual. O runner
           mantém um pool PostgreSQL administrativo e um DAL por processo, com cliente exclusivo por
           operação, evitando churn de conexões e esgotamento de portas efêmeras no Windows; páginas
-          são encerradas antes da limpeza destrutiva para não competir com refetches ainda ativos.
-          Os resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes
-          canônicas de
+          são encerradas antes da limpeza destrutiva para não competir com refetches ainda ativos. A
+          configuração destrutiva é lida somente ao iniciar Playwright ou uma operação real de
+          banco; importar helpers puros em Vitest não exige credenciais E2E e também não cria
+          fallback. Os resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas
+          fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.
