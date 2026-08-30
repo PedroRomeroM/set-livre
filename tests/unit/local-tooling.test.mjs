@@ -176,7 +176,11 @@ describe("local tooling contracts", () => {
 
     expect(configuration.playwright).toEqual({
       config: [],
-      entry: ["playwright.config.ts", "tests/e2e/**/*.spec.ts"],
+      entry: [
+        "playwright.config.ts",
+        "tests/e2e/**/*.spec.ts",
+        "tests/helpers/e2e-database-preflight.ts",
+      ],
     });
   });
 
