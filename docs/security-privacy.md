@@ -74,6 +74,16 @@ aceita apenas taxonomia ativa e plain text validado, persiste somente o YouTube 
 fora do banco. React escapa a prévia, e o único frame remoto permitido pelo CSP é
 `www.youtube-nocookie.com`; auditoria guarda contagens e presença de vídeo, sem conteúdo comercial.
 
+Na FEAT-031, o backoffice usa storage key de cookie própria e binding no banco pelo `session_id` Auth:
+30 minutos de inatividade, oito horas absolutas e cinco minutos de autenticação forte para alterar
+papéis. Cada leitura e comando revalida sessão Auth canônica, perfil ativo/concluído e papel atual;
+remover todos os papéis ou suspender a conta fecha bindings existentes. `support` alcança somente
+usuários e revelação temporária de PII; catálogo administrativo, taxonomias e papéis exigem `admin` no
+banco, mesmo se uma rota for chamada diretamente. O último admin ativo é protegido sob lock global.
+PII aparece mascarada no read model e só é devolvida por motivo allowlisted, fora de URL/QueryCache,
+por até 60 segundos. Ledger e auditoria registram ator, ação, alvo, motivo/versões e correlação, nunca o
+valor nem hash reutilizável da PII. Taxonomia é versionada e arquivada sem apagar referências.
+
 ## Comandos, origem e abuso
 
 Escritas cookie-based exigem método, body limitado, content type, `Origin`/`Host` exatos e, em produção,
@@ -204,6 +214,8 @@ Cobertura proporcional inclui:
 
 - isolamento entre ao menos dois usuários, dono e admin;
 - role escalation, IDOR, origem inválida e body grande;
+- expiração/revogação da sessão administrativa, último admin, PII efêmera e fronteira
+  `support/admin`;
 - concorrência/idempotência de reserva e pagamento quando implementados;
 - webhook inválido/replay e upload spoof quando suas features existirem;
 - redaction, CSP, secret scan e release/rollback;

@@ -11,6 +11,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order: number;
+          taxonomy_version: number;
           updated_at: string;
         };
         Insert: {
@@ -20,6 +21,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Update: {
@@ -29,6 +31,7 @@ export type Database = {
           name?: string;
           slug?: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Relationships: [];
@@ -116,8 +119,45 @@ export type Database = {
           },
         ];
       };
+      platform_roles: {
+        Row: {
+          created_at: string;
+          granted_by: string | null;
+          role: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          granted_by?: string | null;
+          role: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          granted_by?: string | null;
+          role?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "platform_roles_granted_by_fkey";
+            columns: ["granted_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "platform_roles_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
+          account_version: number;
           additional_document: string | null;
           additional_document_masked: string | null;
           completed_at: string | null;
@@ -133,6 +173,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          account_version?: number;
           additional_document?: string | null;
           additional_document_masked?: string | null;
           completed_at?: string | null;
@@ -148,6 +189,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          account_version?: number;
           additional_document?: string | null;
           additional_document_masked?: string | null;
           completed_at?: string | null;
@@ -354,6 +396,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order: number;
+          taxonomy_version: number;
           updated_at: string;
         };
         Insert: {
@@ -363,6 +406,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Update: {
@@ -372,6 +416,7 @@ export type Database = {
           name?: string;
           slug?: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Relationships: [];
@@ -436,6 +481,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order: number;
+          taxonomy_version: number;
           updated_at: string;
         };
         Insert: {
@@ -445,6 +491,7 @@ export type Database = {
           name: string;
           slug: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Update: {
@@ -454,6 +501,7 @@ export type Database = {
           name?: string;
           slug?: string;
           sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Relationships: [];

@@ -13,17 +13,19 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot e tipos são gerados.
 
-### 1.1 Estado versionado até a FEAT-007 em andamento
+### 1.1 Estado versionado até a FEAT-031
 
 A árvore possui a baseline inicial `20260824000100`, a migration de role de produção
-`20260828174500_default_production_dal_role` e a migration append-only
-`20260829103831_feat_006_studio_core_revision` e a migration
-`20260829124200_feat_007_studio_taxonomy_content`, que é o head da branch atual. Antes do primeiro deploy, enquanto o
+`20260828174500_default_production_dal_role` e as migrations append-only
+`20260829103831_feat_006_studio_core_revision`,
+`20260829124200_feat_007_studio_taxonomy_content` e
+`20260829224738_feat_031_backoffice_users_taxonomy`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. O runner executa um setup idempotente e seis suítes pgTAP; o recorte atual totaliza
-310 asserções para baseline/isolamento, identidade/legal, perfil, dono/recebedor e estúdios.
+dump de schema. O runner executa um setup idempotente e sete suítes pgTAP; com o próprio teste de
+setup, o recorte atual totaliza 363 asserções para baseline/isolamento, identidade/legal, perfil,
+dono/recebedor, estúdios e backoffice.
 
 A baseline implementada inclui:
 
@@ -32,6 +34,8 @@ A baseline implementada inclui:
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
 - núcleo de estúdio/revisão, taxonomias ativas, conteúdo comercial, concorrência otimista, ownership e
   descarte seguro;
+- usuários administrativos, binding curto de sessão, papéis `support/admin`, PII temporária,
+  taxonomias versionadas, idempotência e auditoria redigida;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
@@ -160,12 +164,27 @@ Nome, telefone e documentos continuam canônicos em `profiles`; esta tabela não
 ### 4.3 `platform_roles`
 
 - `user_id`;
-- `role`: `reviewer/support/finance/admin`;
+- `role`: `support/admin` no recorte implementado;
 - `granted_by`;
 - `created_at`;
 - PK `(user_id, role)`.
 
-Sem escrita pelo browser.
+Sem escrita pelo browser. `reviewer` e `finance` só entram com as features que os consomem. O primeiro
+admin usa o bootstrap privado one-shot; depois disso, somente admin com autenticação recente altera
+papéis, e a salvaguarda transacional mantém ao menos um admin ativo.
+
+#### `private.backoffice_sessions`
+
+Binding por `auth_session_id`, usuário, abertura, último uso, expiração absoluta e fechamento. A
+sessão expira após 30 minutos de inatividade ou oito horas, respeita a sessão Auth canônica e exige
+login feito nos últimos cinco minutos para gestão de papéis. Remoção de todos os papéis ou suspensão
+fecha bindings existentes.
+
+#### `private.backoffice_command_requests`
+
+Ledger idempotente por ator + chave. Guarda action, hash de payload, alvo e hash do resultado
+autoritativo. Para revelação de PII, não guarda valor nem hash reutilizável: conserva somente versões
+canônicas de perfil/Auth para recusar replay stale. RLS fica habilitada sem policy e sem grant web.
 
 ### 4.4 `terms_versions`
 
@@ -205,8 +224,10 @@ Quatro tipos, oito tags e oito comodidades mínimas são seedados deterministica
 autenticado recebe somente opções ativas para novas escolhas por `list_active_studio_types()` e
 `list_active_studio_taxonomies()`. As policies também conservam legíveis tipo, tags e comodidades
 arquivados quando são referenciados por revisão pertencente ao `auth.uid()`, permitindo abrir o
-histórico sem expor esses itens a outro dono nem aceitá-los em nova mutação. Escrita runtime permanece
-revogada. A administração pertence à FEAT-031, sem antecipar permissões de backoffice nesta feature.
+histórico sem expor esses itens a outro dono nem aceitá-los em nova mutação. Escrita direta permanece
+revogada. A administração da FEAT-031 usa funções privadas somente para `admin`, versão otimista e
+retorno com contagem de uso. Criar/editar incrementa `taxonomy_version`; arquivar remove novas escolhas
+sem apagar relações históricas, e reativar preserva o histórico.
 
 ### 4.7 `studios`
 
@@ -697,11 +718,16 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `public.list_owner_reservations(...)`;
 - `public.list_owner_payments(...)`;
 
+### Backoffice/private implementados
+
+- `private.list_backoffice_users(...)` usa busca server-side e paginação keyset por
+  `created_at + id`, devolvendo somente e-mail mascarado;
+- `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
+
 ### Backoffice/private planejados
 
 - `private.list_review_queue(...)`;
 - `private.get_review_case(uuid)`;
-- `private.list_admin_users(...)`;
 - `private.list_admin_payments(...)`;
 - `private.get_operational_overview(...)`.
 
@@ -711,7 +737,7 @@ Listas crescentes usam paginação **keyset** e retornam `items + nextCursor`. O
 
 ## 6. Comandos privados principais
 
-Implementados nas FEAT-002/003/004:
+Implementados:
 
 - `private.create_signup_legal_intent(uuid, uuid, text, uuid, jsonb)`: retorna o token opaco usado somente como metadata transitória do signup; SQLSTATE `23514` identifica versão jurídica stale;
 - `private.issue_identity_recovery_context(uuid, uuid, timestamptz)`: valida `auth.sessions` e cria atomicamente binding, scope opaco e grant de 15 minutos;
@@ -727,10 +753,19 @@ Implementados nas FEAT-002/003/004:
 - `private.activate_owner(uuid, uuid, uuid, uuid, text)`: recebe `user_id`, versão do contrato, `idempotency_key`, `request_id` e hash do user-agent em campos distintos; sob lock do perfil, cria/renova a autoridade e o aceite de forma idempotente, registra a correlação real e retorna a projeção completa de ativação;
 - `private.prepare_owner_recipient_operation(uuid, text, uuid)`: sob ordem global de locks, reserva `start | refresh`, sequência e versão do perfil antes de qualquer chamada ao adapter;
 - `private.apply_owner_recipient_operation(uuid, uuid, uuid, text, text, text, text[])`: recebe `user_id`, operação, `request_id`, provider, referência, status e requisitos; aplica somente a operação preparada ainda vigente, recusa resultado tardio/divergente e registra a transição redigida. A chave idempotente continua vinculada à operação reservada, sem ocupar o campo de correlação.
+- as fachadas FEAT-006/007 criam, atualizam, descartam e leem revisões, taxonomia e conteúdo de
+  estúdio sob autoridade do dono, versão otimista e idempotência;
+- `private.open/get/close_backoffice_session(...)` vinculam a sessão Auth ao banco;
+- `private.set_backoffice_user_status(...)` e `private.reveal_backoffice_user_pii(...)` atendem
+  `support/admin`, com versão e auditoria;
+- `private.set_backoffice_user_role(...)` exige admin com autenticação recente e protege o último
+  admin ativo;
+- `private.upsert_backoffice_taxonomy(...)` e `private.set_backoffice_taxonomy_active(...)` exigem
+  admin, versão otimista e preservação histórica.
 
 Planejados por suas features proprietárias:
 
-- studio/revision/media;
+- media;
 - review;
 - calendar;
 - pricing/addons;
@@ -738,7 +773,7 @@ Planejados por suas features proprietárias:
 - webhook/payment/reservation;
 - cancellation/refund;
 - payout;
-- admin/taxonomy/fiscal;
+- admin financeiro/fiscal;
 - privacy/export/delete.
 
 Detalhados em `api-contracts.md`.
@@ -772,7 +807,7 @@ Conceder somente:
 
 ### 8.1 Perfis
 
-Usuário lê somente as colunas seguras necessárias aos read models invoker do próprio perfil; `tax_id` e `additional_document` crus permanecem sem grant. Não há grant de escrita. Aceites e preferências usam policy própria pelo mesmo `auth.uid()`; a leitura anônima continua limitada a Termos e Privacidade. `owner_profiles` e `owner_payment_recipients` usam policies próprias pelo mesmo `auth.uid()` e grants apenas nas colunas da projeção segura. Os testes materializam usuários A/B e comprovam que perfil, preferências, aceites, autoridade e recebedor não atravessam ownership. As fixtures adicionais com metadata owner/admin continuam apenas `authenticated`: a metadata não concede autoridade, leitura alheia, escrita direta ou execução privada. A autoridade de dono nasce exclusivamente em `owner_profiles`; `platform_roles` continua pertencendo à FEAT-031. Os estados `private.signup_legal_intents`, `private.identity_recovery_grants`, `private.identity_recovery_sessions`, `private.owner_activation_requests`, `private.owner_recipient_operations` e `audit.events` mantêm RLS sem policy e zero grants para as roles web; o pgTAP falha se essa fronteira for ampliada.
+Usuário lê somente as colunas seguras necessárias aos read models invoker do próprio perfil; `tax_id` e `additional_document` crus permanecem sem grant. Não há grant de escrita. Aceites e preferências usam policy própria pelo mesmo `auth.uid()`; a leitura anônima continua limitada a Termos e Privacidade. `owner_profiles` e `owner_payment_recipients` usam policies próprias pelo mesmo `auth.uid()` e grants apenas nas colunas da projeção segura. Os testes materializam usuários A/B e comprovam que perfil, preferências, aceites, autoridade e recebedor não atravessam ownership. Metadata Auth nunca concede autoridade de dono ou papel operacional: essas autoridades nascem exclusivamente em `owner_profiles` e `platform_roles`. Os estados `private.signup_legal_intents`, `private.identity_recovery_grants`, `private.identity_recovery_sessions`, `private.owner_activation_requests`, `private.owner_recipient_operations`, `private.backoffice_sessions`, `private.backoffice_command_requests`, `public.platform_roles` e `audit.events` mantêm RLS sem policy e zero grants para as roles web; o pgTAP falha se essa fronteira for ampliada.
 
 ### 8.2 Estúdios
 

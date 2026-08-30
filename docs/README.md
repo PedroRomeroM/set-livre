@@ -41,8 +41,8 @@ notificações e backoffice. Eles guardam regras duráveis; não repetem o hist�
 
 ## Documentos transitórios
 
-- [`features/`](features/): somente features planejadas ou em andamento; o plano é apagado depois do
-  merge/deploy concluído.
+- [`features/`](features/): somente features planejadas ou ainda em implementação; o plano é apagado
+  quando código, testes e documentação permanente concluem o recorte, sem substituir review/deploy.
 - [`open-decisions.md`](open-decisions.md): decisões humanas ainda abertas.
 - [`technical-debt.md`](technical-debt.md): dívida aceita com dono e condição de saída.
 

@@ -115,6 +115,13 @@ Tem:
 - secrets próprios;
 - build/deploy independente.
 
+O recorte implementado possui login próprio, shell protegido e as rotas `/usuarios`, `/acessos` e
+`/taxonomias`. Server Components fazem o primeiro fence de navegação; APIs revalidam claims e o binding
+curto; a DAL `server-only` chama somente funções privadas allowlisted. `support` alcança usuários e PII
+temporária auditada; `admin` também alcança papéis e taxonomias. O banco, e não a visibilidade da
+navegação, é a autoridade final. Leituras interativas usam TanStack Query com scope da sessão e filtros
+sem PII; comandos usam Zod estrito, versão esperada, idempotência e retorno autoritativo.
+
 ### 2.3 Workers
 
 Processos Node server-only geridos por systemd:

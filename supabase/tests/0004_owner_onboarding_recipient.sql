@@ -696,7 +696,7 @@ select ok(
 
 select ok(
   (
-    select pg_catalog.count(*) = 21
+    select pg_catalog.count(*) = 31
     from pg_catalog.pg_proc as routine
     cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
     join pg_catalog.pg_roles as role on role.oid = privilege.grantee
@@ -704,7 +704,7 @@ select ok(
       and privilege.privilege_type = 'EXECUTE'
       and not privilege.is_grantable
   ),
-  'app_dal mantém allowlist exata de vinte e uma rotinas'
+  'app_dal mantém allowlist exata de trinta e uma rotinas'
 );
 
 select ok(

@@ -97,7 +97,7 @@ potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é 
 provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
 efetivo e modo `0600` também são obrigatórios.
 
-## Matriz da FEAT-006 em andamento
+## Matriz da FEAT-006
 
 Os dezessete cenários estáveis `SL-F006-E2E-001..017` expandem para 61 execuções:
 
@@ -122,7 +122,7 @@ trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência lo
 No banco, `0005_studio_core_revision.sql` possui 41 asserções de domínio/segurança. O setup
 `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
 
-## Matriz da FEAT-007 em andamento
+## Matriz da FEAT-007
 
 Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
 
@@ -137,9 +137,26 @@ Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
 - axe, teclado, toque e alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
-`0006_studio_taxonomy_content.sql` acrescenta 35 asserções para schema, grants/RLS, isolamento entre
+`0006_studio_taxonomy_content.sql` possui 42 asserções para schema, grants/RLS, isolamento entre
 donos, idempotência, concorrência, clone de publicado, taxonomia ativa, FAQ/vídeo e auditoria
-redigida. As seis suítes totalizam 310 testes.
+redigida.
+
+## Matriz da FEAT-031
+
+Os sete cenários `SL-F031-E2E-001..007` expandem para 24 execuções:
+
+- P0 de suspensão/restauração, bloqueio de comandos, papéis/último admin e taxonomia histórica nos
+  três engines;
+- PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
+  altura compacta;
+- axe, teclado, toque, contraste e ausência de overflow em desktop, mobile, 320 px e tema escuro.
+
+Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
+QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 46
+asserções para grants/RLS, binding curto, expiração, bootstrap one-shot, papel/último admin, versão de
+conta, PII redigida, idempotência, taxonomia histórica e encerramento de sessões. O runner completo
+possui oito arquivos e 363 testes.
 
 ## Contrato por feature
 

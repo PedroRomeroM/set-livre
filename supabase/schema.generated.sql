@@ -564,6 +564,370 @@ $$;
 ALTER FUNCTION "private"."assert_studio_owner_mutable"("p_user_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."backoffice_payload_hash"("payload" "jsonb") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.encode(extensions.digest(payload::text, 'sha256'), 'hex');
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_payload_hash"("payload" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."backoffice_result_hash"("result" "jsonb") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.encode(extensions.digest(result::text, 'sha256'), 'hex');
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_result_hash"("result" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) RETURNS TABLE("actor_role" "text", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  checked_at timestamptz := pg_catalog.clock_timestamp();
+  binding private.backoffice_sessions%rowtype;
+  canonical_not_after timestamptz;
+  current_roles text[];
+begin
+  if pg_catalog.current_setting('app.settings.jwt_exp', true) is distinct from '3600' then
+    raise exception using errcode = '55000', message = 'backoffice_jwt_expiry_not_pinned';
+  end if;
+  if p_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_auth_expires_at <= checked_at
+    or p_auth_expires_at > checked_at + interval '65 minutes'
+    or (p_required_role is not null and p_required_role <> 'admin')
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_session';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock_shared(
+    pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+  );
+
+  select session_binding.*
+  into binding
+  from private.backoffice_sessions as session_binding
+  where session_binding.auth_session_id = p_auth_session_id
+    and session_binding.user_id = p_user_id
+  for update;
+
+  if not found
+    or binding.closed_at is not null
+    or binding.last_seen_at + interval '30 minutes' <= checked_at
+    or binding.absolute_expires_at <= checked_at
+  then
+    raise exception using errcode = '42501', message = 'backoffice_session_expired';
+  end if;
+
+  select auth_session.not_after
+  into canonical_not_after
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+    and (auth_session.not_after is null or auth_session.not_after > checked_at)
+  for key share;
+
+  if not found then
+    raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
+  end if;
+  if not exists (
+    select 1
+    from public.profiles as profile
+    where profile.id = p_user_id
+      and profile.status = 'active'
+      and profile.completed_at is not null
+  ) then
+    raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
+  end if;
+
+  current_roles := private.platform_roles_for_user(p_user_id);
+  if pg_catalog.cardinality(current_roles) = 0
+    or (p_required_role is not null and not p_required_role = any(current_roles))
+  then
+    raise exception using errcode = '42501', message = 'backoffice_role_required';
+  end if;
+  if p_require_strong_authentication
+    and binding.opened_at + interval '5 minutes' <= checked_at
+  then
+    raise exception using errcode = '42501', message = 'backoffice_reauthentication_required';
+  end if;
+
+  update private.backoffice_sessions as session_binding
+  set last_seen_at = checked_at
+  where session_binding.auth_session_id = p_auth_session_id;
+
+  return query
+  select
+    case when 'admin' = any(current_roles) then 'admin'::text else 'support'::text end,
+    current_roles,
+    least(
+      binding.absolute_expires_at,
+      coalesce(canonical_not_after, binding.absolute_expires_at),
+      p_auth_expires_at
+    ),
+    binding.opened_at + interval '5 minutes';
+end;
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."backoffice_taxonomy_item_json"("p_kind" "text", "p_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  result jsonb;
+begin
+  if p_kind = 'studioType' then
+    select pg_catalog.jsonb_build_object(
+      'active', item.active,
+      'id', item.id,
+      'kind', p_kind,
+      'name', item.name,
+      'slug', item.slug,
+      'sortOrder', item.sort_order,
+      'updatedAt', item.updated_at,
+      'usageCount', (
+        select pg_catalog.count(*)
+        from public.studio_revisions as revision
+        where revision.studio_type_id = item.id
+      ),
+      'version', item.taxonomy_version
+    )
+    into result
+    from public.studio_types as item
+    where item.id = p_id;
+  elsif p_kind = 'tag' then
+    select pg_catalog.jsonb_build_object(
+      'active', item.active,
+      'id', item.id,
+      'kind', p_kind,
+      'name', item.name,
+      'slug', item.slug,
+      'sortOrder', item.sort_order,
+      'updatedAt', item.updated_at,
+      'usageCount', (
+        select pg_catalog.count(*)
+        from public.studio_revision_tags as relation
+        where relation.tag_id = item.id
+      ),
+      'version', item.taxonomy_version
+    )
+    into result
+    from public.tags as item
+    where item.id = p_id;
+  elsif p_kind = 'amenity' then
+    select pg_catalog.jsonb_build_object(
+      'active', item.active,
+      'id', item.id,
+      'kind', p_kind,
+      'name', item.name,
+      'slug', item.slug,
+      'sortOrder', item.sort_order,
+      'updatedAt', item.updated_at,
+      'usageCount', (
+        select pg_catalog.count(*)
+        from public.studio_revision_amenities as relation
+        where relation.amenity_id = item.id
+      ),
+      'version', item.taxonomy_version
+    )
+    into result
+    from public.amenities as item
+    where item.id = p_id;
+  else
+    raise exception using errcode = '22023', message = 'invalid_backoffice_taxonomy_kind';
+  end if;
+
+  if result is null then
+    raise exception using errcode = 'P0002', message = 'backoffice_taxonomy_missing';
+  end if;
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_taxonomy_item_json"("p_kind" "text", "p_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."backoffice_user_pii_json"("p_actor_user_id" "uuid", "p_target_user_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  result jsonb;
+begin
+  select pg_catalog.jsonb_build_object(
+    'additionalDocument', profile.additional_document,
+    'email', auth_user.email,
+    'name', profile.name,
+    'phoneE164', profile.phone_e164,
+    'scope', p_actor_user_id,
+    'taxId', profile.tax_id,
+    'userId', profile.id
+  )
+  into result
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where profile.id = p_target_user_id
+    and auth_user.email is not null;
+
+  if result is null then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_user_pii_json"("p_actor_user_id" "uuid", "p_target_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  result jsonb;
+begin
+  select pg_catalog.jsonb_build_object(
+    'accountVersion', profile.account_version,
+    'createdAt', profile.created_at,
+    'emailMasked', private.mask_backoffice_email(auth_user.email),
+    'id', profile.id,
+    'name', profile.name,
+    'roles', private.platform_roles_for_user(profile.id),
+    'status', profile.status
+  )
+  into result
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where profile.id = p_user_id
+    and auth_user.email is not null;
+
+  if result is null then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  result jsonb;
+begin
+  if p_user_id is null or p_request_id is null or p_idempotency_key is null then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_admin_bootstrap';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+  );
+
+  if exists (
+    select 1
+    from audit.events as event
+    where event.action = 'backoffice.admin_bootstrapped'
+      and event.target_type = 'platform_role'
+      and event.target_id = p_user_id
+      and event.idempotency_key = p_idempotency_key
+  ) then
+    if not exists (
+      select 1
+      from public.platform_roles as platform_role
+      where platform_role.user_id = p_user_id
+        and platform_role.role = 'admin'
+    ) then
+      raise exception using errcode = '40001', message = 'backoffice_admin_bootstrap_result_stale';
+    end if;
+    return private.backoffice_user_summary_json(p_user_id);
+  end if;
+
+  if exists (select 1 from public.platform_roles) then
+    raise exception using errcode = '42501', message = 'backoffice_admin_bootstrap_unavailable';
+  end if;
+
+  perform 1
+  from public.profiles as profile
+  where profile.id = p_user_id
+    and profile.status = 'active'
+    and profile.completed_at is not null
+  for share;
+
+  if not found then
+    raise exception using errcode = '42501', message = 'backoffice_admin_bootstrap_profile_ineligible';
+  end if;
+
+  perform 1
+  from auth.users as auth_user
+  where auth_user.id = p_user_id
+    and auth_user.email is not null
+  for share;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+
+  insert into public.platform_roles (user_id, role, granted_by)
+  values (p_user_id, 'admin', null);
+
+  result := private.backoffice_user_summary_json(p_user_id);
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    null,
+    'system',
+    'backoffice.admin_bootstrapped',
+    'platform_role',
+    p_user_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object('role', 'admin')
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") IS 'Bootstrap único e auditado do primeiro admin; executável somente pelo operador PostgreSQL.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."bootstrap_signup_identity"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -714,6 +1078,50 @@ $$;
 
 
 ALTER FUNCTION "private"."bootstrap_user_preferences"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."canonical_platform_roles"("p_roles" "text"[]) RETURNS "text"[]
+    LANGUAGE "plpgsql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+declare
+  canonical_roles text[];
+begin
+  if p_roles is null
+    or pg_catalog.cardinality(p_roles) > 2
+    or exists (
+      select 1
+      from pg_catalog.unnest(p_roles) as candidate(role)
+      where candidate.role is null
+        or candidate.role <> all (array['support'::text, 'admin'::text])
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_roles';
+  end if;
+
+  select coalesce(
+    pg_catalog.array_agg(
+      candidate.role
+      order by case candidate.role when 'support' then 1 else 2 end
+    ),
+    '{}'::text[]
+  )
+  into canonical_roles
+  from (
+    select distinct expanded.role
+    from pg_catalog.unnest(p_roles) as expanded(role)
+  ) as candidate;
+
+  if pg_catalog.cardinality(canonical_roles) <> pg_catalog.cardinality(p_roles) then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_roles';
+  end if;
+
+  return canonical_roles;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."canonical_platform_roles"("p_roles" "text"[]) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
@@ -1329,6 +1737,30 @@ $$;
 
 
 ALTER FUNCTION "private"."clone_studio_revision_relations_after_insert"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."close_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  if p_user_id is null or p_auth_session_id is null then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_session';
+  end if;
+  update private.backoffice_sessions as session_binding
+  set closed_at = coalesce(session_binding.closed_at, pg_catalog.clock_timestamp())
+  where session_binding.auth_session_id = p_auth_session_id
+    and session_binding.user_id = p_user_id;
+  return found;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."close_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."close_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") IS 'Fecha de forma idempotente a sessão curta correspondente ao usuário e session_id Auth.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."close_identity_recovery_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") RETURNS boolean
@@ -2382,6 +2814,35 @@ COMMENT ON FUNCTION "private"."enforce_studio_revision_pointers"() IS 'Valida po
 
 
 
+CREATE OR REPLACE FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  context record;
+begin
+  select *
+  into strict context
+  from private.backoffice_session_context(
+    p_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    null,
+    false
+  );
+  return query
+  select p_user_id, context.roles, context.expires_at, context.strong_authentication_expires_at;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) IS 'Revalida Auth, perfil, papel, inatividade e expiração absoluta da sessão do backoffice.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") RETURNS TABLE("scope" "uuid", "owner_status" "text", "owner_version" bigint, "accepted_owner_contract_version_id" "uuid", "owner_contract_accepted" boolean, "owner_contract_id" "uuid", "owner_contract_kind" "text", "owner_contract_version" "text", "owner_contract_title" "text", "owner_contract_body_markdown" "text", "owner_contract_content_hash" "text", "owner_contract_source" "text", "owner_contract_effective_at" timestamp with time zone, "recipient_status" "text", "requirements" "text"[], "next_action" "text", "profile_version" bigint, "profile_version_synced" bigint, "recipient_version" bigint, "reservations_eligible" boolean, "provider_mode" "text")
     LANGUAGE "plpgsql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -2825,6 +3286,150 @@ COMMENT ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uuid"
 
 
 
+CREATE OR REPLACE FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("active" boolean, "id" "uuid", "kind" "text", "name" "text", "slug" "text", "sort_order" smallint, "updated_at" timestamp with time zone, "usage_count" bigint, "taxonomy_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  perform private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    false
+  );
+  return query
+  select *
+  from (
+    select
+      item.active,
+      item.id,
+      'studioType'::text as kind,
+      item.name,
+      item.slug,
+      item.sort_order,
+      item.updated_at,
+      (
+        select pg_catalog.count(*)
+        from public.studio_revisions as revision
+        where revision.studio_type_id = item.id
+      ) as usage_count,
+      item.taxonomy_version
+    from public.studio_types as item
+    union all
+    select
+      item.active,
+      item.id,
+      'tag'::text,
+      item.name,
+      item.slug,
+      item.sort_order,
+      item.updated_at,
+      (
+        select pg_catalog.count(*)
+        from public.studio_revision_tags as relation
+        where relation.tag_id = item.id
+      ),
+      item.taxonomy_version
+    from public.tags as item
+    union all
+    select
+      item.active,
+      item.id,
+      'amenity'::text,
+      item.name,
+      item.slug,
+      item.sort_order,
+      item.updated_at,
+      (
+        select pg_catalog.count(*)
+        from public.studio_revision_amenities as relation
+        where relation.amenity_id = item.id
+      ),
+      item.taxonomy_version
+    from public.amenities as item
+  ) as taxonomy
+  order by
+    case taxonomy.kind when 'studioType' then 1 when 'tag' then 2 else 3 end,
+    taxonomy.sort_order,
+    taxonomy.name,
+    taxonomy.id
+  limit 501;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) IS 'Lista privada e limitada das taxonomias com versão e impacto de uso.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "name" "text", "roles" "text"[], "status" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  normalized_query text := nullif(pg_catalog.btrim(p_query), '');
+begin
+  perform private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    null,
+    false
+  );
+  if (p_cursor_created_at is null) <> (p_cursor_id is null)
+    or p_limit is null
+    or p_limit < 1
+    or p_limit > 51
+    or (normalized_query is not null and pg_catalog.char_length(normalized_query) > 160)
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_user_query';
+  end if;
+
+  return query
+  select
+    profile.account_version,
+    profile.created_at,
+    private.mask_backoffice_email(auth_user.email),
+    profile.id,
+    profile.name,
+    private.platform_roles_for_user(profile.id),
+    profile.status
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where auth_user.email is not null
+    and (
+      normalized_query is null
+      or pg_catalog.starts_with(
+        pg_catalog.lower(auth_user.email),
+        pg_catalog.lower(normalized_query)
+      )
+      or pg_catalog.starts_with(
+        pg_catalog.lower(coalesce(profile.name, '')),
+        pg_catalog.lower(normalized_query)
+      )
+      or profile.id::text = normalized_query
+    )
+    and (
+      p_cursor_created_at is null
+      or (profile.created_at, profile.id) < (p_cursor_created_at, p_cursor_id)
+    )
+  order by profile.created_at desc, profile.id desc
+  limit p_limit;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) IS 'Busca privada prefixada e paginada por cursor; retorna somente email mascarado.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -2941,6 +3546,118 @@ ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "post
 
 
 COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos legíveis contêm setting sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."mask_backoffice_email"("p_email" "text") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select case
+    when p_email is null or pg_catalog.strpos(p_email, '@') <= 1 then null
+    else
+      pg_catalog.left(pg_catalog.split_part(p_email, '@', 1), 1)
+      || '***@'
+      || pg_catalog.split_part(p_email, '@', 2)
+  end;
+$$;
+
+
+ALTER FUNCTION "private"."mask_backoffice_email"("p_email" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  opened_at timestamptz := pg_catalog.clock_timestamp();
+  canonical_not_after timestamptz;
+  current_roles text[];
+begin
+  if pg_catalog.current_setting('app.settings.jwt_exp', true) is distinct from '3600' then
+    raise exception using errcode = '55000', message = 'backoffice_jwt_expiry_not_pinned';
+  end if;
+  if p_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_auth_expires_at <= opened_at
+    or p_auth_expires_at > opened_at + interval '65 minutes'
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_session';
+  end if;
+
+  select auth_session.not_after
+  into canonical_not_after
+  from auth.sessions as auth_session
+  where auth_session.id = p_auth_session_id
+    and auth_session.user_id = p_user_id
+    and (auth_session.not_after is null or auth_session.not_after > opened_at)
+  for key share;
+
+  if not found then
+    raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
+  end if;
+  if not exists (
+    select 1
+    from public.profiles as profile
+    where profile.id = p_user_id
+      and profile.status = 'active'
+      and profile.completed_at is not null
+  ) then
+    raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
+  end if;
+
+  current_roles := private.platform_roles_for_user(p_user_id);
+  if pg_catalog.cardinality(current_roles) = 0 then
+    raise exception using errcode = '42501', message = 'backoffice_role_required';
+  end if;
+
+  insert into private.backoffice_sessions (
+    auth_session_id,
+    user_id,
+    opened_at,
+    last_seen_at,
+    absolute_expires_at,
+    closed_at
+  )
+  values (
+    p_auth_session_id,
+    p_user_id,
+    opened_at,
+    opened_at,
+    least(
+      opened_at + interval '8 hours',
+      coalesce(canonical_not_after, opened_at + interval '8 hours')
+    ),
+    null
+  )
+  on conflict (auth_session_id) do update
+  set
+    user_id = excluded.user_id,
+    opened_at = excluded.opened_at,
+    last_seen_at = excluded.last_seen_at,
+    absolute_expires_at = excluded.absolute_expires_at,
+    closed_at = null;
+
+  return query
+  select
+    p_user_id,
+    current_roles,
+    least(
+      opened_at + interval '8 hours',
+      coalesce(canonical_not_after, opened_at + interval '8 hours'),
+      p_auth_expires_at
+    ),
+    opened_at + interval '5 minutes';
+end;
+$$;
+
+
+ALTER FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) IS 'Abre binding curto depois de login Auth válido, perfil elegível e papel administrativo vivo.';
 
 
 
@@ -3069,6 +3786,25 @@ $$;
 
 
 ALTER FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."platform_roles_for_user"("p_user_id" "uuid") RETURNS "text"[]
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    pg_catalog.array_agg(
+      platform_role.role
+      order by case platform_role.role when 'support' then 1 else 2 end
+    ),
+    '{}'::text[]
+  )
+  from public.platform_roles as platform_role
+  where platform_role.user_id = p_user_id;
+$$;
+
+
+ALTER FUNCTION "private"."platform_roles_for_user"("p_user_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") RETURNS TABLE("operation_id" "uuid", "operation_sequence" bigint, "operation_action" "text", "provider_reference" "text", "profile_version" bigint, "already_applied" boolean)
@@ -3624,12 +4360,830 @@ COMMENT ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid"
 
 
 
+CREATE OR REPLACE FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_reason" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  actor_context record;
+  auth_updated_at timestamptz;
+  existing_request private.backoffice_command_requests%rowtype;
+  payload_hash text;
+  profile_version bigint;
+  result jsonb;
+begin
+  if p_actor_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_target_user_id is null
+    or p_reason is null
+    or p_reason <> all (array[
+      'identity_verification'::text,
+      'legal_request'::text,
+      'security_investigation'::text,
+      'support_case'::text
+    ])
+    or p_idempotency_key is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_pii_reveal';
+  end if;
+
+  payload_hash := private.backoffice_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'reason', p_reason,
+      'userId', p_target_user_id
+    )
+  );
+
+  select *
+  into strict actor_context
+  from private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    null,
+    false
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_actor_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  select request.*
+  into existing_request
+  from private.backoffice_command_requests as request
+  where request.actor_user_id = p_actor_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if found
+    and (
+      existing_request.action <> 'backoffice.user.revealPii'
+      or existing_request.payload_hash <> payload_hash
+      or existing_request.target_type <> 'profile'
+      or existing_request.target_id <> p_target_user_id
+    )
+  then
+    raise exception using errcode = '40001', message = 'backoffice_idempotency_conflict';
+  end if;
+
+  select
+    profile.profile_version,
+    coalesce(auth_user.updated_at, auth_user.created_at)
+  into profile_version, auth_updated_at
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where profile.id = p_target_user_id
+    and auth_user.email is not null
+  for share of profile, auth_user;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+
+  result := private.backoffice_user_pii_json(p_actor_user_id, p_target_user_id);
+
+  if existing_request.actor_user_id is not null then
+    if existing_request.result_profile_version <> profile_version
+      or existing_request.result_auth_updated_at <> auth_updated_at
+    then
+      raise exception using errcode = '40001', message = 'backoffice_pii_result_stale';
+    end if;
+    return result;
+  end if;
+
+  insert into private.backoffice_command_requests (
+    actor_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    target_type,
+    target_id,
+    result_profile_version,
+    result_auth_updated_at
+  )
+  values (
+    p_actor_user_id,
+    p_idempotency_key,
+    'backoffice.user.revealPii',
+    payload_hash,
+    null,
+    'profile',
+    p_target_user_id,
+    profile_version,
+    auth_updated_at
+  );
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_actor_user_id,
+    actor_context.actor_role,
+    'backoffice.user_pii_revealed',
+    'profile',
+    p_target_user_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object('reason', p_reason)
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_reason" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_reason" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Revela PII somente em resposta efêmera e auditada; o ledger persiste apenas versões.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_active" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  actor_context record;
+  current_active boolean;
+  current_version bigint;
+  existing_request private.backoffice_command_requests%rowtype;
+  payload_hash text;
+  result jsonb;
+  target_type text;
+begin
+  if p_actor_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_kind is null
+    or p_kind <> all (array['studioType'::text, 'tag'::text, 'amenity'::text])
+    or p_id is null
+    or p_expected_version is null
+    or p_expected_version < 0
+    or p_active is null
+    or p_idempotency_key is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_taxonomy_status';
+  end if;
+
+  target_type := case p_kind
+    when 'studioType' then 'studio_type'
+    when 'tag' then 'tag'
+    else 'amenity'
+  end;
+  payload_hash := private.backoffice_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'active', p_active,
+      'expectedVersion', p_expected_version,
+      'id', p_id,
+      'kind', p_kind
+    )
+  );
+
+  select *
+  into strict actor_context
+  from private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    false
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_actor_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  select request.*
+  into existing_request
+  from private.backoffice_command_requests as request
+  where request.actor_user_id = p_actor_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_request.action <> 'backoffice.taxonomy.setActive'
+      or existing_request.payload_hash <> payload_hash
+      or existing_request.target_type <> target_type
+      or existing_request.target_id <> p_id
+    then
+      raise exception using errcode = '40001', message = 'backoffice_idempotency_conflict';
+    end if;
+
+    result := private.backoffice_taxonomy_item_json(p_kind, p_id);
+    if private.backoffice_result_hash(result) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'backoffice_taxonomy_result_stale';
+    end if;
+    return result;
+  end if;
+
+  if p_kind = 'studioType' then
+    select item.active, item.taxonomy_version
+    into current_active, current_version
+    from public.studio_types as item
+    where item.id = p_id
+    for update;
+  elsif p_kind = 'tag' then
+    select item.active, item.taxonomy_version
+    into current_active, current_version
+    from public.tags as item
+    where item.id = p_id
+    for update;
+  else
+    select item.active, item.taxonomy_version
+    into current_active, current_version
+    from public.amenities as item
+    where item.id = p_id
+    for update;
+  end if;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_taxonomy_missing';
+  end if;
+  if current_version <> p_expected_version then
+    raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+  end if;
+  if current_active = p_active then
+    raise exception using errcode = '23514', message = 'backoffice_taxonomy_status_unchanged';
+  end if;
+
+  if p_kind = 'studioType' then
+    update public.studio_types as item
+    set
+      active = p_active,
+      taxonomy_version = item.taxonomy_version + 1
+    where item.id = p_id
+      and item.taxonomy_version = p_expected_version;
+  elsif p_kind = 'tag' then
+    update public.tags as item
+    set
+      active = p_active,
+      taxonomy_version = item.taxonomy_version + 1
+    where item.id = p_id
+      and item.taxonomy_version = p_expected_version;
+  else
+    update public.amenities as item
+    set
+      active = p_active,
+      taxonomy_version = item.taxonomy_version + 1
+    where item.id = p_id
+      and item.taxonomy_version = p_expected_version;
+  end if;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+  end if;
+
+  result := private.backoffice_taxonomy_item_json(p_kind, p_id);
+
+  insert into private.backoffice_command_requests (
+    actor_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    target_type,
+    target_id
+  )
+  values (
+    p_actor_user_id,
+    p_idempotency_key,
+    'backoffice.taxonomy.setActive',
+    payload_hash,
+    private.backoffice_result_hash(result),
+    target_type,
+    p_id
+  );
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_actor_user_id,
+    actor_context.actor_role,
+    case
+      when p_active then 'backoffice.taxonomy_reactivated'
+      else 'backoffice.taxonomy_archived'
+    end,
+    target_type,
+    p_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object(
+      'active', p_active,
+      'kind', p_kind,
+      'usageCount', result -> 'usageCount',
+      'version', result -> 'version'
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_active" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_active" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Arquiva ou reativa taxonomia sem apagar referências históricas.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  actor_context record;
+  current_profile public.profiles%rowtype;
+  current_roles text[];
+  existing_request private.backoffice_command_requests%rowtype;
+  expected_roles text[];
+  payload_hash text;
+  result jsonb;
+begin
+  if p_actor_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_target_user_id is null
+    or p_expected_roles is null
+    or p_role is null
+    or p_role <> all (array['support'::text, 'admin'::text])
+    or p_enabled is null
+    or p_idempotency_key is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_role_change';
+  end if;
+
+  expected_roles := private.canonical_platform_roles(p_expected_roles);
+  payload_hash := private.backoffice_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'enabled', p_enabled,
+      'expectedRoles', pg_catalog.to_jsonb(expected_roles),
+      'role', p_role,
+      'userId', p_target_user_id
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+  );
+
+  select *
+  into strict actor_context
+  from private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    true
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_actor_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  select request.*
+  into existing_request
+  from private.backoffice_command_requests as request
+  where request.actor_user_id = p_actor_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_request.action <> 'backoffice.access.setRole'
+      or existing_request.payload_hash <> payload_hash
+      or existing_request.target_type <> 'platform_role'
+      or existing_request.target_id <> p_target_user_id
+    then
+      raise exception using errcode = '40001', message = 'backoffice_idempotency_conflict';
+    end if;
+
+    perform 1
+    from public.profiles as profile
+    where profile.id = p_target_user_id
+    for share;
+    if not found then
+      raise exception using errcode = '40001', message = 'backoffice_role_result_missing';
+    end if;
+    perform 1
+    from auth.users as auth_user
+    where auth_user.id = p_target_user_id
+      and auth_user.email is not null
+    for share;
+    result := private.backoffice_user_summary_json(p_target_user_id);
+    if private.backoffice_result_hash(result) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'backoffice_role_result_stale';
+    end if;
+    return result;
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_target_user_id
+  for share;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+  if p_enabled
+    and (current_profile.status <> 'active' or current_profile.completed_at is null)
+  then
+    raise exception using errcode = '42501', message = 'backoffice_role_target_ineligible';
+  end if;
+
+  current_roles := private.platform_roles_for_user(p_target_user_id);
+  if current_roles is distinct from expected_roles then
+    raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
+  end if;
+  if p_enabled = (p_role = any(current_roles)) then
+    raise exception using errcode = '23514', message = 'backoffice_role_unchanged';
+  end if;
+
+  if not p_enabled
+    and p_role = 'admin'
+    and current_profile.status = 'active'
+    and current_profile.completed_at is not null
+    and not exists (
+      select 1
+      from public.platform_roles as platform_role
+      join public.profiles as profile on profile.id = platform_role.user_id
+      where platform_role.role = 'admin'
+        and platform_role.user_id <> p_target_user_id
+        and profile.status = 'active'
+        and profile.completed_at is not null
+    )
+  then
+    raise exception using errcode = '23514', message = 'backoffice_last_active_admin_required';
+  end if;
+
+  if p_enabled then
+    insert into public.platform_roles (user_id, role, granted_by)
+    values (p_target_user_id, p_role, p_actor_user_id);
+  else
+    delete from public.platform_roles as platform_role
+    where platform_role.user_id = p_target_user_id
+      and platform_role.role = p_role;
+    if not found then
+      raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
+    end if;
+  end if;
+
+  current_roles := private.platform_roles_for_user(p_target_user_id);
+  if pg_catalog.cardinality(current_roles) = 0 then
+    update private.backoffice_sessions as session_binding
+    set closed_at = coalesce(session_binding.closed_at, pg_catalog.clock_timestamp())
+    where session_binding.user_id = p_target_user_id;
+  end if;
+
+  perform 1
+  from auth.users as auth_user
+  where auth_user.id = p_target_user_id
+    and auth_user.email is not null
+  for share;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+
+  result := private.backoffice_user_summary_json(p_target_user_id);
+
+  insert into private.backoffice_command_requests (
+    actor_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    target_type,
+    target_id
+  )
+  values (
+    p_actor_user_id,
+    p_idempotency_key,
+    'backoffice.access.setRole',
+    payload_hash,
+    private.backoffice_result_hash(result),
+    'platform_role',
+    p_target_user_id
+  );
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_actor_user_id,
+    actor_context.actor_role,
+    case
+      when p_enabled then 'backoffice.role_granted'
+      else 'backoffice.role_revoked'
+    end,
+    'platform_role',
+    p_target_user_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object(
+      'role', p_role,
+      'roles', pg_catalog.to_jsonb(current_roles)
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Concede ou revoga support/admin com reautenticação, concorrência e proteção do último admin.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  actor_context record;
+  current_profile public.profiles%rowtype;
+  existing_request private.backoffice_command_requests%rowtype;
+  payload_hash text;
+  result jsonb;
+begin
+  if p_actor_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_target_user_id is null
+    or p_expected_account_version is null
+    or p_expected_account_version < 0
+    or p_status is null
+    or p_status <> all (array['active'::text, 'suspended'::text])
+    or p_idempotency_key is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_user_status';
+  end if;
+
+  payload_hash := private.backoffice_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'expectedAccountVersion', p_expected_account_version,
+      'status', p_status,
+      'userId', p_target_user_id
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+  );
+
+  select *
+  into strict actor_context
+  from private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    null,
+    false
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_actor_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  select request.*
+  into existing_request
+  from private.backoffice_command_requests as request
+  where request.actor_user_id = p_actor_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_request.action <> 'backoffice.user.setStatus'
+      or existing_request.payload_hash <> payload_hash
+      or existing_request.target_type <> 'profile'
+      or existing_request.target_id <> p_target_user_id
+    then
+      raise exception using errcode = '40001', message = 'backoffice_idempotency_conflict';
+    end if;
+
+    perform 1
+    from public.profiles as profile
+    where profile.id = p_target_user_id
+    for share;
+    if not found then
+      raise exception using errcode = '40001', message = 'backoffice_user_status_result_missing';
+    end if;
+    perform 1
+    from auth.users as auth_user
+    where auth_user.id = p_target_user_id
+      and auth_user.email is not null
+    for share;
+    result := private.backoffice_user_summary_json(p_target_user_id);
+    if private.backoffice_result_hash(result) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'backoffice_user_status_result_stale';
+    end if;
+    return result;
+  end if;
+
+  select profile.*
+  into current_profile
+  from public.profiles as profile
+  where profile.id = p_target_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+  if current_profile.account_version <> p_expected_account_version then
+    raise exception using errcode = '40001', message = 'backoffice_account_version_conflict';
+  end if;
+  if current_profile.status = p_status then
+    raise exception using errcode = '23514', message = 'backoffice_user_status_unchanged';
+  end if;
+
+  if p_status = 'suspended'
+    and exists (
+      select 1
+      from public.platform_roles as platform_role
+      where platform_role.user_id = p_target_user_id
+        and platform_role.role = 'admin'
+    )
+    and not exists (
+      select 1
+      from public.platform_roles as platform_role
+      join public.profiles as profile on profile.id = platform_role.user_id
+      where platform_role.role = 'admin'
+        and platform_role.user_id <> p_target_user_id
+        and profile.status = 'active'
+        and profile.completed_at is not null
+    )
+  then
+    raise exception using errcode = '23514', message = 'backoffice_last_active_admin_required';
+  end if;
+
+  update public.profiles as profile
+  set status = p_status
+  where profile.id = p_target_user_id
+    and profile.account_version = p_expected_account_version
+  returning profile.* into current_profile;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'backoffice_account_version_conflict';
+  end if;
+
+  if p_status = 'suspended' then
+    update private.backoffice_sessions as session_binding
+    set closed_at = coalesce(session_binding.closed_at, pg_catalog.clock_timestamp())
+    where session_binding.user_id = p_target_user_id;
+  end if;
+
+  perform 1
+  from auth.users as auth_user
+  where auth_user.id = p_target_user_id
+    and auth_user.email is not null
+  for share;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+
+  result := private.backoffice_user_summary_json(p_target_user_id);
+
+  insert into private.backoffice_command_requests (
+    actor_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    target_type,
+    target_id
+  )
+  values (
+    p_actor_user_id,
+    p_idempotency_key,
+    'backoffice.user.setStatus',
+    payload_hash,
+    private.backoffice_result_hash(result),
+    'profile',
+    p_target_user_id
+  );
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_actor_user_id,
+    actor_context.actor_role,
+    case
+      when p_status = 'suspended' then 'backoffice.user_suspended'
+      else 'backoffice.user_restored'
+    end,
+    'profile',
+    p_target_user_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object(
+      'accountVersion', current_profile.account_version,
+      'previousStatus', case when p_status = 'suspended' then 'active' else 'suspended' end,
+      'status', p_status
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Suspende ou restaura conta com versão otimista, auditoria e proteção do último admin.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."set_profile_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
     AS $$
 begin
-  new.profile_version := old.profile_version + 1;
+  new.profile_version := old.profile_version + case
+    when (
+      new.person_type,
+      new.completed_at,
+      new.name,
+      new.phone_e164,
+      new.tax_id,
+      new.additional_document
+    ) is distinct from (
+      old.person_type,
+      old.completed_at,
+      old.name,
+      old.phone_e164,
+      old.tax_id,
+      old.additional_document
+    ) then 1
+    else 0
+  end;
+  new.account_version := old.account_version + case
+    when new.status is distinct from old.status then 1
+    else 0
+  end;
   new.updated_at := pg_catalog.clock_timestamp();
   return new;
 end;
@@ -3637,6 +5191,10 @@ $$;
 
 
 ALTER FUNCTION "private"."set_profile_updated_at"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."set_profile_updated_at"() IS 'Atualiza timestamp e mantém versões independentes para identidade e status da conta.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."set_studio_updated_at"() RETURNS "trigger"
@@ -4681,6 +6239,243 @@ COMMENT ON FUNCTION "private"."update_studio_revision_taxonomy"("p_user_id" "uui
 
 
 
+CREATE OR REPLACE FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_slug" "text", "p_name" "text", "p_sort_order" integer, "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  actor_context record;
+  current_version bigint;
+  existing_request private.backoffice_command_requests%rowtype;
+  is_create boolean;
+  payload_hash text;
+  result jsonb;
+  target_id uuid;
+  target_type text;
+begin
+  if p_actor_user_id is null
+    or p_auth_session_id is null
+    or p_auth_expires_at is null
+    or p_kind is null
+    or p_kind <> all (array['studioType'::text, 'tag'::text, 'amenity'::text])
+    or (p_id is null) <> (p_expected_version is null)
+    or (p_expected_version is not null and p_expected_version < 0)
+    or p_slug is null
+    or p_slug <> pg_catalog.btrim(p_slug)
+    or p_slug !~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+    or pg_catalog.char_length(p_slug) not between 2 and 80
+    or p_name is null
+    or p_name <> pg_catalog.btrim(p_name)
+    or pg_catalog.char_length(p_name) not between 2 and 80
+    or p_sort_order is null
+    or p_sort_order not between 0 and 32767
+    or p_idempotency_key is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_taxonomy_upsert';
+  end if;
+
+  is_create := p_id is null;
+  target_type := case p_kind
+    when 'studioType' then 'studio_type'
+    when 'tag' then 'tag'
+    else 'amenity'
+  end;
+  payload_hash := private.backoffice_payload_hash(
+    pg_catalog.jsonb_build_object(
+      'expectedVersion', p_expected_version,
+      'id', p_id,
+      'kind', p_kind,
+      'name', p_name,
+      'slug', p_slug,
+      'sortOrder', p_sort_order
+    )
+  );
+
+  select *
+  into strict actor_context
+  from private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    false
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      p_actor_user_id::text || ':' || p_idempotency_key::text,
+      0
+    )
+  );
+
+  select request.*
+  into existing_request
+  from private.backoffice_command_requests as request
+  where request.actor_user_id = p_actor_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_request.action <> 'backoffice.taxonomy.upsert'
+      or existing_request.payload_hash <> payload_hash
+      or existing_request.target_type <> target_type
+      or (not is_create and existing_request.target_id <> p_id)
+    then
+      raise exception using errcode = '40001', message = 'backoffice_idempotency_conflict';
+    end if;
+
+    result := private.backoffice_taxonomy_item_json(p_kind, existing_request.target_id);
+    if private.backoffice_result_hash(result) <> existing_request.result_hash then
+      raise exception using errcode = '40001', message = 'backoffice_taxonomy_result_stale';
+    end if;
+    return result;
+  end if;
+
+  if is_create then
+    target_id := extensions.gen_random_uuid();
+    if p_kind = 'studioType' then
+      insert into public.studio_types (id, slug, name, sort_order)
+      values (target_id, p_slug, p_name, p_sort_order);
+    elsif p_kind = 'tag' then
+      insert into public.tags (id, slug, name, sort_order)
+      values (target_id, p_slug, p_name, p_sort_order);
+    else
+      insert into public.amenities (id, slug, name, sort_order)
+      values (target_id, p_slug, p_name, p_sort_order);
+    end if;
+  else
+    target_id := p_id;
+    if p_kind = 'studioType' then
+      select item.taxonomy_version
+      into current_version
+      from public.studio_types as item
+      where item.id = target_id
+      for update;
+      if not found then
+        raise exception using errcode = 'P0002', message = 'backoffice_taxonomy_missing';
+      end if;
+      if current_version <> p_expected_version then
+        raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+      end if;
+      update public.studio_types as item
+      set
+        slug = p_slug,
+        name = p_name,
+        sort_order = p_sort_order,
+        taxonomy_version = item.taxonomy_version + 1
+      where item.id = target_id
+        and item.taxonomy_version = p_expected_version;
+    elsif p_kind = 'tag' then
+      select item.taxonomy_version
+      into current_version
+      from public.tags as item
+      where item.id = target_id
+      for update;
+      if not found then
+        raise exception using errcode = 'P0002', message = 'backoffice_taxonomy_missing';
+      end if;
+      if current_version <> p_expected_version then
+        raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+      end if;
+      update public.tags as item
+      set
+        slug = p_slug,
+        name = p_name,
+        sort_order = p_sort_order,
+        taxonomy_version = item.taxonomy_version + 1
+      where item.id = target_id
+        and item.taxonomy_version = p_expected_version;
+    else
+      select item.taxonomy_version
+      into current_version
+      from public.amenities as item
+      where item.id = target_id
+      for update;
+      if not found then
+        raise exception using errcode = 'P0002', message = 'backoffice_taxonomy_missing';
+      end if;
+      if current_version <> p_expected_version then
+        raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+      end if;
+      update public.amenities as item
+      set
+        slug = p_slug,
+        name = p_name,
+        sort_order = p_sort_order,
+        taxonomy_version = item.taxonomy_version + 1
+      where item.id = target_id
+        and item.taxonomy_version = p_expected_version;
+    end if;
+
+    if not found then
+      raise exception using errcode = '40001', message = 'backoffice_taxonomy_version_conflict';
+    end if;
+  end if;
+
+  result := private.backoffice_taxonomy_item_json(p_kind, target_id);
+
+  insert into private.backoffice_command_requests (
+    actor_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    target_type,
+    target_id
+  )
+  values (
+    p_actor_user_id,
+    p_idempotency_key,
+    'backoffice.taxonomy.upsert',
+    payload_hash,
+    private.backoffice_result_hash(result),
+    target_type,
+    target_id
+  );
+
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_actor_user_id,
+    actor_context.actor_role,
+    case
+      when is_create then 'backoffice.taxonomy_created'
+      else 'backoffice.taxonomy_updated'
+    end,
+    target_type,
+    target_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    pg_catalog.jsonb_build_object(
+      'kind', p_kind,
+      'version', result -> 'version'
+    )
+  );
+
+  return result;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_slug" "text", "p_name" "text", "p_sort_order" integer, "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_slug" "text", "p_name" "text", "p_sort_order" integer, "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Cria ou edita taxonomia com versão otimista, idempotência e auditoria.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."validate_terms_acceptance_snapshot"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -5221,12 +7016,12 @@ CREATE TABLE IF NOT EXISTS "audit"."events" (
     "ip_hash" "text",
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
     "idempotency_key" "uuid" NOT NULL,
-    CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text", 'studio.created'::"text", 'studio.revision_updated'::"text", 'studio.revision_taxonomy_updated'::"text", 'studio.revision_content_updated'::"text", 'studio.draft_discarded'::"text"]))),
-    CONSTRAINT "events_actor_role_check" CHECK (("actor_role" = 'authenticated'::"text")),
+    CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text", 'studio.created'::"text", 'studio.revision_updated'::"text", 'studio.revision_taxonomy_updated'::"text", 'studio.revision_content_updated'::"text", 'studio.draft_discarded'::"text", 'backoffice.admin_bootstrapped'::"text", 'backoffice.user_suspended'::"text", 'backoffice.user_restored'::"text", 'backoffice.user_pii_revealed'::"text", 'backoffice.role_granted'::"text", 'backoffice.role_revoked'::"text", 'backoffice.taxonomy_created'::"text", 'backoffice.taxonomy_updated'::"text", 'backoffice.taxonomy_archived'::"text", 'backoffice.taxonomy_reactivated'::"text"]))),
+    CONSTRAINT "events_actor_role_check" CHECK (("actor_role" = ANY (ARRAY['authenticated'::"text", 'support'::"text", 'admin'::"text", 'system'::"text"]))),
     CONSTRAINT "events_ip_hash_check" CHECK ((("ip_hash" IS NULL) OR ("ip_hash" ~ '^[0-9a-f]{64}$'::"text"))),
     CONSTRAINT "events_metadata_check" CHECK (("jsonb_typeof"("metadata") = 'object'::"text")),
     CONSTRAINT "events_result_check" CHECK (("result" = 'succeeded'::"text")),
-    CONSTRAINT "events_target_type_check" CHECK (("target_type" = ANY (ARRAY['owner_profile'::"text", 'owner_payment_recipient'::"text", 'studio'::"text"])))
+    CONSTRAINT "events_target_type_check" CHECK (("target_type" = ANY (ARRAY['owner_profile'::"text", 'owner_payment_recipient'::"text", 'studio'::"text", 'profile'::"text", 'platform_role'::"text", 'studio_type'::"text", 'tag'::"text", 'amenity'::"text"])))
 );
 
 
@@ -5242,6 +7037,50 @@ COMMENT ON COLUMN "audit"."events"."request_id" IS 'Correlação com o requestId
 
 
 COMMENT ON COLUMN "audit"."events"."idempotency_key" IS 'Chave de deduplicação do comando, separada da correlação request_id.';
+
+
+
+CREATE TABLE IF NOT EXISTS "private"."backoffice_command_requests" (
+    "actor_user_id" "uuid" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
+    "action" "text" NOT NULL,
+    "payload_hash" "text" NOT NULL,
+    "result_hash" "text",
+    "target_type" "text" NOT NULL,
+    "target_id" "uuid" NOT NULL,
+    "result_profile_version" bigint,
+    "result_auth_updated_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "backoffice_command_requests_action_check" CHECK (("action" = ANY (ARRAY['backoffice.user.setStatus'::"text", 'backoffice.user.revealPii'::"text", 'backoffice.access.setRole'::"text", 'backoffice.taxonomy.upsert'::"text", 'backoffice.taxonomy.setActive'::"text"]))),
+    CONSTRAINT "backoffice_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
+    CONSTRAINT "backoffice_command_requests_result_hash_check" CHECK ((("result_hash" IS NULL) OR ("result_hash" ~ '^[0-9a-f]{64}$'::"text"))),
+    CONSTRAINT "backoffice_command_requests_result_shape_check" CHECK (((("action" = 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NULL) AND ("result_profile_version" IS NOT NULL) AND ("result_auth_updated_at" IS NOT NULL)) OR (("action" <> 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NOT NULL) AND ("result_profile_version" IS NULL) AND ("result_auth_updated_at" IS NULL)))),
+    CONSTRAINT "backoffice_command_requests_target_type_check" CHECK (("target_type" = ANY (ARRAY['profile'::"text", 'platform_role'::"text", 'studio_type'::"text", 'tag'::"text", 'amenity'::"text"])))
+);
+
+
+ALTER TABLE "private"."backoffice_command_requests" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."backoffice_command_requests" IS 'Ledger mínimo dos comandos administrativos; PII nunca é persistida nem recebe hash reutilizável.';
+
+
+
+CREATE TABLE IF NOT EXISTS "private"."backoffice_sessions" (
+    "auth_session_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "opened_at" timestamp with time zone NOT NULL,
+    "last_seen_at" timestamp with time zone NOT NULL,
+    "absolute_expires_at" timestamp with time zone NOT NULL,
+    "closed_at" timestamp with time zone,
+    CONSTRAINT "backoffice_sessions_window_check" CHECK ((("last_seen_at" >= "opened_at") AND ("absolute_expires_at" > "opened_at") AND (("closed_at" IS NULL) OR ("closed_at" >= "opened_at"))))
+);
+
+
+ALTER TABLE "private"."backoffice_sessions" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."backoffice_sessions" IS 'Binding curta do backoffice para uma sessão Auth canônica; expira por 30 minutos de inatividade ou oito horas absolutas.';
 
 
 
@@ -5425,9 +7264,11 @@ CREATE TABLE IF NOT EXISTS "public"."amenities" (
     "sort_order" smallint DEFAULT 0 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "taxonomy_version" bigint DEFAULT 0 NOT NULL,
     CONSTRAINT "amenities_name_check" CHECK ((("name" = "btrim"("name")) AND (("char_length"("name") >= 2) AND ("char_length"("name") <= 80)))),
     CONSTRAINT "amenities_slug_check" CHECK ((("slug" = "btrim"("slug")) AND ("slug" ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::"text") AND (("char_length"("slug") >= 2) AND ("char_length"("slug") <= 80)))),
     CONSTRAINT "amenities_sort_order_check" CHECK (("sort_order" >= 0)),
+    CONSTRAINT "amenities_taxonomy_version_check" CHECK (("taxonomy_version" >= 0)),
     CONSTRAINT "amenities_timestamps_check" CHECK (("updated_at" >= "created_at"))
 );
 
@@ -5436,6 +7277,10 @@ ALTER TABLE "public"."amenities" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."amenities" IS 'Taxonomia administrada de comodidades; somente itens ativos entram em novas drafts.';
+
+
+
+COMMENT ON COLUMN "public"."amenities"."taxonomy_version" IS 'Versão otimista das alterações administrativas da taxonomia.';
 
 
 
@@ -5489,6 +7334,22 @@ COMMENT ON COLUMN "public"."owner_profiles"."accepted_owner_contract_version_id"
 
 
 
+CREATE TABLE IF NOT EXISTS "public"."platform_roles" (
+    "user_id" "uuid" NOT NULL,
+    "role" "text" NOT NULL,
+    "granted_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "platform_roles_role_check" CHECK (("role" = ANY (ARRAY['support'::"text", 'admin'::"text"])))
+);
+
+
+ALTER TABLE "public"."platform_roles" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."platform_roles" IS 'Papéis cumulativos entregues pela FEAT-031; não antecipa reviewer ou finance e não possui acesso direto de runtime.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."profiles" (
     "id" "uuid" NOT NULL,
     "person_type" "text" NOT NULL,
@@ -5512,6 +7373,8 @@ CASE
     ELSE ("repeat"('*'::"text", ("char_length"("additional_document") - 2)) || "right"("additional_document", 2))
 END) STORED,
     "profile_version" bigint DEFAULT 0 NOT NULL,
+    "account_version" bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT "profiles_account_version_check" CHECK (("account_version" >= 0)),
     CONSTRAINT "profiles_additional_document_shape_check" CHECK ((("additional_document" IS NULL) OR (("char_length"("additional_document") >= 3) AND ("char_length"("additional_document") <= 40) AND ("additional_document" ~ '^[A-Z0-9]+([./ -][A-Z0-9]+)*$'::"text")))),
     CONSTRAINT "profiles_check" CHECK ((("completed_at" IS NULL) OR ("completed_at" >= "created_at"))),
     CONSTRAINT "profiles_check1" CHECK (("updated_at" >= "created_at")),
@@ -5561,6 +7424,10 @@ COMMENT ON COLUMN "public"."profiles"."additional_document_masked" IS 'Projeçã
 
 
 COMMENT ON COLUMN "public"."profiles"."profile_version" IS 'Versão otimista monotônica da identidade, independente da aparência.';
+
+
+
+COMMENT ON COLUMN "public"."profiles"."account_version" IS 'Versão otimista exclusiva do status da conta; não altera a versão da identidade nem a sincronização do recebedor.';
 
 
 
@@ -5667,9 +7534,11 @@ CREATE TABLE IF NOT EXISTS "public"."studio_types" (
     "sort_order" smallint DEFAULT 0 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "taxonomy_version" bigint DEFAULT 0 NOT NULL,
     CONSTRAINT "studio_types_name_check" CHECK ((("name" = "btrim"("name")) AND (("char_length"("name") >= 2) AND ("char_length"("name") <= 80)))),
     CONSTRAINT "studio_types_slug_check" CHECK ((("slug" = "btrim"("slug")) AND ("slug" ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::"text") AND (("char_length"("slug") >= 2) AND ("char_length"("slug") <= 80)))),
     CONSTRAINT "studio_types_sort_order_check" CHECK (("sort_order" >= 0)),
+    CONSTRAINT "studio_types_taxonomy_version_check" CHECK (("taxonomy_version" >= 0)),
     CONSTRAINT "studio_types_timestamps_check" CHECK (("updated_at" >= "created_at"))
 );
 
@@ -5678,6 +7547,10 @@ ALTER TABLE "public"."studio_types" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."studio_types" IS 'Taxonomia mínima e administrada de tipos de estúdio usada pelo conteúdo versionado.';
+
+
+
+COMMENT ON COLUMN "public"."studio_types"."taxonomy_version" IS 'Versão otimista das alterações administrativas da taxonomia.';
 
 
 
@@ -5710,9 +7583,11 @@ CREATE TABLE IF NOT EXISTS "public"."tags" (
     "sort_order" smallint DEFAULT 0 NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "taxonomy_version" bigint DEFAULT 0 NOT NULL,
     CONSTRAINT "tags_name_check" CHECK ((("name" = "btrim"("name")) AND (("char_length"("name") >= 2) AND ("char_length"("name") <= 80)))),
     CONSTRAINT "tags_slug_check" CHECK ((("slug" = "btrim"("slug")) AND ("slug" ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::"text") AND (("char_length"("slug") >= 2) AND ("char_length"("slug") <= 80)))),
     CONSTRAINT "tags_sort_order_check" CHECK (("sort_order" >= 0)),
+    CONSTRAINT "tags_taxonomy_version_check" CHECK (("taxonomy_version" >= 0)),
     CONSTRAINT "tags_timestamps_check" CHECK (("updated_at" >= "created_at"))
 );
 
@@ -5721,6 +7596,10 @@ ALTER TABLE "public"."tags" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."tags" IS 'Taxonomia administrada de usos e estilos do estúdio; somente itens ativos entram em novas drafts.';
+
+
+
+COMMENT ON COLUMN "public"."tags"."taxonomy_version" IS 'Versão otimista das alterações administrativas da taxonomia.';
 
 
 
@@ -5818,6 +7697,16 @@ ALTER TABLE ONLY "audit"."events"
 
 
 
+ALTER TABLE ONLY "private"."backoffice_command_requests"
+    ADD CONSTRAINT "backoffice_command_requests_pkey" PRIMARY KEY ("actor_user_id", "idempotency_key");
+
+
+
+ALTER TABLE ONLY "private"."backoffice_sessions"
+    ADD CONSTRAINT "backoffice_sessions_pkey" PRIMARY KEY ("auth_session_id");
+
+
+
 ALTER TABLE ONLY "private"."dal_routine_allowlist"
     ADD CONSTRAINT "dal_routine_allowlist_pkey" PRIMARY KEY ("signature");
 
@@ -5900,6 +7789,11 @@ ALTER TABLE ONLY "public"."owner_payment_recipients"
 
 ALTER TABLE ONLY "public"."owner_profiles"
     ADD CONSTRAINT "owner_profiles_pkey" PRIMARY KEY ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."platform_roles"
+    ADD CONSTRAINT "platform_roles_pkey" PRIMARY KEY ("user_id", "role");
 
 
 
@@ -5997,6 +7891,10 @@ CREATE INDEX "audit_events_actor_user_id_idx" ON "audit"."events" USING "btree" 
 
 
 
+CREATE INDEX "backoffice_sessions_user_id_idx" ON "private"."backoffice_sessions" USING "btree" ("user_id");
+
+
+
 CREATE INDEX "identity_recovery_grants_expires_at_idx" ON "private"."identity_recovery_grants" USING "btree" ("expires_at");
 
 
@@ -6006,6 +7904,18 @@ CREATE INDEX "identity_recovery_sessions_retain_until_idx" ON "private"."identit
 
 
 CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_intents" USING "btree" ("expires_at");
+
+
+
+CREATE INDEX "platform_roles_granted_by_idx" ON "public"."platform_roles" USING "btree" ("granted_by") WHERE ("granted_by" IS NOT NULL);
+
+
+
+CREATE INDEX "platform_roles_role_user_id_idx" ON "public"."platform_roles" USING "btree" ("role", "user_id");
+
+
+
+CREATE INDEX "profiles_backoffice_created_at_id_idx" ON "public"."profiles" USING "btree" ("created_at" DESC, "id" DESC);
 
 
 
@@ -6097,6 +8007,10 @@ CREATE OR REPLACE TRIGGER "studio_revisions_enforce_immutability" BEFORE DELETE 
 
 
 
+CREATE OR REPLACE TRIGGER "studio_types_set_updated_at" BEFORE UPDATE ON "public"."studio_types" FOR EACH ROW EXECUTE FUNCTION "private"."set_studio_updated_at"();
+
+
+
 CREATE CONSTRAINT TRIGGER "studios_enforce_revision_pointers" AFTER INSERT OR UPDATE OF "draft_revision_id", "published_revision_id" ON "public"."studios" NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION "private"."enforce_studio_revision_pointers"();
 
 
@@ -6127,6 +8041,21 @@ CREATE OR REPLACE TRIGGER "user_preferences_set_updated_at" BEFORE UPDATE ON "pu
 
 ALTER TABLE ONLY "audit"."events"
     ADD CONSTRAINT "events_actor_user_id_fkey" FOREIGN KEY ("actor_user_id") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "private"."backoffice_command_requests"
+    ADD CONSTRAINT "backoffice_command_requests_actor_user_id_fkey" FOREIGN KEY ("actor_user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "private"."backoffice_sessions"
+    ADD CONSTRAINT "backoffice_sessions_auth_session_id_fkey" FOREIGN KEY ("auth_session_id") REFERENCES "auth"."sessions"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "private"."backoffice_sessions"
+    ADD CONSTRAINT "backoffice_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
 
 
 
@@ -6187,6 +8116,16 @@ ALTER TABLE ONLY "public"."owner_profiles"
 
 ALTER TABLE ONLY "public"."owner_profiles"
     ADD CONSTRAINT "owner_profiles_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."platform_roles"
+    ADD CONSTRAINT "platform_roles_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."profiles"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."platform_roles"
+    ADD CONSTRAINT "platform_roles_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
 
 
 
@@ -6263,6 +8202,12 @@ ALTER TABLE ONLY "public"."user_preferences"
 ALTER TABLE "audit"."events" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "private"."backoffice_command_requests" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "private"."backoffice_sessions" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "private"."dal_routine_allowlist" ENABLE ROW LEVEL SECURITY;
 
 
@@ -6307,6 +8252,9 @@ ALTER TABLE "public"."owner_profiles" ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "owner_profiles_select_own" ON "public"."owner_profiles" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
 
+
+
+ALTER TABLE "public"."platform_roles" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
@@ -6438,11 +8386,43 @@ REVOKE ALL ON FUNCTION "private"."assert_studio_owner_mutable"("p_user_id" "uuid
 
 
 
+REVOKE ALL ON FUNCTION "private"."backoffice_payload_hash"("payload" "jsonb") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."backoffice_result_hash"("result" "jsonb") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."backoffice_taxonomy_item_json"("p_kind" "text", "p_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."backoffice_user_pii_json"("p_actor_user_id" "uuid", "p_target_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."bootstrap_signup_identity"() FROM PUBLIC;
 
 
 
 REVOKE ALL ON FUNCTION "private"."bootstrap_user_preferences"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."canonical_platform_roles"("p_roles" "text"[]) FROM PUBLIC;
 
 
 
@@ -6470,6 +8450,11 @@ REVOKE ALL ON FUNCTION "private"."clone_studio_revision_content_before_insert"()
 
 
 REVOKE ALL ON FUNCTION "private"."clone_studio_revision_relations_after_insert"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."close_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."close_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid") TO "app_dal";
 
 
 
@@ -6527,6 +8512,11 @@ REVOKE ALL ON FUNCTION "private"."enforce_studio_revision_pointers"() FROM PUBLI
 
 
 
+REVOKE ALL ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") TO "app_dal";
 
@@ -6558,11 +8548,34 @@ REVOKE ALL ON FUNCTION "private"."issue_identity_recovery_grant"("p_user_id" "uu
 
 
 
+REVOKE ALL ON FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."mask_backoffice_email"("p_email" "text") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."owner_recipient_status_row"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."platform_roles_for_user"("p_user_id" "uuid") FROM PUBLIC;
 
 
 
@@ -6601,6 +8614,26 @@ GRANT ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "u
 
 
 REVOKE ALL ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_reason" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_reason" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_active" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_active" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
 
 
 
@@ -6650,6 +8683,11 @@ GRANT ALL ON FUNCTION "private"."update_studio_revision_core"("p_user_id" "uuid"
 
 REVOKE ALL ON FUNCTION "private"."update_studio_revision_taxonomy"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_tag_ids" "uuid"[], "p_amenity_ids" "uuid"[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."update_studio_revision_taxonomy"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_tag_ids" "uuid"[], "p_amenity_ids" "uuid"[]) TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_slug" "text", "p_name" "text", "p_sort_order" integer, "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_kind" "text", "p_id" "uuid", "p_expected_version" bigint, "p_slug" "text", "p_name" "text", "p_sort_order" integer, "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
 
 
 

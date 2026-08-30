@@ -480,6 +480,13 @@ A CA pública oficial do Supabase fica versionada em
 2031-04-26; substituição exige obter a nova CA no dashboard, conferir emissor/fingerprint, testar a
 conexão real e trocar repositório e host no mesmo release.
 
+O deploy aplica o schema do backoffice, mas nunca escolhe silenciosamente uma pessoa como primeiro
+admin. Depois que o responsável indicar uma conta ativa com perfil concluído, uma sessão administrativa
+autorizada chama `private.bootstrap_first_platform_admin(user_id,idempotency_key,request_id)` uma única
+vez e comprova `platform_roles` + `audit.events`; `insert` direto é proibido. Enquanto não houver host
+de go-live, o acesso humano ao processo `127.0.0.1:3001` usa túnel SSH temporário e a origem local
+correspondente, sem publicar Nginx para o backoffice.
+
 ## HTTPS por IP e DNS adiado
 
 O domínio permanece sem apontamento nesta fase por decisão explícita do responsável. A origem canônica

@@ -2,37 +2,41 @@
 
 ## 1. Fronteira
 
-Aplicação em `apps/backoffice`, build/porta/domínio próprios. Não existe `/admin` no app público.
+Aplicação em `apps/backoffice`, build, porta, cookies e secrets próprios. Não existe `/admin` no app
+público. Em produção, ela permanece somente em `127.0.0.1:3001` até uma mudança explícita de go-live;
+acesso operacional provisório usa túnel SSH, sem criar host público escondido.
 
 Acesso:
 
-- rede/IP/VPN conforme operação;
 - autenticação Supabase;
-- papel server-side;
-- sessão curta;
-- confirmação forte para destruição;
+- perfil ativo e completo;
+- papel `support` ou `admin` revalidado no banco a cada leitura/comando;
+- binding por `session_id` Auth com 30 minutos de inatividade e oito horas absolutas;
+- autenticação realizada há no máximo cinco minutos para alterar papéis;
 - nenhum service role no browser.
+
+`support` opera usuários. `admin` também administra acessos e taxonomias. `reviewer` e `finance` só
+serão introduzidos pelas features proprietárias; não existem antecipadamente no schema ou na UI.
 
 ## 2. Rotas
 
-| Rota             | Função               |
-| ---------------- | -------------------- |
-| `/`              | overview operacional |
-| `/estudios`      | fila e busca         |
-| `/estudios/[id]` | revisão              |
-| `/reservas`      | operação             |
-| `/reservas/[id]` | caso                 |
-| `/pagamentos`    | transações           |
-| `/reembolsos`    | pendências           |
-| `/repasses`      | agenda/falhas        |
-| `/usuarios`      | usuários             |
-| `/taxonomias`    | tipos/tags/amenities |
-| `/fiscal`        | exportações          |
-| `/operacao`      | jobs/saúde           |
-| `/auditoria`     | eventos permitidos   |
-| `/acessos`       | papéis, admin        |
+| Rota             | Função                 | Estado                 |
+| ---------------- | ---------------------- | ---------------------- |
+| `/`              | redireciona por sessão | implementada           |
+| `/entrar`        | login operacional      | implementada           |
+| `/usuarios`      | contas e PII auditada  | implementada           |
+| `/taxonomias`    | tipos/tags/comodidades | implementada, só admin |
+| `/acessos`       | papéis                 | implementada, só admin |
+| `/estudios[/id]` | fila e revisão         | FEAT-030               |
+| `/reservas[/id]` | operação               | FEAT-033               |
+| `/pagamentos`    | transações             | FEAT-032               |
+| `/reembolsos`    | pendências             | FEAT-032               |
+| `/repasses`      | agenda/falhas          | FEAT-032               |
+| `/fiscal`        | exportações            | FEAT-032               |
+| `/operacao`      | jobs/saúde             | FEAT-033               |
+| `/auditoria`     | eventos permitidos     | FEAT-033               |
 
-## 3. Revisão de estúdio
+## 3. Revisão de estúdio planejada
 
 Tela compara:
 
@@ -56,16 +60,32 @@ Aprovação é atômica e audita. Reviewer não altera conteúdo em nome do dono
 
 ## 4. Usuários
 
-- busca server-side;
-- status;
-- papéis;
-- estúdios/reservas relacionados;
-- suspender/restaurar;
-- iniciar fluxo de exclusão;
-- PII mascarada por padrão;
-- acesso completo apenas quando função exige e auditado.
+- busca server-side por prefixo de nome/e-mail ou UUID exato, enviada por `POST` para não persistir o
+  filtro na URL, logs ou histórico;
+- paginação keyset de 50 itens por `created_at + id`, com cursor opaco e precisão de microssegundos;
+- e-mail mascarado e nenhuma PII crua no read model;
+- revelação explícita por motivo allowlisted, auditada, fora do QueryCache e removida após 60 segundos
+  ou quando a aba fica oculta;
+- suspensão/restauração com `account_version` independente da versão da identidade;
+- suspensão fecha bindings administrativos do alvo e os comandos de produto continuam bloqueados
+  pela verificação canônica de `profiles.status`.
 
-## 5. Financeiro
+## 5. Acessos e taxonomias
+
+Somente `admin` vê e abre `/acessos` e `/taxonomias`; chamada direta continua sendo recusada pelo
+banco. Alterar papel usa versão esperada do conjunto atual, lock de autorização, idempotência e
+reautenticação recente. A salvaguarda impede suspender ou remover o último administrador ativo. Remover
+o último papel de uma conta encerra suas sessões de backoffice.
+
+Tipos de estúdio, tags e comodidades possuem slug único por tabela, ordem e versão otimista. Admin pode
+criar, editar, arquivar e reativar. Não existe exclusão física: a tela mostra a contagem autoritativa de
+uso, e arquivamento remove o item de novas seleções sem apagar referências históricas.
+
+O primeiro admin é criado uma única vez por `private.bootstrap_first_platform_admin(...)`, sob lock e
+somente para perfil ativo/concluído enquanto nenhum papel existir. A função não é concedida à DAL; o
+procedimento operacional usa acesso administrativo autorizado e deixa auditoria idempotente.
+
+## 6. Financeiro planejado
 
 - pagamentos por status;
 - webhook/reconciliação;
@@ -79,7 +99,7 @@ Aprovação é atômica e audita. Reviewer não altera conteúdo em nome do dono
 
 Toda ação mostra impacto e requer confirmação. Não editar valor histórico diretamente.
 
-## 6. Operação
+## 7. Operação planejada
 
 Painel:
 
@@ -93,7 +113,7 @@ Painel:
 
 Não expor secrets, payloads completos ou stack.
 
-## 7. Auditoria
+## 8. Auditoria
 
 Filtros por:
 
@@ -106,25 +126,27 @@ Filtros por:
 
 Audit é append-only para operadores. Export controlado.
 
-## 8. Segurança
+## 9. Segurança
 
-- Nginx restringe;
+- Nginx mantém o processo em loopback até o go-live;
 - `robots noindex`;
 - CSP própria;
-- cookies próprios;
-- role a cada command;
-- AAL/reauth para role/deletion;
-- inatividade expira;
-- logs redigidos;
-- actions idempotentes.
+- cookie storage key próprio e headers `private, no-store`;
+- claims, sessão Auth canônica, perfil e papéis são revalidados no servidor;
+- tabelas administrativas usam RLS fechado e zero grants para browser;
+- DAL executa somente as dez fachadas allowlisted e não lê tabelas diretamente;
+- ledger idempotente guarda hash de payload/resultado, mas PII guarda apenas versões para detectar
+  replay stale, nunca valor ou hash reutilizável;
+- erros públicos são allowlisted e logs usam request ID sem e-mail, documento ou payload.
 
-## 9. QA
+## 10. QA
 
 - app público 404 em `/admin`;
 - usuário comum não entra;
-- role insuficiente;
-- approve/reject;
-- audit;
-- refund/payout;
-- confirmação destrutiva;
-- mobile mínimo funcional para emergência, mas desktop é composição principal.
+- `support` opera conta/PII, mas não enxerga nem chama acessos/taxonomias;
+- admin recente gerencia papéis e o último admin permanece protegido;
+- arquivamento preserva referência e bloqueia nova seleção;
+- PII permanece mascarada, temporária e auditada;
+- busca/cursor ficam no servidor e fora da URL;
+- desktop é a composição principal, com operação íntegra em 390 px, 320 px e altura compacta;
+- P0 roda em Chromium, Firefox e WebKit; axe cobre desktop, mobile, 320 px e tema escuro.

@@ -67,13 +67,13 @@
             <tr>
               <td>Produto</td>
               <td>
-                FEAT-002, FEAT-003 e FEAT-004 concluídas. FEAT-006 e FEAT-007 estão em andamento no
-                PR incremental: núcleo/revisões, fronteira autoritativa de sessão e elegibilidade do
-                dono, replay verificável, tokens otimistas isolados por operação, revogação em cada
-                leitura, retry nativo após descarte, taxonomia histórica e ativa, regras, FAQ,
-                YouTube ID, recuperação de tipo arquivado, concorrência, RLS e regressões de
-                navegador foram implementados localmente, mas ainda dependem de review limpo, merge
-                e deploy. Outras 29 features permanecem planejadas.
+                FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. O
+                PR incremental contém núcleo/revisões e conteúdo de estúdio, além do backoffice
+                separado para usuários, suspensão/restauração, PII temporária auditada, papéis
+                <code>support/admin</code> e administração versionada de taxonomias. Sessão curta,
+                reautenticação, idempotência, concorrência, grants/RLS e regressões multiengine
+                foram comprovados localmente; o candidato ainda depende de review limpo, merge e
+                deploy. Outras 28 features permanecem planejadas.
               </td>
             </tr>
             <tr>
@@ -187,7 +187,10 @@
           <li>
             Playwright prova comportamento visível; unitários e SQL protegem lógica e invariantes.
           </li>
-          <li>Plano de feature é removido depois do merge/deploy concluído.</li>
+          <li>
+            Plano de feature é removido quando implementação, testes e documentação permanente
+            concluem o recorte; review, merge e deploy continuam obrigatórios no PR.
+          </li>
         </ul>
       </section>
 

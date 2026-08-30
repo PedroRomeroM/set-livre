@@ -125,6 +125,9 @@ A FEAT-003 completa `profiles` com nome, telefone E.164, CPF/CNPJ, documento adi
 
 `user_preferences` é configuração 1:1 criada com o perfil, limitada a `system/light/dark` e versionada separadamente. Aparência e identidade não incrementam a versão uma da outra.
 
+`account_version` é o fence independente do status `active/suspended`. Suspender uma conta não altera
+`profile_version`; qualquer comando privado continua revalidando o status canônico.
+
 A leitura da conta usa `public.get_my_profile()` como read model `security invoker`, sem argumento de usuário e sempre filtrado por `auth.uid()`. Os comandos privados usam uma projeção interna sem grant runtime para devolver o mesmo estado mascarado; essa projeção não transfere autoridade nem constitui read model.
 
 ### 4.2 Dono e recebedor
@@ -167,7 +170,19 @@ fonte pública aprovada.
 
 ### 4.5 Backoffice
 
-Papéis são globais e não alteram ownership. Ação administrativa passa por função específica e auditoria.
+Papéis são globais e não alteram ownership. A FEAT-031 materializa somente `support` e `admin`:
+support opera contas e PII justificada; admin também gerencia papéis e taxonomias. Claims/metadata Auth
+não concedem papel. O primeiro admin nasce por bootstrap privado one-shot e o último admin ativo não
+pode ser suspenso ou removido.
+
+Uma sessão operacional é a interseção entre sessão Auth canônica, perfil ativo/concluído, papel atual e
+`private.backoffice_sessions`. A binding expira por inatividade/tempo absoluto e é fechada quando a
+conta perde todos os papéis ou é suspensa. Alterar papel exige autenticação recente.
+
+Listas de usuário contêm e-mail mascarado; PII crua continua nas fontes canônicas Auth/`profiles` e é
+uma resposta efêmera, motivada e auditada, não um novo read model persistido. Comandos administrativos
+usam versão esperada, idempotência e auditoria. Taxonomia usada nunca é apagada: `active=false` bloqueia
+novas seleções, preserva referências e incrementa `taxonomy_version`.
 
 ## 5. Estado de estúdio
 

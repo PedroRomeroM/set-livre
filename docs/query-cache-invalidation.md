@@ -25,6 +25,8 @@ Famílias:
 - `owner.calendar(userId,studioIds,range)`;
 - `owner.reservations(...)`;
 - `owner.payments(...)`;
+- `backoffice.users(scope,filterFingerprint)`;
+- `backoffice.taxonomies(scope)`;
 - `admin.reviewQueue(...)`;
 - `admin.finance(...)`;
 - `admin.operations(...)`.
@@ -42,6 +44,8 @@ Famílias:
 - cursor;
 - published revision/version quando relevante;
 - environment não entra na key porque caches não cruzam runtime.
+- backoffice usa o UUID da sessão validada como scope; busca entra somente como SHA-256 normalizado,
+  nunca e-mail/nome, e cursor pertence às páginas da mesma key.
 
 ## 3. Stale defaults
 
@@ -57,28 +61,31 @@ Medir; não usar Infinity em dado operacional.
 
 ## 4. Mutation map
 
-| Command prefix        | Invalida                                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `identity.register`   | nenhuma key privada; sucesso aguarda confirmação Auth                                                                              |
-| login/callback        | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida                                       |
-| logout                | closure sem `variables`, `networkMode: "always"`; limpa integralmente o `QueryClient`, fecha o boundary e recompõe SSR             |
-| recovery              | consulta `recoveryStatus(scope)`; remove scopes antigos; senha/token/e-mail/session_id ficam fora                                  |
-| `profile.*`           | publica o `account/profile` autoritativo mascarado; limpa mutations/outros scopes privados; invalida owner overview quando existir |
-| `recipient.*`         | recipient, owner overview, public eligibility                                                                                      |
-| `studio.revision.*`   | editor, owner studios, review queue                                                                                                |
-| `studio.media.*`      | editor/media                                                                                                                       |
-| `studio.pause/resume` | owner, public list/detail, availability                                                                                            |
-| `admin.studio.*`      | review, owner, public                                                                                                              |
-| `calendar.*`          | owner calendar, public availability, quotes                                                                                        |
-| `pricing.*`           | editor, public detail, quotes                                                                                                      |
-| `addon.*`             | editor, quotes                                                                                                                     |
-| `booking.quote.*`     | quote only                                                                                                                         |
-| `booking.payment.*`   | attempt/payment, availability                                                                                                      |
-| payment webhook       | attempt, reservation, calendar, owner/renter, finance                                                                              |
-| `reservation.cancel`  | reservation, calendar, payment, payout                                                                                             |
-| payout/refund         | finance, owner/renter detail                                                                                                       |
-| taxonomy admin        | public taxonomy/list filters, editors                                                                                              |
-| account deletion      | session/all private                                                                                                                |
+| Command prefix          | Invalida                                                                                                                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `identity.register`     | nenhuma key privada; sucesso aguarda confirmação Auth                                                                              |
+| login/callback          | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida                                       |
+| logout                  | closure sem `variables`, `networkMode: "always"`; limpa integralmente o `QueryClient`, fecha o boundary e recompõe SSR             |
+| recovery                | consulta `recoveryStatus(scope)`; remove scopes antigos; senha/token/e-mail/session_id ficam fora                                  |
+| `profile.*`             | publica o `account/profile` autoritativo mascarado; limpa mutations/outros scopes privados; invalida owner overview quando existir |
+| `recipient.*`           | recipient, owner overview, public eligibility                                                                                      |
+| `studio.revision.*`     | editor, owner studios, review queue                                                                                                |
+| `studio.media.*`        | editor/media                                                                                                                       |
+| `studio.pause/resume`   | owner, public list/detail, availability                                                                                            |
+| `admin.studio.*`        | review, owner, public                                                                                                              |
+| `backoffice.user.*`     | diretório do scope atual; PII revelada não entra no QueryCache                                                                     |
+| `backoffice.access.*`   | diretório do scope atual; remoção de acesso força nova validação da sessão                                                         |
+| `backoffice.taxonomy.*` | catálogo administrativo e, quando expostos, catálogos públicos/editores                                                            |
+| `calendar.*`            | owner calendar, public availability, quotes                                                                                        |
+| `pricing.*`             | editor, public detail, quotes                                                                                                      |
+| `addon.*`               | editor, quotes                                                                                                                     |
+| `booking.quote.*`       | quote only                                                                                                                         |
+| `booking.payment.*`     | attempt/payment, availability                                                                                                      |
+| payment webhook         | attempt, reservation, calendar, owner/renter, finance                                                                              |
+| `reservation.cancel`    | reservation, calendar, payment, payout                                                                                             |
+| payout/refund           | finance, owner/renter detail                                                                                                       |
+| taxonomy admin          | public taxonomy/list filters, editors                                                                                              |
+| account deletion        | session/all private                                                                                                                |
 
 ## 5. UX
 
@@ -139,6 +146,16 @@ Medir; não usar Infinity em dado operacional.
   publica o `StudioEditor` autoritativo e propaga seu token aos painéis irmãos sem apagar inputs
   locais; refetch ordinário não participa desse handoff. Retry existe apenas para a mesma tentativa
   idempotente ambígua;
+- no backoffice, login/reautenticação mantêm e-mail/senha somente em refs efêmeras e chamam
+  `mutate()` sem variables; qualquer desfecho limpa os inputs. Login ambíguo limpa o QueryClient e
+  recompõe `/` para que a sessão server-side decida o estado;
+- diretório usa uma única unidade `{query,fingerprint}` para impedir que o texto de uma busca seja
+  executado sob a key de outra. Páginas mantêm keyset/cursor no mesmo scope e nunca colocam o filtro
+  na URL;
+- comandos administrativos não fazem optimistic update. Uma resposta ambígua preserva comando,
+  payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
+  resposta conclusiva descarta a tentativa e invalida o read model. PII usa apenas estado React
+  efêmero, expira em 60 segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

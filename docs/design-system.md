@@ -22,7 +22,7 @@ autenticação. A FEAT-003 reutiliza essa base para a conta e acrescenta somente
 consumido pela preferência visual e pelas ações explícitas sobre documentos. Nenhuma delas antecipa
 home, dashboard ou domínio posterior.
 
-Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
+Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A tinta neutra `--sl-color-ink-muted` preserva contraste AA sobre canvas/superfícies em claro e escuro; cabeçalhos escuros podem sobrescrever somente os tokens locais necessários. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
 
 A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
 
@@ -207,6 +207,19 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
 - grids colapsam para uma coluna conforme o espaço disponível; iframe mantém proporção, título e
   largura máxima. A composição passou pela mesma matriz de 320 px, alvos de 44 px, tema escuro, axe e
   reflow a 160 CSS px.
+
+### 3.6 Composição da FEAT-031
+
+- o backoffice reutiliza `Button`, `Field`, `Input`, `PasswordInput`, `Select` e `Alert`, mas mantém
+  shell/CSS Module próprios por ser uma aplicação separada;
+- navegação mostra somente superfícies autorizadas; a ausência visual não substitui o fence do banco;
+- usuários e taxonomias usam cards em grid, badges textuais, confirmação em fluxo normal e impacto
+  factual. PII permanece em um painel temporário com `dl`, sem modal ou cache paralelo;
+- grids externos e internos usam tracks `minmax(0, 1fr)`, descendentes encolhíveis e quebra de
+  identificadores longos. Em 320 px, cada grupo vira uma coluna sem scroll horizontal; 390 px, altura
+  compacta e tema escuro preservam os mesmos controles e alvos de 44 px;
+- resposta ambígua bloqueia os campos afetados e apresenta repetição da mesma tentativa idempotente,
+  sem spinner permanente nem criação de um novo comando silencioso.
 
 ## 4. Contratos
 

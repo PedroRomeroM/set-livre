@@ -60,7 +60,16 @@ Todas as rotas públicas, autenticadas e de backoffice devem atender WCAG 2.2 AA
 - no autoplay video;
 - captions controlled by YouTube availability, with title.
 
-## 6. Testing
+## 6. Backoffice
+
+- skip link e landmarks persistem no shell protegido;
+- busca, selects, confirmações e PII temporária usam controles nativos/labels e regiões nomeadas;
+- estado, papel e ativação possuem texto, sem depender de cor;
+- e-mails, slugs e IDs longos quebram sem scroll horizontal;
+- cards e ações ficam em uma coluna a 320 px, mantendo alvo mínimo de 44 px;
+- axe cobre claro/escuro, desktop/mobile/320 px e PII continua mascarada durante a auditoria.
+
+## 7. Testing
 
 - axe in main feature scenario;
 - manual keyboard checklist;

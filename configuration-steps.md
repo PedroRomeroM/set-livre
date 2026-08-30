@@ -15,6 +15,10 @@ próprios e validados sem exibir seus valores.
 - [ ] Antes de compartilhar implementação proprietária adicional, contratar GitHub Pro ou mover o
       repositório para um plano que preserve os mesmos checks e proteções de `main` em modo privado.
 - [ ] Autorizar explicitamente o go-live e a retirada do bloqueio de indexação.
+- [ ] Antes do primeiro uso do backoffice, criar/confirmar uma conta comum e concluir seu perfil pela
+      aplicação pública; informar ao agente qual e-mail será o primeiro admin. O agente executará o
+      bootstrap one-shot auditado, provará o papel e orientará o túnel SSH enquanto o backoffice
+      permanecer somente em loopback. Não executar `insert` manual em `platform_roles`.
 
 ### DNS no go-live comercial
 
