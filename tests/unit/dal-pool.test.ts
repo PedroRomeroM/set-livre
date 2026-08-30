@@ -20,8 +20,19 @@ vi.mock("pg", () => ({
   },
 }));
 
+const poolRegistry = globalThis as typeof globalThis & {
+  setLivreBackofficeDalPool?: unknown;
+  setLivreBackofficeReadinessConnection?: unknown;
+  setLivreWebCommandDalPool?: unknown;
+  setLivreWebReadinessConnection?: unknown;
+};
+
 describe("shared restricted command DAL pool", () => {
   beforeEach(() => {
+    delete poolRegistry.setLivreBackofficeDalPool;
+    delete poolRegistry.setLivreBackofficeReadinessConnection;
+    delete poolRegistry.setLivreWebCommandDalPool;
+    delete poolRegistry.setLivreWebReadinessConnection;
     mocks.configurations.length = 0;
     vi.clearAllMocks();
     process.env.DATABASE_URL_APP_DAL =
@@ -29,7 +40,7 @@ describe("shared restricted command DAL pool", () => {
     mocks.query.mockRejectedValue(new Error("readiness unavailable in unit test"));
   });
 
-  it("creates one command pool capped at four connections", async () => {
+  it("creates one command pool capped at two connections", async () => {
     const { commandDalPool } = await import("../../src/lib/server/dal-pool");
     const first = commandDalPool();
     const second = commandDalPool();
@@ -38,11 +49,22 @@ describe("shared restricted command DAL pool", () => {
     expect(mocks.configurations).toEqual([
       expect.objectContaining({
         application_name: "set-livre-web-command-dal",
-        max: 4,
+        max: 2,
         query_timeout: 2_000,
         statement_timeout: 2_000,
       }),
     ]);
+  });
+
+  it("reuses the process pool after the development module is reloaded", async () => {
+    const { commandDalPool } = await import("../../src/lib/server/dal-pool");
+    const first = commandDalPool();
+
+    vi.resetModules();
+    const reloaded = await import("../../src/lib/server/dal-pool");
+
+    expect(reloaded.commandDalPool()).toBe(first);
+    expect(mocks.configurations).toHaveLength(1);
   });
 
   it("preserves a separate readiness pool capped at one connection", async () => {
@@ -64,18 +86,20 @@ describe("shared restricted command DAL pool", () => {
     const { commandDalPool } = await import("../../src/lib/server/dal-pool");
     const { isDatabaseReady: isWebDatabaseReady } =
       await import("../../src/lib/server/database-readiness");
+    const { backofficeDalPool } = await import("../../apps/backoffice/src/lib/server/dal-pool");
     const { isDatabaseReady: isBackofficeDatabaseReady } =
       await import("../../apps/backoffice/src/lib/server/database-readiness");
 
     commandDalPool();
     await expect(isWebDatabaseReady()).resolves.toBe(false);
+    backofficeDalPool();
     await expect(isBackofficeDatabaseReady()).resolves.toBe(false);
 
     const connectionBudget = mocks.configurations.map(
       (configuration) => z.object({ max: z.number().int().positive() }).parse(configuration).max,
     );
     const allocatedConnections = connectionBudget.reduce((total, maximum) => total + maximum, 0);
-    expect(connectionBudget).toEqual([4, 1, 1]);
+    expect(connectionBudget).toEqual([2, 1, 2, 1]);
     expect(allocatedConnections).toBe(6);
     expect(10 - allocatedConnections).toBe(4);
   });

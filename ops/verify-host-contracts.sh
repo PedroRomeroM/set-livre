@@ -5,7 +5,7 @@ REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPOSITORY_ROOT
 readonly PRODUCTION_SUPABASE_URL="https://oirvvnojgkzdppkdvhej.supabase.co"
 readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
-readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
+readonly PRODUCTION_BACKOFFICE_APP_URL="http://127.0.0.1:3001"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
 readonly INSTALLED_DEPLOY_LOCK="/usr/local/sbin/set-livre-deploy-lock"
 readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"

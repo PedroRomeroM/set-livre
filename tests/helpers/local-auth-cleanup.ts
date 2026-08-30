@@ -92,7 +92,7 @@ export async function cleanupLocalAuthUserWithDependencies(
 }
 
 export async function cleanupLocalAuthUser(input: LocalAuthCleanupInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
+  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
     import("./e2e-database-preflight"),
     import("./e2e-environment"),
   ]);
@@ -116,6 +116,6 @@ export async function cleanupLocalAuthUser(input: LocalAuthCleanupInput) {
         },
       };
     },
-    preflight: e2eDatabasePreflight,
+    preflight: e2eDatabaseSafetyPreflight,
   });
 }

@@ -9,13 +9,30 @@ import { describe, expect, it } from "vitest";
 import {
   BackofficeClientError,
   isAmbiguousBackofficeError,
+  isStaleBackofficeError,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
+import { backofficeLoginNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/login-rate-limit-profile";
 
 const actorId = "10000000-0000-4000-8000-000000000001";
 const targetId = "10000000-0000-4000-8000-000000000002";
 const idempotencyKey = "10000000-0000-4000-8000-000000000003";
 
 describe("backoffice contracts", () => {
+  it("expands only the E2E network bucket while preserving production login limits", () => {
+    expect(backofficeLoginNetworkRateLimitOptions("production")).toEqual({
+      limit: 30,
+      windowMs: 15 * 60_000,
+    });
+    expect(backofficeLoginNetworkRateLimitOptions("local")).toEqual({
+      limit: 30,
+      windowMs: 15 * 60_000,
+    });
+    expect(backofficeLoginNetworkRateLimitOptions("test")).toEqual({
+      limit: 10_000,
+      windowMs: 15 * 60_000,
+    });
+  });
+
   it("preserves only transport-ambiguous attempts for idempotent replay", () => {
     expect(isAmbiguousBackofficeError(new TypeError("network"))).toBe(true);
     expect(
@@ -48,16 +65,25 @@ describe("backoffice contracts", () => {
   it("keeps administrative commands strict and scoped", () => {
     expect(
       backofficeCommandSchema.parse({
-        action: "backoffice.user.setStatus",
+        action: "backoffice.user.suspend",
         expectedScope: actorId,
         idempotencyKey,
-        payload: { expectedAccountVersion: 2, status: "suspended", userId: targetId },
+        payload: { expectedAccountVersion: 2, userId: targetId },
       }),
-    ).toMatchObject({ action: "backoffice.user.setStatus", expectedScope: actorId });
+    ).toMatchObject({ action: "backoffice.user.suspend", expectedScope: actorId });
+
+    expect(
+      backofficeCommandSchema.parse({
+        action: "backoffice.user.restore",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { expectedAccountVersion: 3, userId: targetId },
+      }),
+    ).toMatchObject({ action: "backoffice.user.restore", expectedScope: actorId });
 
     expect(
       backofficeCommandSchema.safeParse({
-        action: "backoffice.user.setStatus",
+        action: "backoffice.user.suspend",
         expectedScope: actorId,
         idempotencyKey,
         payload: { expectedAccountVersion: 2, status: "suspended", userId: targetId },
@@ -97,7 +123,6 @@ describe("backoffice contracts", () => {
       accountVersion: 0,
       emailMasked: "p***@example.test",
       id: targetId,
-      name: "Pessoa QA",
       roles: ["support"],
       status: "active",
     } as const;
@@ -106,10 +131,32 @@ describe("backoffice contracts", () => {
     ).toMatchObject({ scope: actorId });
     expect(
       backofficeUserListSchema.safeParse({
+        items: [{ ...item, name: "Pessoa QA" }],
+        nextCursor: null,
+        scope: actorId,
+      }).success,
+    ).toBe(false);
+    expect(
+      backofficeUserListSchema.safeParse({
         items: Array.from({ length: 51 }, () => item),
         nextCursor: null,
         scope: actorId,
       }).success,
+    ).toBe(false);
+  });
+
+  it("distinguishes stale state from transport ambiguity", () => {
+    const stale = new BackofficeClientError({
+      code: "STALE_STATE",
+      message: "stale",
+      status: 409,
+    });
+    expect(isStaleBackofficeError(stale)).toBe(true);
+    expect(isAmbiguousBackofficeError(stale)).toBe(false);
+    expect(
+      isStaleBackofficeError(
+        new BackofficeClientError({ code: "CONFLICT", message: "guardrail", status: 409 }),
+      ),
     ).toBe(false);
   });
 

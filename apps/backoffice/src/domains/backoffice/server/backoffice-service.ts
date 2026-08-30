@@ -25,6 +25,14 @@ const databaseErrorSchema = z.object({
   code: z.string().optional(),
   message: z.string().optional(),
 });
+const staleStateMessages = new Set([
+  "backoffice_account_version_conflict",
+  "backoffice_role_result_stale",
+  "backoffice_roles_conflict",
+  "backoffice_taxonomy_result_stale",
+  "backoffice_taxonomy_version_conflict",
+  "backoffice_user_status_result_stale",
+]);
 
 function translateBackofficeDatabaseError(error: unknown): never {
   const parsed = databaseErrorSchema.safeParse(error);
@@ -49,6 +57,13 @@ function translateBackofficeDatabaseError(error: unknown): never {
   }
   if (code === "42501") {
     throw new BackofficeApiError(403, "FORBIDDEN", "Você não possui permissão para esta ação.");
+  }
+  if (code === "40001" && message !== undefined && staleStateMessages.has(message)) {
+    throw new BackofficeApiError(
+      409,
+      "STALE_STATE",
+      "Os dados mudaram. O estado atual será recarregado para uma nova revisão.",
+    );
   }
   if (code === "40001" || code === "23505" || code === "23514") {
     throw new BackofficeApiError(
@@ -107,7 +122,8 @@ export async function executeBackofficeCommand(commandInput: BackofficeCommand, 
   try {
     let data: unknown;
     switch (command.action) {
-      case "backoffice.user.setStatus":
+      case "backoffice.user.restore":
+      case "backoffice.user.suspend":
         data = await setBackofficeUserStatus({ auth: route.auth, command, requestId });
         break;
       case "backoffice.user.revealPii":

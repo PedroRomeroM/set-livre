@@ -102,6 +102,21 @@ potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é 
 provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
 efetivo e modo `0600` também são obrigatórios.
 
+O preflight global também exige zero identidades `qa_*@example.test`; resíduo de execução
+interrompida exige `npm run supabase:reset` e nunca é tratado como fixture válida. Durante cada
+cenário, helpers destrutivos revalidam o mesmo marcador local antes de consultar ou limpar dados, mas
+não exigem ausência da própria identidade QA ainda em uso. Os servidores Playwright usam
+`APP_ENV=test`: somente o bucket de rede compartilhado do login recebe capacidade para a matriz
+multibrowser de identidades únicas. O bucket por identidade continua limitado a dez tentativas, e os
+runtimes `local`, `development` e `production` preservam o limite de rede de 30 tentativas por 15
+minutos.
+
+Os dois servidores Next compartilham cada pool PostgreSQL no escopo global do respectivo processo,
+inclusive entre bundles e recompilações do modo de desenvolvimento. O orçamento completo é exercitado
+por teste unitário como `2 + 1 + 2 + 1 = 6`, preservando quatro das dez conexões do runtime para os
+helpers restritos, readiness, recuperação e variação operacional. A suíte crítica longa é regressão
+obrigatória para impedir que instâncias duplicadas voltem a saturar `app_runtime_local`.
+
 ## Matriz da FEAT-006
 
 Os dezessete cenários estáveis `SL-F006-E2E-001..017` expandem para 61 execuções:
@@ -148,20 +163,23 @@ redigida.
 
 ## Matriz da FEAT-031
 
-Os sete cenários `SL-F031-E2E-001..007` expandem para 24 execuções:
+Os dez cenários `SL-F031-E2E-001..010` expandem para 36 execuções:
 
 - P0 de suspensão/restauração, bloqueio de comandos, papéis/último admin e taxonomia histórica nos
   três engines;
 - PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
   altura compacta;
+- revalidação de sessão/papel fecha a composição privada anterior; conflitos de conta, papel e
+  taxonomia descartam confirmações versionadas e exigem nova leitura nas quatro composições de
+  regressão;
 - axe, teclado, toque, contraste e ausência de overflow em desktop, mobile, 320 px e tema escuro.
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
 QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
-restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 46
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 48
 asserções para grants/RLS, binding curto, expiração, bootstrap one-shot, papel/último admin, versão de
-conta, PII redigida, idempotência, taxonomia histórica e encerramento de sessões. O runner completo
-possui oito arquivos e 363 testes.
+conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
+runner completo possui oito arquivos e 365 testes.
 
 ## Contrato por feature
 

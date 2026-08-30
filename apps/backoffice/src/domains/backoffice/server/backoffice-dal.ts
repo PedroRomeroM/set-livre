@@ -11,7 +11,7 @@ import {
   type BackofficeTaxonomySetActiveCommand,
   type BackofficeTaxonomyUpsertCommand,
   type BackofficeUserRevealPiiCommand,
-  type BackofficeUserSetStatusCommand,
+  type BackofficeUserStatusCommand,
 } from "@set-livre/contracts";
 import { z } from "zod";
 
@@ -36,7 +36,6 @@ const userRowSchema = z.strictObject({
   cursor_created_at: z.iso.datetime(),
   email_masked: z.string().min(3).max(254),
   id: z.uuid(),
-  name: z.string().nullable(),
   roles: platformRolesSchema,
   status: z.enum(["active", "suspended"]),
 });
@@ -153,7 +152,6 @@ export async function listBackofficeUsers(input: {
       createdAt: row.created_at,
       emailMasked: row.email_masked,
       id: row.id,
-      name: row.name,
       roles: row.roles,
       status: row.status,
     }),
@@ -199,7 +197,7 @@ export async function listBackofficeTaxonomies(auth: BackofficeAuthContext) {
 
 export async function setBackofficeUserStatus(input: {
   auth: BackofficeAuthContext;
-  command: BackofficeUserSetStatusCommand;
+  command: BackofficeUserStatusCommand;
   requestId: string;
 }) {
   const { payload } = input.command;
@@ -212,7 +210,7 @@ export async function setBackofficeUserStatus(input: {
       ...bindingArguments(input.auth),
       payload.userId,
       payload.expectedAccountVersion,
-      payload.status,
+      input.command.action,
       input.command.idempotencyKey,
       input.requestId,
     ],

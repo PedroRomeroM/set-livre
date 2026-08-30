@@ -806,7 +806,6 @@ begin
     'createdAt', profile.created_at,
     'emailMasked', private.mask_backoffice_email(auth_user.email),
     'id', profile.id,
-    'name', profile.name,
     'roles', private.platform_roles_for_user(profile.id),
     'status', profile.status
   )
@@ -3366,7 +3365,7 @@ COMMENT ON FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uu
 
 
 
-CREATE OR REPLACE FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "name" "text", "roles" "text"[], "status" "text")
+CREATE OR REPLACE FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "roles" "text"[], "status" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -3395,7 +3394,6 @@ begin
     profile.created_at,
     private.mask_backoffice_email(auth_user.email),
     profile.id,
-    profile.name,
     private.platform_roles_for_user(profile.id),
     profile.status
   from public.profiles as profile
@@ -4943,7 +4941,7 @@ COMMENT ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid
 
 
 
-CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -4953,6 +4951,7 @@ declare
   existing_request private.backoffice_command_requests%rowtype;
   payload_hash text;
   result jsonb;
+  target_status text;
 begin
   if p_actor_user_id is null
     or p_auth_session_id is null
@@ -4960,18 +4959,24 @@ begin
     or p_target_user_id is null
     or p_expected_account_version is null
     or p_expected_account_version < 0
-    or p_status is null
-    or p_status <> all (array['active'::text, 'suspended'::text])
+    or p_action is null
+    or p_action <> all (
+      array['backoffice.user.restore'::text, 'backoffice.user.suspend'::text]
+    )
     or p_idempotency_key is null
     or p_request_id is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_user_status';
   end if;
 
+  target_status := case p_action
+    when 'backoffice.user.suspend' then 'suspended'
+    else 'active'
+  end;
+
   payload_hash := private.backoffice_payload_hash(
     pg_catalog.jsonb_build_object(
       'expectedAccountVersion', p_expected_account_version,
-      'status', p_status,
       'userId', p_target_user_id
     )
   );
@@ -5004,7 +5009,7 @@ begin
     and request.idempotency_key = p_idempotency_key;
 
   if found then
-    if existing_request.action <> 'backoffice.user.setStatus'
+    if existing_request.action <> p_action
       or existing_request.payload_hash <> payload_hash
       or existing_request.target_type <> 'profile'
       or existing_request.target_id <> p_target_user_id
@@ -5043,11 +5048,11 @@ begin
   if current_profile.account_version <> p_expected_account_version then
     raise exception using errcode = '40001', message = 'backoffice_account_version_conflict';
   end if;
-  if current_profile.status = p_status then
+  if current_profile.status = target_status then
     raise exception using errcode = '23514', message = 'backoffice_user_status_unchanged';
   end if;
 
-  if p_status = 'suspended'
+  if target_status = 'suspended'
     and exists (
       select 1
       from public.platform_roles as platform_role
@@ -5068,7 +5073,7 @@ begin
   end if;
 
   update public.profiles as profile
-  set status = p_status
+  set status = target_status
   where profile.id = p_target_user_id
     and profile.account_version = p_expected_account_version
   returning profile.* into current_profile;
@@ -5077,7 +5082,7 @@ begin
     raise exception using errcode = '40001', message = 'backoffice_account_version_conflict';
   end if;
 
-  if p_status = 'suspended' then
+  if target_status = 'suspended' then
     update private.backoffice_sessions as session_binding
     set closed_at = coalesce(session_binding.closed_at, pg_catalog.clock_timestamp())
     where session_binding.user_id = p_target_user_id;
@@ -5106,7 +5111,7 @@ begin
   values (
     p_actor_user_id,
     p_idempotency_key,
-    'backoffice.user.setStatus',
+    p_action,
     payload_hash,
     private.backoffice_result_hash(result),
     'profile',
@@ -5129,7 +5134,7 @@ begin
     p_actor_user_id,
     actor_context.actor_role,
     case
-      when p_status = 'suspended' then 'backoffice.user_suspended'
+      when target_status = 'suspended' then 'backoffice.user_suspended'
       else 'backoffice.user_restored'
     end,
     'profile',
@@ -5140,8 +5145,8 @@ begin
     null,
     pg_catalog.jsonb_build_object(
       'accountVersion', current_profile.account_version,
-      'previousStatus', case when p_status = 'suspended' then 'active' else 'suspended' end,
-      'status', p_status
+      'previousStatus', case when target_status = 'suspended' then 'active' else 'suspended' end,
+      'status', target_status
     )
   );
 
@@ -5150,10 +5155,10 @@ end;
 $$;
 
 
-ALTER FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Suspende ou restaura conta com versão otimista, auditoria e proteção do último admin.';
+COMMENT ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Suspende ou restaura conta com versão otimista, auditoria e proteção do último admin.';
 
 
 
@@ -6332,6 +6337,22 @@ begin
   end if;
 
   if is_create then
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('set-livre:backoffice-taxonomy-capacity', 0)
+    );
+    if (
+      select pg_catalog.count(*) >= 500
+      from (
+        select studio_type.id from public.studio_types as studio_type
+        union all
+        select tag.id from public.tags as tag
+        union all
+        select amenity.id from public.amenities as amenity
+      ) as taxonomy_item
+    ) then
+      raise exception using errcode = '23514', message = 'backoffice_taxonomy_capacity_reached';
+    end if;
+
     target_id := extensions.gen_random_uuid();
     if p_kind = 'studioType' then
       insert into public.studio_types (id, slug, name, sort_order)
@@ -7051,7 +7072,7 @@ CREATE TABLE IF NOT EXISTS "private"."backoffice_command_requests" (
     "result_profile_version" bigint,
     "result_auth_updated_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "backoffice_command_requests_action_check" CHECK (("action" = ANY (ARRAY['backoffice.user.setStatus'::"text", 'backoffice.user.revealPii'::"text", 'backoffice.access.setRole'::"text", 'backoffice.taxonomy.upsert'::"text", 'backoffice.taxonomy.setActive'::"text"]))),
+    CONSTRAINT "backoffice_command_requests_action_check" CHECK (("action" = ANY (ARRAY['backoffice.user.restore'::"text", 'backoffice.user.suspend'::"text", 'backoffice.user.revealPii'::"text", 'backoffice.access.setRole'::"text", 'backoffice.taxonomy.upsert'::"text", 'backoffice.taxonomy.setActive'::"text"]))),
     CONSTRAINT "backoffice_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "backoffice_command_requests_result_hash_check" CHECK ((("result_hash" IS NULL) OR ("result_hash" ~ '^[0-9a-f]{64}$'::"text"))),
     CONSTRAINT "backoffice_command_requests_result_shape_check" CHECK (((("action" = 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NULL) AND ("result_profile_version" IS NOT NULL) AND ("result_auth_updated_at" IS NOT NULL)) OR (("action" <> 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NOT NULL) AND ("result_profile_version" IS NULL) AND ("result_auth_updated_at" IS NULL)))),
@@ -8632,8 +8653,8 @@ GRANT ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uu
 
 
 
-REVOKE ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_status" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_backoffice_user_status"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
 
 
 

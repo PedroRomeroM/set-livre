@@ -129,6 +129,7 @@ create schema if not exists audit;
 | `tax_id_masked`              | text        | generated; revela somente os dois DVs                                  |
 | `additional_document_masked` | text        | generated; revela somente os dois últimos caracteres                   |
 | `profile_version`            | bigint      | versão otimista monotônica, inicia em zero                             |
+| `account_version`            | bigint      | versão independente do status da conta, inicia em zero                 |
 | `completed_at`               | timestamptz | nulo enquanto os dados pessoais crus são nulos; imutável após concluir |
 | `created_at`                 | timestamptz | UTC                                                                    |
 | `updated_at`                 | timestamptz | UTC, mantido por trigger                                               |

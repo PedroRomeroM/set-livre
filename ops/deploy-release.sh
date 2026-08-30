@@ -965,7 +965,7 @@ def read_environment(path, label, expected_app_url):
 
 
 web = read_environment(web_path, "web", "https://147.15.97.227")
-backoffice = read_environment(backoffice_path, "backoffice", "https://ops.setlivre.com")
+backoffice = read_environment(backoffice_path, "backoffice", "http://127.0.0.1:3001")
 if web["DATABASE_URL_APP_DAL"] != backoffice["DATABASE_URL_APP_DAL"]:
     fail("runtime", "URLs DAL divergentes")
 if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON_KEY"]:

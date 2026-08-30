@@ -137,7 +137,7 @@ function productionProvisioningAdminQuery({
 
 describe("production role provisioning", () => {
   const fixedCoordinates = {
-    PRODUCTION_BACKOFFICE_APP_URL: "https://ops.setlivre.com",
+    PRODUCTION_BACKOFFICE_APP_URL: "http://127.0.0.1:3001",
     PRODUCTION_PUBLIC_APP_URL: "https://147.15.97.227",
     PRODUCTION_SUPABASE_URL: "https://oirvvnojgkzdppkdvhej.supabase.co",
     PRODUCTION_VM_HOST: "147.15.97.227",

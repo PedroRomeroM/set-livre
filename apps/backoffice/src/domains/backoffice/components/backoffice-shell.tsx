@@ -2,13 +2,18 @@
 
 import type { BackofficeSession } from "@set-livre/contracts";
 import { Button } from "@set-livre/ui";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
-import { logoutBackofficeClient } from "./backoffice-api";
+import { logoutBackofficeClient, readBackofficeSessionClient } from "./backoffice-api";
 import styles from "./backoffice.module.css";
+import { backofficeQueryKeys } from "./query-keys";
+import {
+  notifyBackofficeSessionChanged,
+  subscribeToBackofficeSessionChanges,
+} from "./session-events";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
 
@@ -25,14 +30,71 @@ export function BackofficeShell({
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const intentionalLogout = useRef(false);
+  const currentSession = useQuery({
+    initialData: session,
+    initialDataUpdatedAt: 0,
+    queryFn: readBackofficeSessionClient,
+    queryKey: backofficeQueryKeys.session(session.scope),
+    refetchInterval: 15_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    retry: false,
+    staleTime: 0,
+  });
+  const {
+    data: currentSessionData,
+    isError: currentSessionFailed,
+    refetch: revalidateSession,
+  } = currentSession;
+  const sessionStillMatches =
+    currentSessionData?.authenticated === true &&
+    currentSessionData.scope === session.scope &&
+    currentSessionData.email === session.email &&
+    currentSessionData.roles.length === session.roles.length &&
+    currentSessionData.roles.every((role, index) => role === session.roles[index]);
+  const privateViewUnsafe = currentSessionFailed || !sessionStillMatches;
+
+  useEffect(
+    () =>
+      subscribeToBackofficeSessionChanges(() => {
+        void revalidateSession();
+      }),
+    [revalidateSession],
+  );
+
+  useEffect(() => {
+    if (!currentSessionFailed && sessionStillMatches) return;
+    if (intentionalLogout.current) return;
+    queryClient.clear();
+    router.replace(currentSessionData?.authenticated === true ? "/" : "/entrar");
+    router.refresh();
+  }, [
+    currentSessionData?.authenticated,
+    currentSessionFailed,
+    queryClient,
+    router,
+    sessionStillMatches,
+  ]);
+
   const logout = useMutation({
     mutationFn: () => logoutBackofficeClient(session.scope),
     onSuccess: () => {
+      intentionalLogout.current = true;
       queryClient.clear();
+      notifyBackofficeSessionChanged();
       router.replace("/entrar?saida=sucesso");
       router.refresh();
     },
   });
+
+  if (privateViewUnsafe) {
+    return (
+      <main className={styles.main} id="conteudo-principal">
+        <p role="status">Encerrando a visualização privada…</p>
+      </main>
+    );
+  }
 
   return (
     <div className={styles.shell}>

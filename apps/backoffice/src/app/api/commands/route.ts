@@ -10,7 +10,7 @@ import {
 import { enforceBackofficeRateLimit } from "@/lib/server/rate-limit";
 
 export async function POST(request: Request) {
-  return runBackofficeRoute(request, "backoffice.user.setStatus", async (requestId, setAction) => {
+  return runBackofficeRoute(request, "backoffice.user.suspend", async (requestId, setAction) => {
     enforceBackofficeRateLimit(
       "backoffice.commands.network",
       backofficeNetworkDiscriminator(request),

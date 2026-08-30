@@ -20,6 +20,8 @@ import {
 } from "@set-livre/contracts";
 import { z } from "zod";
 
+import { notifyBackofficeSessionChanged } from "./session-events";
+
 export class BackofficeClientError extends Error {
   readonly code: string;
   readonly fieldErrors: Readonly<Record<string, string>> | undefined;
@@ -48,6 +50,10 @@ export function isAmbiguousBackofficeError(error: unknown) {
     error.status >= 500 ||
     error.code === "RESPONSE_INVALID"
   );
+}
+
+export function isStaleBackofficeError(error: unknown) {
+  return error instanceof BackofficeClientError && error.code === "STALE_STATE";
 }
 
 async function responsePayload(response: Response) {
@@ -86,6 +92,13 @@ async function backofficeRequest<T>(
         status: response.status,
       });
     }
+    if (
+      error.data.error.code === "FORBIDDEN" ||
+      error.data.error.code === "SESSION_CHANGED" ||
+      error.data.error.code === "UNAUTHENTICATED"
+    ) {
+      notifyBackofficeSessionChanged();
+    }
     throw new BackofficeClientError({
       code: error.data.error.code,
       fieldErrors: error.data.error.fieldErrors,
@@ -119,6 +132,10 @@ export function logoutBackofficeClient(expectedScope: string) {
   });
 }
 
+export function readBackofficeSessionClient() {
+  return backofficeRequest("/api/auth/session", backofficeSessionSchema);
+}
+
 export function listBackofficeUsersClient(query: BackofficeUserQuery): Promise<BackofficeUserList> {
   return backofficeRequest("/api/users", backofficeUserListSchema, {
     body: JSON.stringify(query),
@@ -133,7 +150,9 @@ export function listBackofficeTaxonomiesClient(): Promise<BackofficeTaxonomyList
 export function executeBackofficeUserCommand(
   command: Extract<
     BackofficeCommand,
-    { action: "backoffice.user.setStatus" | "backoffice.access.setRole" }
+    {
+      action: "backoffice.access.setRole" | "backoffice.user.restore" | "backoffice.user.suspend";
+    }
   >,
 ): Promise<BackofficeUserSummary> {
   return backofficeRequest("/api/commands", backofficeUserSummarySchema, {

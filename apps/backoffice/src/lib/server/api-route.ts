@@ -23,6 +23,7 @@ export type BackofficeApiErrorCode =
   | "REAUTHENTICATION_REQUIRED"
   | "SERVICE_UNAVAILABLE"
   | "SESSION_CHANGED"
+  | "STALE_STATE"
   | "UNAUTHENTICATED"
   | "VALIDATION_FAILED";
 
@@ -47,7 +48,11 @@ export class BackofficeApiError extends Error {
 
 function trustedBackofficeOrigin() {
   const environment = readBackofficeSupabaseEnvironment();
-  return { environment: environment.environment, url: new URL(environment.appOrigin) };
+  return {
+    accessMode: environment.accessMode,
+    environment: environment.environment,
+    url: new URL(environment.appOrigin),
+  };
 }
 
 function assertTrustedBackofficeRequest(request: Request, options?: { origin?: boolean }) {
@@ -61,8 +66,15 @@ function assertTrustedBackofficeRequest(request: Request, options?: { origin?: b
   }
   if (
     trusted.environment === "production" &&
+    trusted.accessMode === "reverse-proxy" &&
     (request.headers.get("x-forwarded-host") !== trusted.url.host ||
       request.headers.get("x-forwarded-proto") !== "https")
+  ) {
+    throw new BackofficeApiError(403, "ORIGIN_INVALID", "A origem da solicitação não é permitida.");
+  }
+  if (
+    trusted.accessMode === "ssh-tunnel" &&
+    (request.headers.has("x-forwarded-host") || request.headers.has("x-forwarded-proto"))
   ) {
     throw new BackofficeApiError(403, "ORIGIN_INVALID", "A origem da solicitação não é permitida.");
   }
@@ -171,6 +183,9 @@ export function backofficeNetworkDiscriminator(request: Request) {
   if (environment.environment !== "production") {
     return hashBackofficePrivateValue("local-direct");
   }
+  if (environment.accessMode === "ssh-tunnel") {
+    return hashBackofficePrivateValue("production-ssh-tunnel");
+  }
   const forwardedAddress = request.headers.get("x-forwarded-for");
   if (
     forwardedAddress === null ||
@@ -236,7 +251,8 @@ const actionSchema = z.enum([
   "backoffice.taxonomy.setActive",
   "backoffice.taxonomy.upsert",
   "backoffice.user.revealPii",
-  "backoffice.user.setStatus",
+  "backoffice.user.restore",
+  "backoffice.user.suspend",
   "backoffice.users.read",
 ]);
 

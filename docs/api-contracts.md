@@ -292,7 +292,7 @@ Comandos validam hora cheia e ownership.
 | `admin.studio.reject`                  | reviewer/admin             |
 | `admin.studio.disable`                 | admin                      |
 | `admin.studio.restore`                 | admin                      |
-| `backoffice.user.setStatus`            | support/admin              |
+| `backoffice.user.suspend/restore`      | support/admin              |
 | `backoffice.user.revealPii`            | support/admin              |
 | `backoffice.access.setRole`            | admin + autenticação forte |
 | `backoffice.taxonomy.upsert/setActive` | admin                      |
@@ -309,15 +309,17 @@ O recorte implementado do backoffice usa endpoints próprios na aplicação `:30
   escopada, papéis e expirações;
 - `POST /api/users` recebe `{ query?, cursor? }`, limita 50 itens e mantém e-mail/filtro fora da URL;
 - `GET /api/taxonomies` devolve catálogo, versão e contagem de uso somente para admin;
-- `POST /api/commands` aceita exclusivamente a união discriminada das cinco actions
+- `POST /api/commands` aceita exclusivamente a união discriminada das seis actions
   `backoffice.*` acima.
 
-Todos os comandos incluem `expectedScope` e `idempotencyKey`. Status recebe
-`expectedAccountVersion`; papel recebe o conjunto `expectedRoles`; taxonomia recebe sua versão. O
-servidor ignora qualquer autoridade implícita nesses campos, revalida sessão/papel no banco e converte
-stale para `409`. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna replay
-somente enquanto as versões canônicas continuam idênticas. Nenhuma resposta expõe SQL, provider ou
-detalhe de autorização.
+Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
+distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.
+Papel recebe o conjunto `expectedRoles`; taxonomia recebe sua versão. O servidor ignora qualquer
+autoridade implícita nesses campos, revalida sessão/papel no banco e converte estado obsoleto para
+`409/STALE_STATE`. Nesse caso a UI remove a confirmação, limpa o alvo versionado e relê o read model
+antes de permitir outra ação. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna
+replay somente enquanto as versões canônicas continuam idênticas. Nenhuma resposta expõe SQL,
+provider ou detalhe de autorização.
 
 ## 6. Read models e DTOs
 

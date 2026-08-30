@@ -459,9 +459,10 @@ export function assertLoopbackContainerInspections(
       for (const binding of bindings) {
         const hostIp = binding?.HostIp;
         const hostPort = binding?.HostPort;
+        const dockerDesktopIpv6Loopback = hostIp === "::" || hostIp === "::1";
         if (
           typeof hostPort !== "string" ||
-          (hostIp !== "127.0.0.1" && !(dockerDesktopLocalOnly && hostIp === "::"))
+          (hostIp !== "127.0.0.1" && !(dockerDesktopLocalOnly && dockerDesktopIpv6Loopback))
         ) {
           throw new Error("Um container Supabase publicou porta fora da fronteira local.");
         }

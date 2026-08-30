@@ -104,7 +104,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(46);
+select plan(48);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -328,10 +328,13 @@ select pg_catalog.set_config(
   )::text,
   true
 );
-select is(
-  pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb -> 'roles',
-  '["admin"]'::jsonb,
-  'bootstrap cria exatamente o primeiro admin elegível'
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb -> 'roles'
+    = '["admin"]'::jsonb
+    and not (
+      pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb ? 'name'
+    ),
+  'bootstrap cria o primeiro admin sem devolver nome bruto no resumo'
 );
 select private.bootstrap_first_platform_admin(
   '81000000-0000-4000-8000-000000000001',
@@ -516,7 +519,7 @@ select matches(
         pg_catalog.clock_timestamp() + interval '30 minutes',
         '81000000-0000-4000-8000-000000000001',
         0,
-        'suspended',
+        'backoffice.user.suspend',
         '87000000-0000-4000-8000-000000000006',
         '86000000-0000-4000-8000-000000000006'
       )
@@ -1004,6 +1007,67 @@ select ok(
   'read model privado entrega versão e impacto autoritativos'
 );
 
+with taxonomy_total as (
+  select pg_catalog.count(*)::integer as value
+  from (
+    select studio_type.id from public.studio_types as studio_type
+    union all
+    select tag.id from public.tags as tag
+    union all
+    select amenity.id from public.amenities as amenity
+  ) as taxonomy_item
+)
+insert into public.tags (id, slug, name, sort_order)
+select
+  extensions.gen_random_uuid(),
+  'qa-capacidade-' || generated.index::text,
+  'Capacidade QA ' || generated.index::text,
+  (1000 + generated.index)::smallint
+from taxonomy_total
+cross join lateral pg_catalog.generate_series(1, 500 - taxonomy_total.value) as generated(index);
+
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select private.upsert_backoffice_taxonomy(
+        '81000000-0000-4000-8000-000000000001',
+        '82000000-0000-4000-8000-000000000001',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        'tag', null, null, 'limite-feat031', 'Limite FEAT 031', 1501,
+        '87000000-0000-4000-8000-000000000024',
+        '86000000-0000-4000-8000-000000000024'
+      )
+    $command$
+  ),
+  '^23514:backoffice_taxonomy_capacity_reached$',
+  'catálogo cheio rejeita nova taxonomia antes de ultrapassar 500 itens'
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f031_tag_at_capacity',
+  private.upsert_backoffice_taxonomy(
+    '81000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000001',
+    pg_catalog.clock_timestamp() + interval '30 minutes',
+    'tag',
+    pg_catalog.current_setting('set_livre.test.f031_tag_id')::uuid,
+    3,
+    'ensaio-atualizado-feat031',
+    'Ensaio atualizado FEAT 031',
+    93,
+    '87000000-0000-4000-8000-000000000025',
+    '86000000-0000-4000-8000-000000000025'
+  )::text,
+  true
+);
+reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_tag_at_capacity')::jsonb
+    @> '{"slug":"ensaio-atualizado-feat031","version":4}'::jsonb,
+  'catálogo cheio continua permitindo atualizar um item existente'
+);
+
 set local role app_dal;
 select pg_catalog.set_config(
   'set_livre.test.f031_owner_suspended',
@@ -1013,7 +1077,7 @@ select pg_catalog.set_config(
     pg_catalog.clock_timestamp() + interval '30 minutes',
     '81000000-0000-4000-8000-000000000003',
     0,
-    'suspended',
+    'backoffice.user.suspend',
     '87000000-0000-4000-8000-000000000019',
     '86000000-0000-4000-8000-000000000019'
   )::text,
@@ -1025,7 +1089,7 @@ select private.set_backoffice_user_status(
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000003',
   0,
-  'suspended',
+  'backoffice.user.suspend',
   '87000000-0000-4000-8000-000000000019',
   '86000000-0000-4000-8000-000000000096'
 );
@@ -1074,7 +1138,7 @@ select private.set_backoffice_user_status(
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000003',
   1,
-  'active',
+  'backoffice.user.restore',
   '87000000-0000-4000-8000-000000000021',
   '86000000-0000-4000-8000-000000000021'
 );
@@ -1095,7 +1159,7 @@ select private.set_backoffice_user_status(
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000002',
   0,
-  'suspended',
+  'backoffice.user.suspend',
   '87000000-0000-4000-8000-000000000022',
   '86000000-0000-4000-8000-000000000022'
 );
@@ -1134,7 +1198,7 @@ select private.set_backoffice_user_status(
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000002',
   1,
-  'active',
+  'backoffice.user.restore',
   '87000000-0000-4000-8000-000000000023',
   '86000000-0000-4000-8000-000000000023'
 );

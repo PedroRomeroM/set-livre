@@ -451,8 +451,11 @@ Nova execução retoma a mesma credencial, evitando invalidar o cache de autenti
 role já tem `LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM
 sem alterar a credencial que sustenta a release vigente. Rotação futura exige mudança operacional
 própria com duas credenciais/identidades durante a transição, comprovação e retirada da anterior; não
-faz parte do deploy normal. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps,
-deixando quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
+faz parte do deploy normal. Os pools usam `2 + 1 + 2 + 1 = 6`: comandos e readiness do app público,
+seguidos pelo DAL e readiness do backoffice. Os quatro slots restantes do limite dez ficam reservados
+para verificação de deploy, recuperação e variação operacional. Cada processo conserva seus pools em
+um registro global tipado, para que bundles ou recompilações do Next não dupliquem conexões além desse
+orçamento.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de
@@ -481,11 +484,14 @@ A CA pública oficial do Supabase fica versionada em
 conexão real e trocar repositório e host no mesmo release.
 
 O deploy aplica o schema do backoffice, mas nunca escolhe silenciosamente uma pessoa como primeiro
-admin. Depois que o responsável indicar uma conta ativa com perfil concluído, uma sessão administrativa
-autorizada chama `private.bootstrap_first_platform_admin(user_id,idempotency_key,request_id)` uma única
-vez e comprova `platform_roles` + `audit.events`; `insert` direto é proibido. Enquanto não houver host
-de go-live, o acesso humano ao processo `127.0.0.1:3001` usa túnel SSH temporário e a origem local
-correspondente, sem publicar Nginx para o backoffice.
+admin. Depois que o responsável indicar uma conta ativa com perfil concluído, o operador PostgreSQL
+autorizado chama uma única vez
+`private.bootstrap_first_platform_admin(p_user_id => ..., p_request_id => ..., p_idempotency_key => ...)`
+e comprova `platform_roles` + `audit.events`; `insert` direto é proibido. Enquanto não houver host de
+go-live, o runtime usa `NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001` e o acesso humano abre
+`ssh -N -L 127.0.0.1:3001:127.0.0.1:3001 ubuntu@147.15.97.227`, então navega para
+`http://127.0.0.1:3001`. O processo remoto continua em loopback, sem virtual host Nginx; `Host` e
+`Origin` precisam coincidir exatamente e headers de proxy são recusados.
 
 ## HTTPS por IP e DNS adiado
 

@@ -281,6 +281,81 @@ export async function readFeat031UserStatus(userId: string) {
   });
 }
 
+export async function setFeat031UserStatusConcurrently(
+  userId: string,
+  status: "active" | "suspended",
+) {
+  await withFeat031AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.profiles
+       set status = $2::text
+       where id = $1::uuid and status <> $2::text
+       returning id`,
+      [userId, status],
+    );
+    if (result.rowCount !== 1)
+      throw new Error("A concorrência de status FEAT-031 não foi aplicada.");
+  });
+}
+
+export async function setFeat031RolesConcurrently(
+  userId: string,
+  roles: readonly ("admin" | "support")[],
+) {
+  await withFeat031AdminPool(async (pool) => {
+    await pool.query("begin");
+    try {
+      await pool.query(`delete from public.platform_roles where user_id = $1::uuid`, [userId]);
+      if (roles.length > 0) {
+        await pool.query(
+          `insert into public.platform_roles (user_id, role, granted_by)
+           select $1::uuid, requested.role, null
+           from pg_catalog.unnest($2::text[]) as requested(role)`,
+          [userId, roles],
+        );
+      }
+      const persisted = await pool.query<{ role: string }>(
+        `select platform_role.role
+         from public.platform_roles as platform_role
+         where platform_role.user_id = $1::uuid
+         order by case platform_role.role when 'support' then 1 else 2 end`,
+        [userId],
+      );
+      const persistedRoles = z
+        .array(z.strictObject({ role: z.enum(["admin", "support"]) }))
+        .parse(persisted.rows)
+        .map(({ role }) => role);
+      expect(persistedRoles).toEqual([...roles]);
+      await pool.query("commit");
+    } catch (error) {
+      await pool.query("rollback");
+      throw error;
+    }
+  });
+}
+
+export async function updateFeat031TagConcurrently(slug: string, name: string) {
+  return withFeat031AdminPool(async (pool) => {
+    const result = await pool.query(
+      `update public.tags as tag
+       set name = $2::text, taxonomy_version = tag.taxonomy_version + 1
+       where tag.slug = $1::text
+       returning tag.id, tag.name, tag.taxonomy_version`,
+      [slug, name],
+    );
+    return z
+      .array(
+        z.strictObject({
+          id: z.uuid(),
+          name: z.string(),
+          taxonomy_version: z.coerce.number().int().nonnegative(),
+        }),
+      )
+      .length(1)
+      .parse(result.rows)[0];
+  });
+}
+
 export async function expectFeat031OwnerCommandBlocked(userId: string) {
   return withFeat031DalPool(async (pool) => {
     await pool.query("begin");
@@ -418,15 +493,53 @@ export async function readFeat031TaxonomyHistory(tagId: string, revisionId: stri
   });
 }
 
-export async function cleanupFeat031Taxonomy(tagId: string | undefined) {
-  if (tagId === undefined) return;
-  const parsedTagId = z.uuid().parse(tagId);
+export async function cleanupFeat031Taxonomy(
+  tagId: string | undefined,
+  fallbackSlug?: string | undefined,
+) {
+  if (tagId === undefined && fallbackSlug === undefined) return;
+  const parsedTagId = tagId === undefined ? null : z.uuid().parse(tagId);
+  const parsedFallbackSlug =
+    fallbackSlug === undefined
+      ? null
+      : z
+          .string()
+          .min(1)
+          .max(80)
+          .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u)
+          .parse(fallbackSlug);
   await withFeat031AdminPool(async (pool) => {
-    await pool.query(`delete from audit.events where target_id = $1::uuid`, [parsedTagId]);
-    const result = await pool.query(`delete from public.tags where id = $1::uuid returning id`, [
-      parsedTagId,
-    ]);
-    if (result.rowCount !== 1) throw new Error("A limpeza da taxonomia FEAT-031 não foi exata.");
+    await pool.query("begin");
+    try {
+      const target = await pool.query<{ id: string }>(
+        `select tag.id
+         from public.tags as tag
+         where ($1::uuid is not null and tag.id = $1::uuid)
+            or ($1::uuid is null and $2::text is not null and tag.slug = $2::text)
+         for update`,
+        [parsedTagId, parsedFallbackSlug],
+      );
+      const targetId = z
+        .array(z.strictObject({ id: z.uuid() }))
+        .max(1)
+        .parse(target.rows)[0]?.id;
+      if (parsedTagId !== null && targetId === undefined) {
+        throw new Error("A taxonomia FEAT-031 esperada para limpeza não foi encontrada.");
+      }
+      if (targetId !== undefined) {
+        await pool.query(`delete from audit.events where target_id = $1::uuid`, [targetId]);
+        const result = await pool.query(
+          `delete from public.tags where id = $1::uuid returning id`,
+          [targetId],
+        );
+        if (result.rowCount !== 1)
+          throw new Error("A limpeza da taxonomia FEAT-031 não foi exata.");
+      }
+      await pool.query("commit");
+    } catch (error) {
+      await pool.query("rollback");
+      throw error;
+    }
   });
 }
 

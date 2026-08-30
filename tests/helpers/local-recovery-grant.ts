@@ -137,7 +137,7 @@ export async function expireExactLocalRecoveryGrantWithDependencies(
 }
 
 export async function expireExactLocalRecoveryGrant(input: ExpirationInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
+  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
     import("./e2e-database-preflight"),
     import("./e2e-environment"),
   ]);
@@ -161,7 +161,7 @@ export async function expireExactLocalRecoveryGrant(input: ExpirationInput) {
         },
       };
     },
-    preflight: e2eDatabasePreflight,
+    preflight: e2eDatabaseSafetyPreflight,
   });
 }
 
@@ -247,7 +247,7 @@ export async function assertExactLocalRecoverySessionClosedWithDependencies(
 }
 
 export async function assertExactLocalRecoverySessionClosed(input: ExpirationInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
+  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
     import("./e2e-database-preflight"),
     import("./e2e-environment"),
   ]);
@@ -271,6 +271,6 @@ export async function assertExactLocalRecoverySessionClosed(input: ExpirationInp
         },
       };
     },
-    preflight: e2eDatabasePreflight,
+    preflight: e2eDatabaseSafetyPreflight,
   });
 }

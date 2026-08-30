@@ -1,6 +1,7 @@
 "use client";
 
 export const backofficeQueryKeys = {
+  session: (scope: string) => ["backoffice", "session", scope] as const,
   taxonomies: (scope: string) => ["backoffice", "taxonomies", scope] as const,
   users: (scope: string, filterFingerprint: string) =>
     ["backoffice", "users", scope, filterFingerprint] as const,

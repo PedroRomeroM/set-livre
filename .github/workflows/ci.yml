@@ -26,7 +26,7 @@ concurrency:
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
-  PRODUCTION_BACKOFFICE_APP_URL: https://ops.setlivre.com
+  PRODUCTION_BACKOFFICE_APP_URL: http://127.0.0.1:3001
   PRODUCTION_PUBLIC_APP_URL: https://147.15.97.227
   PRODUCTION_SUPABASE_PROJECT_REF: oirvvnojgkzdppkdvhej
   PRODUCTION_SUPABASE_URL: https://oirvvnojgkzdppkdvhej.supabase.co
@@ -171,13 +171,14 @@ jobs:
             local directory="$2"
             local entrypoint="$3"
             local port="$4"
+            local app_url="$5"
             local response="$RUNNER_TEMP/${application}-live.json"
             local log="$RUNNER_TEMP/${application}-standalone.log"
             local live=false
 
             (
               cd "$directory"
-              exec env HOSTNAME=127.0.0.1 PORT="$port" node "$entrypoint"
+              exec env HOSTNAME=127.0.0.1 PORT="$port" NEXT_PUBLIC_APP_URL="$app_url" node "$entrypoint"
             ) >"$log" 2>&1 &
             processes+=("$!")
 
@@ -205,8 +206,18 @@ jobs:
             ' "$response" "$application" "$GITHUB_SHA"
           }
 
-          smoke_release web .artifacts/release/web server.js 3100
-          smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3101
+          smoke_release web .artifacts/release/web server.js 3100 https://setlivre.example
+          smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3001 http://127.0.0.1:3001
+          curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 \
+            http://127.0.0.1:3001/api/auth/session \
+            | node --input-type=module -e '
+                let body = "";
+                for await (const chunk of process.stdin) body += chunk;
+                const payload = JSON.parse(body);
+                if (payload.data?.authenticated !== false) {
+                  throw new Error("Sessão anônima do túnel SSH não respeitou o contrato.");
+                }
+              '
 
       - name: Stop local Supabase
         if: always()

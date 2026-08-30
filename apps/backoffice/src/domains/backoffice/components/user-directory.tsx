@@ -6,7 +6,7 @@ import {
   type BackofficeSession,
   type BackofficeUserPii,
   type BackofficeUserRevealPiiCommand,
-  type BackofficeUserSetStatusCommand,
+  type BackofficeUserStatusCommand,
   type BackofficeUserSummary,
   type PlatformRole,
 } from "@set-livre/contracts";
@@ -18,6 +18,7 @@ import {
   BackofficeClientError,
   executeBackofficeUserCommand,
   isAmbiguousBackofficeError,
+  isStaleBackofficeError,
   listBackofficeUsersClient,
   loginBackofficeClient,
   revealBackofficePiiWithoutCaching,
@@ -129,10 +130,7 @@ function UserPiiReveal({
       </div>
       {reveal.isError ? <Alert variant="error">{errorMessage(reveal.error)}</Alert> : null}
       {pii === undefined ? null : (
-        <section
-          aria-label={`Dados revelados de ${user.name ?? user.emailMasked}`}
-          className={styles.piiPanel}
-        >
+        <section aria-label={`Dados revelados de ${user.emailMasked}`} className={styles.piiPanel}>
           <p className={styles.help}>
             Conteúdo temporário, fora do cache e limpo ao ocultar a aba.
           </p>
@@ -172,8 +170,8 @@ function UserCard({
     <article className={styles.card}>
       <div className={styles.cardHeader}>
         <div>
-          <h2>{user.name ?? "Perfil sem nome"}</h2>
-          <p className={styles.muted}>{user.emailMasked}</p>
+          <h2>Conta {user.emailMasked}</h2>
+          <p className={styles.muted}>Identificador …{user.id.slice(-8)}</p>
         </div>
         <span className={styles.badge} data-state={user.status}>
           {user.status === "active" ? "Ativo" : "Suspenso"}
@@ -290,7 +288,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const [needsReauthentication, setNeedsReauthentication] = useState(false);
   const [notice, setNotice] = useState<string>();
   const pendingRoleCommand = useRef<BackofficeAccessSetRoleCommand>(undefined);
-  const pendingStatusCommand = useRef<BackofficeUserSetStatusCommand>(undefined);
+  const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
     queryKey: backofficeQueryKeys.users(session.scope, activeFilter.fingerprint),
@@ -303,6 +301,8 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   });
   const invalidateUsers = () =>
     queryClient.invalidateQueries({ queryKey: ["backoffice", "users", session.scope] });
+  const resetUsers = () =>
+    queryClient.resetQueries({ queryKey: ["backoffice", "users", session.scope] });
   const statusMutation = useMutation({
     mutationFn: () => {
       if (pendingStatusCommand.current === undefined) {
@@ -311,7 +311,15 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       return executeBackofficeUserCommand(pendingStatusCommand.current);
     },
     networkMode: "always",
-    onError: (error) => {
+    onError: async (error) => {
+      if (isStaleBackofficeError(error)) {
+        pendingStatusCommand.current = undefined;
+        setStatusImpactConfirmed(false);
+        setStatusTarget(undefined);
+        setNotice("A conta mudou. A lista foi recarregada; revise o estado atual antes de agir.");
+        await resetUsers();
+        return;
+      }
       if (!isAmbiguousBackofficeError(error)) pendingStatusCommand.current = undefined;
     },
     onSuccess: async (user) => {
@@ -334,7 +342,17 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       return executeBackofficeUserCommand(pendingRoleCommand.current);
     },
     networkMode: "always",
-    onError: (error) => {
+    onError: async (error) => {
+      if (isStaleBackofficeError(error)) {
+        pendingRoleCommand.current = undefined;
+        setNeedsReauthentication(false);
+        setRoleTarget(undefined);
+        setNotice(
+          "Os papéis mudaram. A lista foi recarregada; revise o estado atual antes de agir.",
+        );
+        await resetUsers();
+        return;
+      }
       if (!isAmbiguousBackofficeError(error)) pendingRoleCommand.current = undefined;
       if (error instanceof BackofficeClientError && error.code === "REAUTHENTICATION_REQUIRED")
         setNeedsReauthentication(true);
@@ -441,12 +459,14 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               loadingLabel="Aplicando"
               onClick={() => {
                 pendingStatusCommand.current ??= {
-                  action: "backoffice.user.setStatus",
+                  action:
+                    statusTarget.status === "active"
+                      ? "backoffice.user.suspend"
+                      : "backoffice.user.restore",
                   expectedScope: session.scope,
                   idempotencyKey: crypto.randomUUID(),
                   payload: {
                     expectedAccountVersion: statusTarget.accountVersion,
-                    status: statusTarget.status === "active" ? "suspended" : "active",
                     userId: statusTarget.id,
                   },
                 };
@@ -474,8 +494,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           <h2 id="role-confirmation">Confirmar alteração de papel</h2>
           <p>
             {roleTarget.enabled ? "Conceder" : "Revogar"} <strong>{roleTarget.role}</strong> para{" "}
-            {roleTarget.user.name ?? roleTarget.user.emailMasked}. Esta ação exige reautenticação
-            recente.
+            {roleTarget.user.emailMasked}. Esta ação exige reautenticação recente.
           </p>
           {roleMutation.isError ? (
             <Alert variant="error">{errorMessage(roleMutation.error)}</Alert>

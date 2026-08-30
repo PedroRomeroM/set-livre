@@ -12,11 +12,14 @@ import {
 const environmentSchema = z.object({
   DATABASE_URL_APP_DAL: z.string(),
 });
-let databaseConnection: { pool: Pool; sessionRole: string } | undefined;
+type DatabaseConnection = { pool: Pool; sessionRole: string };
+const connectionRegistry = globalThis as typeof globalThis & {
+  setLivreBackofficeReadinessConnection?: DatabaseConnection;
+};
 
 function getDatabaseConnection() {
-  if (databaseConnection !== undefined) {
-    return databaseConnection;
+  if (connectionRegistry.setLivreBackofficeReadinessConnection !== undefined) {
+    return connectionRegistry.setLivreBackofficeReadinessConnection;
   }
 
   const environment = environmentSchema.parse(process.env);
@@ -32,7 +35,8 @@ function getDatabaseConnection() {
     statement_timeout: 1_000,
   });
   pool.on("error", () => undefined);
-  databaseConnection = { pool, sessionRole: configuration.sessionRole };
+  const databaseConnection = { pool, sessionRole: configuration.sessionRole };
+  connectionRegistry.setLivreBackofficeReadinessConnection = databaseConnection;
 
   return databaseConnection;
 }

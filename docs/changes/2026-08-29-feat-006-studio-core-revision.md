@@ -29,10 +29,31 @@
 - classifica `studio_type_inactive` sem expor detalhe SQL, relê a taxonomia e exige uma seleção ativa
   tanto na criação quanto na edição quando o tipo é arquivado durante o preenchimento;
 - adiciona `Textarea` à UI compartilhada e invalidação/cache privado por usuário + estúdio;
-- habilita runner pgTAP efêmero sem bind mount no Windows e restaura artefatos Playwright em falhas.
+- habilita runner pgTAP efêmero sem bind mount no Windows e restaura artefatos Playwright em falhas;
+- faz o preflight global E2E rejeitar identidades QA residuais, preserva a validação do marcador
+  local durante limpezas em andamento e amplia apenas o bucket de rede do login em `APP_ENV=test`,
+  sem alterar os limites por identidade ou de produção.
 
 ## Operação e rollback
 
 Antes do merge não há rollback externo: a branch pode ser descartada. Depois de aplicada, a migration
 é append-only e não deve ser revertida manualmente; regressão exige nova migration corretiva e novo PR.
 As superfícies ainda não são públicas e não alteram conteúdo já servido em produção até o deploy.
+
+## Correções de review da FEAT-031
+
+- o diretório administrativo deixa de devolver nome bruto; PII completa continua exclusivamente no
+  reveal temporário, motivado e auditado;
+- suspensão e restauração tornam-se comandos explícitos, e o banco deriva a transição sem aceitar
+  status de destino do navegador;
+- sessão e papéis são relidos no mount, foco, intervalo e eventos entre abas; divergência fecha o DOM
+  privado, limpa o cache e recompõe a rota;
+- conflitos otimistas de conta, papel e taxonomia removem o alvo obsoleto, relêem o estado canônico e
+  exigem nova confirmação;
+- criação de taxonomia é serializada e limitada a 500 itens combinados, sem bloquear atualização de
+  itens existentes;
+- a origem de produção do backoffice passa a refletir a fronteira realmente implantada: loopback
+  `127.0.0.1:3001` acessado por túnel SSH, sem domínio ou proxy público inexistente.
+- os pools DAL/readiness passam a ser únicos por processo mesmo entre bundles do Next; o orçamento
+  explícito de `2 + 1 + 2 + 1 = 6` preserva quatro conexões do limite dez e elimina a saturação vista
+  somente na suíte Playwright longa.

@@ -25,7 +25,7 @@ test("SL-F031-E2E-007 @p1 backoffice passa axe, teclado, toque e 320 px sem reve
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "Buscar" })).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { name: target.name })).toBeVisible();
+    await expect(page.getByRole("article").first()).toBeVisible();
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     expect(
       await page.evaluate(() => ({
@@ -37,6 +37,7 @@ test("SL-F031-E2E-007 @p1 backoffice passa axe, teclado, toque e 320 px sem reve
       })),
     ).toEqual({ body: true, document: true, rawSensitiveControls: 0 });
     await expect(page.locator("body")).not.toContainText(target.email);
+    await expect(page.locator("body")).not.toContainText(target.name);
     await expect(page.locator("body")).not.toContainText(target.taxId);
     const statusButton = page.getByRole("button", { name: "Revisar suspensão" });
     const box = await statusButton.boundingBox();

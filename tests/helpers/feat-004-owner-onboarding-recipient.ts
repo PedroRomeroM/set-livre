@@ -337,11 +337,11 @@ export async function verifyFeat004CleanupWithDependencies(
 }
 
 async function withFeat004AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
+  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
     import("./e2e-database-preflight"),
     import("./e2e-environment"),
   ]);
-  await e2eDatabasePreflight();
+  await e2eDatabaseSafetyPreflight();
   const pool = new Pool({
     allowExitOnIdle: true,
     connectionString: safeE2EEnvironment.adminDatabaseUrl,

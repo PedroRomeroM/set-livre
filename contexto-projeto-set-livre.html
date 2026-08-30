@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 29/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 30/08/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -69,14 +69,19 @@
               <td>
                 FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. O
                 PR incremental contém núcleo/revisões e conteúdo de estúdio, além do backoffice
-                separado para usuários, suspensão/restauração, PII temporária auditada, papéis
-                <code>support/admin</code> e administração versionada de taxonomias. Sessão curta,
+                separado para usuários, comandos explícitos de suspensão/restauração, PII temporária
+                auditada, papéis <code>support/admin</code> e administração versionada de
+                taxonomias. O diretório não entrega nome bruto; sessão e papéis são revalidados no
+                cliente, estado concorrente exige nova leitura/confirmação e o catálogo possui teto
+                transacional de 500 itens. A origem de produção do backoffice corresponde ao
+                loopback acessado por túnel SSH, sem domínio público fictício. Sessão curta,
                 reautenticação, idempotência, concorrência, grants/RLS e regressões multiengine
-                foram comprovados localmente. A raiz pública ainda informa o estado técnico,
-                enquanto a raiz do backoffice encaminha visitantes sem sessão para a autenticação
-                real; a suíte transversal valida cada superfície pelo seu próprio contrato. O
-                candidato ainda depende de review limpo, merge e deploy. Outras 28 features
-                permanecem planejadas.
+                foram comprovados localmente. Pools PostgreSQL são únicos por processo e respeitam o
+                orçamento conjunto de seis das dez conexões do runtime. A raiz pública ainda informa
+                o estado técnico, enquanto a raiz do backoffice encaminha visitantes sem sessão para
+                a autenticação real; a suíte transversal valida cada superfície pelo seu próprio
+                contrato. O candidato ainda depende de review limpo, merge e deploy. Outras 28
+                features permanecem planejadas.
               </td>
             </tr>
             <tr>
@@ -158,8 +163,9 @@
           multiengine, acessibilidade, builds standalone, disciplina de dívida técnica e fronteiras
           de segurança da entrega e do host. Testes não usam retry ou relaxamento de asserção para
           mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
-          resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas
-          de
+          servidores E2E usam um perfil explícito que suporta a matriz multibrowser sem alterar os
+          limites de produção, e o preflight rejeita qualquer identidade QA residual. Os resultados
+          permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

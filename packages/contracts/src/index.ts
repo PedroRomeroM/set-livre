@@ -19,7 +19,8 @@ export {
   backofficeUserPiiSchema,
   backofficeUserQuerySchema,
   backofficeUserRevealPiiCommandSchema,
-  backofficeUserSetStatusCommandSchema,
+  backofficeUserRestoreCommandSchema,
+  backofficeUserSuspendCommandSchema,
   backofficeUserSummarySchema,
   platformRoleSchema,
   platformRolesSchema,
@@ -39,7 +40,7 @@ export {
   type BackofficeUserPii,
   type BackofficeUserQuery,
   type BackofficeUserRevealPiiCommand,
-  type BackofficeUserSetStatusCommand,
+  type BackofficeUserStatusCommand,
   type BackofficeUserSummary,
   type PlatformRole,
 } from "./backoffice";

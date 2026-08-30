@@ -15,6 +15,7 @@ import {
   BackofficeClientError,
   executeBackofficeTaxonomyCommand,
   isAmbiguousBackofficeError,
+  isStaleBackofficeError,
   listBackofficeTaxonomiesClient,
 } from "./backoffice-api";
 import { backofficeQueryKeys } from "./query-keys";
@@ -159,6 +160,8 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   });
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: backofficeQueryKeys.taxonomies(session.scope) });
+  const resetTaxonomies = () =>
+    queryClient.resetQueries({ queryKey: backofficeQueryKeys.taxonomies(session.scope) });
   const upsert = useMutation({
     mutationFn: () => {
       if (pendingUpsertCommand.current === undefined) {
@@ -167,7 +170,16 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       return executeBackofficeTaxonomyCommand(pendingUpsertCommand.current);
     },
     networkMode: "always",
-    onError: (error) => {
+    onError: async (error) => {
+      if (isStaleBackofficeError(error)) {
+        pendingUpsertCommand.current = undefined;
+        setUpsertRetryAvailable(false);
+        setEditing(undefined);
+        setFormGeneration((current) => current + 1);
+        setNotice("A taxonomia mudou. O catálogo foi recarregado; revise o item antes de editar.");
+        await resetTaxonomies();
+        return;
+      }
       const ambiguous = isAmbiguousBackofficeError(error);
       setUpsertRetryAvailable(ambiguous);
       if (!ambiguous) pendingUpsertCommand.current = undefined;
@@ -189,7 +201,15 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       return executeBackofficeTaxonomyCommand(pendingActivationCommand.current);
     },
     networkMode: "always",
-    onError: (error) => {
+    onError: async (error) => {
+      if (isStaleBackofficeError(error)) {
+        pendingActivationCommand.current = undefined;
+        setActivationRetryAvailable(false);
+        setActivationTarget(undefined);
+        setNotice("A taxonomia mudou. O catálogo foi recarregado; revise o impacto antes de agir.");
+        await resetTaxonomies();
+        return;
+      }
       const ambiguous = isAmbiguousBackofficeError(error);
       setActivationRetryAvailable(ambiguous);
       if (!ambiguous) pendingActivationCommand.current = undefined;

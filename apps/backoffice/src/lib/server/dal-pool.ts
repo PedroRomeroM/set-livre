@@ -6,14 +6,18 @@ import { z } from "zod";
 
 const environmentSchema = z.object({ DATABASE_URL_APP_DAL: z.string() });
 
-let backofficePool: Pool | undefined;
+const poolRegistry = globalThis as typeof globalThis & {
+  setLivreBackofficeDalPool?: Pool;
+};
 
 export function backofficeDalPool() {
-  if (backofficePool !== undefined) return backofficePool;
+  if (poolRegistry.setLivreBackofficeDalPool !== undefined) {
+    return poolRegistry.setLivreBackofficeDalPool;
+  }
 
   const environment = environmentSchema.parse(process.env);
   const database = parseDalDatabaseUrl(environment.DATABASE_URL_APP_DAL);
-  backofficePool = new Pool({
+  const backofficePool = new Pool({
     allowExitOnIdle: true,
     application_name: "set-livre-backoffice-dal",
     connectionString: database.connectionString,
@@ -24,5 +28,6 @@ export function backofficeDalPool() {
     statement_timeout: 2_000,
   });
   backofficePool.on("error", () => undefined);
+  poolRegistry.setLivreBackofficeDalPool = backofficePool;
   return backofficePool;
 }

@@ -1624,13 +1624,18 @@ describe("local tooling contracts", () => {
       "fora da fronteira local",
     );
     inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "127.0.0.1";
-    inspections[0].NetworkSettings.Ports["service/tcp"].push({ HostIp: "::", HostPort: "54321" });
-    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
-      "fora da fronteira local",
-    );
-    expect(() =>
-      assertLoopbackContainerInspections(inspections, { dockerDesktopLocalOnly: true }),
-    ).not.toThrow();
+    for (const hostIp of ["::", "::1"]) {
+      inspections[0].NetworkSettings.Ports["service/tcp"] = [
+        { HostIp: "127.0.0.1", HostPort: "54321" },
+        { HostIp: hostIp, HostPort: "54321" },
+      ];
+      expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
+        "fora da fronteira local",
+      );
+      expect(() =>
+        assertLoopbackContainerInspections(inspections, { dockerDesktopLocalOnly: true }),
+      ).not.toThrow();
+    }
   });
 
   it("accepts Docker Desktop IPv6 forwarding only under its native local-only policy", () => {

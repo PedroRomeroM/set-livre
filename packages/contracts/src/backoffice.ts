@@ -40,7 +40,6 @@ export const backofficeUserSummarySchema = z.strictObject({
   createdAt: z.iso.datetime(),
   emailMasked: z.string().min(3).max(254),
   id: z.uuid(),
-  name: profileNameSchema.nullable(),
   roles: platformRolesSchema,
   status: identityStatusSchema,
 });
@@ -112,13 +111,19 @@ export const backofficeTaxonomyImpactSchema = z.strictObject({
   usageCount: z.number().int().nonnegative(),
 });
 
-export const backofficeUserSetStatusCommandSchema = idempotentBackofficeCommandSchema.extend({
-  action: z.literal("backoffice.user.setStatus"),
-  payload: z.strictObject({
-    expectedAccountVersion: z.number().int().nonnegative(),
-    status: identityStatusSchema,
-    userId: z.uuid(),
-  }),
+const backofficeUserStatusPayloadSchema = z.strictObject({
+  expectedAccountVersion: z.number().int().nonnegative(),
+  userId: z.uuid(),
+});
+
+export const backofficeUserSuspendCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.user.suspend"),
+  payload: backofficeUserStatusPayloadSchema,
+});
+
+export const backofficeUserRestoreCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.user.restore"),
+  payload: backofficeUserStatusPayloadSchema,
 });
 
 export const backofficeUserRevealPiiCommandSchema = idempotentBackofficeCommandSchema.extend({
@@ -167,7 +172,8 @@ export const backofficeTaxonomySetActiveCommandSchema = idempotentBackofficeComm
 });
 
 export const backofficeCommandSchema = z.discriminatedUnion("action", [
-  backofficeUserSetStatusCommandSchema,
+  backofficeUserSuspendCommandSchema,
+  backofficeUserRestoreCommandSchema,
   backofficeUserRevealPiiCommandSchema,
   backofficeAccessSetRoleCommandSchema,
   backofficeTaxonomyUpsertCommandSchema,
@@ -192,6 +198,8 @@ export type BackofficeUserList = z.infer<typeof backofficeUserListSchema>;
 export type BackofficeUserPii = z.infer<typeof backofficeUserPiiSchema>;
 export type BackofficeUserQuery = z.infer<typeof backofficeUserQuerySchema>;
 export type BackofficeUserRevealPiiCommand = z.infer<typeof backofficeUserRevealPiiCommandSchema>;
-export type BackofficeUserSetStatusCommand = z.infer<typeof backofficeUserSetStatusCommandSchema>;
+export type BackofficeUserStatusCommand =
+  | z.infer<typeof backofficeUserRestoreCommandSchema>
+  | z.infer<typeof backofficeUserSuspendCommandSchema>;
 export type BackofficeUserSummary = z.infer<typeof backofficeUserSummarySchema>;
 export type PlatformRole = z.infer<typeof platformRoleSchema>;

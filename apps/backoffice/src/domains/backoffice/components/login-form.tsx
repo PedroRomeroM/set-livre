@@ -11,6 +11,7 @@ import {
   isAmbiguousBackofficeError,
   loginBackofficeClient,
 } from "./backoffice-api";
+import { notifyBackofficeSessionChanged } from "./session-events";
 
 export function BackofficeLoginForm({ signedOut }: Readonly<{ signedOut: boolean }>) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -38,6 +39,7 @@ export function BackofficeLoginForm({ signedOut }: Readonly<{ signedOut: boolean
     onSuccess: (session) => {
       if (!session.authenticated) return;
       queryClient.clear();
+      notifyBackofficeSessionChanged();
       router.replace("/");
       router.refresh();
     },

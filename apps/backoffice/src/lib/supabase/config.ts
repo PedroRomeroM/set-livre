@@ -9,8 +9,10 @@ const environmentSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
 });
 
-export function readBackofficeSupabaseEnvironment() {
-  const environment = environmentSchema.parse(process.env);
+export function readBackofficeSupabaseEnvironment(
+  source: Readonly<Record<string, string | undefined>> = process.env,
+) {
+  const environment = environmentSchema.parse(source);
   const appUrl = new URL(environment.NEXT_PUBLIC_APP_URL);
   const supabaseUrl = new URL(environment.NEXT_PUBLIC_SUPABASE_URL);
 
@@ -24,17 +26,27 @@ export function readBackofficeSupabaseEnvironment() {
   }
 
   const isLocalRuntime = environment.APP_ENV === "local" || environment.APP_ENV === "test";
+  const isProductionSshTunnel =
+    environment.APP_ENV === "production" && appUrl.origin === "http://127.0.0.1:3001";
   if (
     isLocalRuntime &&
     (appUrl.origin !== "http://127.0.0.1:3001" || supabaseUrl.origin !== "http://127.0.0.1:54321")
   ) {
     throw new Error("O backoffice local exige as origens IPv4 literais documentadas.");
   }
-  if (!isLocalRuntime && (appUrl.protocol !== "https:" || supabaseUrl.protocol !== "https:")) {
-    throw new Error("O backoffice não local exige origens HTTPS.");
+  if (!isLocalRuntime && !isProductionSshTunnel && appUrl.protocol !== "https:") {
+    throw new Error("O backoffice não local exige HTTPS ou o túnel SSH de produção documentado.");
+  }
+  if (!isLocalRuntime && supabaseUrl.protocol !== "https:") {
+    throw new Error("O Supabase não local exige origem HTTPS.");
   }
 
   return {
+    accessMode: isLocalRuntime
+      ? ("local" as const)
+      : isProductionSshTunnel
+        ? ("ssh-tunnel" as const)
+        : ("reverse-proxy" as const),
     anonKey: environment.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     appOrigin: appUrl.origin,
     cookieOptions: {
@@ -42,7 +54,7 @@ export function readBackofficeSupabaseEnvironment() {
       name: backofficeAuthCookieName,
       path: "/",
       sameSite: "strict" as const,
-      secure: !isLocalRuntime,
+      secure: !isLocalRuntime && !isProductionSshTunnel,
     },
     environment: environment.APP_ENV,
     supabaseOrigin: supabaseUrl.origin,

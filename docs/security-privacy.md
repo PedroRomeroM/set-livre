@@ -80,14 +80,21 @@ papéis. Cada leitura e comando revalida sessão Auth canônica, perfil ativo/co
 remover todos os papéis ou suspender a conta fecha bindings existentes. `support` alcança somente
 usuários e revelação temporária de PII; catálogo administrativo, taxonomias e papéis exigem `admin` no
 banco, mesmo se uma rota for chamada diretamente. O último admin ativo é protegido sob lock global.
-PII aparece mascarada no read model e só é devolvida por motivo allowlisted, fora de URL/QueryCache,
-por até 60 segundos. Ledger e auditoria registram ator, ação, alvo, motivo/versões e correlação, nunca o
-valor nem hash reutilizável da PII. Taxonomia é versionada e arquivada sem apagar referências.
+PII aparece mascarada no read model; nome bruto fica exclusivamente na revelação por motivo
+allowlisted, fora de URL/QueryCache, por até 60 segundos. Um observador relê a sessão no mount, foco,
+intervalo curto e eventos entre abas; identidade ou papéis divergentes ocultam o DOM privado e limpam o
+cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo, motivo/versões e correlação,
+nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada transacionalmente a 500
+itens e arquivada sem apagar referências.
 
 ## Comandos, origem e abuso
 
-Escritas cookie-based exigem método, body limitado, content type, `Origin`/`Host` exatos e, em produção,
-`X-Forwarded-Host` e `X-Forwarded-Proto=https` substituídos pelo Nginx confiável.
+Escritas cookie-based exigem método, body limitado, content type e `Origin`/`Host` exatos. Na aplicação
+pública e em futura exposição HTTPS do backoffice, produção também exige `X-Forwarded-Host` e
+`X-Forwarded-Proto=https` substituídos pelo Nginx confiável. Na fase atual, o backoffice não passa pelo
+Nginx: escuta somente em `127.0.0.1:3001`, aceita a origem literal homônima via túnel SSH e rejeita
+headers de proxy. O trecho remoto é cifrado pelo túnel; o pequeno trecho HTTP existe apenas no
+loopback do navegador e permite o cookie host-only necessário à origem efetivamente acessível.
 `X-Forwarded-For` recebe um único `$remote_addr`; cadeia fornecida pelo cliente é descartada. A borda
 gera um UUIDv4 a partir do `$request_id` interno, substitui o header não confiável de entrada e usa o
 mesmo valor no upstream, na resposta e no log. O access log do Nginx substitui o formato `combined`:
@@ -177,7 +184,10 @@ limitado, Storage RLS e cleanup. SVG e nomes de usuário nunca chegam a processa
 
 Supabase local e E2E usam somente a fronteira local validada, dados QA descartáveis e credenciais próprias
 geradas a cada reset. O preflight recusa banco/URL não local antes de abrir navegador; o wrapper também
-recusa daemon, bridge, política do Docker Desktop, container ou binding divergente. Docker Desktop não é
+recusa daemon, bridge, política do Docker Desktop, container ou binding divergente. Sob a política nativa
+`Local only`, os bindings aceitos são `127.0.0.1`, `::1` e a representação `::` emitida pelo Docker
+Desktop somente quando essa política local foi comprovada separadamente; qualquer wildcard sem esse
+controle continua proibido. Docker Desktop não é
 uma fronteira de produção e não recebe firewall customizado; o controle decisivo continua sendo não
 reutilizar dado ou credencial real.
 

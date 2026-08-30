@@ -15,7 +15,7 @@ const runtimeTerminationPollIntervalMilliseconds = 250;
 const runtimeTerminationTimeoutMilliseconds = 5_000;
 const migrationVersionPattern = /^[0-9]{14}$/u;
 export const productionCoordinates = Object.freeze({
-  backofficeUrl: "https://ops.setlivre.com",
+  backofficeUrl: "http://127.0.0.1:3001",
   databaseHost: "aws-0-sa-east-1.pooler.supabase.com",
   databasePort: 5432,
   projectRef: "oirvvnojgkzdppkdvhej",

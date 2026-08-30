@@ -17,12 +17,13 @@ import {
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
 import { safeE2EEnvironment } from "../../helpers/e2e-environment";
 
-async function searchUser(page: Page, query: string, heading: string) {
+async function searchUser(page: Page, query: string, userId: string | undefined) {
+  if (userId === undefined) throw new Error("A busca FEAT-031 exige o UUID do usuário-alvo.");
   await page.getByRole("textbox", { name: "Buscar usuários" }).fill(query);
   await page.getByRole("button", { name: "Buscar" }).click();
   const card = page
     .getByRole("article")
-    .filter({ has: page.getByRole("heading", { name: heading }) });
+    .filter({ has: page.getByText(`Identificador …${userId.slice(-8)}`, { exact: true }) });
   await expect(card).toBeVisible();
   return card;
 }
@@ -36,7 +37,7 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
   try {
     await provisionFeat031Operator(page, operator, "support", "031001");
     await loginFeat031Backoffice(page, operator);
-    let card = await searchUser(page, target.email, target.name);
+    let card = await searchUser(page, target.email, target.userId);
     await card.getByRole("button", { name: "Revisar suspensão" }).click();
     const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
     const confirm = confirmation.getByRole("button", { name: "Confirmar" });
@@ -52,7 +53,7 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
     await expectFeat031OwnerCommandBlocked(target.userId);
     expect(await readFeat031Audit("backoffice.user_suspended", target.userId)).toHaveLength(1);
 
-    card = await searchUser(page, target.email, target.name);
+    card = await searchUser(page, target.email, target.userId);
     await card.getByRole("button", { name: "Revisar restauração" }).click();
     const restoration = page.getByRole("region", { name: "Confirmar restauração" });
     await restoration.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
@@ -122,7 +123,7 @@ test("SL-F031-E2E-002 @p0 somente admin gerencia papéis", async ({ browser, pag
     await expect(page).toHaveURL(/\/entrar\?saida=sucesso$/u);
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Acessos" }).click();
-    const adminCard = await searchUser(page, target.email, target.name);
+    const adminCard = await searchUser(page, target.email, target.userId);
     await adminCard.getByRole("button", { name: "Conceder support" }).click();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
     await expect(page.getByRole("status")).toContainText("Papéis atualizados");
@@ -143,7 +144,7 @@ test("SL-F031-E2E-003 @p0 salvaguarda impede remover o último admin", async ({
     await provisionFeat031Operator(page, admin, "admin", "031003");
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Acessos" }).click();
-    const card = await searchUser(page, admin.email, "Operador admin QA 031003");
+    const card = await searchUser(page, admin.email, admin.userId);
     await card.getByRole("button", { name: "Revogar admin" }).click();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
     await expect(page.getByRole("region", { name: "Acessos" }).getByRole("alert")).toContainText(
