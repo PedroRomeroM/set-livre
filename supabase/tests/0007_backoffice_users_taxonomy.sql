@@ -104,7 +104,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(48);
+select plan(53);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -189,7 +189,7 @@ select ok(
   )
   and not pg_catalog.has_function_privilege(
     'app_dal',
-    'private.backoffice_session_context(uuid,uuid,timestamptz,text,boolean)',
+    'private.backoffice_session_context(uuid,uuid,timestamptz,text,boolean,boolean)',
     'EXECUTE'
   )
   and not exists (
@@ -206,10 +206,11 @@ select ok(
         ('private.get_backoffice_session(uuid,uuid,timestamptz)'),
         ('private.close_backoffice_session(uuid,uuid)'),
         ('private.list_backoffice_users(uuid,uuid,timestamptz,text,timestamptz,uuid,integer)'),
+        ('private.get_backoffice_user_access(uuid,uuid,timestamptz,uuid)'),
         ('private.list_backoffice_taxonomies(uuid,uuid,timestamptz)'),
         ('private.set_backoffice_user_status(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.reveal_backoffice_user_pii(uuid,uuid,timestamptz,uuid,text,uuid,uuid)'),
-        ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,text[],text,boolean,uuid,uuid)'),
+        ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.upsert_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,text,integer,uuid,uuid)'),
         ('private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)')
     ) as entrypoint(signature)
@@ -227,16 +228,17 @@ select ok(
         ('private.get_backoffice_session(uuid,uuid,timestamptz)'),
         ('private.close_backoffice_session(uuid,uuid)'),
         ('private.list_backoffice_users(uuid,uuid,timestamptz,text,timestamptz,uuid,integer)'),
+        ('private.get_backoffice_user_access(uuid,uuid,timestamptz,uuid)'),
         ('private.list_backoffice_taxonomies(uuid,uuid,timestamptz)'),
         ('private.set_backoffice_user_status(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.reveal_backoffice_user_pii(uuid,uuid,timestamptz,uuid,text,uuid,uuid)'),
-        ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,text[],text,boolean,uuid,uuid)'),
+        ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.upsert_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,text,integer,uuid,uuid)'),
         ('private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)')
     ) as entrypoint(signature)
     where not pg_catalog.has_function_privilege('app_dal', entrypoint.signature, 'EXECUTE')
   ),
-  'app_dal executa somente as dez fachadas administrativas e nunca lê tabelas diretamente'
+  'app_dal executa somente as onze fachadas administrativas e nunca lê tabelas diretamente'
 );
 
 select private.feat031_create_user(
@@ -329,12 +331,15 @@ select pg_catalog.set_config(
   true
 );
 select ok(
-  pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb -> 'roles'
-    = '["admin"]'::jsonb
+  pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb
+    @> '{"accountVersion":1}'::jsonb
     and not (
       pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb ? 'name'
+    )
+    and not (
+      pg_catalog.current_setting('set_livre.test.f031_bootstrap')::jsonb ? 'roles'
     ),
-  'bootstrap cria o primeiro admin sem devolver nome bruto no resumo'
+  'bootstrap cria o primeiro admin e devolve resumo sem nome ou papel'
 );
 select private.bootstrap_first_platform_admin(
   '81000000-0000-4000-8000-000000000001',
@@ -398,6 +403,56 @@ select ok(
   'admin abre binding curto vinculado ao session_id Auth'
 );
 
+update private.backoffice_sessions as session_binding
+set
+  opened_at = shifted.observed_at,
+  last_seen_at = shifted.observed_at,
+  absolute_expires_at = shifted.observed_at + interval '1 hour'
+from (
+  select pg_catalog.clock_timestamp() + interval '1 second' as observed_at
+) as shifted
+where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001';
+set local role app_dal;
+select * from private.list_backoffice_users(
+  '81000000-0000-4000-8000-000000000001',
+  '82000000-0000-4000-8000-000000000001',
+  pg_catalog.clock_timestamp() + interval '30 minutes',
+  null,
+  null,
+  null,
+  1
+);
+reset role;
+select ok(
+  (
+    select session_binding.last_seen_at >= session_binding.opened_at
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  'atividade preserva o relógio lógico monotônico da sessão'
+);
+set local role app_dal;
+select private.close_backoffice_session(
+  '81000000-0000-4000-8000-000000000001',
+  '82000000-0000-4000-8000-000000000001'
+);
+reset role;
+select ok(
+  (
+    select session_binding.closed_at >= session_binding.last_seen_at
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  'encerramento preserva a ordem temporal da sessão'
+);
+set local role app_dal;
+select * from private.open_backoffice_session(
+  '81000000-0000-4000-8000-000000000001',
+  '82000000-0000-4000-8000-000000000001',
+  pg_catalog.clock_timestamp() + interval '30 minutes'
+);
+reset role;
+
 update private.backoffice_sessions
 set
   opened_at = pg_catalog.clock_timestamp() - interval '32 minutes',
@@ -438,9 +493,8 @@ select matches(
         '82000000-0000-4000-8000-000000000001',
         pg_catalog.clock_timestamp() + interval '30 minutes',
         '81000000-0000-4000-8000-000000000002',
-        '{}'::text[],
-        'support',
-        true,
+        0,
+        'backoffice.access.grantSupport',
         '87000000-0000-4000-8000-000000000003',
         '86000000-0000-4000-8000-000000000003'
       )
@@ -463,9 +517,8 @@ select pg_catalog.set_config(
     '82000000-0000-4000-8000-000000000001',
     pg_catalog.clock_timestamp() + interval '30 minutes',
     '81000000-0000-4000-8000-000000000002',
-    '{}'::text[],
-    'support',
-    true,
+    0,
+    'backoffice.access.grantSupport',
     '87000000-0000-4000-8000-000000000004',
     '86000000-0000-4000-8000-000000000004'
   )::text,
@@ -477,10 +530,16 @@ select * from private.open_backoffice_session(
   pg_catalog.clock_timestamp() + interval '30 minutes'
 );
 reset role;
-select is(
-  pg_catalog.current_setting('set_livre.test.f031_support_role')::jsonb -> 'roles',
-  '["support"]'::jsonb,
-  'admin recente concede support com resultado autoritativo'
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_support_role')::jsonb
+    @> '{"accountVersion":1}'::jsonb
+    and not (pg_catalog.current_setting('set_livre.test.f031_support_role')::jsonb ? 'roles')
+    and exists (
+      select 1 from public.platform_roles
+      where user_id = '81000000-0000-4000-8000-000000000002'
+        and role = 'support'
+    ),
+  'admin recente concede support sem devolver papel no resultado do browser'
 );
 select ok(
   exists (
@@ -499,9 +558,8 @@ select matches(
         '82000000-0000-4000-8000-000000000002',
         pg_catalog.clock_timestamp() + interval '30 minutes',
         '81000000-0000-4000-8000-000000000004',
-        '{}'::text[],
-        'support',
-        true,
+        0,
+        'backoffice.access.grantSupport',
         '87000000-0000-4000-8000-000000000005',
         '86000000-0000-4000-8000-000000000005'
       )
@@ -518,7 +576,7 @@ select matches(
         '82000000-0000-4000-8000-000000000001',
         pg_catalog.clock_timestamp() + interval '30 minutes',
         '81000000-0000-4000-8000-000000000001',
-        0,
+        1,
         'backoffice.user.suspend',
         '87000000-0000-4000-8000-000000000006',
         '86000000-0000-4000-8000-000000000006'
@@ -536,9 +594,8 @@ select matches(
         '82000000-0000-4000-8000-000000000001',
         pg_catalog.clock_timestamp() + interval '30 minutes',
         '81000000-0000-4000-8000-000000000001',
-        array['admin']::text[],
-        'admin',
-        false,
+        1,
+        'backoffice.access.revokeAdmin',
         '87000000-0000-4000-8000-000000000007',
         '86000000-0000-4000-8000-000000000007'
       )
@@ -554,9 +611,8 @@ select private.set_backoffice_user_role(
   '82000000-0000-4000-8000-000000000001',
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000005',
-  '{}'::text[],
-  'admin',
-  true,
+  0,
+  'backoffice.access.grantAdmin',
   '87000000-0000-4000-8000-000000000008',
   '86000000-0000-4000-8000-000000000008'
 );
@@ -575,8 +631,72 @@ select pg_catalog.set_config(
 reset role;
 select ok(
   pg_catalog.current_setting('set_livre.test.f031_admin_b_session')::jsonb
-    @> '{"roles":["admin"]}'::jsonb,
+    @> '{"authorization_version":1,"roles":["admin"]}'::jsonb,
   'segundo admin recebe papel e abre sessão independente'
+);
+
+update private.backoffice_sessions
+set last_seen_at = opened_at
+where auth_session_id = '82000000-0000-4000-8000-000000000001';
+select pg_catalog.set_config(
+  'set_livre.test.f031_passive_last_seen',
+  (
+    select last_seen_at::text
+    from private.backoffice_sessions
+    where auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  true
+);
+set local role app_dal;
+select * from private.get_backoffice_session(
+  '81000000-0000-4000-8000-000000000001',
+  '82000000-0000-4000-8000-000000000001',
+  pg_catalog.clock_timestamp() + interval '30 minutes'
+);
+reset role;
+select is(
+  (
+    select last_seen_at::text
+    from private.backoffice_sessions
+    where auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  pg_catalog.current_setting('set_livre.test.f031_passive_last_seen'),
+  'revalidação passiva da sessão não renova o limite de inatividade'
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f031_admin_b_access',
+  (
+    select pg_catalog.to_jsonb(access_result)::text
+    from private.get_backoffice_user_access(
+      '81000000-0000-4000-8000-000000000001',
+      '82000000-0000-4000-8000-000000000001',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81000000-0000-4000-8000-000000000005'
+    ) as access_result
+  ),
+  true
+);
+reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_admin_b_access')::jsonb
+    @> '{"account_version":1,"roles":["admin"]}'::jsonb,
+  'somente a leitura server-side de acesso expõe papéis ao admin'
+);
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select * from private.get_backoffice_user_access(
+        '81000000-0000-4000-8000-000000000002',
+        '82000000-0000-4000-8000-000000000002',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        '81000000-0000-4000-8000-000000000005'
+      )
+    $command$
+  ),
+  '^42501:backoffice_role_required$',
+  'support não lê a composição de papéis de outra conta'
 );
 
 select ok(
@@ -584,6 +704,7 @@ select ok(
     select pg_catalog.count(*) = 5
       and pg_catalog.bool_and(email_masked like '%***@%')
       and pg_catalog.bool_and(email_masked not like 'qa-feat031-%')
+      and pg_catalog.bool_and(not (pg_catalog.to_jsonb(listed_user) ? 'roles'))
     from private.list_backoffice_users(
       '81000000-0000-4000-8000-000000000002',
       '82000000-0000-4000-8000-000000000002',
@@ -592,9 +713,9 @@ select ok(
       null,
       null,
       51
-    )
+    ) as listed_user
   ),
-  'busca server-side retorna as cinco personas somente com email mascarado'
+  'busca server-side retorna as cinco personas mascaradas sem papéis no contrato do browser'
 );
 select ok(
   (
@@ -1158,7 +1279,7 @@ select private.set_backoffice_user_status(
   '82000000-0000-4000-8000-000000000001',
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000002',
-  0,
+  1,
   'backoffice.user.suspend',
   '87000000-0000-4000-8000-000000000022',
   '86000000-0000-4000-8000-000000000022'
@@ -1166,7 +1287,7 @@ select private.set_backoffice_user_status(
 reset role;
 select ok(
   (
-    select account_version = 1 and profile_version = 1
+    select account_version = 2 and profile_version = 1
     from public.profiles
     where id = '81000000-0000-4000-8000-000000000002'
   )
@@ -1197,7 +1318,7 @@ select private.set_backoffice_user_status(
   '82000000-0000-4000-8000-000000000001',
   pg_catalog.clock_timestamp() + interval '30 minutes',
   '81000000-0000-4000-8000-000000000002',
-  1,
+  2,
   'backoffice.user.restore',
   '87000000-0000-4000-8000-000000000023',
   '86000000-0000-4000-8000-000000000023'
@@ -1205,7 +1326,7 @@ select private.set_backoffice_user_status(
 reset role;
 select ok(
   (
-    select status = 'active' and account_version = 2 and profile_version = 1
+    select status = 'active' and account_version = 3 and profile_version = 1
     from public.profiles
     where id = '81000000-0000-4000-8000-000000000002'
   ),
@@ -1230,7 +1351,7 @@ reset role;
 revoke app_dal from postgres granted by current_user;
 
 select ok(
-  private.check_readiness('20260829224738'),
+  private.check_readiness('20260830173000'),
   'readiness inclui a migration FEAT-031 e a allowlist DAL exata'
 );
 

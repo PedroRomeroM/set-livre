@@ -23,10 +23,10 @@ const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
   process.env,
   applicationEnvironment(publicBaseUrl),
 );
-const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
-  process.env,
-  applicationEnvironment(backofficeBaseUrl),
-);
+const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env, {
+  ...applicationEnvironment(backofficeBaseUrl),
+  BACKOFFICE_RUNTIME_UNLOCK_KEY: safeEnvironment.backofficeRuntimeUnlockKey,
+});
 const posixGracefulWebServerShutdown = {
   gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 } satisfies {

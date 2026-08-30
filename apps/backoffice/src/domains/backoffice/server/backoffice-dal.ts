@@ -7,7 +7,7 @@ import {
   backofficeUserPiiSchema,
   backofficeUserSummarySchema,
   platformRolesSchema,
-  type BackofficeAccessSetRoleCommand,
+  type BackofficeAccessCommand,
   type BackofficeTaxonomySetActiveCommand,
   type BackofficeTaxonomyUpsertCommand,
   type BackofficeUserRevealPiiCommand,
@@ -25,6 +25,7 @@ const pgSafeIntegerSchema = z
   .transform((value) => Number(value))
   .pipe(z.number().int().nonnegative().safe());
 const sessionRowSchema = z.strictObject({
+  authorization_version: pgSafeIntegerSchema,
   expires_at: timestampSchema,
   roles: platformRolesSchema,
   scope: z.uuid(),
@@ -33,12 +34,12 @@ const sessionRowSchema = z.strictObject({
 const userRowSchema = z.strictObject({
   account_version: pgSafeIntegerSchema,
   created_at: timestampSchema,
-  cursor_created_at: z.iso.datetime(),
   email_masked: z.string().min(3).max(254),
   id: z.uuid(),
-  roles: platformRolesSchema,
   status: z.enum(["active", "suspended"]),
 });
+const listedUserRowSchema = userRowSchema.extend({ cursor_created_at: z.iso.datetime() });
+const accessRowSchema = userRowSchema.extend({ roles: platformRolesSchema });
 const taxonomyRowSchema = z.strictObject({
   active: z.boolean(),
   id: z.uuid(),
@@ -144,7 +145,7 @@ export async function listBackofficeUsers(input: {
       51,
     ],
   );
-  const rows = z.array(userRowSchema).max(51).parse(result.rows);
+  const rows = z.array(listedUserRowSchema).max(51).parse(result.rows);
   const visibleRows = rows.slice(0, 50);
   const visible = visibleRows.map((row) =>
     backofficeUserSummarySchema.parse({
@@ -152,7 +153,6 @@ export async function listBackofficeUsers(input: {
       createdAt: row.created_at,
       emailMasked: row.email_masked,
       id: row.id,
-      roles: row.roles,
       status: row.status,
     }),
   );
@@ -168,6 +168,17 @@ export async function listBackofficeUsers(input: {
           }),
     scope: input.auth.userId,
   });
+}
+
+export async function getBackofficeUserAccess(input: {
+  auth: BackofficeAuthContext;
+  userId: string;
+}) {
+  const result = await backofficeDalPool().query(
+    `select * from private.get_backoffice_user_access($1::uuid, $2::uuid, $3::timestamptz, $4::uuid)`,
+    [...bindingArguments(input.auth), input.userId],
+  );
+  return exactlyOne(result.rows, accessRowSchema, "get_backoffice_user_access");
 }
 
 export async function listBackofficeTaxonomies(auth: BackofficeAuthContext) {
@@ -248,21 +259,20 @@ export async function revealBackofficeUserPii(input: {
 
 export async function setBackofficeUserRole(input: {
   auth: BackofficeAuthContext;
-  command: BackofficeAccessSetRoleCommand;
+  command: BackofficeAccessCommand;
   requestId: string;
 }) {
   const { payload } = input.command;
   const result = await backofficeDalPool().query(
     `select private.set_backoffice_user_role(
-       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid, $5::text[],
-       $6::text, $7::boolean, $8::uuid, $9::uuid
+       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid, $5::bigint,
+       $6::text, $7::uuid, $8::uuid
      ) as result`,
     [
       ...bindingArguments(input.auth),
       payload.userId,
-      payload.expectedRoles,
-      payload.role,
-      payload.enabled,
+      payload.expectedAccountVersion,
+      input.command.action,
       input.command.idempotencyKey,
       input.requestId,
     ],

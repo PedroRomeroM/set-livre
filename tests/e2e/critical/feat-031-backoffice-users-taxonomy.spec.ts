@@ -14,7 +14,9 @@ import {
   readFeat031Roles,
   readFeat031TaxonomyHistory,
   readFeat031UserStatus,
+  unlockFeat031Backoffice,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
+import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 import { safeE2EEnvironment } from "../../helpers/e2e-environment";
 
 async function searchUser(page: Page, query: string, userId: string | undefined) {
@@ -44,7 +46,7 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
     await expect(confirm).toBeDisabled();
     await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
     await confirm.click();
-    await expect(page.getByRole("status")).toContainText("Usuário suspenso");
+    await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toBeVisible();
     expect(await readFeat031UserStatus(target.userId)).toMatchObject({
       account_version: 1,
       profile_version: 1,
@@ -58,7 +60,7 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
     const restoration = page.getByRole("region", { name: "Confirmar restauração" });
     await restoration.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
     await restoration.getByRole("button", { name: "Confirmar" }).click();
-    await expect(page.getByRole("status")).toContainText("Usuário restaurado");
+    await expect(page.getByRole("status").filter({ hasText: "Usuário restaurado" })).toBeVisible();
     expect(await readFeat031UserStatus(target.userId)).toMatchObject({
       account_version: 2,
       profile_version: 1,
@@ -66,7 +68,46 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
     });
     expect(await readFeat031Audit("backoffice.user_restored", target.userId)).toHaveLength(1);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [operator] });
+  }
+});
+
+test("SL-F031-E2E-011 @p0 runtime bloqueado rejeita mutação até desbloqueio local", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "011_runtime_unlock");
+  const target = await createFeat031DirectIdentity("Interlock alvo");
+  try {
+    await provisionFeat031Operator(page, support, "support", "031011");
+    await loginFeat031Backoffice(page, support, { unlockRuntime: false });
+    const card = await searchUser(page, target.email, target.userId);
+    await card.getByRole("button", { name: "Revisar suspensão" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
+    const lockedResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/commands" && response.status() === 423,
+    );
+    await confirmation.getByRole("button", { name: "Confirmar" }).click();
+    await lockedResponse;
+    await expect(confirmation).toContainText("Desbloqueie operações com a chave local");
+    expect(await readFeat031UserStatus(target.userId)).toMatchObject({
+      account_version: 0,
+      status: "active",
+    });
+
+    await unlockFeat031Backoffice(page);
+    await confirmation.getByRole("button", { name: "Confirmar" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toBeVisible();
+    expect(await readFeat031UserStatus(target.userId)).toMatchObject({
+      account_version: 1,
+      status: "suspended",
+    });
+  } finally {
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [target], operators: [support] });
   }
 });
 
@@ -111,10 +152,10 @@ test("SL-F031-E2E-002 @p0 somente admin gerencia papéis", async ({ browser, pag
         return response.status;
       },
       {
-        action: "backoffice.access.setRole",
+        action: "backoffice.access.grantSupport",
         expectedScope: supportSession.scope,
         idempotencyKey: crypto.randomUUID(),
-        payload: { enabled: true, expectedRoles: [], role: "support", userId: target.userId },
+        payload: { expectedAccountVersion: 0, userId: target.userId },
       },
     );
     expect(forbidden).toBe(403);
@@ -124,12 +165,14 @@ test("SL-F031-E2E-002 @p0 somente admin gerencia papéis", async ({ browser, pag
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Acessos" }).click();
     const adminCard = await searchUser(page, target.email, target.userId);
-    await adminCard.getByRole("button", { name: "Conceder support" }).click();
+    await adminCard.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
-    await expect(page.getByRole("status")).toContainText("Papéis atualizados");
+    await expect(page.getByRole("status").filter({ hasText: "Acesso atualizado" })).toBeVisible();
     expect(await readFeat031Roles(target.userId)).toEqual([{ role: "support" }]);
     expect(await readFeat031Audit("backoffice.role_granted", target.userId)).toHaveLength(1);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await adminContext.close().catch(() => undefined);
     await cleanupFeat031Users({ direct: [target], operators: [support, admin] });
   }
@@ -145,13 +188,15 @@ test("SL-F031-E2E-003 @p0 salvaguarda impede remover o último admin", async ({
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Acessos" }).click();
     const card = await searchUser(page, admin.email, admin.userId);
-    await card.getByRole("button", { name: "Revogar admin" }).click();
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar revogação administrativa" }).click();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
-    await expect(page.getByRole("region", { name: "Acessos" }).getByRole("alert")).toContainText(
-      "salvaguarda",
-    );
+    await expect(
+      page.getByRole("region", { name: "Ações de acesso" }).getByRole("alert"),
+    ).toContainText("salvaguarda");
     expect(await readFeat031Roles(admin.userId ?? "")).toEqual([{ role: "admin" }]);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [admin] });
   }
 });
@@ -174,7 +219,7 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await page.getByRole("textbox", { name: "Slug" }).fill(slug);
     await page.getByRole("spinbutton", { name: "Ordem" }).fill("310");
     await page.getByRole("button", { name: "Criar taxonomia" }).click();
-    await expect(page.getByRole("status")).toContainText("salva na versão 0");
+    await expect(page.getByRole("status").filter({ hasText: "salva na versão 0" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue("");
 
     const createdCard = page
@@ -185,7 +230,7 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await page.getByRole("textbox", { name: "Slug" }).fill(editedSlug);
     await page.getByRole("spinbutton", { name: "Ordem" }).fill("311");
     await page.getByRole("button", { name: "Salvar edição" }).click();
-    await expect(page.getByRole("status")).toContainText("salva na versão 1");
+    await expect(page.getByRole("status").filter({ hasText: "salva na versão 1" })).toBeVisible();
 
     const history = await linkFeat031TagToHistory(owner.userId, editedSlug);
     tagId = history.tagId;
@@ -198,7 +243,9 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     const impact = page.getByRole("region", { name: "Impacto da desativação" });
     await expect(impact).toContainText("1 referências");
     await impact.getByRole("button", { name: "Confirmar arquivamento" }).click();
-    await expect(page.getByRole("status")).toContainText("referências históricas preservadas");
+    await expect(
+      page.getByRole("status").filter({ hasText: "referências históricas preservadas" }),
+    ).toBeVisible();
     expect(await readFeat031TaxonomyHistory(history.tagId, history.revisionId)).toMatchObject({
       absent_from_new_selection: true,
       active: false,
@@ -212,8 +259,11 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
       .filter({ has: page.getByRole("heading", { name: "Arquivo histórico editado QA" }) });
     await archivedCard.getByRole("button", { name: "Revisar reativação" }).click();
     await page.getByRole("button", { name: "Confirmar reativação" }).click();
-    await expect(page.getByRole("status")).toContainText("reativada para novas seleções");
+    await expect(
+      page.getByRole("status").filter({ hasText: "reativada para novas seleções" }),
+    ).toBeVisible();
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [owner], operators: [admin] });
     await cleanupFeat031Taxonomy(tagId);
   }

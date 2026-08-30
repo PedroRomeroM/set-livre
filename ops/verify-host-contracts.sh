@@ -719,8 +719,12 @@ sudo install -o root -g setlivre -m 0640 "$temporary_directory/host-config.sha25
 write_fixture_environment() {
   local destination="$1"
   local app_url="$2"
+  local runtime_unlock_key="${3:-}"
   {
     printf 'APP_ENV=production\n'
+    if [[ -n ${runtime_unlock_key} ]]; then
+      printf 'BACKOFFICE_RUNTIME_UNLOCK_KEY=%s\n' "$runtime_unlock_key"
+    fi
     printf 'DATABASE_URL_APP_DAL=postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%%20role%%3Dapp_dal\n'
     printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
     printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ci_contract_key\n'
@@ -740,7 +744,9 @@ fixture_runtime_environment_digest() {
   } | sha256sum | cut --delimiter=' ' --fields=1
 }
 write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL"
-write_fixture_environment "$temporary_directory/backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+fixture_runtime_unlock_key="$(printf 'A%.0s' {1..43})"
+write_fixture_environment "$temporary_directory/backoffice.env" \
+  "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
 runtime_environment_digest="$(
   fixture_runtime_environment_digest \
     "$temporary_directory/web.env" "$temporary_directory/backoffice.env"
@@ -1126,7 +1132,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v9 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v10 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 sudo cp /etc/nginx/sites-available/set-livre "$temporary_directory/effective-nginx-site"
@@ -1214,7 +1220,7 @@ preflight_recovered_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_recovered_output} == set-livre-deploy-ready-v9 ]] \
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v10 ]] \
   || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {

@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import { apiSuccessSchema, studioEditorSchema, type StudioEditor } from "@set-livre/contracts";
 import { expect, type Page } from "@playwright/test";
-import { Pool } from "pg";
 import { z } from "zod";
 
+import { withE2EAdminClient, type E2EDatabaseClient } from "./e2e-database-preflight";
 import {
   activateFeat004Owner,
   cleanupFeat004QaIdentity,
@@ -12,6 +12,7 @@ import {
   provisionFeat004Profile,
   type Feat004QaIdentity,
 } from "./feat-004-owner-onboarding-recipient";
+import { closePageBeforeDatabaseCleanup } from "./page-cleanup";
 
 const studioEvidenceSchema = z.strictObject({
   draft_revision_id: z.uuid().nullable(),
@@ -71,9 +72,7 @@ export const feat006DefaultCore: Feat006CoreForm = {
 };
 
 export async function closeFeat006PageBeforeCleanup(page: Page) {
-  if (page.isClosed()) return;
-  await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
-  await page.close();
+  await closePageBeforeDatabaseCleanup(page);
 }
 
 export function createFeat006QaIdentity(
@@ -175,25 +174,10 @@ export function saveFeat006StudioThroughUi(page: Page) {
   );
 }
 
-export async function withFeat006AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
-  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
-  await e2eDatabaseSafetyPreflight();
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
-  });
-  try {
-    return await operation(pool);
-  } finally {
-    await pool.end();
-  }
+export async function withFeat006AdminPool<T>(
+  operation: (client: E2EDatabaseClient) => Promise<T>,
+) {
+  return withE2EAdminClient(operation);
 }
 
 async function readFeat006StudioPrerequisites(userId: string) {

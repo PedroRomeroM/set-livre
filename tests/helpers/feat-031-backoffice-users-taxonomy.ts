@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 
 import { expect, type Page } from "@playwright/test";
-import { Pool } from "pg";
 import { z } from "zod";
 
+import {
+  withE2EAdminClient,
+  withE2EDalClient,
+  type E2EDatabaseClient,
+} from "./e2e-database-preflight";
 import {
   cleanupFeat003QaIdentity,
   completeFeat003Profile,
@@ -47,36 +51,12 @@ function decimalEntropy(length: number) {
     .slice(0, length);
 }
 
-async function withFeat031AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
-  });
-  try {
-    return await operation(pool);
-  } finally {
-    await pool.end();
-  }
+async function withFeat031AdminPool<T>(operation: (client: E2EDatabaseClient) => Promise<T>) {
+  return withE2EAdminClient(operation);
 }
 
-async function withFeat031DalPool<T>(operation: (pool: Pool) => Promise<T>) {
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.dalDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
-  });
-  try {
-    return await operation(pool);
-  } finally {
-    await pool.end();
-  }
+async function withFeat031DalPool<T>(operation: (client: E2EDatabaseClient) => Promise<T>) {
+  return withE2EDalClient(operation);
 }
 
 export function createFeat031Operator(
@@ -116,7 +96,11 @@ export async function provisionFeat031Operator(
   });
 }
 
-export async function loginFeat031Backoffice(page: Page, operator: Feat031Operator) {
+export async function loginFeat031Backoffice(
+  page: Page,
+  operator: Feat031Operator,
+  options: { unlockRuntime?: boolean } = {},
+) {
   const login = await page.goto(`${safeE2EEnvironment.backofficeBaseUrl}/entrar`);
   expect(login?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Operação Set Livre" })).toBeVisible();
@@ -128,6 +112,20 @@ export async function loginFeat031Backoffice(page: Page, operator: Feat031Operat
   await page.getByRole("button", { name: "Entrar no backoffice" }).click();
   await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toBe("/usuarios");
   await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
+  if (options.unlockRuntime === false) return;
+  await unlockFeat031Backoffice(page);
+}
+
+export async function unlockFeat031Backoffice(page: Page) {
+  await stageFeat002PasswordForSubmission(
+    page.getByLabel("Chave local de desbloqueio"),
+    safeE2EEnvironment.backofficeRuntimeUnlockKey,
+    ["runtimeUnlockKey"],
+  );
+  await page.getByRole("button", { name: "Desbloquear operações" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Operações desbloqueadas" }),
+  ).toBeVisible();
 }
 
 export async function createFeat031DirectIdentity(scenario: string, owner = false) {

@@ -55,6 +55,7 @@ export function createPlaywrightNextCommand(argumentsList: readonly string[]) {
 }
 
 export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
+  BACKOFFICE_RUNTIME_UNLOCK_KEY?: string;
   DATABASE_URL_APP_DAL: string;
   NEXT_PUBLIC_APP_URL: string;
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string;

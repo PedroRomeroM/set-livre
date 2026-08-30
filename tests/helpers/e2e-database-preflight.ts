@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { z } from "zod";
 
 import { safeE2EEnvironment } from "./e2e-environment";
@@ -14,18 +14,52 @@ const identitySchema = z
   )
   .length(1);
 
-async function inspectE2EDatabase() {
+export type E2EDatabaseClient = Pick<PoolClient, "query">;
+
+type DatabaseScope = "admin" | "dal";
+
+const pools: Partial<Record<DatabaseScope, Pool>> = {};
+let safetyPreflight: Promise<z.infer<typeof identitySchema>[number] | undefined> | undefined;
+
+function databasePool(scope: DatabaseScope) {
+  const existing = pools[scope];
+  if (existing !== undefined) return existing;
+
   const pool = new Pool({
     allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
+    application_name: `set-livre-e2e-${scope}`,
+    connectionString:
+      scope === "admin" ? safeE2EEnvironment.adminDatabaseUrl : safeE2EEnvironment.dalDatabaseUrl,
     connectionTimeoutMillis: 1_000,
+    idleTimeoutMillis: 0,
     max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
+    query_timeout: 2_000,
+    statement_timeout: 2_000,
   });
+  pool.on("error", () => {
+    if (pools[scope] === pool) delete pools[scope];
+    if (scope === "admin") safetyPreflight = undefined;
+    void pool.end().catch(() => undefined);
+  });
+  pools[scope] = pool;
+  return pool;
+}
 
+async function withDatabaseClient<T>(
+  scope: DatabaseScope,
+  operation: (client: E2EDatabaseClient) => Promise<T>,
+) {
+  const client = await databasePool(scope).connect();
   try {
-    const result = await pool.query(
+    return await operation(client);
+  } finally {
+    client.release();
+  }
+}
+
+async function inspectE2EDatabase() {
+  return withDatabaseClient("admin", async (client) => {
+    const result = await client.query(
       `select
         current_database() as database,
         current_user as role,
@@ -39,9 +73,7 @@ async function inspectE2EDatabase() {
       where database.datname = current_database()`,
     );
     return identitySchema.parse(result.rows).at(0);
-  } finally {
-    await pool.end();
-  }
+  });
 }
 
 async function assertE2EDatabaseSafety() {
@@ -53,7 +85,23 @@ async function assertE2EDatabaseSafety() {
 }
 
 export async function e2eDatabaseSafetyPreflight() {
-  await assertE2EDatabaseSafety();
+  safetyPreflight ??= assertE2EDatabaseSafety();
+  try {
+    await safetyPreflight;
+  } catch (error) {
+    safetyPreflight = undefined;
+    throw error;
+  }
+}
+
+export async function withE2EAdminClient<T>(operation: (client: E2EDatabaseClient) => Promise<T>) {
+  await e2eDatabaseSafetyPreflight();
+  return withDatabaseClient("admin", operation);
+}
+
+export async function withE2EDalClient<T>(operation: (client: E2EDatabaseClient) => Promise<T>) {
+  await e2eDatabaseSafetyPreflight();
+  return withDatabaseClient("dal", operation);
 }
 
 export default async function e2eDatabasePreflight() {

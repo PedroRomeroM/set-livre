@@ -28,7 +28,6 @@ function cleanupPool(
   calls: Array<Readonly<{ text: string; values: readonly [string, string] }>>,
 ): Feat003CleanupPool {
   return {
-    end: async () => undefined,
     query: async (text, values) => {
       calls.push({ text, values });
       return { rows: [evidence] };

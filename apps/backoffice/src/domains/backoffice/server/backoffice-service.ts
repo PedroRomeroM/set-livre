@@ -10,7 +10,9 @@ import { z } from "zod";
 
 import { BackofficeApiError } from "@/lib/server/api-route";
 
+import type { BackofficeAuthContext } from "./auth-context";
 import {
+  getBackofficeUserAccess,
   listBackofficeTaxonomies,
   listBackofficeUsers,
   revealBackofficeUserPii,
@@ -20,6 +22,7 @@ import {
   upsertBackofficeTaxonomy,
 } from "./backoffice-dal";
 import { requireRouteBackofficeSession } from "./backoffice-session";
+import { requireBackofficeRuntimeUnlock } from "./runtime-unlock";
 
 const databaseErrorSchema = z.object({
   code: z.string().optional(),
@@ -109,6 +112,20 @@ export async function readBackofficeTaxonomies() {
   }
 }
 
+export async function readBackofficeUserAccess(input: {
+  auth: BackofficeAuthContext;
+  userId: string;
+}) {
+  try {
+    return await getBackofficeUserAccess({
+      auth: input.auth,
+      userId: z.uuid().parse(input.userId),
+    });
+  } catch (error) {
+    translateBackofficeDatabaseError(error);
+  }
+}
+
 export async function executeBackofficeCommand(commandInput: BackofficeCommand, requestId: string) {
   const command = backofficeCommandSchema.parse(commandInput);
   const route = await requireRouteBackofficeSession();
@@ -119,6 +136,7 @@ export async function executeBackofficeCommand(commandInput: BackofficeCommand, 
       "A sessão mudou. Recarregue antes de continuar.",
     );
   }
+  await requireBackofficeRuntimeUnlock(route.auth);
   try {
     let data: unknown;
     switch (command.action) {
@@ -129,7 +147,10 @@ export async function executeBackofficeCommand(commandInput: BackofficeCommand, 
       case "backoffice.user.revealPii":
         data = await revealBackofficeUserPii({ auth: route.auth, command, requestId });
         break;
-      case "backoffice.access.setRole":
+      case "backoffice.access.grantAdmin":
+      case "backoffice.access.grantSupport":
+      case "backoffice.access.revokeAdmin":
+      case "backoffice.access.revokeSupport":
         data = await setBackofficeUserRole({ auth: route.auth, command, requestId });
         break;
       case "backoffice.taxonomy.upsert":

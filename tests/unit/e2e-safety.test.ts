@@ -13,6 +13,7 @@ function jwtForRole(role: string) {
 const safeInput = {
   adminDatabaseUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
   backofficeBaseUrl: "http://127.0.0.1:3001",
+  backofficeRuntimeUnlockKey: "A".repeat(43),
   databaseMarker: "local-only-marker-0000000000000000",
   dalDatabaseUrl:
     "postgresql://app_runtime_local:local-secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",

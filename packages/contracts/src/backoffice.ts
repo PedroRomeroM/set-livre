@@ -12,6 +12,14 @@ export const backofficeLogoutPayloadSchema = z.strictObject({
   expectedScope: z.uuid(),
 });
 
+export const backofficeRuntimeUnlockPayloadSchema = z.strictObject({
+  key: z.string().regex(/^[A-Za-z0-9_-]{43}$/u, "A chave local possui formato inválido."),
+});
+
+export const backofficeRuntimeUnlockResultSchema = z.strictObject({
+  expiresAt: z.iso.datetime(),
+});
+
 const idempotentBackofficeCommandSchema = z.strictObject({
   expectedScope: z.uuid(),
   idempotencyKey: z.uuid(),
@@ -27,9 +35,10 @@ export const backofficeSessionSchema = z.discriminatedUnion("authenticated", [
   z.strictObject({ authenticated: z.literal(false) }),
   z.strictObject({
     authenticated: z.literal(true),
+    authorizationVersion: z.number().int().nonnegative().safe(),
     email: identityEmailSchema,
     expiresAt: z.iso.datetime(),
-    roles: platformRolesSchema,
+    runtimeUnlockExpiresAt: z.iso.datetime().nullable(),
     scope: z.uuid(),
     strongAuthenticationExpiresAt: z.iso.datetime(),
   }),
@@ -40,7 +49,6 @@ export const backofficeUserSummarySchema = z.strictObject({
   createdAt: z.iso.datetime(),
   emailMasked: z.string().min(3).max(254),
   id: z.uuid(),
-  roles: platformRolesSchema,
   status: identityStatusSchema,
 });
 
@@ -134,14 +142,29 @@ export const backofficeUserRevealPiiCommandSchema = idempotentBackofficeCommandS
   }),
 });
 
-export const backofficeAccessSetRoleCommandSchema = idempotentBackofficeCommandSchema.extend({
-  action: z.literal("backoffice.access.setRole"),
-  payload: z.strictObject({
-    enabled: z.boolean(),
-    expectedRoles: platformRolesSchema,
-    role: platformRoleSchema,
-    userId: z.uuid(),
-  }),
+const backofficeAccessPayloadSchema = z.strictObject({
+  expectedAccountVersion: z.number().int().nonnegative(),
+  userId: z.uuid(),
+});
+
+export const backofficeAccessGrantSupportCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.access.grantSupport"),
+  payload: backofficeAccessPayloadSchema,
+});
+
+export const backofficeAccessRevokeSupportCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.access.revokeSupport"),
+  payload: backofficeAccessPayloadSchema,
+});
+
+export const backofficeAccessGrantAdminCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.access.grantAdmin"),
+  payload: backofficeAccessPayloadSchema,
+});
+
+export const backofficeAccessRevokeAdminCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.access.revokeAdmin"),
+  payload: backofficeAccessPayloadSchema,
 });
 
 export const backofficeTaxonomyUpsertCommandSchema = idempotentBackofficeCommandSchema.extend({
@@ -175,16 +198,25 @@ export const backofficeCommandSchema = z.discriminatedUnion("action", [
   backofficeUserSuspendCommandSchema,
   backofficeUserRestoreCommandSchema,
   backofficeUserRevealPiiCommandSchema,
-  backofficeAccessSetRoleCommandSchema,
+  backofficeAccessGrantSupportCommandSchema,
+  backofficeAccessRevokeSupportCommandSchema,
+  backofficeAccessGrantAdminCommandSchema,
+  backofficeAccessRevokeAdminCommandSchema,
   backofficeTaxonomyUpsertCommandSchema,
   backofficeTaxonomySetActiveCommandSchema,
 ]);
 
-export type BackofficeAccessSetRoleCommand = z.infer<typeof backofficeAccessSetRoleCommandSchema>;
+export type BackofficeAccessCommand =
+  | z.infer<typeof backofficeAccessGrantAdminCommandSchema>
+  | z.infer<typeof backofficeAccessGrantSupportCommandSchema>
+  | z.infer<typeof backofficeAccessRevokeAdminCommandSchema>
+  | z.infer<typeof backofficeAccessRevokeSupportCommandSchema>;
 export type BackofficeCommand = z.infer<typeof backofficeCommandSchema>;
 export type BackofficeLoginPayload = z.infer<typeof backofficeLoginPayloadSchema>;
 export type BackofficeLogoutPayload = z.infer<typeof backofficeLogoutPayloadSchema>;
 export type BackofficePiiReason = z.infer<typeof backofficePiiReasonSchema>;
+export type BackofficeRuntimeUnlockPayload = z.infer<typeof backofficeRuntimeUnlockPayloadSchema>;
+export type BackofficeRuntimeUnlockResult = z.infer<typeof backofficeRuntimeUnlockResultSchema>;
 export type BackofficeSession = z.infer<typeof backofficeSessionSchema>;
 export type BackofficeTaxonomyImpact = z.infer<typeof backofficeTaxonomyImpactSchema>;
 export type BackofficeTaxonomyItem = z.infer<typeof backofficeTaxonomyItemSchema>;

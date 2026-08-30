@@ -13,12 +13,13 @@ import {
 } from "../../scripts/database-artifacts.mjs";
 import {
   applicationDatabaseSchemas,
-  assertDockerPolicyOrStopRunningStack,
   assertLocalStatusOrStopRunningStack,
   assertLoopbackContainerInspections,
   assertLoopbackNetworkInspection,
   assertNoUnexpectedNextEnvironmentFiles,
+  classifySupabaseProjectStartup,
   createLocalApplicationEnvironment,
+  ensureWindowsDockerEngine,
   parseSupabaseCliError,
   parseSupabaseStatus,
   runNextBuildWithCacheCleanup,
@@ -26,7 +27,8 @@ import {
   runWindowsDatabaseTests,
   supabaseLocalNetworkName,
   validateLocalDockerContext,
-  validateDockerDesktopPortBindingPolicy,
+  waitForSupabaseProjectStartup,
+  windowsPathToWslPath,
   withSupabaseLocalNetwork,
 } from "../../scripts/local-setup.mjs";
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
@@ -71,6 +73,42 @@ describe("local tooling contracts", () => {
         },
       }),
     ).toThrow("identidade DAL local");
+  });
+
+  it("requires the runtime unlock key only in the local backoffice contract", () => {
+    const backofficeEnvironment = {
+      ...localApplicationEnvironment,
+      BACKOFFICE_RUNTIME_UNLOCK_KEY: "A".repeat(43),
+      NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3001",
+    };
+
+    expect(
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: backofficeEnvironment,
+      }),
+    ).toMatchObject(backofficeEnvironment);
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3000",
+        localEnvironment: backofficeEnvironment,
+      }),
+    ).toThrow("exatamente o contrato runtime gerado");
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: localApplicationEnvironment,
+      }),
+    ).toThrow("exatamente o contrato runtime gerado");
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: {
+          ...backofficeEnvironment,
+          BACKOFFICE_RUNTIME_UNLOCK_KEY: "A".repeat(42),
+        },
+      }),
+    ).toThrow("BACKOFFICE_RUNTIME_UNLOCK_KEY local possui formato inválido");
   });
 
   it("routes development scripts through the local guard and rejects extra Next env files", () => {
@@ -984,6 +1022,9 @@ describe("local tooling contracts", () => {
     );
     expect(deploy).toContain(".runtime/environment-contract.sha256");
     expect(deploy).toContain("contrato atual dos ambientes divergiu da release staged");
+    expect(deploy).toContain('runtime_unlock_key_name = "BACKOFFICE_RUNTIME_UNLOCK_KEY"');
+    expect(deploy).toContain("{runtime_unlock_key_name},");
+    expect(hostVerification).toContain('fixture_runtime_unlock_key="$(printf');
   });
 
   it("accepts current only when it resolves to an exact SHA release root", () => {
@@ -1113,7 +1154,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v9"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v10"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1169,7 +1210,7 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum} ${runtime_digest}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v9");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v10");
     expect(hostVerification).toContain("preflight SSH aceitou drift no binário Node efetivo");
     expect(hostVerification).toContain("preflight SSH aceitou unit systemd efetiva divergente");
     expect(hostVerification).toContain(
@@ -1195,7 +1236,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v10" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
@@ -1443,6 +1484,28 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("smokes the canonical SSH tunnel and rejects divergent forwarded origins", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const smokeStart = workflow.indexOf("- name: Smoke standalone Linux release");
+    const smokeEnd = workflow.indexOf("- name: Stop local Supabase", smokeStart);
+    const smokeStep = workflow.slice(smokeStart, smokeEnd);
+
+    expect(smokeStart).toBeGreaterThan(-1);
+    expect(smokeEnd).toBeGreaterThan(smokeStart);
+    expect(smokeStep).toContain(
+      "smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3001 http://127.0.0.1:3001",
+    );
+    expect(smokeStep).toContain("payload.data?.authenticated !== false");
+    expect(smokeStep).toContain("assert_invalid_backoffice_origin");
+    expect(smokeStep).toContain("x-forwarded-host: attacker.example");
+    expect(smokeStep).toContain("x-forwarded-proto: https");
+    expect(smokeStep).toContain('[[ "$status" == 403 ]]');
+    expect(smokeStep).toContain('payload.error?.code !== "ORIGIN_INVALID"');
+  });
+
   it("allows manual CI and only redeploys the exact current main SHA by explicit request", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
@@ -1623,51 +1686,42 @@ describe("local tooling contracts", () => {
     }));
 
     expect(() => assertLoopbackContainerInspections(inspections)).not.toThrow();
-    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "0.0.0.0";
-    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
-      "fora da fronteira local",
-    );
-    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "127.0.0.1";
-    for (const hostIp of ["::", "::1"]) {
-      inspections[0].NetworkSettings.Ports["service/tcp"] = [
-        { HostIp: "127.0.0.1", HostPort: "54321" },
-        { HostIp: hostIp, HostPort: "54321" },
-      ];
+    for (const hostIp of ["0.0.0.0", "::", "::1"]) {
+      inspections[0].NetworkSettings.Ports["service/tcp"] = [{ HostIp: hostIp, HostPort: "54321" }];
       expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
         "fora da fronteira local",
       );
-      expect(() =>
-        assertLoopbackContainerInspections(inspections, { dockerDesktopLocalOnly: true }),
-      ).not.toThrow();
     }
   });
 
-  it("accepts Docker Desktop IPv6 forwarding only under its native local-only policy", () => {
-    expect(() =>
-      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "local-only-port-binding" }),
-    ).not.toThrow();
-    expect(() =>
-      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "default-port-binding" }),
-    ).toThrow("Local only");
-  });
+  it("waits for a restored Supabase stack to become healthy without a fixed startup delay", () => {
+    const healthy = {
+      State: { Health: { Status: "healthy" }, Status: "running" },
+    };
+    const starting = {
+      State: { Health: { Status: "starting" }, Status: "running" },
+    };
+    expect(classifySupabaseProjectStartup([])).toBe("absent");
+    expect(classifySupabaseProjectStartup([healthy, starting])).toBe("starting");
+    expect(classifySupabaseProjectStartup([healthy])).toBe("ready");
 
-  it("stops a running Supabase stack before propagating an unverifiable Docker policy", () => {
-    const actions = [];
-
-    expect(() =>
-      assertDockerPolicyOrStopRunningStack({
-        assertPolicy: () => {
-          actions.push("validate-policy");
-          throw new Error("política Docker ilegível");
-        },
-        isStackRunning: () => {
-          actions.push("inspect-stack");
-          return true;
-        },
-        stopStack: () => actions.push("stop-stack"),
+    const states = ["starting", "starting", "ready"];
+    const pauses = [];
+    expect(
+      waitForSupabaseProjectStartup({
+        pause: (milliseconds) => pauses.push(milliseconds),
+        readState: () => states.shift(),
       }),
-    ).toThrow("política Docker ilegível");
-    expect(actions).toEqual(["inspect-stack", "validate-policy", "stop-stack"]);
+    ).toBe(true);
+    expect(pauses).toEqual([500, 500]);
+    expect(waitForSupabaseProjectStartup({ readState: () => "absent" })).toBe(false);
+    expect(() =>
+      waitForSupabaseProjectStartup({
+        maxAttempts: 2,
+        pause: () => undefined,
+        readState: () => "starting",
+      }),
+    ).toThrow("não ficou saudável");
   });
 
   it("stops a running Supabase stack when status or binding validation fails", () => {
@@ -1695,14 +1749,14 @@ describe("local tooling contracts", () => {
   it("accepts only the canonical local Docker contexts", () => {
     expect(
       validateLocalDockerContext({
-        contextName: "desktop-linux",
+        contextName: "set-livre-wsl",
         dockerContextOverride: undefined,
         dockerHostOverride: undefined,
-        endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine",
+        endpoint: "tcp://127.0.0.1:2375",
         engineOperatingSystem: "linux",
         platform: "win32",
       }),
-    ).toBe("npipe:////./pipe/dockerDesktopLinuxEngine");
+    ).toBe("tcp://127.0.0.1:2375");
     expect(
       validateLocalDockerContext({
         contextName: "default",
@@ -1713,6 +1767,60 @@ describe("local tooling contracts", () => {
         platform: "linux",
       }),
     ).toBe("unix:///var/run/docker.sock");
+  });
+
+  it("maps only absolute Windows paths into the dedicated WSL mount", () => {
+    expect(windowsPathToWslPath("C:\\Users\\thefe\\Set Livre\\schema.sql")).toBe(
+      "/mnt/c/Users/thefe/Set Livre/schema.sql",
+    );
+    expect(windowsPathToWslPath("D:/work/supabase/config.toml")).toBe(
+      "/mnt/d/work/supabase/config.toml",
+    );
+    expect(() => windowsPathToWslPath("supabase/config.toml")).toThrow("precisa ser absoluto");
+    expect(() => windowsPathToWslPath("C:\\unsafe\0path")).toThrow("é inválido");
+  });
+
+  it("starts the dedicated Docker service only on Windows with a sanitized launcher", () => {
+    const invocations = [];
+    expect(
+      ensureWindowsDockerEngine({
+        environment: { PATH: "trusted", PRIVATE_VALUE: "must-not-cross" },
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command, options });
+          return { status: 0, stderr: "", stdout: "" };
+        },
+        platform: "win32",
+      }),
+    ).toBe(true);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toMatchObject({
+      argumentsList: [
+        "--distribution",
+        "SetLivreDocker",
+        "--user",
+        "root",
+        "--exec",
+        "/usr/bin/systemctl",
+        "start",
+        "docker.service",
+      ],
+      command: "wsl.exe",
+      options: { env: { PATH: "trusted" }, windowsHide: true },
+    });
+    expect(
+      ensureWindowsDockerEngine({
+        execute: () => {
+          throw new Error("Linux must not launch WSL");
+        },
+        platform: "linux",
+      }),
+    ).toBe(false);
+    expect(() =>
+      ensureWindowsDockerEngine({
+        execute: () => ({ status: 1, stderr: "private detail", stdout: "" }),
+        platform: "win32",
+      }),
+    ).toThrow("não iniciou o Docker Engine local esperado");
   });
 
   it("rejects remote Docker selectors before a destructive local command", () => {
@@ -1747,6 +1855,22 @@ describe("local tooling contracts", () => {
     expect(() =>
       validateLocalDockerContext({
         ...localContext,
+        contextName: "default",
+        endpoint: "npipe:////./pipe/docker_engine",
+        platform: "win32",
+      }),
+    ).toThrow("daemon local permitido");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        contextName: "set-livre-wsl",
+        endpoint: "tcp://0.0.0.0:2375",
+        platform: "win32",
+      }),
+    ).toThrow("daemon local permitido");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
         engineOperatingSystem: "windows",
       }),
     ).toThrow("containers Linux");
@@ -1775,10 +1899,15 @@ describe("local tooling contracts", () => {
 
   it("pipes Supabase stderr and emits only its redacted structured failure", () => {
     let invocationOptions;
+    const invocations = [];
     let thrown;
     try {
-      runSupabase(["test", "db", "--local"], {
-        execute: (_command, _argumentsList, options) => {
+      runSupabase(["db", "dump", "--file", "C:\\Users\\thefe\\schema.sql"], {
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command });
+          if (argumentsList.at(-1) === "--version") {
+            return { status: 0, stderr: "", stdout: "2.116.0\n" };
+          }
           invocationOptions = options;
           return {
             status: 1,
@@ -1788,11 +1917,17 @@ describe("local tooling contracts", () => {
             stdout: "",
           };
         },
+        platform: "win32",
         resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
       });
     } catch (error) {
       thrown = String(error);
     }
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]?.command).toBe("wsl.exe");
+    expect(invocations[1]?.argumentsList).toContain("SetLivreDocker");
+    expect(invocations[1]?.argumentsList).toContain("/usr/bin/supabase");
+    expect(invocations[1]?.argumentsList).toContain("/mnt/c/Users/thefe/schema.sql");
     expect(invocationOptions?.stdio).toEqual(["ignore", "inherit", "pipe"]);
     expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
     expect(thrown).not.toContain("raw-secret");
@@ -1829,7 +1964,7 @@ describe("local tooling contracts", () => {
       PGUSER: "postgres",
     });
     expect(invocations[1]?.argumentsList[2]).toBe("set-livre-pgtap-test:/tests");
-    expect(invocations[2]?.options.stdio).toEqual(["ignore", "inherit", "pipe"]);
+    expect(invocations[2]?.options.stdio).toEqual(["ignore", "inherit", "inherit"]);
   });
 
   it("normalizes and validates the tracked schema dump", () => {

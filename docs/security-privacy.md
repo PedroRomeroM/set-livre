@@ -76,16 +76,31 @@ fora do banco. React escapa a prévia, e o único frame remoto permitido pelo CS
 
 Na FEAT-031, o backoffice usa storage key de cookie própria e binding no banco pelo `session_id` Auth:
 30 minutos de inatividade, oito horas absolutas e cinco minutos de autenticação forte para alterar
-papéis. Cada leitura e comando revalida sessão Auth canônica, perfil ativo/concluído e papel atual;
+papéis. O polling de sessão é deliberadamente passivo: revalida toda a fronteira sem atualizar
+`last_seen_at`; somente leituras operacionais e comandos renovam atividade. Cada leitura e comando
+revalida sessão Auth canônica, perfil ativo/concluído e papel atual;
 remover todos os papéis ou suspender a conta fecha bindings existentes. `support` alcança somente
 usuários e revelação temporária de PII; catálogo administrativo, taxonomias e papéis exigem `admin` no
-banco, mesmo se uma rota for chamada diretamente. O último admin ativo é protegido sob lock global.
+banco, mesmo se uma rota for chamada diretamente. Papéis permanecem no servidor: o DTO de sessão e a
+lista enviada ao browser carregam somente uma versão opaca de autorização; o detalhe de uma única conta
+é composto por fachada admin-only no Server Component. Cada concessão/revogação é uma action explícita
+contra `expectedAccountVersion`. O último admin ativo é protegido sob lock global.
+
 PII aparece mascarada no read model; nome bruto fica exclusivamente na revelação por motivo
-allowlisted, fora de URL/QueryCache, por até 60 segundos. Um observador relê a sessão no mount, foco,
-intervalo curto e eventos entre abas; identidade ou papéis divergentes ocultam o DOM privado e limpam o
-cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo, motivo/versões e correlação,
-nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada transacionalmente a 500
-itens e arquivada sem apagar referências.
+allowlisted, fora de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver
+visível e é descartada se terminar durante ocultação. Um observador relê a sessão no mount, foco,
+intervalo curto e eventos entre abas; identidade ou versão de autorização divergente ocultam o DOM
+privado e limpam o cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo,
+motivo/versões e correlação, nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada
+transacionalmente a 500 itens e arquivada sem apagar referências.
+
+Além da sessão e da autorização no banco, toda mutação exige um desbloqueio local do runtime. A chave de
+43 caracteres base64url existe apenas no EnvironmentFile do processo e na entrada efêmera do formulário;
+ela não é armazenada no browser. O servidor compara seu digest em tempo constante e emite por cinco
+minutos um token HMAC em cookie HttpOnly, SameSite estrito e vinculado a usuário + `session_id` Auth.
+Token ausente, expirado, adulterado ou de outra sessão falha fechado antes da DAL; transições de
+autenticação apagam o cookie. A release recusa a chave em artifact e o CI a transporta somente pelo
+environment protegido de produção.
 
 ## Comandos, origem e abuso
 
@@ -184,12 +199,12 @@ limitado, Storage RLS e cleanup. SVG e nomes de usuário nunca chegam a processa
 
 Supabase local e E2E usam somente a fronteira local validada, dados QA descartáveis e credenciais próprias
 geradas a cada reset. O preflight recusa banco/URL não local antes de abrir navegador; o wrapper também
-recusa daemon, bridge, política do Docker Desktop, container ou binding divergente. Sob a política nativa
-`Local only`, os bindings aceitos são `127.0.0.1`, `::1` e a representação `::` emitida pelo Docker
-Desktop somente quando essa política local foi comprovada separadamente; qualquer wildcard sem esse
-controle continua proibido. Docker Desktop não é
-uma fronteira de produção e não recebe firewall customizado; o controle decisivo continua sendo não
-reutilizar dado ou credencial real.
+recusa daemon, contexto, endpoint, bridge, container ou binding divergente. No Windows, somente o
+contexto `set-livre-wsl` para `tcp://127.0.0.1:2375` é aceito; containers precisam publicar cada porta
+em `127.0.0.1`, sem wildcard ou equivalência IPv6. A API local do Docker é privilegiada, por isso não
+pode ser encaminhada nem exposta à LAN. Ela não é fronteira de produção e não recebe firewall
+customizado; os controles decisivos continuam sendo loopback estrito e nunca reutilizar dado ou
+credencial real.
 
 Arquivos `.env.local` são ignorados e escritos com permissão privada quando a plataforma oferece essa
 semântica. Antes de interpretar `.env.e2e.local`, o leitor recusa links e arquivos não regulares ou com

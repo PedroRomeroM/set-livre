@@ -71,6 +71,10 @@ describe("studio private query cache", () => {
 
   it("rejects a late mutation after session cleanup and removes all private studio data", () => {
     const queryClient = new QueryClient();
+    const currentTaxonomies = studioQueryKeys.taxonomies(studioTestIds.userId);
+    const foreignTaxonomies = studioQueryKeys.taxonomies(studioTestIds.otherUserId);
+    const currentTypes = studioQueryKeys.types(studioTestIds.userId);
+    expect(currentTaxonomies).not.toEqual(foreignTaxonomies);
     expect(() =>
       publishStudioEditor(
         queryClient,
@@ -84,12 +88,18 @@ describe("studio private query cache", () => {
       studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId),
       studioEditorFixture,
     );
+    queryClient.setQueryData(currentTaxonomies, { tags: ["current"] });
+    queryClient.setQueryData(foreignTaxonomies, { tags: ["foreign"] });
+    queryClient.setQueryData(currentTypes, [{ id: "private-type" }]);
     clearIdentityAndAccountQueryCache(queryClient);
     expect(
       queryClient.getQueryData(
         studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId),
       ),
     ).toBeUndefined();
+    expect(queryClient.getQueryData(currentTaxonomies)).toBeUndefined();
+    expect(queryClient.getQueryData(foreignTaxonomies)).toBeUndefined();
+    expect(queryClient.getQueryData(currentTypes)).toBeUndefined();
   });
 
   it("keeps SSR private values hidden until an authoritative scoped read succeeds", () => {

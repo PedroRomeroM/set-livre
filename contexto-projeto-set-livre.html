@@ -71,24 +71,28 @@
                 PR incremental contém núcleo/revisões e conteúdo de estúdio, além do backoffice
                 separado para usuários, comandos explícitos de suspensão/restauração, PII temporária
                 auditada, papéis <code>support/admin</code> e administração versionada de
-                taxonomias. O diretório não entrega nome bruto; sessão e papéis são revalidados no
-                cliente, estado concorrente exige nova leitura/confirmação e o catálogo possui teto
-                transacional de 500 itens. A origem de produção do backoffice corresponde ao
-                loopback acessado por túnel SSH, sem domínio público fictício. Sessão curta,
-                reautenticação, idempotência, concorrência, grants/RLS e regressões multiengine
-                foram comprovados localmente. Pools PostgreSQL são únicos por processo e respeitam o
-                orçamento conjunto de seis das dez conexões do runtime. A raiz pública ainda informa
-                o estado técnico, enquanto a raiz do backoffice encaminha visitantes sem sessão para
-                a autenticação real; a suíte transversal valida cada superfície pelo seu próprio
-                contrato. O candidato ainda depende de review limpo, merge e deploy. Outras 28
-                features permanecem planejadas.
+                taxonomias. O diretório não entrega nome bruto nem papéis ao browser; a autorização
+                permanece no servidor e o cliente observa somente uma versão opaca. Polling passivo
+                não renova a inatividade, PII concluída em aba oculta é descartada e toda mutação
+                exige um desbloqueio local HttpOnly de cinco minutos. Estado concorrente exige nova
+                leitura/confirmação e o catálogo possui teto transacional de 500 itens. A sessão
+                administrativa e os timestamps de atualização do domínio permanecem monotônicos
+                mesmo se o relógio de parede do host for corrigido para trás. A origem de produção
+                do backoffice corresponde ao loopback acessado por túnel SSH, sem domínio público
+                fictício. Sessão curta, reautenticação, idempotência, concorrência, grants/RLS e
+                regressões multiengine foram comprovados localmente. Pools PostgreSQL são únicos por
+                processo e respeitam o orçamento conjunto de seis das dez conexões do runtime. A
+                raiz pública ainda informa o estado técnico, enquanto a raiz do backoffice encaminha
+                visitantes sem sessão para a autenticação real; a suíte transversal valida cada
+                superfície pelo seu próprio contrato. O candidato ainda depende de review limpo,
+                merge e deploy. Outras 28 features permanecem planejadas.
               </td>
             </tr>
             <tr>
               <td>Desenvolvimento</td>
               <td>
-                Windows nativo, Node 24.18, npm 11.19 e Supabase local oficial, restrito às
-                coordenadas locais geradas; consulte o
+                Windows nativo para aplicação e testes, com Docker Engine oficial em uma distro WSL2
+                dedicada e Supabase local restrito ao loopback; consulte o
                 <a href="docs/development.md">contrato canônico de desenvolvimento</a>.
               </td>
             </tr>
@@ -114,8 +118,11 @@
                 protegido já concluiu migrations, ativação atômica do runtime restrito e health
                 público no mesmo SHA; a produção serve somente a fundação técnica, com identificação
                 neutra ao ambiente e sem simular features planejadas. Os contratos do rollout ficam
-                na <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. DNS foi
-                adiado até o go-live.
+                na <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. O
+                protocolo de host <code>v10</code> exige a chave efêmera exclusivamente no ambiente
+                privado do backoffice e falha antes do upload se o instalador ainda usar o contrato
+                anterior. O túnel aceita somente Host, Origin e headers normalizados que coincidam
+                com o loopback canônico. DNS foi adiado até o go-live.
               </td>
             </tr>
           </tbody>
@@ -164,8 +171,12 @@
           de segurança da entrega e do host. Testes não usam retry ou relaxamento de asserção para
           mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
           servidores E2E usam um perfil explícito que suporta a matriz multibrowser sem alterar os
-          limites de produção, e o preflight rejeita qualquer identidade QA residual. Os resultados
-          permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
+          limites de produção, e o preflight rejeita qualquer identidade QA residual. O runner
+          mantém um pool PostgreSQL administrativo e um DAL por processo, com cliente exclusivo por
+          operação, evitando churn de conexões e esgotamento de portas efêmeras no Windows; páginas
+          são encerradas antes da limpeza destrutiva para não competir com refetches ainda ativos.
+          Os resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes
+          canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

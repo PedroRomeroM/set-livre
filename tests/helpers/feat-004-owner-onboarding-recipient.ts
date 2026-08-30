@@ -9,9 +9,9 @@ import {
   type PersonType,
 } from "@set-livre/contracts";
 import { expect, type Page } from "@playwright/test";
-import { Pool } from "pg";
 import { z } from "zod";
 
+import { withE2EAdminClient, type E2EDatabaseClient } from "./e2e-database-preflight";
 import {
   cleanupFeat003QaIdentity,
   completeFeat003Profile,
@@ -46,7 +46,6 @@ const localRecipientTestFixtureSchema = z.enum([
 
 export type Feat004QaIdentity = Feat003QaIdentity;
 export type Feat004CleanupPool = Readonly<{
-  end: () => Promise<void>;
   query: (text: string, values: readonly string[]) => Promise<Readonly<{ rows: unknown[] }>>;
 }>;
 
@@ -336,25 +335,8 @@ export async function verifyFeat004CleanupWithDependencies(
   }
 }
 
-async function withFeat004AdminPool<T>(operation: (pool: Pool) => Promise<T>) {
-  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
-  await e2eDatabaseSafetyPreflight();
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
-  });
-  try {
-    return await operation(pool);
-  } finally {
-    await pool.end();
-  }
+async function withFeat004AdminPool<T>(operation: (client: E2EDatabaseClient) => Promise<T>) {
+  return withE2EAdminClient(operation);
 }
 
 async function removeFeat004OwnedRows(input: Readonly<{ email: string; userId: string }>) {

@@ -112,15 +112,17 @@ Medir; não usar Infinity em dado operacional.
 - `CONFLICT` e `VALIDATION_FAILED` sem `fieldErrors` desabilitam a ação até um GET autoritativo explícito e nunca repetem o POST. `VALIDATION_FAILED` com erro de campo continua no formulário e pode ser corrigido sem forçar releitura. A combinação privada exata `42501 + owner_contract_not_current` vira `409 CONFLICT` para usar esse fence; outros `42501`, inclusive bloqueios, permanecem `403 FORBIDDEN` e não são reclassificados como recuperáveis;
 - conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;
 - alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
-- tipos de estúdio usam a key pública autenticada `studio/taxonomies/types`; tags e comodidades ativas
-  usam `studio/taxonomies/content`; editores usam
+- tipos de estúdio usam a key privada autenticada
+  `owner/private/studio-taxonomies/<userId>/types`; tags e comodidades ativas usam
+  `owner/private/studio-taxonomies/<userId>/content`; editores usam
   `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
-  logout/troca de sessão remove toda a família `owner/private/studio-editor`;
+  logout/troca de sessão remove conjuntamente as famílias `owner/private/studio-editor` e
+  `owner/private/studio-taxonomies`;
 - o token otimista do editor permanece ligado aos valores visíveis durante refetch em foco; update só
   adota o token remoto após escolha explícita na comparação. Descarte mantém token independente e,
   depois de conflito rejeitado, avança apenas esse token e exige nova confirmação antes de agir; isso
   não rebaseia silenciosamente um save pendente.
-  `STUDIO_TYPE_UNAVAILABLE` limpa a seleção arquivada e refaz `studio/taxonomies/types`; erro nessa
+  `STUDIO_TYPE_UNAVAILABLE` limpa a seleção arquivada e refaz a key `types` do usuário atual; erro nessa
   releitura mantém os controles bloqueados e oferece retry somente do GET;
 - o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
   até o GET autoritativo do mesmo usuário/estúdio terminar em `idle` sem erro. Refetch de montagem,

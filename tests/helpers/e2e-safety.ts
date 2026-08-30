@@ -5,6 +5,7 @@ import { z } from "zod";
 const safeEnvironmentSchema = z.object({
   adminDatabaseUrl: z.url(),
   backofficeBaseUrl: z.url(),
+  backofficeRuntimeUnlockKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   databaseMarker: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
   dalDatabaseUrl: z.url(),
   explicitLocalPermission: z.literal("1"),
@@ -16,6 +17,7 @@ const safeEnvironmentSchema = z.object({
 type SafeEnvironmentInput = {
   adminDatabaseUrl: string | undefined;
   backofficeBaseUrl: string | undefined;
+  backofficeRuntimeUnlockKey: string | undefined;
   databaseMarker: string | undefined;
   dalDatabaseUrl: string | undefined;
   explicitLocalPermission: string | undefined;

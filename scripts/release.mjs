@@ -204,6 +204,7 @@ function assertNoSensitiveReleaseContent(directory, sensitiveValues) {
 
 export function releaseSensitiveValues(environment = process.env) {
   const values = [
+    environment.BACKOFFICE_RUNTIME_UNLOCK_KEY,
     environment.DATABASE_URL_APP_DAL,
     environment.PRD_DATABASE_URL_APP_DAL,
     environment.SUPABASE_DB_PASSWORD,

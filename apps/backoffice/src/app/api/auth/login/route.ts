@@ -8,7 +8,7 @@ import {
   readLimitedJson,
   runBackofficeRoute,
 } from "@/lib/server/api-route";
-import { backofficeLoginNetworkRateLimitOptions } from "@/lib/server/login-rate-limit-profile";
+import { backofficeAuthNetworkRateLimitOptions } from "@/lib/server/auth-rate-limit-profile";
 import { enforceBackofficeRateLimit } from "@/lib/server/rate-limit";
 
 export async function POST(request: Request) {
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     enforceBackofficeRateLimit(
       "backoffice.login.network",
       backofficeNetworkDiscriminator(request),
-      backofficeLoginNetworkRateLimitOptions(),
+      backofficeAuthNetworkRateLimitOptions(),
     );
     const payload = parseOrBackofficeInputError(
       backofficeLoginPayloadSchema,

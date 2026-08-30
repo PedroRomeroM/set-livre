@@ -4,6 +4,7 @@ import {
   apiErrorSchema,
   apiSuccessSchema,
   backofficeSessionSchema,
+  backofficeRuntimeUnlockResultSchema,
   backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
@@ -11,6 +12,7 @@ import {
   backofficeUserSummarySchema,
   type BackofficeCommand,
   type BackofficeLoginPayload,
+  type BackofficeRuntimeUnlockPayload,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyList,
   type BackofficeUserList,
@@ -136,6 +138,13 @@ export function readBackofficeSessionClient() {
   return backofficeRequest("/api/auth/session", backofficeSessionSchema);
 }
 
+export function unlockBackofficeRuntimeClient(payload: BackofficeRuntimeUnlockPayload) {
+  return backofficeRequest("/api/auth/unlock", backofficeRuntimeUnlockResultSchema, {
+    body: JSON.stringify(payload),
+    method: "POST",
+  });
+}
+
 export function listBackofficeUsersClient(query: BackofficeUserQuery): Promise<BackofficeUserList> {
   return backofficeRequest("/api/users", backofficeUserListSchema, {
     body: JSON.stringify(query),
@@ -151,7 +160,13 @@ export function executeBackofficeUserCommand(
   command: Extract<
     BackofficeCommand,
     {
-      action: "backoffice.access.setRole" | "backoffice.user.restore" | "backoffice.user.suspend";
+      action:
+        | "backoffice.access.grantAdmin"
+        | "backoffice.access.grantSupport"
+        | "backoffice.access.revokeAdmin"
+        | "backoffice.access.revokeSupport"
+        | "backoffice.user.restore"
+        | "backoffice.user.suspend";
     }
   >,
 ): Promise<BackofficeUserSummary> {

@@ -263,10 +263,13 @@ describe("identity mutation cache security", () => {
 
     expect(helper).toContain("const staging = await control.evaluate(");
     expect(helper).toContain("element.ownerDocument.defaultView?.HTMLInputElement");
-    expect(helper).toContain('element.name !== "password"');
-    expect(helper).toContain('element.name !== "confirmPassword"');
+    expect(helper).toContain(
+      'allowedControlNames: readonly string[] = ["password", "confirmPassword"]',
+    );
+    expect(helper).toContain("!input.allowedControlNames.includes(element.name)");
+    expect(helper).toContain("{ allowedControlNames: [...allowedControlNames], secret: password }");
     expect(helper).toMatch(/element\.form\.addEventListener\(\s*"formdata"/u);
-    expect(helper).toContain("event.formData.set(name, secret);");
+    expect(helper).toContain("event.formData.set(name, input.secret);");
     expect(helper).toContain("{ once: true }");
     expect(helper).not.toMatch(/\.value\s*=\s*(?:password|secret)/u);
     expect(helper).not.toContain("Object.getOwnPropertyDescriptor");

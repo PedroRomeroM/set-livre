@@ -19,12 +19,14 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260828174500_default_production_dal_role` e as migrations append-only
 `20260829103831_feat_006_studio_core_revision`,
 `20260829124200_feat_007_studio_taxonomy_content` e
-`20260829224738_feat_031_backoffice_users_taxonomy`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260829224738_feat_031_backoffice_users_taxonomy`, seguida pelas correções
+`20260830164500_backoffice_session_monotonic_clock` e
+`20260830173000_business_timestamp_monotonicity`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. O runner executa um setup idempotente e sete suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 363 asserções para baseline/isolamento, identidade/legal, perfil,
+dump de schema. O runner executa um setup idempotente e oito suítes pgTAP; com o próprio teste de
+setup, o recorte atual totaliza 375 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios e backoffice.
 
 A baseline implementada inclui:
@@ -36,6 +38,8 @@ A baseline implementada inclui:
   descarte seguro;
 - usuários administrativos, binding curto de sessão, papéis `support/admin`, PII temporária,
   taxonomias versionadas, idempotência e auditoria redigida;
+- relógio lógico monotônico no binding administrativo e nos dez pares `created_at/updated_at` do
+  domínio, preservado no banco mesmo quando o relógio de parede do host sofre uma correção regressiva;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
@@ -172,14 +176,18 @@ Nome, telefone e documentos continuam canônicos em `profiles`; esta tabela não
 
 Sem escrita pelo browser. `reviewer` e `finance` só entram com as features que os consomem. O primeiro
 admin usa o bootstrap privado one-shot; depois disso, somente admin com autenticação recente altera
-papéis, e a salvaguarda transacional mantém ao menos um admin ativo.
+papéis, e a salvaguarda transacional mantém ao menos um admin ativo. Um trigger em toda concessão ou
+revogação incrementa `profiles.account_version`; essa versão opaca invalida sessão/clientes sem publicar
+o conjunto de papéis no browser.
 
 #### `private.backoffice_sessions`
 
 Binding por `auth_session_id`, usuário, abertura, último uso, expiração absoluta e fechamento. A
 sessão expira após 30 minutos de inatividade ou oito horas, respeita a sessão Auth canônica e exige
 login feito nos últimos cinco minutos para gestão de papéis. Remoção de todos os papéis ou suspensão
-fecha bindings existentes.
+fecha bindings existentes. `private.backoffice_session_context(..., p_touch_activity)` separa
+revalidação passiva de atividade real: `get_backoffice_session` passa `false`, enquanto leituras
+operacionais e comandos passam `true`.
 
 #### `private.backoffice_command_requests`
 
@@ -722,7 +730,9 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 ### Backoffice/private implementados
 
 - `private.list_backoffice_users(...)` usa busca server-side e paginação keyset por
-  `created_at + id`, devolvendo somente e-mail mascarado;
+  `created_at + id`, devolvendo somente e-mail mascarado, status e versão opaca, sem papéis;
+- `private.get_backoffice_user_access(...)` exige admin e compõe no servidor uma única conta com seus
+  papéis para a rota de detalhe;
 - `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
 
 ### Backoffice/private planejados
@@ -756,11 +766,15 @@ Implementados:
 - `private.apply_owner_recipient_operation(uuid, uuid, uuid, text, text, text, text[])`: recebe `user_id`, operação, `request_id`, provider, referência, status e requisitos; aplica somente a operação preparada ainda vigente, recusa resultado tardio/divergente e registra a transição redigida. A chave idempotente continua vinculada à operação reservada, sem ocupar o campo de correlação.
 - as fachadas FEAT-006/007 criam, atualizam, descartam e leem revisões, taxonomia e conteúdo de
   estúdio sob autoridade do dono, versão otimista e idempotência;
-- `private.open/get/close_backoffice_session(...)` vinculam a sessão Auth ao banco;
+- `private.open/get/close_backoffice_session(...)` vinculam a sessão Auth ao banco; GET passivo não
+  renova a janela de inatividade;
+- `private.get_backoffice_user_access(...)` expõe papéis somente à composição server-only de um alvo
+  para admin revalidado;
 - `private.set_backoffice_user_status(...)` e `private.reveal_backoffice_user_pii(...)` atendem
   `support/admin`, com versão e auditoria;
-- `private.set_backoffice_user_role(...)` exige admin com autenticação recente e protege o último
-  admin ativo;
+- `private.set_backoffice_user_role(...)` deriva somente uma das quatro actions explícitas de
+  concessão/revogação `support/admin`, compara `expectedAccountVersion`, exige admin com autenticação
+  recente e protege o último admin ativo;
 - `private.upsert_backoffice_taxonomy(...)` e `private.set_backoffice_taxonomy_active(...)` exigem
   admin, versão otimista e preservação histórica.
 

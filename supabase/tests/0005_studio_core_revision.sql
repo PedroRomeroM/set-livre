@@ -90,7 +90,7 @@ revoke all on function private.feat006_capture_error(text)
 revoke all on function private.feat006_create_owner(uuid, text, text, integer)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(41);
+select plan(42);
 
 select private.feat006_create_owner(
   '61000000-0000-4000-8000-000000000001',
@@ -291,6 +291,39 @@ select ok(
   ),
   'ledger preserva somente o hash verificável do resultado idempotente'
 );
+
+savepoint future_revision_timestamp;
+
+alter table public.studio_revisions disable trigger user;
+select pg_catalog.set_config(
+  'set_livre.test.future_revision_timestamp',
+  (pg_catalog.clock_timestamp() + interval '2 seconds')::text,
+  true
+);
+update public.studio_revisions as revision
+set
+  created_at = pg_catalog.current_setting('set_livre.test.future_revision_timestamp')::timestamptz,
+  updated_at = pg_catalog.current_setting('set_livre.test.future_revision_timestamp')::timestamptz
+where revision.id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid;
+alter table public.studio_revisions enable trigger user;
+
+update public.studio_revisions as revision
+set revision_version = revision.revision_version + 1
+where revision.id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid;
+
+select ok(
+  (
+    select revision.revision_version = 2
+      and revision.updated_at >= revision.created_at
+      and revision.updated_at >=
+        pg_catalog.current_setting('set_livre.test.future_revision_timestamp')::timestamptz
+    from public.studio_revisions as revision
+    where revision.id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid
+  ),
+  'revisão permanece atualizável quando o relógio observado recua após sua criação'
+);
+
+rollback to savepoint future_revision_timestamp;
 
 select matches(
   private.feat006_capture_error(

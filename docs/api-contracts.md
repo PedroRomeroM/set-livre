@@ -294,7 +294,10 @@ Comandos validam hora cheia e ownership.
 | `admin.studio.restore`                 | admin                      |
 | `backoffice.user.suspend/restore`      | support/admin              |
 | `backoffice.user.revealPii`            | support/admin              |
-| `backoffice.access.setRole`            | admin + autenticação forte |
+| `backoffice.access.grantSupport`       | admin + autenticação forte |
+| `backoffice.access.revokeSupport`      | admin + autenticação forte |
+| `backoffice.access.grantAdmin`         | admin + autenticação forte |
+| `backoffice.access.revokeAdmin`        | admin + autenticação forte |
 | `backoffice.taxonomy.upsert/setActive` | admin                      |
 | `admin.refund.request/retry`           | finance/admin              |
 | `admin.payout.retry/block/unblock`     | finance/admin              |
@@ -305,21 +308,28 @@ Toda action administrativa gera `audit.events`.
 
 O recorte implementado do backoffice usa endpoints próprios na aplicação `:3001`:
 
-- `POST /api/auth/login`, `POST /api/auth/logout` e `GET /api/auth/session` publicam somente a sessão
-  escopada, papéis e expirações;
+- `POST /api/auth/login`, `POST /api/auth/logout` e `GET /api/auth/session` publicam somente identidade,
+  escopo, versão opaca de autorização e expirações; papéis permanecem exclusivamente no servidor;
+- `POST /api/auth/unlock` recebe a chave local exata, aplica rate limit e publica somente a expiração de
+  um cookie HttpOnly assinado, vinculado ao usuário + `session_id` Auth e válido por cinco minutos;
 - `POST /api/users` recebe `{ query?, cursor? }`, limita 50 itens e mantém e-mail/filtro fora da URL;
 - `GET /api/taxonomies` devolve catálogo, versão e contagem de uso somente para admin;
-- `POST /api/commands` aceita exclusivamente a união discriminada das seis actions
+- `/acessos/[userId]` compõe papéis no Server Component por uma fachada admin-only; listas e DTOs do
+  browser nunca carregam o conjunto de papéis;
+- `POST /api/commands` aceita exclusivamente a união discriminada das nove actions
   `backoffice.*` acima.
 
 Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
 distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.
-Papel recebe o conjunto `expectedRoles`; taxonomia recebe sua versão. O servidor ignora qualquer
+Cada concessão/revogação de papel é uma action explícita e recebe somente `expectedAccountVersion`;
+o cliente nunca envia o conjunto desejado. Taxonomia recebe sua versão. O servidor ignora qualquer
 autoridade implícita nesses campos, revalida sessão/papel no banco e converte estado obsoleto para
 `409/STALE_STATE`. Nesse caso a UI remove a confirmação, limpa o alvo versionado e relê o read model
 antes de permitir outra ação. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna
-replay somente enquanto as versões canônicas continuam idênticas. Nenhuma resposta expõe SQL,
-provider ou detalhe de autorização.
+replay somente enquanto as versões canônicas continuam idênticas. Toda mutação, inclusive revelação de
+PII, exige o desbloqueio local vigente; ausência ou expiração retorna `423/RUNTIME_LOCKED` antes da DAL.
+Chave ausente no processo retorna `503/RUNTIME_UNLOCK_UNAVAILABLE` e chave divergente retorna
+`403/RUNTIME_UNLOCK_DENIED`. Nenhuma resposta expõe SQL, provider, chave ou detalhe de autorização.
 
 ## 6. Read models e DTOs
 
@@ -515,9 +525,10 @@ Na FEAT-003, cada mutation sensível de perfil envia `{ action, expectedScope, p
 
 Na FEAT-004, as famílias privadas são `owner/private/activation/<userId>` e `owner/private/recipient/<userId>`; projeção e usuário fazem parte da identidade do cache. O refetch de `/dono` chama somente o GET completo de ativação, enquanto recebimentos usa somente o GET compacto. Sucesso de `owner.activate` publica `activation`; `recipient.onboarding.start | refresh` publicam `recipient`. Um erro concorrente `409` ou uma validação sem campo exige GET explícito antes de habilitar nova ação, sem replay do comando.
 
-Na FEAT-006, tipos usam `studio/taxonomies/types` e cada editor usa
+Na FEAT-006/007, catálogos privados usam
+`owner/private/studio-taxonomies/<userId>/types|content` e cada editor usa
 `owner/private/studio-editor/<userId>/<studioId>`. Sucesso só publica sobre a key existente do mesmo
-escopo; logout remove toda a família privada. `initialData` SSR permanece oculto até um GET autoritativo
+escopo; logout ou troca de identidade remove editores e catálogos privados. `initialData` SSR permanece oculto até um GET autoritativo
 do mesmo usuário/estúdio terminar sem erro; refetch em curso volta ao boundary neutro. Conflito
 otimista relê o editor e preserva os valores locais para comparação. Exclusão de inédito remove a
 família; mudança de sessão, acesso ou contrato limpa o cliente e recompõe a rota SSR.

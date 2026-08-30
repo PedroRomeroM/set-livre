@@ -1,6 +1,10 @@
 import "server-only";
 
-import { backofficeSessionSchema, type BackofficeSession } from "@set-livre/contracts";
+import {
+  backofficeSessionSchema,
+  type BackofficeSession,
+  type PlatformRole,
+} from "@set-livre/contracts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { z } from "zod";
@@ -25,6 +29,10 @@ import {
   readBackofficeBinding,
   type BackofficeBinding,
 } from "./backoffice-dal";
+import {
+  clearBackofficeRuntimeUnlock,
+  readBackofficeRuntimeUnlockExpiration,
+} from "./runtime-unlock";
 
 const databaseErrorSchema = z.object({
   code: z.string().optional(),
@@ -33,24 +41,62 @@ const databaseErrorSchema = z.object({
 
 type BackofficeSupabaseClient = SupabaseClient;
 
-function unauthenticatedSession(): BackofficeSession {
-  return backofficeSessionSchema.parse({ authenticated: false });
+export type BackofficeServerSession =
+  | { authenticated: false }
+  | {
+      authenticated: true;
+      authorizationVersion: number;
+      authSessionId: string;
+      email: string;
+      expiresAt: string;
+      roles: PlatformRole[];
+      scope: string;
+      strongAuthenticationExpiresAt: string;
+    };
+type AuthenticatedBackofficeServerSession = Extract<
+  BackofficeServerSession,
+  { authenticated: true }
+>;
+
+function unauthenticatedSession(): BackofficeServerSession {
+  return { authenticated: false };
 }
 
 function authenticatedSession(
   auth: BackofficeAuthContext,
   binding: BackofficeBinding,
-): BackofficeSession {
+): AuthenticatedBackofficeServerSession {
   if (binding.scope !== auth.userId) {
     throw new Error("A binding administrativa não corresponde à identidade autenticada.");
   }
-  return backofficeSessionSchema.parse({
+  return {
     authenticated: true,
+    authorizationVersion: binding.authorization_version,
+    authSessionId: auth.authSessionId,
     email: auth.email,
     expiresAt: binding.expires_at,
     roles: binding.roles,
     scope: binding.scope,
     strongAuthenticationExpiresAt: binding.strong_authentication_expires_at,
+  };
+}
+
+export async function toBrowserBackofficeSession(
+  session: BackofficeServerSession,
+): Promise<BackofficeSession> {
+  if (!session.authenticated) return backofficeSessionSchema.parse({ authenticated: false });
+  const runtimeUnlockExpiresAt = await readBackofficeRuntimeUnlockExpiration({
+    authSessionId: session.authSessionId,
+    userId: session.scope,
+  });
+  return backofficeSessionSchema.parse({
+    authenticated: true,
+    authorizationVersion: session.authorizationVersion,
+    email: session.email,
+    expiresAt: session.expiresAt,
+    runtimeUnlockExpiresAt,
+    scope: session.scope,
+    strongAuthenticationExpiresAt: session.strongAuthenticationExpiresAt,
   });
 }
 
@@ -69,6 +115,7 @@ async function invalidateCurrentSession(
   auth: BackofficeAuthContext | undefined,
 ) {
   const cookieStore = await cookies();
+  await clearBackofficeRuntimeUnlock();
   if (auth !== undefined) {
     try {
       await closeBackofficeBinding(auth);
@@ -82,6 +129,7 @@ async function invalidateCurrentSession(
 async function readBoundSession(client: BackofficeSupabaseClient) {
   const auth = await readAuthContext(client);
   if (auth === undefined) {
+    await clearBackofficeRuntimeUnlock();
     clearBackofficeAuthCookies(await cookies());
     return undefined;
   }
@@ -95,8 +143,12 @@ async function readBoundSession(client: BackofficeSupabaseClient) {
   }
 }
 
+export async function readComponentBackofficeState() {
+  return readBoundSession(await createBackofficeComponentSupabaseClient());
+}
+
 export async function readComponentBackofficeSession() {
-  const state = await readBoundSession(await createBackofficeComponentSupabaseClient());
+  const state = await readComponentBackofficeState();
   return state?.session ?? unauthenticatedSession();
 }
 
@@ -168,6 +220,7 @@ export async function loginBackoffice(payload: { email: string; password: string
       refresh_token: signIn.data.session.refresh_token,
     });
     if (publish.error !== null) throw publish.error;
+    await clearBackofficeRuntimeUnlock();
   } catch {
     try {
       await closeBackofficeBinding(auth);
@@ -183,7 +236,10 @@ export async function loginBackoffice(payload: { email: string; password: string
     );
   }
 
-  return { data: authenticatedSession(auth, binding), responseHeaders: route.responseHeaders };
+  return {
+    data: await toBrowserBackofficeSession(authenticatedSession(auth, binding)),
+    responseHeaders: route.responseHeaders,
+  };
 }
 
 export async function logoutBackoffice(expectedScope: string) {
@@ -191,6 +247,7 @@ export async function logoutBackoffice(expectedScope: string) {
   const state = await readBoundSession(route.client);
   const cookieStore = await cookies();
   if (state === undefined) {
+    await clearBackofficeRuntimeUnlock();
     clearBackofficeAuthCookies(cookieStore);
     return { data: { signedOut: true as const }, responseHeaders: route.responseHeaders };
   }
@@ -210,9 +267,11 @@ export async function logoutBackoffice(expectedScope: string) {
   }
   try {
     await signOutBackofficeLocally(route.client.auth);
+    await clearBackofficeRuntimeUnlock();
     clearBackofficeAuthCookies(cookieStore);
   } catch (providerError) {
     if (!bindingClosed) throw providerError;
+    await clearBackofficeRuntimeUnlock();
     clearBackofficeAuthCookies(cookieStore);
   }
   return { data: { signedOut: true as const }, responseHeaders: route.responseHeaders };

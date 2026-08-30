@@ -3,7 +3,7 @@ alter table public.profiles
   add constraint profiles_account_version_check check (account_version >= 0);
 
 comment on column public.profiles.account_version is
-  'Versão otimista exclusiva do status da conta; não altera a versão da identidade nem a sincronização do recebedor.';
+  'Versão otimista do estado operacional da conta: status e autorizações; não altera a versão da identidade nem a sincronização do recebedor.';
 
 create or replace function private.set_profile_updated_at() returns trigger
 language plpgsql
@@ -29,7 +29,9 @@ begin
     else 0
   end;
   new.account_version := old.account_version + case
-    when new.status is distinct from old.status then 1
+    when new.status is distinct from old.status
+      or new.account_version is distinct from old.account_version
+    then 1
     else 0
   end;
   new.updated_at := pg_catalog.clock_timestamp();
@@ -40,7 +42,7 @@ $function$;
 alter function private.set_profile_updated_at() owner to postgres;
 
 comment on function private.set_profile_updated_at() is
-  'Atualiza timestamp e mantém versões independentes para identidade e status da conta.';
+  'Atualiza timestamp e mantém versões independentes para identidade e estado operacional da conta.';
 
 create index profiles_backoffice_created_at_id_idx
   on public.profiles (created_at desc, id desc);
@@ -81,6 +83,27 @@ create index platform_roles_granted_by_idx
   on public.platform_roles (granted_by)
   where granted_by is not null;
 
+create or replace function private.touch_platform_role_account_version() returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  update public.profiles as profile
+  set account_version = profile.account_version + 1
+  where profile.id = case when tg_op = 'DELETE' then old.user_id else new.user_id end;
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$function$;
+
+alter function private.touch_platform_role_account_version() owner to postgres;
+
+create trigger platform_roles_touch_account_version
+  after insert or delete on public.platform_roles
+  for each row execute function private.touch_platform_role_account_version();
+
+comment on function private.touch_platform_role_account_version() is
+  'Avança a versão opaca de autorização em toda concessão ou revogação de papel.';
+
 create table private.backoffice_sessions (
   auth_session_id uuid primary key references auth.sessions(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -118,7 +141,10 @@ create table private.backoffice_command_requests (
       'backoffice.user.restore'::text,
       'backoffice.user.suspend'::text,
       'backoffice.user.revealPii'::text,
-      'backoffice.access.setRole'::text,
+      'backoffice.access.grantAdmin'::text,
+      'backoffice.access.grantSupport'::text,
+      'backoffice.access.revokeAdmin'::text,
+      'backoffice.access.revokeSupport'::text,
       'backoffice.taxonomy.upsert'::text,
       'backoffice.taxonomy.setActive'::text
     ])
@@ -242,7 +268,6 @@ begin
     'createdAt', profile.created_at,
     'emailMasked', private.mask_backoffice_email(auth_user.email),
     'id', profile.id,
-    'roles', private.platform_roles_for_user(profile.id),
     'status', profile.status
   )
   into result
@@ -387,6 +412,7 @@ create or replace function private.open_backoffice_session(
 )
 returns table (
   scope uuid,
+  authorization_version bigint,
   roles text[],
   expires_at timestamptz,
   strong_authentication_expires_at timestamptz
@@ -397,6 +423,7 @@ set search_path = ''
 as $function$
 declare
   opened_at timestamptz := pg_catalog.clock_timestamp();
+  current_authorization_version bigint;
   canonical_not_after timestamptz;
   current_roles text[];
 begin
@@ -423,13 +450,14 @@ begin
   if not found then
     raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
   end if;
-  if not exists (
-    select 1
-    from public.profiles as profile
-    where profile.id = p_user_id
-      and profile.status = 'active'
-      and profile.completed_at is not null
-  ) then
+  select profile.account_version
+  into current_authorization_version
+  from public.profiles as profile
+  where profile.id = p_user_id
+    and profile.status = 'active'
+    and profile.completed_at is not null
+  for share;
+  if not found then
     raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
   end if;
 
@@ -468,6 +496,7 @@ begin
   return query
   select
     p_user_id,
+    current_authorization_version,
     current_roles,
     least(
       opened_at + interval '8 hours',
@@ -485,10 +514,12 @@ create or replace function private.backoffice_session_context(
   p_auth_session_id uuid,
   p_auth_expires_at timestamptz,
   p_required_role text,
-  p_require_strong_authentication boolean
+  p_require_strong_authentication boolean,
+  p_touch_activity boolean
 )
 returns table (
   actor_role text,
+  authorization_version bigint,
   roles text[],
   expires_at timestamptz,
   strong_authentication_expires_at timestamptz
@@ -499,6 +530,7 @@ set search_path = ''
 as $function$
 declare
   checked_at timestamptz := pg_catalog.clock_timestamp();
+  current_authorization_version bigint;
   binding private.backoffice_sessions%rowtype;
   canonical_not_after timestamptz;
   current_roles text[];
@@ -512,6 +544,7 @@ begin
     or p_auth_expires_at <= checked_at
     or p_auth_expires_at > checked_at + interval '65 minutes'
     or (p_required_role is not null and p_required_role <> 'admin')
+    or p_touch_activity is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_session';
   end if;
@@ -546,13 +579,14 @@ begin
   if not found then
     raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
   end if;
-  if not exists (
-    select 1
-    from public.profiles as profile
-    where profile.id = p_user_id
-      and profile.status = 'active'
-      and profile.completed_at is not null
-  ) then
+  select profile.account_version
+  into current_authorization_version
+  from public.profiles as profile
+  where profile.id = p_user_id
+    and profile.status = 'active'
+    and profile.completed_at is not null
+  for share;
+  if not found then
     raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
   end if;
 
@@ -568,13 +602,16 @@ begin
     raise exception using errcode = '42501', message = 'backoffice_reauthentication_required';
   end if;
 
-  update private.backoffice_sessions as session_binding
-  set last_seen_at = checked_at
-  where session_binding.auth_session_id = p_auth_session_id;
+  if p_touch_activity then
+    update private.backoffice_sessions as session_binding
+    set last_seen_at = checked_at
+    where session_binding.auth_session_id = p_auth_session_id;
+  end if;
 
   return query
   select
     case when 'admin' = any(current_roles) then 'admin'::text else 'support'::text end,
+    current_authorization_version,
     current_roles,
     least(
       binding.absolute_expires_at,
@@ -585,7 +622,7 @@ begin
 end;
 $function$;
 
-alter function private.backoffice_session_context(uuid, uuid, timestamptz, text, boolean)
+alter function private.backoffice_session_context(uuid, uuid, timestamptz, text, boolean, boolean)
   owner to postgres;
 
 create or replace function private.get_backoffice_session(
@@ -595,6 +632,7 @@ create or replace function private.get_backoffice_session(
 )
 returns table (
   scope uuid,
+  authorization_version bigint,
   roles text[],
   expires_at timestamptz,
   strong_authentication_expires_at timestamptz
@@ -613,10 +651,16 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
+    false,
     false
   );
   return query
-  select p_user_id, context.roles, context.expires_at, context.strong_authentication_expires_at;
+  select
+    p_user_id,
+    context.authorization_version,
+    context.roles,
+    context.expires_at,
+    context.strong_authentication_expires_at;
 end;
 $function$;
 
@@ -659,7 +703,6 @@ returns table (
   created_at timestamptz,
   email_masked text,
   id uuid,
-  roles text[],
   status text
 )
 language plpgsql
@@ -674,7 +717,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
   if (p_cursor_created_at is null) <> (p_cursor_id is null)
     or p_limit is null
@@ -691,7 +735,6 @@ begin
     profile.created_at,
     private.mask_backoffice_email(auth_user.email),
     profile.id,
-    private.platform_roles_for_user(profile.id),
     profile.status
   from public.profiles as profile
   join auth.users as auth_user on auth_user.id = profile.id
@@ -721,6 +764,57 @@ alter function private.list_backoffice_users(
   uuid, uuid, timestamptz, text, timestamptz, uuid, integer
 ) owner to postgres;
 
+create or replace function private.get_backoffice_user_access(
+  p_actor_user_id uuid,
+  p_auth_session_id uuid,
+  p_auth_expires_at timestamptz,
+  p_target_user_id uuid
+)
+returns table (
+  account_version bigint,
+  created_at timestamptz,
+  email_masked text,
+  id uuid,
+  roles text[],
+  status text
+)
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+begin
+  if p_target_user_id is null then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_access_target';
+  end if;
+  perform private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    false,
+    true
+  );
+  return query
+  select
+    profile.account_version,
+    profile.created_at,
+    private.mask_backoffice_email(auth_user.email),
+    profile.id,
+    private.platform_roles_for_user(profile.id),
+    profile.status
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where profile.id = p_target_user_id
+    and auth_user.email is not null;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+end;
+$function$;
+
+alter function private.get_backoffice_user_access(uuid, uuid, timestamptz, uuid)
+  owner to postgres;
+
 create or replace function private.list_backoffice_taxonomies(
   p_actor_user_id uuid,
   p_auth_session_id uuid,
@@ -747,7 +841,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
   return query
   select *
@@ -1066,7 +1161,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -1285,7 +1381,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -1398,9 +1495,8 @@ create or replace function private.set_backoffice_user_role(
   p_auth_session_id uuid,
   p_auth_expires_at timestamptz,
   p_target_user_id uuid,
-  p_expected_roles text[],
-  p_role text,
-  p_enabled boolean,
+  p_expected_account_version bigint,
+  p_action text,
   p_idempotency_key uuid,
   p_request_id uuid
 )
@@ -1413,31 +1509,40 @@ declare
   actor_context record;
   current_profile public.profiles%rowtype;
   current_roles text[];
+  enabled boolean;
   existing_request private.backoffice_command_requests%rowtype;
-  expected_roles text[];
   payload_hash text;
   result jsonb;
+  role_to_change text;
 begin
   if p_actor_user_id is null
     or p_auth_session_id is null
     or p_auth_expires_at is null
     or p_target_user_id is null
-    or p_expected_roles is null
-    or p_role is null
-    or p_role <> all (array['support'::text, 'admin'::text])
-    or p_enabled is null
+    or p_expected_account_version is null
+    or p_expected_account_version < 0
+    or p_action is null
+    or p_action <> all (array[
+      'backoffice.access.grantAdmin'::text,
+      'backoffice.access.grantSupport'::text,
+      'backoffice.access.revokeAdmin'::text,
+      'backoffice.access.revokeSupport'::text
+    ])
     or p_idempotency_key is null
     or p_request_id is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_role_change';
   end if;
 
-  expected_roles := private.canonical_platform_roles(p_expected_roles);
+  role_to_change := case
+    when p_action in ('backoffice.access.grantAdmin', 'backoffice.access.revokeAdmin')
+      then 'admin'
+    else 'support'
+  end;
+  enabled := p_action in ('backoffice.access.grantAdmin', 'backoffice.access.grantSupport');
   payload_hash := private.backoffice_payload_hash(
     pg_catalog.jsonb_build_object(
-      'enabled', p_enabled,
-      'expectedRoles', pg_catalog.to_jsonb(expected_roles),
-      'role', p_role,
+      'expectedAccountVersion', p_expected_account_version,
       'userId', p_target_user_id
     )
   );
@@ -1453,6 +1558,7 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
+    true,
     true
   );
 
@@ -1470,7 +1576,7 @@ begin
     and request.idempotency_key = p_idempotency_key;
 
   if found then
-    if existing_request.action <> 'backoffice.access.setRole'
+    if existing_request.action <> p_action
       or existing_request.payload_hash <> payload_hash
       or existing_request.target_type <> 'platform_role'
       or existing_request.target_id <> p_target_user_id
@@ -1501,27 +1607,27 @@ begin
   into current_profile
   from public.profiles as profile
   where profile.id = p_target_user_id
-  for share;
+  for update;
 
   if not found then
     raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
   end if;
-  if p_enabled
+  if current_profile.account_version <> p_expected_account_version then
+    raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
+  end if;
+  if enabled
     and (current_profile.status <> 'active' or current_profile.completed_at is null)
   then
     raise exception using errcode = '42501', message = 'backoffice_role_target_ineligible';
   end if;
 
   current_roles := private.platform_roles_for_user(p_target_user_id);
-  if current_roles is distinct from expected_roles then
-    raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
-  end if;
-  if p_enabled = (p_role = any(current_roles)) then
+  if enabled = (role_to_change = any(current_roles)) then
     raise exception using errcode = '23514', message = 'backoffice_role_unchanged';
   end if;
 
-  if not p_enabled
-    and p_role = 'admin'
+  if not enabled
+    and role_to_change = 'admin'
     and current_profile.status = 'active'
     and current_profile.completed_at is not null
     and not exists (
@@ -1537,13 +1643,13 @@ begin
     raise exception using errcode = '23514', message = 'backoffice_last_active_admin_required';
   end if;
 
-  if p_enabled then
+  if enabled then
     insert into public.platform_roles (user_id, role, granted_by)
-    values (p_target_user_id, p_role, p_actor_user_id);
+    values (p_target_user_id, role_to_change, p_actor_user_id);
   else
     delete from public.platform_roles as platform_role
     where platform_role.user_id = p_target_user_id
-      and platform_role.role = p_role;
+      and platform_role.role = role_to_change;
     if not found then
       raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
     end if;
@@ -1579,7 +1685,7 @@ begin
   values (
     p_actor_user_id,
     p_idempotency_key,
-    'backoffice.access.setRole',
+    p_action,
     payload_hash,
     private.backoffice_result_hash(result),
     'platform_role',
@@ -1602,7 +1708,7 @@ begin
     p_actor_user_id,
     actor_context.actor_role,
     case
-      when p_enabled then 'backoffice.role_granted'
+      when enabled then 'backoffice.role_granted'
       else 'backoffice.role_revoked'
     end,
     'platform_role',
@@ -1612,7 +1718,7 @@ begin
     p_idempotency_key,
     null,
     pg_catalog.jsonb_build_object(
-      'role', p_role,
+      'role', role_to_change,
       'roles', pg_catalog.to_jsonb(current_roles)
     )
   );
@@ -1622,7 +1728,7 @@ end;
 $function$;
 
 alter function private.set_backoffice_user_role(
-  uuid, uuid, timestamptz, uuid, text[], text, boolean, uuid, uuid
+  uuid, uuid, timestamptz, uuid, bigint, text, uuid, uuid
 ) owner to postgres;
 
 create or replace function private.upsert_backoffice_taxonomy(
@@ -1699,7 +1805,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -1949,7 +2056,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -2103,13 +2211,14 @@ alter function private.set_backoffice_taxonomy_active(
 insert into private.dal_routine_allowlist (signature)
 values
   ('private.close_backoffice_session(uuid,uuid)'),
+  ('private.get_backoffice_user_access(uuid,uuid,timestamptz,uuid)'),
   ('private.get_backoffice_session(uuid,uuid,timestamptz)'),
   ('private.list_backoffice_taxonomies(uuid,uuid,timestamptz)'),
   ('private.list_backoffice_users(uuid,uuid,timestamptz,text,timestamptz,uuid,integer)'),
   ('private.open_backoffice_session(uuid,uuid,timestamptz)'),
   ('private.reveal_backoffice_user_pii(uuid,uuid,timestamptz,uuid,text,uuid,uuid)'),
   ('private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)'),
-  ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,text[],text,boolean,uuid,uuid)'),
+  ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
   ('private.set_backoffice_user_status(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
   ('private.upsert_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,text,integer,uuid,uuid)');
 
@@ -2137,9 +2246,11 @@ revoke all on function private.backoffice_user_pii_json(uuid, uuid)
 revoke all on function private.backoffice_taxonomy_item_json(text, uuid)
   from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.backoffice_session_context(
-  uuid, uuid, timestamptz, text, boolean
+  uuid, uuid, timestamptz, text, boolean, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.canonical_platform_roles(text[])
+  from public, anon, authenticated, service_role, app_dal;
+revoke all on function private.touch_platform_role_account_version()
   from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.bootstrap_first_platform_admin(uuid, uuid, uuid)
   from public, anon, authenticated, service_role, app_dal;
@@ -2153,6 +2264,8 @@ revoke all on function private.close_backoffice_session(uuid, uuid)
 revoke all on function private.list_backoffice_users(
   uuid, uuid, timestamptz, text, timestamptz, uuid, integer
 ) from public, anon, authenticated, service_role, app_dal;
+revoke all on function private.get_backoffice_user_access(uuid, uuid, timestamptz, uuid)
+  from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.list_backoffice_taxonomies(uuid, uuid, timestamptz)
   from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.set_backoffice_user_status(
@@ -2162,7 +2275,7 @@ revoke all on function private.reveal_backoffice_user_pii(
   uuid, uuid, timestamptz, uuid, text, uuid, uuid
 ) from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.set_backoffice_user_role(
-  uuid, uuid, timestamptz, uuid, text[], text, boolean, uuid, uuid
+  uuid, uuid, timestamptz, uuid, bigint, text, uuid, uuid
 ) from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.upsert_backoffice_taxonomy(
   uuid, uuid, timestamptz, text, uuid, bigint, text, text, integer, uuid, uuid
@@ -2180,6 +2293,8 @@ grant execute on function private.close_backoffice_session(uuid, uuid)
 grant execute on function private.list_backoffice_users(
   uuid, uuid, timestamptz, text, timestamptz, uuid, integer
 ) to app_dal;
+grant execute on function private.get_backoffice_user_access(uuid, uuid, timestamptz, uuid)
+  to app_dal;
 grant execute on function private.list_backoffice_taxonomies(uuid, uuid, timestamptz)
   to app_dal;
 grant execute on function private.set_backoffice_user_status(
@@ -2189,7 +2304,7 @@ grant execute on function private.reveal_backoffice_user_pii(
   uuid, uuid, timestamptz, uuid, text, uuid, uuid
 ) to app_dal;
 grant execute on function private.set_backoffice_user_role(
-  uuid, uuid, timestamptz, uuid, text[], text, boolean, uuid, uuid
+  uuid, uuid, timestamptz, uuid, bigint, text, uuid, uuid
 ) to app_dal;
 grant execute on function private.upsert_backoffice_taxonomy(
   uuid, uuid, timestamptz, text, uuid, bigint, text, text, integer, uuid, uuid
@@ -2216,6 +2331,8 @@ comment on function private.close_backoffice_session(uuid, uuid) is
 comment on function private.list_backoffice_users(
   uuid, uuid, timestamptz, text, timestamptz, uuid, integer
 ) is 'Busca privada prefixada e paginada por cursor; retorna somente email mascarado.';
+comment on function private.get_backoffice_user_access(uuid, uuid, timestamptz, uuid) is
+  'Compõe no servidor o estado de acesso de uma conta para um admin revalidado.';
 comment on function private.list_backoffice_taxonomies(uuid, uuid, timestamptz) is
   'Lista privada e limitada das taxonomias com versão e impacto de uso.';
 comment on function private.set_backoffice_user_status(
@@ -2225,8 +2342,8 @@ comment on function private.reveal_backoffice_user_pii(
   uuid, uuid, timestamptz, uuid, text, uuid, uuid
 ) is 'Revela PII somente em resposta efêmera e auditada; o ledger persiste apenas versões.';
 comment on function private.set_backoffice_user_role(
-  uuid, uuid, timestamptz, uuid, text[], text, boolean, uuid, uuid
-) is 'Concede ou revoga support/admin com reautenticação, concorrência e proteção do último admin.';
+  uuid, uuid, timestamptz, uuid, bigint, text, uuid, uuid
+) is 'Deriva concessão ou revogação support/admin da ação explícita, com reautenticação, versão opaca e proteção do último admin.';
 comment on function private.upsert_backoffice_taxonomy(
   uuid, uuid, timestamptz, text, uuid, bigint, text, text, integer, uuid, uuid
 ) is 'Cria ou edita taxonomia com versão otimista, idempotência e auditoria.';

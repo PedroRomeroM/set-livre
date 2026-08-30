@@ -1,7 +1,10 @@
 import {
   backofficeCommandSchema,
+  backofficeRuntimeUnlockPayloadSchema,
+  backofficeSessionSchema,
   backofficeTaxonomyItemSchema,
   backofficeUserListSchema,
+  backofficeUserSummarySchema,
   platformRolesSchema,
 } from "@set-livre/contracts";
 import { describe, expect, it } from "vitest";
@@ -11,23 +14,36 @@ import {
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
-import { backofficeLoginNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/login-rate-limit-profile";
+import { backofficeAuthNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/auth-rate-limit-profile";
 
 const actorId = "10000000-0000-4000-8000-000000000001";
 const targetId = "10000000-0000-4000-8000-000000000002";
 const idempotencyKey = "10000000-0000-4000-8000-000000000003";
 
 describe("backoffice contracts", () => {
-  it("expands only the E2E network bucket while preserving production login limits", () => {
-    expect(backofficeLoginNetworkRateLimitOptions("production")).toEqual({
+  it("accepts only the canonical runtime unlock key format", () => {
+    const runtimeKey = "A".repeat(43);
+    expect(backofficeRuntimeUnlockPayloadSchema.parse({ key: runtimeKey })).toEqual({
+      key: runtimeKey,
+    });
+    expect(backofficeRuntimeUnlockPayloadSchema.safeParse({ key: "short" }).success).toBe(false);
+    expect(
+      backofficeRuntimeUnlockPayloadSchema.safeParse({
+        key: `${"A".repeat(42)}!`,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("expands only the E2E network bucket while preserving production auth limits", () => {
+    expect(backofficeAuthNetworkRateLimitOptions("production")).toEqual({
       limit: 30,
       windowMs: 15 * 60_000,
     });
-    expect(backofficeLoginNetworkRateLimitOptions("local")).toEqual({
+    expect(backofficeAuthNetworkRateLimitOptions("local")).toEqual({
       limit: 30,
       windowMs: 15 * 60_000,
     });
-    expect(backofficeLoginNetworkRateLimitOptions("test")).toEqual({
+    expect(backofficeAuthNetworkRateLimitOptions("test")).toEqual({
       limit: 10_000,
       windowMs: 15 * 60_000,
     });
@@ -95,10 +111,10 @@ describe("backoffice contracts", () => {
   it("rejects future roles and malformed taxonomy values at the boundary", () => {
     expect(
       backofficeCommandSchema.safeParse({
-        action: "backoffice.access.setRole",
+        action: "backoffice.access.grantSupport",
         expectedScope: actorId,
         idempotencyKey,
-        payload: { enabled: true, expectedRoles: [], role: "finance", userId: targetId },
+        payload: { expectedAccountVersion: 0, role: "finance", userId: targetId },
       }).success,
     ).toBe(false);
 
@@ -123,7 +139,6 @@ describe("backoffice contracts", () => {
       accountVersion: 0,
       emailMasked: "p***@example.test",
       id: targetId,
-      roles: ["support"],
       status: "active",
     } as const;
     expect(
@@ -141,6 +156,30 @@ describe("backoffice contracts", () => {
         items: Array.from({ length: 51 }, () => item),
         nextCursor: null,
         scope: actorId,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps administrative role claims out of browser response contracts", () => {
+    const session = {
+      authenticated: true,
+      authorizationVersion: 3,
+      email: "operator@example.test",
+      expiresAt: "2026-08-29T01:00:00.000Z",
+      runtimeUnlockExpiresAt: null,
+      scope: actorId,
+      strongAuthenticationExpiresAt: "2026-08-29T00:05:00.000Z",
+    } as const;
+    expect(backofficeSessionSchema.parse(session)).toEqual(session);
+    expect(backofficeSessionSchema.safeParse({ ...session, roles: ["admin"] }).success).toBe(false);
+    expect(
+      backofficeUserSummarySchema.safeParse({
+        accountVersion: 1,
+        createdAt: "2026-08-29T00:00:00.000Z",
+        emailMasked: "p***@example.test",
+        id: targetId,
+        roles: ["support"],
+        status: "active",
       }).success,
     ).toBe(false);
   });

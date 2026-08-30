@@ -1,16 +1,14 @@
 "use client";
 
 import {
-  type BackofficeAccessSetRoleCommand,
   type BackofficePiiReason,
   type BackofficeSession,
   type BackofficeUserPii,
   type BackofficeUserRevealPiiCommand,
   type BackofficeUserStatusCommand,
   type BackofficeUserSummary,
-  type PlatformRole,
 } from "@set-livre/contracts";
-import { Alert, Button, Checkbox, Field, Input, PasswordInput, Select } from "@set-livre/ui";
+import { Alert, Button, ButtonLink, Checkbox, Field, Input, Select } from "@set-livre/ui";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
@@ -20,7 +18,6 @@ import {
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
   listBackofficeUsersClient,
-  loginBackofficeClient,
   revealBackofficePiiWithoutCaching,
 } from "./backoffice-api";
 import { backofficeFilterFingerprint, backofficeQueryKeys } from "./query-keys";
@@ -62,7 +59,9 @@ function UserPiiReveal({
       if (pendingReveal.current === undefined) {
         throw new Error("A revelação não possui solicitação idempotente preparada.");
       }
-      return revealBackofficePiiWithoutCaching(pendingReveal.current, setPii);
+      return revealBackofficePiiWithoutCaching(pendingReveal.current, (revealedPii) => {
+        if (document.visibilityState === "visible") setPii(revealedPii);
+      });
     },
     networkMode: "always",
     onError: (error) => {
@@ -82,6 +81,7 @@ function UserPiiReveal({
     const hide = () => {
       if (document.visibilityState === "hidden") setPii(undefined);
     };
+    hide();
     document.addEventListener("visibilitychange", hide);
     return () => {
       window.clearTimeout(timeout);
@@ -154,18 +154,15 @@ function UserPiiReveal({
 
 function UserCard({
   mode,
-  onRoleChange,
   onStatusChange,
   session,
   user,
 }: {
   mode: Mode;
-  onRoleChange: (user: BackofficeUserSummary, role: PlatformRole, enabled: boolean) => void;
   onStatusChange: (user: BackofficeUserSummary) => void;
   session: AuthenticatedSession;
   user: BackofficeUserSummary;
 }) {
-  const isAdmin = session.roles.includes("admin");
   return (
     <article className={styles.card}>
       <div className={styles.cardHeader}>
@@ -178,20 +175,12 @@ function UserCard({
         </span>
       </div>
       <p className={styles.metadata}>
-        Criado em {new Date(user.createdAt).toLocaleDateString("pt-BR")} · versão{" "}
-        {user.accountVersion}
+        Criado em{" "}
+        {new Date(user.createdAt).toLocaleDateString("pt-BR", {
+          timeZone: "America/Sao_Paulo",
+        })}{" "}
+        · versão {user.accountVersion}
       </p>
-      <div aria-label="Papéis atuais" className={styles.roleList}>
-        {user.roles.length === 0 ? (
-          <span className={styles.muted}>Sem acesso operacional</span>
-        ) : (
-          user.roles.map((role) => (
-            <span className={styles.badge} key={role}>
-              {role}
-            </span>
-          ))
-        )}
-      </div>
       {mode === "users" ? (
         <>
           <Button
@@ -202,75 +191,12 @@ function UserCard({
           </Button>
           <UserPiiReveal session={session} user={user} />
         </>
-      ) : isAdmin ? (
-        <div className={styles.roleList}>
-          {(["support", "admin"] as const).map((role) => {
-            const enabled = user.roles.includes(role);
-            return (
-              <Button
-                key={role}
-                onClick={() => onRoleChange(user, role, !enabled)}
-                variant={enabled ? "secondary" : "ghost"}
-              >
-                {enabled ? `Revogar ${role}` : `Conceder ${role}`}
-              </Button>
-            );
-          })}
-        </div>
-      ) : null}
+      ) : (
+        <ButtonLink href={`/acessos/${user.id}`} variant="secondary">
+          Gerenciar acesso
+        </ButtonLink>
+      )}
     </article>
-  );
-}
-
-function Reauthentication({
-  session,
-  onConfirmed,
-}: {
-  session: AuthenticatedSession;
-  onConfirmed: () => void;
-}) {
-  const formRef = useRef<HTMLFormElement>(null);
-  const pendingPassword = useRef<string>(undefined);
-  const reauthenticate = useMutation({
-    gcTime: 0,
-    mutationFn: () => {
-      if (pendingPassword.current === undefined) {
-        throw new Error("A reautenticação não possui senha efêmera preparada.");
-      }
-      return loginBackofficeClient({ email: session.email, password: pendingPassword.current });
-    },
-    networkMode: "always",
-    onSettled: () => {
-      pendingPassword.current = undefined;
-      formRef.current?.reset();
-    },
-    onSuccess: (nextSession) => {
-      if (nextSession.authenticated) onConfirmed();
-    },
-  });
-  return (
-    <form
-      className={styles.reauthentication}
-      onSubmit={(event) => {
-        event.preventDefault();
-        const data = new FormData(event.currentTarget);
-        pendingPassword.current = String(data.get("password") ?? "");
-        reauthenticate.mutate();
-      }}
-      ref={formRef}
-    >
-      <h2>Confirme sua identidade</h2>
-      <p>Alterações de papel exigem uma autenticação realizada nos últimos cinco minutos.</p>
-      <Field label="Senha atual" required>
-        <PasswordInput autoComplete="current-password" name="password" />
-      </Field>
-      {reauthenticate.isError ? (
-        <Alert variant="error">{errorMessage(reauthenticate.error)}</Alert>
-      ) : null}
-      <Button loading={reauthenticate.isPending} loadingLabel="Confirmando" type="submit">
-        Confirmar identidade
-      </Button>
-    </form>
   );
 }
 
@@ -280,14 +206,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const [activeFilter, setActiveFilter] = useState({ fingerprint: "empty", query: "" });
   const [statusTarget, setStatusTarget] = useState<BackofficeUserSummary>();
   const [statusImpactConfirmed, setStatusImpactConfirmed] = useState(false);
-  const [roleTarget, setRoleTarget] = useState<{
-    enabled: boolean;
-    role: PlatformRole;
-    user: BackofficeUserSummary;
-  }>();
-  const [needsReauthentication, setNeedsReauthentication] = useState(false);
   const [notice, setNotice] = useState<string>();
-  const pendingRoleCommand = useRef<BackofficeAccessSetRoleCommand>(undefined);
   const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
@@ -334,36 +253,6 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       await invalidateUsers();
     },
   });
-  const roleMutation = useMutation({
-    mutationFn: () => {
-      if (pendingRoleCommand.current === undefined) {
-        throw new Error("A alteração de papel não possui solicitação idempotente preparada.");
-      }
-      return executeBackofficeUserCommand(pendingRoleCommand.current);
-    },
-    networkMode: "always",
-    onError: async (error) => {
-      if (isStaleBackofficeError(error)) {
-        pendingRoleCommand.current = undefined;
-        setNeedsReauthentication(false);
-        setRoleTarget(undefined);
-        setNotice(
-          "Os papéis mudaram. A lista foi recarregada; revise o estado atual antes de agir.",
-        );
-        await resetUsers();
-        return;
-      }
-      if (!isAmbiguousBackofficeError(error)) pendingRoleCommand.current = undefined;
-      if (error instanceof BackofficeClientError && error.code === "REAUTHENTICATION_REQUIRED")
-        setNeedsReauthentication(true);
-    },
-    onSuccess: async () => {
-      pendingRoleCommand.current = undefined;
-      setRoleTarget(undefined);
-      setNotice("Papéis atualizados e sessões incompatíveis revogadas.");
-      await invalidateUsers();
-    },
-  });
   const items = users.data?.pages.flatMap((page) => page.items) ?? [];
 
   return (
@@ -374,18 +263,9 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         <p>
           {mode === "users"
             ? "Busque, suspenda ou restaure contas e revele dados somente com motivo auditado."
-            : "Conceda e revogue papéis. O banco protege o último administrador ativo."}
+            : "Busque uma conta e abra o detalhe autorizado para revisar seus acessos."}
         </p>
       </header>
-      {needsReauthentication ? (
-        <Reauthentication
-          session={session}
-          onConfirmed={() => {
-            setNeedsReauthentication(false);
-            setNotice("Identidade confirmada. Revise e confirme a alteração novamente.");
-          }}
-        />
-      ) : null}
       {notice === undefined ? null : <Alert>{notice}</Alert>}
       <form
         className={styles.toolbar}
@@ -415,12 +295,6 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           <UserCard
             key={user.id}
             mode={mode}
-            onRoleChange={(target, role, enabled) => {
-              pendingRoleCommand.current = undefined;
-              roleMutation.reset();
-              setNotice(undefined);
-              setRoleTarget({ enabled, role, user: target });
-            }}
             onStatusChange={(target) => {
               pendingStatusCommand.current = undefined;
               statusMutation.reset();
@@ -481,50 +355,6 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
                 statusMutation.reset();
                 setStatusImpactConfirmed(false);
                 setStatusTarget(undefined);
-              }}
-              variant="ghost"
-            >
-              Cancelar
-            </Button>
-          </div>
-        </section>
-      )}
-      {roleTarget === undefined ? null : (
-        <section aria-labelledby="role-confirmation" className={styles.confirmation}>
-          <h2 id="role-confirmation">Confirmar alteração de papel</h2>
-          <p>
-            {roleTarget.enabled ? "Conceder" : "Revogar"} <strong>{roleTarget.role}</strong> para{" "}
-            {roleTarget.user.emailMasked}. Esta ação exige reautenticação recente.
-          </p>
-          {roleMutation.isError ? (
-            <Alert variant="error">{errorMessage(roleMutation.error)}</Alert>
-          ) : null}
-          <div className={styles.actions}>
-            <Button
-              loading={roleMutation.isPending}
-              loadingLabel="Aplicando"
-              onClick={() => {
-                pendingRoleCommand.current ??= {
-                  action: "backoffice.access.setRole",
-                  expectedScope: session.scope,
-                  idempotencyKey: crypto.randomUUID(),
-                  payload: {
-                    enabled: roleTarget.enabled,
-                    expectedRoles: roleTarget.user.roles,
-                    role: roleTarget.role,
-                    userId: roleTarget.user.id,
-                  },
-                };
-                roleMutation.mutate();
-              }}
-            >
-              Confirmar alteração
-            </Button>
-            <Button
-              onClick={() => {
-                pendingRoleCommand.current = undefined;
-                roleMutation.reset();
-                setRoleTarget(undefined);
               }}
               variant="ghost"
             >

@@ -104,18 +104,27 @@ efetivo e modo `0600` também são obrigatórios.
 
 O preflight global também exige zero identidades `qa_*@example.test`; resíduo de execução
 interrompida exige `npm run supabase:reset` e nunca é tratado como fixture válida. Durante cada
-cenário, helpers destrutivos revalidam o mesmo marcador local antes de consultar ou limpar dados, mas
-não exigem ausência da própria identidade QA ainda em uso. Os servidores Playwright usam
-`APP_ENV=test`: somente o bucket de rede compartilhado do login recebe capacidade para a matriz
-multibrowser de identidades únicas. O bucket por identidade continua limitado a dez tentativas, e os
-runtimes `local`, `development` e `production` preservam o limite de rede de 30 tentativas por 15
-minutos.
+processo worker, a primeira operação destrutiva revalida o mesmo marcador local; o resultado seguro é
+compartilhado apenas durante aquela execução e não exige ausência da própria identidade QA já em uso.
+Os servidores Playwright usam
+`APP_ENV=test`: somente os buckets de rede compartilhados do login e do desbloqueio local recebem
+capacidade para a matriz multibrowser de identidades únicas. Os buckets por identidade continuam
+limitados a dez tentativas, e os runtimes `local`, `development` e `production` preservam o limite de
+rede de 30 tentativas por 15 minutos.
 
 Os dois servidores Next compartilham cada pool PostgreSQL no escopo global do respectivo processo,
 inclusive entre bundles e recompilações do modo de desenvolvimento. O orçamento completo é exercitado
 por teste unitário como `2 + 1 + 2 + 1 = 6`, preservando quatro das dez conexões do runtime para os
 helpers restritos, readiness, recuperação e variação operacional. A suíte crítica longa é regressão
 obrigatória para impedir que instâncias duplicadas voltem a saturar `app_runtime_local`.
+
+Os helpers do próprio runner mantêm somente um pool administrativo e um pool DAL por processo, cada
+um com no máximo uma conexão. Toda operação adquire e libera um cliente do pool; transações permanecem
+presas ao mesmo cliente. Criar e encerrar um pool por consulta é proibido: além de anular o pooling,
+esse churn esgota portas TCP efêmeras no gate Windows durante a matriz completa.
+Antes de apagar identidades ou linhas de domínio, o teardown fecha as páginas relacionadas e deixa a
+navegação já iniciada alcançar `domcontentloaded`; nenhuma limpeza pode concorrer com um refetch ou
+`router.refresh()` ainda ativo sobre a mesma sessão.
 
 ## Matriz da FEAT-006
 
@@ -163,12 +172,16 @@ redigida.
 
 ## Matriz da FEAT-031
 
-Os dez cenários `SL-F031-E2E-001..010` expandem para 36 execuções:
+Os doze cenários `SL-F031-E2E-001..012` expandem para 43 execuções:
 
 - P0 de suspensão/restauração, bloqueio de comandos, papéis/último admin e taxonomia histórica nos
   três engines;
+- P0 prova que o runtime bloqueado retorna `423` sem mutação e que somente o desbloqueio local válido
+  permite prosseguir, nos três engines;
 - PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
   altura compacta;
+- resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
+  regressão;
 - revalidação de sessão/papel fecha a composição privada anterior; conflitos de conta, papel e
   taxonomia descartam confirmações versionadas e exigem nova leitura nas quatro composições de
   regressão;
@@ -176,10 +189,14 @@ Os dez cenários `SL-F031-E2E-001..010` expandem para 36 execuções:
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
 QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
-restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 48
-asserções para grants/RLS, binding curto, expiração, bootstrap one-shot, papel/último admin, versão de
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 53
+asserções para grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
+relógio, expiração, bootstrap one-shot,
+papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo possui oito arquivos e 365 testes.
+runner completo possui nove arquivos e 375 testes. A regressão transversal de tempo força timestamps
+persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
+domínio que mantêm `created_at/updated_at`.
 
 ## Contrato por feature
 
@@ -193,6 +210,9 @@ cenários P0/P1. Para concluir:
 5. consolidar contratos permanentes no documento de domínio;
 6. apagar o plano transitório da feature;
 7. marcar a feature como concluída em `docs/roadmap.md`.
+
+Os passos 6 e 7 ocorrem somente depois que review, merge e deploy da entrega estão verdes; até lá o
+plano e o status `Em andamento` permanecem como guardrail rastreável.
 
 ## Evidência
 

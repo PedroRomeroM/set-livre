@@ -390,11 +390,11 @@ function StudioLocalPreview({
   );
 }
 
-function useStudioTypes(initialTypes: readonly StudioTypeOption[]) {
+function useStudioTypes(initialTypes: readonly StudioTypeOption[], userId: string) {
   return useQuery({
     initialData: [...initialTypes],
     queryFn: ({ signal }) => readStudioTypes(signal),
-    queryKey: studioQueryKeys.types,
+    queryKey: studioQueryKeys.types(userId),
     retry: false,
     staleTime: 0,
   });
@@ -447,7 +447,7 @@ function CreateStudioForm({
     retry: false,
     staleTime: 30_000,
   });
-  const typesQuery = useStudioTypes(initialTypes);
+  const typesQuery = useStudioTypes(initialTypes, userId);
   const pendingCommand = useRef<CreateCommand>(undefined);
   const [createdStudioId, setCreatedStudioId] = useState<string>();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -726,7 +726,7 @@ function EditStudioForm({
   userId: string;
 }>) {
   const queryClient = useQueryClient();
-  const typesQuery = useStudioTypes(initialTypes);
+  const typesQuery = useStudioTypes(initialTypes, userId);
   const editorQueryKey = useMemo(
     () => studioQueryKeys.editor(userId, initialEditor.studioId),
     [initialEditor.studioId, userId],

@@ -1,13 +1,17 @@
 "use client";
 
 import type { BackofficeSession } from "@set-livre/contracts";
-import { Button } from "@set-livre/ui";
+import { Alert, Button, Field, PasswordInput } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { logoutBackofficeClient, readBackofficeSessionClient } from "./backoffice-api";
+import {
+  BackofficeClientError,
+  logoutBackofficeClient,
+  readBackofficeSessionClient,
+  unlockBackofficeRuntimeClient,
+} from "./backoffice-api";
 import styles from "./backoffice.module.css";
 import { backofficeQueryKeys } from "./query-keys";
 import {
@@ -17,20 +21,26 @@ import {
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
 
-const navigation = [
-  { adminOnly: false, href: "/usuarios", label: "Usuários" },
-  { adminOnly: true, href: "/taxonomias", label: "Taxonomias" },
-  { adminOnly: true, href: "/acessos", label: "Acessos" },
-] as const;
+function runtimeUnlockErrorMessage(error: unknown) {
+  return error instanceof BackofficeClientError
+    ? error.message
+    : "Não foi possível confirmar o desbloqueio. Tente novamente.";
+}
 
 export function BackofficeShell({
   children,
+  navigation,
   session,
-}: Readonly<{ children: ReactNode; session: AuthenticatedSession }>) {
-  const pathname = usePathname();
+}: Readonly<{
+  children: ReactNode;
+  navigation: ReactNode;
+  session: AuthenticatedSession;
+}>) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const intentionalLogout = useRef(false);
+  const pendingRuntimeKey = useRef<string>(undefined);
+  const unlockForm = useRef<HTMLFormElement>(null);
   const currentSession = useQuery({
     initialData: session,
     initialDataUpdatedAt: 0,
@@ -51,8 +61,7 @@ export function BackofficeShell({
     currentSessionData?.authenticated === true &&
     currentSessionData.scope === session.scope &&
     currentSessionData.email === session.email &&
-    currentSessionData.roles.length === session.roles.length &&
-    currentSessionData.roles.every((role, index) => role === session.roles[index]);
+    currentSessionData.authorizationVersion === session.authorizationVersion;
   const privateViewUnsafe = currentSessionFailed || !sessionStillMatches;
 
   useEffect(
@@ -87,6 +96,26 @@ export function BackofficeShell({
       router.refresh();
     },
   });
+  const unlock = useMutation({
+    mutationFn: () => {
+      if (pendingRuntimeKey.current === undefined) {
+        throw new Error("O desbloqueio não possui uma chave efêmera preparada.");
+      }
+      return unlockBackofficeRuntimeClient({ key: pendingRuntimeKey.current });
+    },
+    networkMode: "always",
+    onSettled: () => {
+      pendingRuntimeKey.current = undefined;
+      unlockForm.current?.reset();
+    },
+    onSuccess: () => {
+      void revalidateSession();
+    },
+  });
+  const runtimeUnlockExpiresAt =
+    currentSessionData?.authenticated === true
+      ? currentSessionData.runtimeUnlockExpiresAt
+      : session.runtimeUnlockExpiresAt;
 
   if (privateViewUnsafe) {
     return (
@@ -108,7 +137,6 @@ export function BackofficeShell({
         </div>
         <div className={styles.sessionSummary}>
           <span>{session.email}</span>
-          <span>{session.roles.join(" + ")}</span>
           <Button
             loading={logout.isPending}
             loadingLabel="Saindo"
@@ -119,18 +147,49 @@ export function BackofficeShell({
           </Button>
         </div>
       </header>
-      <nav aria-label="Backoffice" className={styles.navigation}>
-        {navigation
-          .filter((item) => !item.adminOnly || session.roles.includes("admin"))
-          .map((item) => {
-            const active = pathname.startsWith(item.href);
-            return (
-              <Link aria-current={active ? "page" : undefined} href={item.href} key={item.href}>
-                {item.label}
-              </Link>
-            );
-          })}
-      </nav>
+      {navigation}
+      <form
+        aria-label="Desbloqueio de operações críticas"
+        className={styles.runtimeUnlock}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          const data = new FormData(event.currentTarget);
+          pendingRuntimeKey.current = String(data.get("runtimeUnlockKey") ?? "");
+          unlock.mutate();
+        }}
+        ref={unlockForm}
+      >
+        <Field
+          description="A chave não é armazenada no navegador. O desbloqueio expira em cinco minutos."
+          label="Chave local de desbloqueio"
+          required
+        >
+          <PasswordInput autoComplete="off" name="runtimeUnlockKey" />
+        </Field>
+        <Button
+          disabled={!currentSession.isFetchedAfterMount}
+          loading={unlock.isPending}
+          loadingLabel="Desbloqueando"
+          type="submit"
+        >
+          Desbloquear operações
+        </Button>
+        {runtimeUnlockExpiresAt === null ? (
+          <p className={styles.muted}>Operações críticas bloqueadas neste runtime.</p>
+        ) : (
+          <p role="status">
+            Operações desbloqueadas até{" "}
+            {new Date(runtimeUnlockExpiresAt).toLocaleTimeString("pt-BR", {
+              timeZone: "America/Sao_Paulo",
+            })}
+            .
+          </p>
+        )}
+        {unlock.isError ? (
+          <Alert variant="error">{runtimeUnlockErrorMessage(unlock.error)}</Alert>
+        ) : null}
+      </form>
       {logout.isError ? (
         <p className={styles.globalError} role="alert">
           Não foi possível encerrar a sessão. Tente novamente.

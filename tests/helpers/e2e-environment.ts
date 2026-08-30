@@ -11,6 +11,7 @@ const environmentValue = (name: string) =>
 export const safeE2EEnvironment = assertSafeE2EEnvironment({
   adminDatabaseUrl: environmentValue("E2E_DATABASE_URL"),
   backofficeBaseUrl: environmentValue("E2E_BACKOFFICE_URL"),
+  backofficeRuntimeUnlockKey: environmentValue("BACKOFFICE_RUNTIME_UNLOCK_KEY"),
   databaseMarker: environmentValue("E2E_DATABASE_MARKER"),
   dalDatabaseUrl: environmentValue("DATABASE_URL_APP_DAL"),
   explicitLocalPermission: environmentValue("E2E_ALLOW_LOCAL"),

@@ -549,7 +549,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v9\n'
+  printf 'set-livre-deploy-ready-v10\n'
   exit 0
 fi
 
@@ -894,13 +894,14 @@ import sys
 import urllib.parse
 
 web_path, backoffice_path = map(pathlib.Path, sys.argv[1:])
-expected_keys = {
+common_expected_keys = {
     "APP_ENV",
     "DATABASE_URL_APP_DAL",
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     "NEXT_PUBLIC_SUPABASE_URL",
 }
+runtime_unlock_key_name = "BACKOFFICE_RUNTIME_UNLOCK_KEY"
 project_ref = "oirvvnojgkzdppkdvhej"
 supabase_url = f"https://{project_ref}.supabase.co"
 
@@ -909,7 +910,7 @@ def fail(label, reason):
     raise SystemExit(f"ambiente {label} inválido: {reason}")
 
 
-def read_environment(path, label, expected_app_url):
+def read_environment(path, label, expected_app_url, extra_expected_keys=frozenset()):
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8")
@@ -924,6 +925,7 @@ def read_environment(path, label, expected_app_url):
         if match is None or match.group(1) in values:
             fail(label, "linha ou chave duplicada")
         values[match.group(1)] = match.group(2)
+    expected_keys = common_expected_keys | set(extra_expected_keys)
     if set(values) != expected_keys or any(value == "" for value in values.values()):
         fail(label, "conjunto de chaves")
     if any(
@@ -938,6 +940,10 @@ def read_environment(path, label, expected_app_url):
         fail(label, "origem pública")
     if values["NEXT_PUBLIC_SUPABASE_URL"] != supabase_url:
         fail(label, "projeto Supabase")
+    if runtime_unlock_key_name in values and re.fullmatch(
+        r"[A-Za-z0-9_-]{43}", values[runtime_unlock_key_name]
+    ) is None:
+        fail(label, "chave de desbloqueio do runtime")
     publishable_key = values["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
     if re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{12,}", publishable_key) is None:
         fail(label, "publishable key")
@@ -965,7 +971,12 @@ def read_environment(path, label, expected_app_url):
 
 
 web = read_environment(web_path, "web", "https://147.15.97.227")
-backoffice = read_environment(backoffice_path, "backoffice", "http://127.0.0.1:3001")
+backoffice = read_environment(
+    backoffice_path,
+    "backoffice",
+    "http://127.0.0.1:3001",
+    {runtime_unlock_key_name},
+)
 if web["DATABASE_URL_APP_DAL"] != backoffice["DATABASE_URL_APP_DAL"]:
     fail("runtime", "URLs DAL divergentes")
 if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON_KEY"]:

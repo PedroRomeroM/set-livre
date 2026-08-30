@@ -13,6 +13,7 @@ import {
   setFeat031UserStatusConcurrently,
   updateFeat031TagConcurrently,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
+import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 
 async function searchUser(page: Page, query: string, userId: string) {
   await page.getByRole("textbox", { name: "Buscar usuários" }).fill(query);
@@ -22,6 +23,17 @@ async function searchUser(page: Page, query: string, userId: string) {
     .filter({ has: page.getByText(`Identificador …${userId.slice(-8)}`, { exact: true }) });
   await expect(card).toBeVisible();
   return card;
+}
+
+async function emulateDocumentVisibility(page: Page, visibilityState: "hidden" | "visible") {
+  await page.evaluate((nextVisibilityState) => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => nextVisibilityState,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visibilityState);
+  await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe(visibilityState);
 }
 
 test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e auditada", async ({
@@ -57,6 +69,65 @@ test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e audi
     await expect(card).not.toContainText(target.name);
     await expect(card).not.toContainText(target.taxId);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [target], operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-012 @p1 resposta de PII concluída em aba oculta é descartada", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "012_hidden_pii");
+  const target = await createFeat031DirectIdentity("PII oculta");
+  let releaseResponse: () => void = () => undefined;
+  let markResponseHeld: () => void = () => undefined;
+  const responseRelease = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+  const responseHeld = new Promise<void>((resolve) => {
+    markResponseHeld = resolve;
+  });
+  try {
+    await provisionFeat031Operator(page, support, "support", "031012");
+    await loginFeat031Backoffice(page, support);
+    const card = await searchUser(page, target.email, target.userId);
+    await page.route("**/api/commands", async (route) => {
+      const command = route.request().postDataJSON() as { action?: unknown } | null;
+      if (command?.action !== "backoffice.user.revealPii") {
+        await route.continue();
+        return;
+      }
+      const response = await route.fetch();
+      markResponseHeld();
+      await responseRelease;
+      await route.fulfill({ response });
+    });
+    await card
+      .getByRole("combobox", { name: "Motivo auditado" })
+      .selectOption("security_investigation");
+    await card.getByRole("button", { name: "Revelar dados por 60 segundos" }).click();
+    await responseHeld;
+
+    await emulateDocumentVisibility(page, "hidden");
+    const delivered = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/commands" && response.status() === 200,
+    );
+    releaseResponse();
+    await delivered;
+    await expect(card).not.toContainText(target.email);
+    await expect(card).not.toContainText(target.name);
+    await expect(card).not.toContainText(target.taxId);
+
+    await emulateDocumentVisibility(page, "visible");
+    await expect(card).not.toContainText(target.email);
+    await expect(card).not.toContainText(target.name);
+    await expect(card).not.toContainText(target.taxId);
+    expect(await readFeat031Audit("backoffice.user_pii_revealed", target.userId)).toHaveLength(1);
+  } finally {
+    releaseResponse();
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [support] });
   }
 });
@@ -138,6 +209,7 @@ test("SL-F031-E2E-006 @p1 busca e cursor permanecem no servidor sem filtro na UR
       query: bulk.query,
     });
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ bulk: bulk.identities, operators: [support] });
   }
 });
@@ -169,6 +241,7 @@ test("SL-F031-E2E-008 @p1 mudança de papel encerra a composição privada anter
     await expect(page.getByRole("link", { name: "Taxonomias" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Acessos" })).toHaveCount(0);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [admin] });
   }
 });
@@ -202,15 +275,19 @@ test("SL-F031-E2E-009 @p1 conflitos de conta e papel exigem nova revisão", asyn
     await setFeat031UserStatusConcurrently(target.userId, "active");
     await page.getByRole("link", { name: "Acessos" }).click();
     card = await searchUser(page, target.email, target.userId);
-    await card.getByRole("button", { name: "Conceder support" }).click();
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
     await setFeat031RolesConcurrently(target.userId, ["support"]);
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
-    await expect(page.getByRole("region", { name: "Confirmar alteração de papel" })).toHaveCount(0);
-    await expect(page.getByRole("status").filter({ hasText: "Os papéis mudaram" })).toContainText(
-      "Os papéis mudaram",
+    await expect(page.getByRole("region", { name: "Confirmar alteração de acesso" })).toHaveCount(
+      0,
     );
-    await expect(card.getByRole("button", { name: "Revogar support" })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Os acessos mudaram" })).toContainText(
+      "Os acessos mudaram",
+    );
+    await expect(page.getByRole("button", { name: "Revisar revogação de suporte" })).toBeVisible();
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [admin] });
   }
 });
@@ -247,6 +324,7 @@ test("SL-F031-E2E-010 @p1 conflito de taxonomia descarta o editor obsoleto", asy
     await expect(page.getByRole("heading", { name: remoteName })).toBeVisible();
     await expect(page.getByText("Edição local obsoleta", { exact: true })).toHaveCount(0);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Taxonomy(undefined, slug);
     await cleanupFeat031Users({ operators: [admin] });
   }

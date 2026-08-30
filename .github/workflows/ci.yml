@@ -208,16 +208,41 @@ jobs:
 
           smoke_release web .artifacts/release/web server.js 3100 https://setlivre.example
           smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3001 http://127.0.0.1:3001
+          backoffice_session_response="$RUNNER_TEMP/backoffice-session.json"
           curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 \
             http://127.0.0.1:3001/api/auth/session \
-            | node --input-type=module -e '
-                let body = "";
-                for await (const chunk of process.stdin) body += chunk;
-                const payload = JSON.parse(body);
-                if (payload.data?.authenticated !== false) {
-                  throw new Error("Sessão anônima do túnel SSH não respeitou o contrato.");
-                }
-              '
+            --output "$backoffice_session_response"
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const payload = JSON.parse(readFileSync(process.argv[1], "utf8"));
+            if (payload.data?.authenticated !== false) {
+              throw new Error("Sessão anônima do túnel SSH não respeitou o contrato.");
+            }
+          ' "$backoffice_session_response"
+
+          assert_invalid_backoffice_origin() {
+            local header="$1"
+            local status
+
+            status="$(
+              curl --disable --noproxy '*' --silent --show-error --max-time 5 \
+                --header "$header" \
+                --output "$backoffice_session_response" \
+                --write-out '%{http_code}' \
+                http://127.0.0.1:3001/api/auth/session
+            )"
+            [[ "$status" == 403 ]]
+            node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const payload = JSON.parse(readFileSync(process.argv[1], "utf8"));
+              if (payload.error?.code !== "ORIGIN_INVALID") {
+                throw new Error("Origem divergente não foi rejeitada pelo contrato do backoffice.");
+              }
+            ' "$backoffice_session_response"
+          }
+
+          assert_invalid_backoffice_origin 'x-forwarded-host: attacker.example'
+          assert_invalid_backoffice_origin 'x-forwarded-proto: https'
 
       - name: Stop local Supabase
         if: always()
@@ -345,7 +370,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v10" ]]
 
       - name: Verify public HTTPS entrypoint
         env:
@@ -368,6 +393,7 @@ jobs:
       - name: Prepare and identify ephemeral runtime environments
         id: runtime_environment
         env:
+          BACKOFFICE_RUNTIME_UNLOCK_KEY: ${{ secrets.BACKOFFICE_RUNTIME_UNLOCK_KEY }}
           PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
           PRD_SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRD_SUPABASE_PUBLISHABLE_KEY }}
         run: |
@@ -377,12 +403,18 @@ jobs:
           }
           reject_line_breaks "$PRD_DATABASE_URL_APP_DAL"
           reject_line_breaks "$PRD_SUPABASE_PUBLISHABLE_KEY"
+          reject_line_breaks "$BACKOFFICE_RUNTIME_UNLOCK_KEY"
+          [[ "$BACKOFFICE_RUNTIME_UNLOCK_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]
           umask 077
           write_environment() {
             local destination="$1"
             local app_url="$2"
+            local runtime_unlock_key="${3:-}"
             {
               printf 'APP_ENV=production\n'
+              if [[ -n "$runtime_unlock_key" ]]; then
+                printf 'BACKOFFICE_RUNTIME_UNLOCK_KEY=%s\n' "$runtime_unlock_key"
+              fi
               printf 'DATABASE_URL_APP_DAL=%s\n' "$PRD_DATABASE_URL_APP_DAL"
               printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
               printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$PRD_SUPABASE_PUBLISHABLE_KEY"
@@ -391,7 +423,8 @@ jobs:
             chmod 0600 "$destination"
           }
           write_environment "$RUNNER_TEMP/set-livre-web.env" "$PRODUCTION_PUBLIC_APP_URL"
-          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+          write_environment "$RUNNER_TEMP/set-livre-backoffice.env" \
+            "$PRODUCTION_BACKOFFICE_APP_URL" "$BACKOFFICE_RUNTIME_UNLOCK_KEY"
           runtime_digest="$({
             printf 'web.env\0'
             cat -- "$RUNNER_TEMP/set-livre-web.env"

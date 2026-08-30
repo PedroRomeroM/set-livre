@@ -586,12 +586,13 @@ $$;
 ALTER FUNCTION "private"."backoffice_result_hash"("result" "jsonb") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) RETURNS TABLE("actor_role" "text", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+CREATE OR REPLACE FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean, "p_touch_activity" boolean) RETURNS TABLE("actor_role" "text", "authorization_version" bigint, "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
 declare
   checked_at timestamptz := pg_catalog.clock_timestamp();
+  current_authorization_version bigint;
   binding private.backoffice_sessions%rowtype;
   canonical_not_after timestamptz;
   current_roles text[];
@@ -605,6 +606,7 @@ begin
     or p_auth_expires_at <= checked_at
     or p_auth_expires_at > checked_at + interval '65 minutes'
     or (p_required_role is not null and p_required_role <> 'admin')
+    or p_touch_activity is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_session';
   end if;
@@ -620,8 +622,12 @@ begin
     and session_binding.user_id = p_user_id
   for update;
 
-  if not found
-    or binding.closed_at is not null
+  if not found then
+    raise exception using errcode = '42501', message = 'backoffice_session_expired';
+  end if;
+
+  checked_at := greatest(checked_at, binding.last_seen_at);
+  if binding.closed_at is not null
     or binding.last_seen_at + interval '30 minutes' <= checked_at
     or binding.absolute_expires_at <= checked_at
   then
@@ -639,13 +645,14 @@ begin
   if not found then
     raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
   end if;
-  if not exists (
-    select 1
-    from public.profiles as profile
-    where profile.id = p_user_id
-      and profile.status = 'active'
-      and profile.completed_at is not null
-  ) then
+  select profile.account_version
+  into current_authorization_version
+  from public.profiles as profile
+  where profile.id = p_user_id
+    and profile.status = 'active'
+    and profile.completed_at is not null
+  for share;
+  if not found then
     raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
   end if;
 
@@ -661,13 +668,16 @@ begin
     raise exception using errcode = '42501', message = 'backoffice_reauthentication_required';
   end if;
 
-  update private.backoffice_sessions as session_binding
-  set last_seen_at = checked_at
-  where session_binding.auth_session_id = p_auth_session_id;
+  if p_touch_activity then
+    update private.backoffice_sessions as session_binding
+    set last_seen_at = checked_at
+    where session_binding.auth_session_id = p_auth_session_id;
+  end if;
 
   return query
   select
     case when 'admin' = any(current_roles) then 'admin'::text else 'support'::text end,
+    current_authorization_version,
     current_roles,
     least(
       binding.absolute_expires_at,
@@ -679,7 +689,11 @@ end;
 $$;
 
 
-ALTER FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) OWNER TO "postgres";
+ALTER FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean, "p_touch_activity" boolean) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean, "p_touch_activity" boolean) IS 'Valida a sessão administrativa com atividade monotônica mesmo sob correção regressiva do relógio do host.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."backoffice_taxonomy_item_json"("p_kind" "text", "p_id" "uuid") RETURNS "jsonb"
@@ -806,7 +820,6 @@ begin
     'createdAt', profile.created_at,
     'emailMasked', private.mask_backoffice_email(auth_user.email),
     'id', profile.id,
-    'roles', private.platform_roles_for_user(profile.id),
     'status', profile.status
   )
   into result
@@ -2813,7 +2826,7 @@ COMMENT ON FUNCTION "private"."enforce_studio_revision_pointers"() IS 'Valida po
 
 
 
-CREATE OR REPLACE FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+CREATE OR REPLACE FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "authorization_version" bigint, "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -2827,10 +2840,16 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
+    false,
     false
   );
   return query
-  select p_user_id, context.roles, context.expires_at, context.strong_authentication_expires_at;
+  select
+    p_user_id,
+    context.authorization_version,
+    context.roles,
+    context.expires_at,
+    context.strong_authentication_expires_at;
 end;
 $$;
 
@@ -2839,6 +2858,48 @@ ALTER FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_se
 
 
 COMMENT ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) IS 'Revalida Auth, perfil, papel, inatividade e expiração absoluta da sessão do backoffice.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "roles" "text"[], "status" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  if p_target_user_id is null then
+    raise exception using errcode = '22023', message = 'invalid_backoffice_access_target';
+  end if;
+  perform private.backoffice_session_context(
+    p_actor_user_id,
+    p_auth_session_id,
+    p_auth_expires_at,
+    'admin',
+    false,
+    true
+  );
+  return query
+  select
+    profile.account_version,
+    profile.created_at,
+    private.mask_backoffice_email(auth_user.email),
+    profile.id,
+    private.platform_roles_for_user(profile.id),
+    profile.status
+  from public.profiles as profile
+  join auth.users as auth_user on auth_user.id = profile.id
+  where profile.id = p_target_user_id
+    and auth_user.email is not null;
+  if not found then
+    raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
+  end if;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") IS 'Compõe no servidor o estado de acesso de uma conta para um admin revalidado.';
 
 
 
@@ -3295,7 +3356,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
   return query
   select *
@@ -3365,7 +3427,7 @@ COMMENT ON FUNCTION "private"."list_backoffice_taxonomies"("p_actor_user_id" "uu
 
 
 
-CREATE OR REPLACE FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "roles" "text"[], "status" "text")
+CREATE OR REPLACE FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "status" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -3377,7 +3439,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
   if (p_cursor_created_at is null) <> (p_cursor_id is null)
     or p_limit is null
@@ -3394,7 +3457,6 @@ begin
     profile.created_at,
     private.mask_backoffice_email(auth_user.email),
     profile.id,
-    private.platform_roles_for_user(profile.id),
     profile.status
   from public.profiles as profile
   join auth.users as auth_user on auth_user.id = profile.id
@@ -3564,12 +3626,58 @@ $$;
 ALTER FUNCTION "private"."mask_backoffice_email"("p_email" "text") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
+CREATE OR REPLACE FUNCTION "private"."normalize_backoffice_session_window"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if new.last_seen_at < new.opened_at then
+    new.last_seen_at := new.opened_at;
+  end if;
+  if new.closed_at is not null and new.closed_at < new.last_seen_at then
+    new.closed_at := new.last_seen_at;
+  end if;
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."normalize_backoffice_session_window"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."normalize_backoffice_session_window"() IS 'Preserva a ordem temporal da sessão quando o relógio de parede do host recua.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."normalize_updated_at_monotonic"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  new.updated_at := greatest(
+    old.updated_at,
+    new.created_at,
+    pg_catalog.clock_timestamp()
+  );
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."normalize_updated_at_monotonic"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."normalize_updated_at_monotonic"() IS 'Mantém updated_at monotônico quando o relógio de parede do host recua.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."open_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "authorization_version" bigint, "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
 declare
   opened_at timestamptz := pg_catalog.clock_timestamp();
+  current_authorization_version bigint;
   canonical_not_after timestamptz;
   current_roles text[];
 begin
@@ -3596,13 +3704,14 @@ begin
   if not found then
     raise exception using errcode = '42501', message = 'backoffice_auth_session_invalid';
   end if;
-  if not exists (
-    select 1
-    from public.profiles as profile
-    where profile.id = p_user_id
-      and profile.status = 'active'
-      and profile.completed_at is not null
-  ) then
+  select profile.account_version
+  into current_authorization_version
+  from public.profiles as profile
+  where profile.id = p_user_id
+    and profile.status = 'active'
+    and profile.completed_at is not null
+  for share;
+  if not found then
     raise exception using errcode = '42501', message = 'backoffice_profile_ineligible';
   end if;
 
@@ -3641,6 +3750,7 @@ begin
   return query
   select
     p_user_id,
+    current_authorization_version,
     current_roles,
     least(
       opened_at + interval '8 hours',
@@ -4401,7 +4511,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -4562,7 +4673,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -4717,7 +4829,7 @@ COMMENT ON FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_id"
 
 
 
-CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -4725,31 +4837,40 @@ declare
   actor_context record;
   current_profile public.profiles%rowtype;
   current_roles text[];
+  enabled boolean;
   existing_request private.backoffice_command_requests%rowtype;
-  expected_roles text[];
   payload_hash text;
   result jsonb;
+  role_to_change text;
 begin
   if p_actor_user_id is null
     or p_auth_session_id is null
     or p_auth_expires_at is null
     or p_target_user_id is null
-    or p_expected_roles is null
-    or p_role is null
-    or p_role <> all (array['support'::text, 'admin'::text])
-    or p_enabled is null
+    or p_expected_account_version is null
+    or p_expected_account_version < 0
+    or p_action is null
+    or p_action <> all (array[
+      'backoffice.access.grantAdmin'::text,
+      'backoffice.access.grantSupport'::text,
+      'backoffice.access.revokeAdmin'::text,
+      'backoffice.access.revokeSupport'::text
+    ])
     or p_idempotency_key is null
     or p_request_id is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_role_change';
   end if;
 
-  expected_roles := private.canonical_platform_roles(p_expected_roles);
+  role_to_change := case
+    when p_action in ('backoffice.access.grantAdmin', 'backoffice.access.revokeAdmin')
+      then 'admin'
+    else 'support'
+  end;
+  enabled := p_action in ('backoffice.access.grantAdmin', 'backoffice.access.grantSupport');
   payload_hash := private.backoffice_payload_hash(
     pg_catalog.jsonb_build_object(
-      'enabled', p_enabled,
-      'expectedRoles', pg_catalog.to_jsonb(expected_roles),
-      'role', p_role,
+      'expectedAccountVersion', p_expected_account_version,
       'userId', p_target_user_id
     )
   );
@@ -4765,6 +4886,7 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
+    true,
     true
   );
 
@@ -4782,7 +4904,7 @@ begin
     and request.idempotency_key = p_idempotency_key;
 
   if found then
-    if existing_request.action <> 'backoffice.access.setRole'
+    if existing_request.action <> p_action
       or existing_request.payload_hash <> payload_hash
       or existing_request.target_type <> 'platform_role'
       or existing_request.target_id <> p_target_user_id
@@ -4813,27 +4935,27 @@ begin
   into current_profile
   from public.profiles as profile
   where profile.id = p_target_user_id
-  for share;
+  for update;
 
   if not found then
     raise exception using errcode = 'P0002', message = 'backoffice_user_missing';
   end if;
-  if p_enabled
+  if current_profile.account_version <> p_expected_account_version then
+    raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
+  end if;
+  if enabled
     and (current_profile.status <> 'active' or current_profile.completed_at is null)
   then
     raise exception using errcode = '42501', message = 'backoffice_role_target_ineligible';
   end if;
 
   current_roles := private.platform_roles_for_user(p_target_user_id);
-  if current_roles is distinct from expected_roles then
-    raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
-  end if;
-  if p_enabled = (p_role = any(current_roles)) then
+  if enabled = (role_to_change = any(current_roles)) then
     raise exception using errcode = '23514', message = 'backoffice_role_unchanged';
   end if;
 
-  if not p_enabled
-    and p_role = 'admin'
+  if not enabled
+    and role_to_change = 'admin'
     and current_profile.status = 'active'
     and current_profile.completed_at is not null
     and not exists (
@@ -4849,13 +4971,13 @@ begin
     raise exception using errcode = '23514', message = 'backoffice_last_active_admin_required';
   end if;
 
-  if p_enabled then
+  if enabled then
     insert into public.platform_roles (user_id, role, granted_by)
-    values (p_target_user_id, p_role, p_actor_user_id);
+    values (p_target_user_id, role_to_change, p_actor_user_id);
   else
     delete from public.platform_roles as platform_role
     where platform_role.user_id = p_target_user_id
-      and platform_role.role = p_role;
+      and platform_role.role = role_to_change;
     if not found then
       raise exception using errcode = '40001', message = 'backoffice_roles_conflict';
     end if;
@@ -4891,7 +5013,7 @@ begin
   values (
     p_actor_user_id,
     p_idempotency_key,
-    'backoffice.access.setRole',
+    p_action,
     payload_hash,
     private.backoffice_result_hash(result),
     'platform_role',
@@ -4914,7 +5036,7 @@ begin
     p_actor_user_id,
     actor_context.actor_role,
     case
-      when p_enabled then 'backoffice.role_granted'
+      when enabled then 'backoffice.role_granted'
       else 'backoffice.role_revoked'
     end,
     'platform_role',
@@ -4924,7 +5046,7 @@ begin
     p_idempotency_key,
     null,
     pg_catalog.jsonb_build_object(
-      'role', p_role,
+      'role', role_to_change,
       'roles', pg_catalog.to_jsonb(current_roles)
     )
   );
@@ -4934,10 +5056,10 @@ end;
 $$;
 
 
-ALTER FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Concede ou revoga support/admin com reautenticação, concorrência e proteção do último admin.';
+COMMENT ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") IS 'Deriva concessão ou revogação support/admin da ação explícita, com reautenticação, versão opaca e proteção do último admin.';
 
 
 
@@ -4992,7 +5114,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     null,
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -5186,7 +5309,9 @@ begin
     else 0
   end;
   new.account_version := old.account_version + case
-    when new.status is distinct from old.status then 1
+    when new.status is distinct from old.status
+      or new.account_version is distinct from old.account_version
+    then 1
     else 0
   end;
   new.updated_at := pg_catalog.clock_timestamp();
@@ -5198,7 +5323,7 @@ $$;
 ALTER FUNCTION "private"."set_profile_updated_at"() OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."set_profile_updated_at"() IS 'Atualiza timestamp e mantém versões independentes para identidade e status da conta.';
+COMMENT ON FUNCTION "private"."set_profile_updated_at"() IS 'Atualiza timestamp e mantém versões independentes para identidade e estado operacional da conta.';
 
 
 
@@ -5369,6 +5494,26 @@ $$;
 
 
 ALTER FUNCTION "private"."studio_result_hash"("p_result" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."touch_platform_role_account_version"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  update public.profiles as profile
+  set account_version = profile.account_version + 1
+  where profile.id = case when tg_op = 'DELETE' then old.user_id else new.user_id end;
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."touch_platform_role_account_version"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."touch_platform_role_account_version"() IS 'Avança a versão opaca de autorização em toda concessão ou revogação de papel.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."update_profile_appearance"("p_user_id" "uuid", "p_expected_preferences_version" bigint, "p_color_scheme" "text") RETURNS TABLE("user_id" "uuid", "person_type" "text", "status" "text", "name" "text", "phone_e164" "text", "tax_id_masked" "text", "additional_document_masked" "text", "profile_completed" boolean, "profile_version" bigint, "color_scheme" "text", "preferences_version" bigint)
@@ -6304,7 +6449,8 @@ begin
     p_auth_session_id,
     p_auth_expires_at,
     'admin',
-    false
+    false,
+    true
   );
 
   perform pg_catalog.pg_advisory_xact_lock(
@@ -7072,7 +7218,7 @@ CREATE TABLE IF NOT EXISTS "private"."backoffice_command_requests" (
     "result_profile_version" bigint,
     "result_auth_updated_at" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "backoffice_command_requests_action_check" CHECK (("action" = ANY (ARRAY['backoffice.user.restore'::"text", 'backoffice.user.suspend'::"text", 'backoffice.user.revealPii'::"text", 'backoffice.access.setRole'::"text", 'backoffice.taxonomy.upsert'::"text", 'backoffice.taxonomy.setActive'::"text"]))),
+    CONSTRAINT "backoffice_command_requests_action_check" CHECK (("action" = ANY (ARRAY['backoffice.user.restore'::"text", 'backoffice.user.suspend'::"text", 'backoffice.user.revealPii'::"text", 'backoffice.access.grantAdmin'::"text", 'backoffice.access.grantSupport'::"text", 'backoffice.access.revokeAdmin'::"text", 'backoffice.access.revokeSupport'::"text", 'backoffice.taxonomy.upsert'::"text", 'backoffice.taxonomy.setActive'::"text"]))),
     CONSTRAINT "backoffice_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "backoffice_command_requests_result_hash_check" CHECK ((("result_hash" IS NULL) OR ("result_hash" ~ '^[0-9a-f]{64}$'::"text"))),
     CONSTRAINT "backoffice_command_requests_result_shape_check" CHECK (((("action" = 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NULL) AND ("result_profile_version" IS NOT NULL) AND ("result_auth_updated_at" IS NOT NULL)) OR (("action" <> 'backoffice.user.revealPii'::"text") AND ("result_hash" IS NOT NULL) AND ("result_profile_version" IS NULL) AND ("result_auth_updated_at" IS NULL)))),
@@ -7094,7 +7240,7 @@ CREATE TABLE IF NOT EXISTS "private"."backoffice_sessions" (
     "last_seen_at" timestamp with time zone NOT NULL,
     "absolute_expires_at" timestamp with time zone NOT NULL,
     "closed_at" timestamp with time zone,
-    CONSTRAINT "backoffice_sessions_window_check" CHECK ((("last_seen_at" >= "opened_at") AND ("absolute_expires_at" > "opened_at") AND (("closed_at" IS NULL) OR ("closed_at" >= "opened_at"))))
+    CONSTRAINT "backoffice_sessions_window_check" CHECK ((("last_seen_at" >= "opened_at") AND ("absolute_expires_at" > "opened_at") AND (("closed_at" IS NULL) OR ("closed_at" >= "last_seen_at"))))
 );
 
 
@@ -7448,7 +7594,7 @@ COMMENT ON COLUMN "public"."profiles"."profile_version" IS 'Versão otimista mon
 
 
 
-COMMENT ON COLUMN "public"."profiles"."account_version" IS 'Versão otimista exclusiva do status da conta; não altera a versão da identidade nem a sincronização do recebedor.';
+COMMENT ON COLUMN "public"."profiles"."account_version" IS 'Versão otimista do estado operacional da conta: status e autorizações; não altera a versão da identidade nem a sincronização do recebedor.';
 
 
 
@@ -7972,6 +8118,10 @@ CREATE OR REPLACE TRIGGER "audit_events_protect_append_only" BEFORE DELETE OR UP
 
 
 
+CREATE OR REPLACE TRIGGER "backoffice_sessions_normalize_window" BEFORE INSERT OR UPDATE ON "private"."backoffice_sessions" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_backoffice_session_window"();
+
+
+
 CREATE OR REPLACE TRIGGER "amenities_set_updated_at" BEFORE UPDATE ON "public"."amenities" FOR EACH ROW EXECUTE FUNCTION "private"."set_studio_updated_at"();
 
 
@@ -7981,6 +8131,10 @@ CREATE OR REPLACE TRIGGER "owner_payment_recipients_enforce_state" BEFORE INSERT
 
 
 CREATE OR REPLACE TRIGGER "owner_profiles_enforce_state" BEFORE INSERT OR UPDATE ON "public"."owner_profiles" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_owner_profile_state"();
+
+
+
+CREATE OR REPLACE TRIGGER "platform_roles_touch_account_version" AFTER INSERT OR DELETE ON "public"."platform_roles" FOR EACH ROW EXECUTE FUNCTION "private"."touch_platform_role_account_version"();
 
 
 
@@ -8057,6 +8211,46 @@ CREATE OR REPLACE TRIGGER "terms_versions_protect_immutability" BEFORE DELETE OR
 
 
 CREATE OR REPLACE TRIGGER "user_preferences_set_updated_at" BEFORE UPDATE ON "public"."user_preferences" FOR EACH ROW EXECUTE FUNCTION "private"."set_user_preferences_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."amenities" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."owner_payment_recipients" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."owner_profiles" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."studio_faqs" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."studio_revisions" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."studio_types" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."studios" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."tags" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
+
+
+
+CREATE OR REPLACE TRIGGER "zzzz_normalize_updated_at" BEFORE UPDATE ON "public"."user_preferences" FOR EACH ROW EXECUTE FUNCTION "private"."normalize_updated_at_monotonic"();
 
 
 
@@ -8415,7 +8609,7 @@ REVOKE ALL ON FUNCTION "private"."backoffice_result_hash"("result" "jsonb") FROM
 
 
 
-REVOKE ALL ON FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION "private"."backoffice_session_context"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_required_role" "text", "p_require_strong_authentication" boolean, "p_touch_activity" boolean) FROM PUBLIC;
 
 
 
@@ -8538,6 +8732,11 @@ GRANT ALL ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_
 
 
 
+REVOKE ALL ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") TO "app_dal";
 
@@ -8584,6 +8783,14 @@ REVOKE ALL ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() FROM P
 
 
 REVOKE ALL ON FUNCTION "private"."mask_backoffice_email"("p_email" "text") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."normalize_backoffice_session_window"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."normalize_updated_at_monotonic"() FROM PUBLIC;
 
 
 
@@ -8648,8 +8855,8 @@ GRANT ALL ON FUNCTION "private"."set_backoffice_taxonomy_active"("p_actor_user_i
 
 
 
-REVOKE ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_roles" "text"[], "p_role" "text", "p_enabled" boolean, "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_backoffice_user_role"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid", "p_expected_account_version" bigint, "p_action" "text", "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
 
 
 
@@ -8679,6 +8886,10 @@ REVOKE ALL ON FUNCTION "private"."studio_editor_json"("p_user_id" "uuid", "p_stu
 
 
 REVOKE ALL ON FUNCTION "private"."studio_result_hash"("p_result" "jsonb") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."touch_platform_role_account_version"() FROM PUBLIC;
 
 
 

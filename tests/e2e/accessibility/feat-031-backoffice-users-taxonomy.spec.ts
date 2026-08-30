@@ -8,6 +8,7 @@ import {
   loginFeat031Backoffice,
   provisionFeat031Operator,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
+import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 
 test("SL-F031-E2E-007 @p1 backoffice passa axe, teclado, toque e 320 px sem revelar PII", async ({
   page,
@@ -44,6 +45,7 @@ test("SL-F031-E2E-007 @p1 backoffice passa axe, teclado, toque e 320 px sem reve
     expect(box?.height).toBeGreaterThanOrEqual(44);
     expect(box?.width).toBeGreaterThanOrEqual(44);
   } finally {
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [support] });
   }
 });

@@ -555,7 +555,7 @@ export function StudioTaxonomyContentPanel({
     enabled: editorIsVerified,
     initialData: initialTaxonomies,
     queryFn: ({ signal }) => readStudioTaxonomies(signal),
-    queryKey: studioQueryKeys.taxonomies,
+    queryKey: studioQueryKeys.taxonomies(userId),
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     retry: false,
@@ -638,7 +638,7 @@ export function StudioTaxonomyContentPanel({
     }
     if (!(await publish(editorResult.value))) return;
     if (kind === "taxonomy" && taxonomiesResult.status === "fulfilled") {
-      queryClient.setQueryData(studioQueryKeys.taxonomies, taxonomiesResult.value);
+      queryClient.setQueryData(studioQueryKeys.taxonomies(userId), taxonomiesResult.value);
     }
     setConflict({ failedReads: [], kind, pending: false, remote: editorResult.value });
   }

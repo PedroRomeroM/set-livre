@@ -21,6 +21,9 @@ export type BackofficeApiErrorCode =
   | "ORIGIN_INVALID"
   | "RATE_LIMITED"
   | "REAUTHENTICATION_REQUIRED"
+  | "RUNTIME_LOCKED"
+  | "RUNTIME_UNLOCK_DENIED"
+  | "RUNTIME_UNLOCK_UNAVAILABLE"
   | "SERVICE_UNAVAILABLE"
   | "SESSION_CHANGED"
   | "STALE_STATE"
@@ -74,7 +77,8 @@ function assertTrustedBackofficeRequest(request: Request, options?: { origin?: b
   }
   if (
     trusted.accessMode === "ssh-tunnel" &&
-    (request.headers.has("x-forwarded-host") || request.headers.has("x-forwarded-proto"))
+    (request.headers.get("x-forwarded-host") !== trusted.url.host ||
+      request.headers.get("x-forwarded-proto") !== "http")
   ) {
     throw new BackofficeApiError(403, "ORIGIN_INVALID", "A origem da solicitação não é permitida.");
   }
@@ -243,10 +247,14 @@ function backofficeErrorResponse(
 }
 
 const actionSchema = z.enum([
-  "backoffice.access.setRole",
+  "backoffice.access.grantAdmin",
+  "backoffice.access.grantSupport",
+  "backoffice.access.revokeAdmin",
+  "backoffice.access.revokeSupport",
   "backoffice.auth.login",
   "backoffice.auth.logout",
   "backoffice.auth.session",
+  "backoffice.auth.unlock",
   "backoffice.taxonomies.read",
   "backoffice.taxonomy.setActive",
   "backoffice.taxonomy.upsert",

@@ -700,7 +700,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v10" ]]');
     const httpsProbe = deployJob.slice(publicHttps, runtimeEnvironment);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
@@ -708,6 +708,11 @@ describe("production role provisioning", () => {
     expect(httpsProbe).toContain("User-agent: *\\nDisallow: /");
     expect(httpsProbe).toContain("X-Robots-Tag: noindex, nofollow, noarchive, nosnippet");
     const runtimeStep = deployJob.slice(runtimeEnvironment, releaseInspection);
+    expect(runtimeStep).toContain(
+      "BACKOFFICE_RUNTIME_UNLOCK_KEY: ${{ secrets.BACKOFFICE_RUNTIME_UNLOCK_KEY }}",
+    );
+    expect(runtimeStep).toContain('[[ "$BACKOFFICE_RUNTIME_UNLOCK_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]');
+    expect(runtimeStep).toContain("printf 'BACKOFFICE_RUNTIME_UNLOCK_KEY=%s\\n'");
     expect(runtimeStep).toContain("runtime_digest");
     expect(runtimeStep).toContain("sha256sum");
     expect(runtimeStep).toContain('echo "digest=$runtime_digest" >> "$GITHUB_OUTPUT"');

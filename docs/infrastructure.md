@@ -1,13 +1,13 @@
 # Infraestrutura, ambientes e deploy
 
-Esta é a fonte canônica da operação técnica. Decisões ficam nos ADRs 014, 019, 020 e 021; resultados
+Esta é a fonte canônica da operação técnica. Decisões ficam nos ADRs 014, 019, 020, 021 e 023; resultados
 de uma execução pertencem ao check, deployment ou PR que os produziu.
 
 ## Contrato vigente
 
 | Componente        | Contrato                                                                                       |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
-| desenvolvimento   | Windows nativo, Node 24.18, npm 11.19 e Supabase local em Docker Desktop                       |
+| desenvolvimento   | Windows nativo; Docker Engine oficial em WSL2 dedicado; Supabase local em loopback             |
 | produção de dados | Supabase Cloud `oirvvnojgkzdppkdvhej`, `sa-east-1`, sem branches remotas nesta fase            |
 | produção web      | Oracle E2 Micro Always Free-eligible x86_64, Ubuntu 24.04, 50 GB, IP reservado `147.15.97.227` |
 | origem web        | `https://147.15.97.227`, com indexação bloqueada até o go-live                                 |
@@ -21,7 +21,7 @@ local. `main` representa produção e só recebe mudanças pelo [ciclo obrigató
 
 ```mermaid
 flowchart LR
-    DEV[Windows + Supabase local] --> PR[Pull request]
+    DEV[Windows + WSL2 Docker Engine + Supabase local] --> PR[Pull request]
     PR --> CI[GitHub Actions Linux + Windows]
     CI --> MAIN[main aprovada]
     MAIN --> ART[Standalone Linux x86_64 por SHA]
@@ -50,11 +50,21 @@ o segundo mecanismo de deploy.
 
 `npm run local:setup` inicia a stack oficial da Supabase CLI, recria o banco e grava três arquivos
 ignorados: `.env.local`, `apps/backoffice/.env.local` e `.env.e2e.local`. O login DAL local é exclusivo,
-assume `app_dal` e não aceita host diferente de `127.0.0.1`.
+assume `app_dal` e não aceita host diferente de `127.0.0.1`. A mesma execução gera uma chave base64url
+de 32 bytes para `BACKOFFICE_RUNTIME_UNLOCK_KEY`, compartilhada somente entre o ambiente privado do
+backoffice e o runner E2E; ela nunca é versionada.
 
 O banco local contém somente dados QA descartáveis. Não há firewall customizado: a própria fronteira
-Docker é validada como local antes e depois de iniciar a stack, além de nunca reutilizar credencial ou
-dado de produção. Consulte [development.md](development.md).
+Docker é validada como local antes e depois de iniciar a stack. A distro `SetLivreDocker` hospeda
+somente o Engine oficial; o CLI Windows usa o contexto `set-livre-wsl` para
+`tcp://127.0.0.1:2375`. O wrapper inicia o serviço sob demanda, enquanto os timeouts oficiais de oito
+horas da distro e da VM WSL evitam interrupção durante uma jornada de desenvolvimento sem manter tarefa
+agendada.
+Aplicações e testes continuam nativos no Windows e nunca reutilizam credencial ou dado de produção.
+O runner Playwright reutiliza um pool PostgreSQL administrativo e um DAL por processo, com uma conexão
+e lease exclusivo por operação. Isso preserva transações no mesmo cliente e impede que conexões locais
+descartáveis esgotem o intervalo de portas efêmeras do Windows durante a suíte multibrowser.
+Consulte [development.md](development.md).
 
 ## CI e proteção de branch
 
@@ -491,7 +501,18 @@ e comprova `platform_roles` + `audit.events`; `insert` direto é proibido. Enqua
 go-live, o runtime usa `NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001` e o acesso humano abre
 `ssh -N -L 127.0.0.1:3001:127.0.0.1:3001 ubuntu@147.15.97.227`, então navega para
 `http://127.0.0.1:3001`. O processo remoto continua em loopback, sem virtual host Nginx; `Host` e
-`Origin` precisam coincidir exatamente e headers de proxy são recusados.
+`Origin` precisam coincidir exatamente. Os headers `x-forwarded-host` e `x-forwarded-proto` que o
+próprio Next normaliza precisam corresponder exatamente a `127.0.0.1:3001` e `http`; qualquer valor
+divergente é recusado.
+
+O EnvironmentFile privado do backoffice recebe também `BACKOFFICE_RUNTIME_UNLOCK_KEY`, uma chave
+base64url de 43 caracteres mantida no environment protegido `production`. O workflow valida formato e
+quebras de linha, transporta o arquivo efêmero separado do artifact e o instalador publica-o como
+`root:setlivre-backoffice 0640`. O processo converte a chave em cookies HttpOnly assinados de cinco
+minutos; o valor original não entra no bundle, release, log ou browser storage. O instalador exige o
+conjunto comum de variáveis nos dois arquivos, exige a chave somente no arquivo do backoffice e a recusa
+no arquivo público. O preflight `set-livre-deploy-ready-v10` distingue hosts que já validam esse contrato
+dos instaladores anteriores antes de qualquer upload ou migration.
 
 ## HTTPS por IP e DNS adiado
 
@@ -540,6 +561,7 @@ Secrets do environment `production`:
 
 - `SUPABASE_ACCESS_TOKEN`;
 - `SUPABASE_DB_PASSWORD`;
+- `BACKOFFICE_RUNTIME_UNLOCK_KEY`;
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
 

@@ -16,7 +16,11 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hostConfigurationFiles, packageRelease } from "../../scripts/release.mjs";
+import {
+  hostConfigurationFiles,
+  packageRelease,
+  releaseSensitiveValues,
+} from "../../scripts/release.mjs";
 
 const roots = [];
 const commit = "a".repeat(40);
@@ -120,6 +124,14 @@ describe("release package", () => {
       }),
     ).toThrow("valor sensível");
     expect(existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("classifies the backoffice runtime unlock key as release-sensitive", () => {
+    const runtimeUnlockKey = "A".repeat(43);
+
+    expect(releaseSensitiveValues({ BACKOFFICE_RUNTIME_UNLOCK_KEY: runtimeUnlockKey })).toContain(
+      runtimeUnlockKey,
+    );
   });
 
   it("materializes internal symbolic and hard links as independent regular files", () => {

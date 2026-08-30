@@ -6,9 +6,9 @@ import {
   type IdentitySession,
 } from "@set-livre/contracts";
 import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
-import { Pool } from "pg";
 import { z } from "zod";
 
+import { withE2EAdminClient } from "./e2e-database-preflight";
 import { gotoExpectedPage } from "./expected-page";
 import { cleanupLocalAuthUser } from "./local-auth-cleanup";
 import {
@@ -79,34 +79,41 @@ export function getFeat002PasswordControl(
   return page.getByLabel(feat002PasswordLabelPatterns[label]);
 }
 
-export async function stageFeat002PasswordForSubmission(control: Locator, password: string) {
+export async function stageFeat002PasswordForSubmission(
+  control: Locator,
+  password: string,
+  allowedControlNames: readonly string[] = ["password", "confirmPassword"],
+) {
   try {
     // `fill`/`type` include their value in Playwright step titles; `evaluate` keeps the title static.
     await control.waitFor({ state: "visible", timeout: 5_000 });
-    const staging = await control.evaluate((element, secret) => {
-      const inputConstructor = element.ownerDocument.defaultView?.HTMLInputElement;
-      if (inputConstructor === undefined || !(element instanceof inputConstructor)) {
-        return { code: "not-input" as const };
-      }
-      if (element.form === null) {
-        return { code: "form-missing" as const };
-      }
-      if (element.name !== "password" && element.name !== "confirmPassword") {
-        return { code: "name-not-allowed" as const };
-      }
-      if (element.value !== "") {
-        return { code: "input-not-empty" as const };
-      }
-      const name = element.name;
-      element.form.addEventListener(
-        "formdata",
-        (event) => {
-          event.formData.set(name, secret);
-        },
-        { once: true },
-      );
-      return { code: "staged" as const };
-    }, password);
+    const staging = await control.evaluate(
+      (element, input) => {
+        const inputConstructor = element.ownerDocument.defaultView?.HTMLInputElement;
+        if (inputConstructor === undefined || !(element instanceof inputConstructor)) {
+          return { code: "not-input" as const };
+        }
+        if (element.form === null) {
+          return { code: "form-missing" as const };
+        }
+        if (!input.allowedControlNames.includes(element.name)) {
+          return { code: "name-not-allowed" as const };
+        }
+        if (element.value !== "") {
+          return { code: "input-not-empty" as const };
+        }
+        const name = element.name;
+        element.form.addEventListener(
+          "formdata",
+          (event) => {
+            event.formData.set(name, input.secret);
+          },
+          { once: true },
+        );
+        return { code: "staged" as const };
+      },
+      { allowedControlNames: [...allowedControlNames], secret: password },
+    );
     if (staging.code !== "staged") {
       throw new Error(`O staging QA de senha falhou: code=${staging.code}.`);
     }
@@ -249,42 +256,23 @@ export async function logoutFeat002Identity(page: Page) {
 
 async function findExactLocalAuthUserId(email: string) {
   const recipientEmail = assertQaAuthEmail(email);
-  const [{ e2eDatabaseSafetyPreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
-  await e2eDatabaseSafetyPreflight();
-
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
-  });
-
   try {
-    const result = await pool.query<{ id: string }>(
-      `select id
-         from auth.users
-        where email = $1
-        limit 2`,
-      [recipientEmail],
-    );
-    const rows = authUserRowsSchema.safeParse(result.rows);
-    if (!rows.success || rows.data.length !== result.rowCount) {
-      throw new Error("O lookup local de limpeza Auth não retornou uma identidade exata.");
-    }
-    return rows.data[0]?.id;
+    return await withE2EAdminClient(async (client) => {
+      const result = await client.query<{ id: string }>(
+        `select id
+           from auth.users
+          where email = $1
+          limit 2`,
+        [recipientEmail],
+      );
+      const rows = authUserRowsSchema.safeParse(result.rows);
+      if (!rows.success || rows.data.length !== result.rowCount) {
+        throw new Error("O lookup local de limpeza Auth não retornou uma identidade exata.");
+      }
+      return rows.data[0]?.id;
+    });
   } catch {
     throw new Error("Não foi possível resolver a identidade Auth local para limpeza exata.");
-  } finally {
-    try {
-      await pool.end();
-    } catch {
-      throw new Error("Não foi possível encerrar a conexão local de limpeza Auth.");
-    }
   }
 }
 
