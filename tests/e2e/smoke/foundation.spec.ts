@@ -157,7 +157,7 @@ async function expectNonceProtectedDevelopmentPage(
   expectRawHtmlScriptsUseNonce(await secondResponse.text(), secondNonce);
 }
 
-test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundação", async ({
+test("FOUNDATION-E2E-001 fronteiras expõem somente superfícies autorizadas", async ({
   page,
   request,
 }) => {
@@ -170,7 +170,9 @@ test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundaçã
   });
 
   await expectNonceProtectedDevelopmentPage(page, request, backofficeBaseUrl, "Operação Set Livre");
-  await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toBeVisible();
+  await expect(page.getByText("Acesso restrito a operadores autorizados")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Entrar no backoffice" })).toBeVisible();
+  await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
 
   await expectNonceProtectedDevelopmentPage(page, request, "/", "Set Livre");
@@ -257,9 +259,9 @@ test("FOUNDATION-E2E-005 app público não expõe rota administrativa", async ({
 });
 
 test("FOUNDATION-E2E-006 composições respeitam o viewport configurado", async ({ page }) => {
-  for (const [url, heading] of [
-    ["/", "Set Livre"],
-    [backofficeBaseUrl, "Operação Set Livre"],
+  for (const [surface, url, heading] of [
+    ["public", "/", "Set Livre"],
+    ["backoffice", backofficeBaseUrl, "Operação Set Livre"],
   ] as const) {
     await gotoExpectedPage(page, url, heading);
     const hasHorizontalOverflow = await page.evaluate(
@@ -267,10 +269,13 @@ test("FOUNDATION-E2E-006 composições respeitam o viewport configurado", async 
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    const finalNote = page.getByText(
-      "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
-    );
-    await finalNote.scrollIntoViewIfNeeded();
-    await expect(finalNote).toBeInViewport();
+    const finalContent =
+      surface === "public"
+        ? page.getByText(
+            "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
+          )
+        : page.getByRole("button", { name: "Entrar no backoffice" });
+    await finalContent.scrollIntoViewIfNeeded();
+    await expect(finalContent).toBeInViewport();
   }
 });

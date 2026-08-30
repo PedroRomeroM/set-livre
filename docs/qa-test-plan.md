@@ -78,6 +78,11 @@ Os testes são serializados por padrão porque compartilham um banco local destr
 permanente nem `waitForTimeout`. O gate `docs:check` varre todos os specs TypeScript/TSX em
 `tests/e2e` e falha se encontrar `waitForTimeout`, `.only` ou `.skip`.
 
+Os cenários transversais usam marcadores semânticos próprios de cada superfície. A raiz pública ainda
+expõe o estado técnico; a raiz do backoffice, após a FEAT-031, redireciona visitantes sem sessão para
+a autenticação real. Responsividade, ampliação textual e reflow precisam validar o conteúdo terminal
+de cada aplicação, sem impor ao backoffice o placeholder removido.
+
 ## Segurança do E2E
 
 Antes de qualquer mutação, os helpers exigem:
