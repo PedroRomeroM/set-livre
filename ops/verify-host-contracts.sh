@@ -1250,7 +1250,8 @@ package_candidate() {
     | gzip --best --no-name > "$candidate_archive"
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
   write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
-  write_fixture_environment "$candidate_backoffice_environment" "$PRODUCTION_BACKOFFICE_APP_URL"
+  write_fixture_environment "$candidate_backoffice_environment" \
+    "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
   candidate_runtime_environment_digest="$(
     fixture_runtime_environment_digest \
       "$candidate_web_environment" "$candidate_backoffice_environment"
