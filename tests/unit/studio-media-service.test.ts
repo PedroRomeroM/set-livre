@@ -212,12 +212,17 @@ describe("studio media service", () => {
 
     await expect(executeStudioMediaCommand(command, context)).resolves.toEqual(gallery);
     expect(mocks.download).toHaveBeenCalledWith(mediaPath, expect.any(AbortSignal));
+    const processingSignal = mocks.download.mock.calls[0]?.[1];
     expect(mocks.verifyStudioMediaImage).toHaveBeenCalledWith(
       expect.any(Blob),
       candidate,
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({ signal: processingSignal }),
     );
-    expect(mocks.uploadPreview).toHaveBeenCalledWith(previewPath, new Uint8Array([1, 2, 3]));
+    expect(mocks.uploadPreview).toHaveBeenCalledWith(
+      previewPath,
+      new Uint8Array([1, 2, 3]),
+      processingSignal,
+    );
     expect(mocks.finalizeStudioMediaUpload).toHaveBeenCalledWith(
       expect.objectContaining({
         mediaId,

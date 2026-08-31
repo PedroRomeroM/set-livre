@@ -7,6 +7,7 @@ import { studioTestIds } from "./studio-test-fixture";
 
 const mediaId = "88888888-8888-4888-8888-888888888888";
 const mediaPath = `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.jpg`;
+const previewPath = mediaPath.replace(/\.jpg$/u, ".preview.webp");
 
 describe("trusted studio media storage", () => {
   afterEach(() => {
@@ -70,5 +71,79 @@ describe("trusted studio media storage", () => {
 
     expect(observedSignal).toBe(controller.signal);
     expect(observedCache).toBe("no-store");
+  });
+
+  it("aborts the underlying preview upload with the absolute server deadline", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    let observedSignal: AbortSignal | null | undefined;
+    const fetchImplementation: typeof fetch = vi.fn((_input, init) => {
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        if (observedSignal?.aborted) {
+          reject(observedSignal.reason);
+          return;
+        }
+        observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const controller = new AbortController();
+    const operation = createTrustedStudioMediaStorage(fetchImplementation).uploadPreview(
+      previewPath,
+      new Uint8Array([1, 2, 3]),
+      controller.signal,
+    );
+    const failure = expect(operation).rejects.toMatchObject({
+      name: "StudioMediaStorageError",
+      operation: "preview-upload",
+    });
+
+    await vi.waitFor(() => expect(observedSignal).toBe(controller.signal));
+    controller.abort(new Error("deadline reached"));
+    await failure;
+  });
+
+  it("uses the same deadline when a duplicate preview is verified for replay", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    const bytes = new Uint8Array([7, 8, 9]);
+    const requests: Array<Readonly<{ method: string; signal: AbortSignal | null | undefined }>> =
+      [];
+    const fetchImplementation: typeof fetch = vi.fn(async (_input, init) => {
+      requests.push({ method: init?.method ?? "GET", signal: init?.signal });
+      if (requests.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: "Duplicate",
+            message: "The resource already exists",
+            statusCode: "409",
+          }),
+          { headers: { "content-type": "application/json" }, status: 409 },
+        );
+      }
+      return new Response(bytes, { status: 200 });
+    });
+    const controller = new AbortController();
+
+    await expect(
+      createTrustedStudioMediaStorage(fetchImplementation).uploadPreview(
+        previewPath,
+        bytes,
+        controller.signal,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requests).toEqual([
+      { method: "POST", signal: controller.signal },
+      { method: "GET", signal: controller.signal },
+    ]);
   });
 });

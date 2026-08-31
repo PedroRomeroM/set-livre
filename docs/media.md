@@ -49,13 +49,14 @@ consomem.
    dimensões, orçamento total de pixels e checksum opcional; um decode mínimo prova que o conteúdo não
    é apenas um header. Download, decode e geração da prévia compartilham um único slot global, fila
    limitada e um deadline absoluto server-side de 15 segundos. O mesmo `AbortSignal` interrompe o
-   download e o tempo restante limita o Sharp, preservando a VM de 1 GiB sem liberar o slot antes do
-   trabalho subjacente terminar.
+   download, o upload da prévia e o download comparativo de replay; o tempo restante limita o Sharp,
+   preservando a VM de 1 GiB sem liberar o slot antes do trabalho subjacente terminar.
 6. Arquivo válido produz a prévia WebP privada; retry aceita uma derivada preexistente somente quando
    os bytes são exatamente iguais.
 7. O objeto vira `ready` e é associado à revisão na mesma transação. Arquivo inválido vira `rejected`
-   com `validation_failed`; ausência comprovada no Storage vira `object_missing`. Ambos liberam a cota
-   imediatamente, sem expor detalhe interno do decoder.
+   com `validation_failed`; ausência comprovada no Storage vira `object_missing`. A terminalização é
+   cercada pela identidade persistida da reserva, não pela versão mutável da galeria, e ambos liberam
+   a cota imediatamente sem expor detalhe interno do decoder.
 8. O retorno autoritativo substitui a galeria privada e invalida o editor relacionado.
 
 O download de verificação é bounded e não transforma a VM em proxy de upload. Erro de rede ou resposta

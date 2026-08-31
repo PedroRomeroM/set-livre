@@ -70,13 +70,14 @@
                 FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. A
                 FEAT-008 está em validação no PR incremental: galeria privada versionada, upload
                 direto ao Storage com verificação autoritativa, originais preservados, prévias WebP
-                limitadas e assinadas, deadline server-side único de 15 segundos e cleanup de ambos
-                os objetos pela Storage API em Function imutável por SHA. Recusa de upload só libera
-                renovação depois de o servidor persistir a ausência do objeto; clones conservam o
-                path imutável da revisão de origem e descartar uma draft expulsa sua galeria privada
-                do cache. O mesmo PR contém núcleo/revisões e conteúdo de estúdio, além do
-                backoffice separado para usuários, comandos explícitos de suspensão/restauração, PII
-                temporária auditada, papéis
+                limitadas e assinadas, deadline server-side único de 15 segundos que aborta
+                download, geração e upload da prévia, e cleanup de ambos os objetos pela Storage API
+                em Function imutável por SHA. Recusa de upload libera a reserva pela identidade
+                persistida mesmo se outra aba avançar a galeria, e só então autoriza renovação;
+                clones conservam o path imutável da revisão de origem e descartar uma draft expulsa
+                sua galeria privada do cache. O mesmo PR contém núcleo/revisões e conteúdo de
+                estúdio, além do backoffice separado para usuários, comandos explícitos de
+                suspensão/restauração, PII temporária auditada, papéis
                 <code>support/admin</code> e administração versionada de taxonomias por ações
                 explícitas de arquivar/reativar, sem status escolhido pelo cliente. O diretório não
                 entrega nome bruto nem papéis ao browser; a autorização permanece no servidor e o

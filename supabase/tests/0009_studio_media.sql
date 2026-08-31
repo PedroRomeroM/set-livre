@@ -1944,6 +1944,14 @@ select matches(
   'lock da revisão contabiliza pendentes e impede a vigésima primeira mídia'
 );
 
+update public.studio_revisions as revision
+set revision_version = revision.revision_version + 1
+where revision.id = (
+    pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+      #>> '{revision,id}'
+  )::uuid
+  and revision.revision_version = 1;
+
 set local role app_dal;
 select pg_catalog.set_config(
   'set_livre.test.f008_limit_reject',
@@ -1976,7 +1984,7 @@ select pg_catalog.set_config(
       pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
         #>> '{revision,id}'
     )::uuid,
-    1,
+    2,
     '8a000000-0000-4000-8000-000000000002',
     '8a000000-0000-4000-8000-000000000003',
     'image/jpeg',
@@ -1990,8 +1998,12 @@ reset role;
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_limit_reject')::jsonb
       ->> 'rejectionCode' = 'object_missing'
+    and pg_catalog.current_setting('set_livre.test.f008_limit_reject')::jsonb
+      ->> 'revisionVersion' = '1'
     and pg_catalog.current_setting('set_livre.test.f008_limit_replacement')::jsonb
       ->> 'mediaId' is not null
+    and pg_catalog.current_setting('set_livre.test.f008_limit_replacement')::jsonb
+      ->> 'revisionVersion' = '2'
     and (
       select pg_catalog.count(*) filter (where media.status = 'pending_upload') = 20
         and pg_catalog.count(*) filter (
@@ -2004,7 +2016,7 @@ select ok(
           #>> '{revision,id}'
       )::uuid
     ),
-  'rejeição server-side libera a quota antes de preparar uma identidade de upload nova'
+  'rejeição por identidade libera a quota mesmo após a versão da galeria avançar'
 );
 
 set local role app_dal;

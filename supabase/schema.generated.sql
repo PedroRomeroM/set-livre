@@ -5410,8 +5410,6 @@ CREATE OR REPLACE FUNCTION "private"."reject_studio_media_upload"("p_user_id" "u
     SET "search_path" TO ''
     AS $$
 declare
-  draft_revision_id uuid;
-  draft_revision_version bigint;
   media public.studio_media%rowtype;
   rejected_time timestamptz := pg_catalog.clock_timestamp();
   result jsonb;
@@ -5433,21 +5431,34 @@ begin
     pg_catalog.hashtextextended('studio-media-reject:' || p_media_id::text, 0)
   );
   perform private.assert_studio_owner_mutable(p_user_id);
-  select locked.locked_revision_id, locked.locked_revision_version
-  into draft_revision_id, draft_revision_version
-  from private.lock_studio_media_revision(
-    p_user_id,
-    p_studio_id,
-    p_expected_revision_id,
-    p_expected_revision_version
-  ) as locked;
+
+  perform studio.id
+  from public.studios as studio
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+
+  perform revision.id
+  from public.studio_revisions as revision
+  where revision.id = p_expected_revision_id
+    and revision.studio_id = p_studio_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
 
   select candidate.*
   into media
   from public.studio_media as candidate
   where candidate.id = p_media_id
     and candidate.studio_id = p_studio_id
-    and candidate.prepared_revision_id = draft_revision_id
+    and candidate.prepared_revision_id = p_expected_revision_id
+    and candidate.uploaded_by = p_user_id
   for update;
 
   if not found then
@@ -5475,8 +5486,8 @@ begin
       p_studio_id,
       pg_catalog.jsonb_build_object(
         'mediaId', p_media_id,
-        'revisionId', draft_revision_id,
-        'revisionVersion', draft_revision_version,
+        'revisionId', p_expected_revision_id,
+        'revisionVersion', p_expected_revision_version,
         'rejectionCode', p_rejection_code
       )
     );
@@ -5488,8 +5499,8 @@ begin
   result := pg_catalog.jsonb_build_object(
     'scope', p_user_id,
     'studioId', p_studio_id,
-    'revisionId', draft_revision_id,
-    'revisionVersion', draft_revision_version,
+    'revisionId', p_expected_revision_id,
+    'revisionVersion', p_expected_revision_version,
     'mediaId', p_media_id,
     'status', 'rejected',
     'rejectionCode', p_rejection_code,
@@ -5503,7 +5514,7 @@ $$;
 ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza uma reserva pendente com motivo server-side permitido; replay preserva o primeiro fato e libera a quota imediatamente.';
+COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza a reserva pela identidade persistida, sem depender da versão corrente da galeria; replay preserva o primeiro fato e libera a quota imediatamente.';
 
 
 

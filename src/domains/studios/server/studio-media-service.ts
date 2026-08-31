@@ -169,7 +169,11 @@ export async function executeStudioMediaCommand(
               "A foto enviada não corresponde ao tipo, tamanho ou conteúdo informado.",
             );
           }
-          await storage.uploadPreview(candidate.previewPath, verified.previewBytes);
+          await storage.uploadPreview(
+            candidate.previewPath,
+            verified.previewBytes,
+            deadline.signal,
+          );
           return verified.verification;
         });
         return storage.signGalleryPreviews(

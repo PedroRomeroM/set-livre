@@ -34,8 +34,12 @@ export type StudioMediaStorage = Readonly<{
   createUploadToken: (path: string) => Promise<string>;
   download: (path: string, signal: AbortSignal) => Promise<Blob>;
   signGalleryPreviews: (gallery: StudioMediaGalleryRecord) => Promise<StudioMediaGallery>;
-  uploadPreview: (path: string, bytes: Uint8Array) => Promise<void>;
+  uploadPreview: (path: string, bytes: Uint8Array, signal: AbortSignal) => Promise<void>;
 }>;
+
+type StudioMediaBucket = ReturnType<StorageClient["from"]>;
+type StudioMediaBucketFactory = (signal?: AbortSignal) => StudioMediaBucket;
+type StudioMediaFetch = NonNullable<ConstructorParameters<typeof StorageClient>[2]>;
 
 function storageObjectWasNotFound(error: unknown) {
   return (
@@ -51,19 +55,34 @@ function storageObjectAlreadyExists(error: unknown) {
 }
 
 async function existingPreviewMatches(
-  bucket: ReturnType<StorageClient["from"]>,
+  bucket: StudioMediaBucket,
   path: string,
   expected: Uint8Array,
+  signal: AbortSignal,
 ) {
-  const { data, error } = await bucket.download(path);
+  const { data, error } = await bucket.download(path, {}, { cache: "no-store", signal });
   if (error !== null) throw new StudioMediaStorageError("preview-upload");
   const actual = Buffer.from(await data.arrayBuffer());
   const expectedBuffer = Buffer.from(expected);
   return actual.byteLength === expectedBuffer.byteLength && timingSafeEqual(actual, expectedBuffer);
 }
 
-function createStudioMediaStorage(client: Pick<StorageClient, "from">): StudioMediaStorage {
-  const bucket = client.from(studioMediaBucket);
+function createDeadlineFetch(
+  fetchImplementation: StudioMediaFetch,
+  deadlineSignal: AbortSignal,
+): StudioMediaFetch {
+  return (input, init) => {
+    const requestSignal = init?.signal;
+    const signal =
+      requestSignal === undefined || requestSignal === null || requestSignal === deadlineSignal
+        ? deadlineSignal
+        : AbortSignal.any([deadlineSignal, requestSignal]);
+    return fetchImplementation(input, { ...init, signal });
+  };
+}
+
+function createStudioMediaStorage(createBucket: StudioMediaBucketFactory): StudioMediaStorage {
+  const bucket = createBucket();
 
   return {
     async createUploadToken(rawPath) {
@@ -125,9 +144,10 @@ function createStudioMediaStorage(client: Pick<StorageClient, "from">): StudioMe
       return { ...gallery, items: previews, previewExpiresAt };
     },
 
-    async uploadPreview(rawPath, bytes) {
+    async uploadPreview(rawPath, bytes, signal) {
       const path = studioMediaPreviewPathSchema.parse(rawPath);
-      const { error } = await bucket.upload(path, bytes, {
+      const deadlineBucket = createBucket(signal);
+      const { error } = await deadlineBucket.upload(path, bytes, {
         cacheControl: String(studioMediaPrivateCacheSeconds),
         contentType: "image/webp",
         upsert: false,
@@ -135,7 +155,7 @@ function createStudioMediaStorage(client: Pick<StorageClient, "from">): StudioMe
       if (error === null) return;
       if (
         storageObjectAlreadyExists(error) &&
-        (await existingPreviewMatches(bucket, path, bytes))
+        (await existingPreviewMatches(deadlineBucket, path, bytes, signal))
       ) {
         return;
       }
@@ -149,7 +169,12 @@ export function createTrustedStudioMediaStorage(
 ) {
   const environment = readTrustedSupabaseEnvironment();
   const storageOrigin = new URL("/storage/v1", environment.supabaseOrigin).href.replace(/\/$/u, "");
-  return createStudioMediaStorage(
-    new StorageClient(storageOrigin, { apikey: environment.secretKey }, fetchImplementation),
+  const trustedFetch = fetchImplementation ?? globalThis.fetch;
+  return createStudioMediaStorage((signal) =>
+    new StorageClient(
+      storageOrigin,
+      { apikey: environment.secretKey },
+      signal === undefined ? trustedFetch : createDeadlineFetch(trustedFetch, signal),
+    ).from(studioMediaBucket),
   );
 }

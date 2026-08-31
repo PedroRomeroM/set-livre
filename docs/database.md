@@ -25,7 +25,7 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260830204500_backoffice_taxonomy_explicit_transitions`,
 `20260831021612_harden_studio_reads_and_backoffice_search` e
 `20260831082000_feat_008_studio_media` e o hardening append-only
-`20260831170000_harden_studio_media_review_findings`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260831192100_harden_studio_media_terminal_rejection`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
@@ -315,7 +315,9 @@ Constraints:
 - transições de estado seguem somente o ciclo permitido;
 - relação só pode ser alterada em revisão draft e referencia mídia `ready` do mesmo estúdio;
 - no máximo 20 associações ou candidatos pendentes por revisão, sob lock; `rejected` deixa a quota
-  imediatamente, mas preserva o objeto até a janela segura de cleanup;
+  imediatamente, mesmo quando a revisão avançou durante a verificação, porque a transição terminal é
+  cercada por `media_id/studio_id/prepared_revision_id/uploaded_by`, mas preserva o objeto até a janela
+  segura de cleanup;
 - candidato `pending_upload` expirado não consome cota e não pode ser finalizado; renovação cria nova
   identidade, enquanto o objeto anterior segue para cleanup;
 - remover a última associação agenda o par de objetos para cleanup em vez de apagar linha do Storage.
