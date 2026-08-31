@@ -570,8 +570,10 @@ Secrets do environment `production`:
 Depois do `db push`, o workflow executa o seed declarativo de buckets e exige `studio-media` privado,
 limite exato de 15 MiB e apenas JPEG/PNG/WebP/AVIF. Em seguida publica uma Edge Function imutável
 `media-cleanup-<SHA>`; ausência ou drift do bucket interrompe a entrega antes de habilitar a aplicação.
-A fonte canônica dessa Function é TypeScript estrito (`index.ts` e `cleanup-core.ts`): o CI executa
-`deno check` diretamente nesse grafo e copia o diretório sem renomear ou trocar extensões antes do deploy.
+A fonte canônica dessa Function é TypeScript estrito (`index.ts` e `cleanup-core.ts`). O Deno 2.9.5
+fica fixado no lockfile npm e o `npm run typecheck` executa `deno check` diretamente nesse grafo em
+Linux e Windows; assim o CI preserva a política que recusa Actions externas e copia o diretório sem
+renomear ou trocar extensões antes do deploy.
 
 O cleanup de mídia não adiciona segredo ao GitHub. No começo do job, o workflow usa o
 `SUPABASE_ACCESS_TOKEN` já protegido para ler pela Management API exatamente a secret key moderna

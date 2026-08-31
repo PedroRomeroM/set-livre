@@ -65,18 +65,8 @@ jobs:
       - name: Set up npm
         run: npm install --global npm@11.19.0
 
-      - name: Set up Deno
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
-        with:
-          deno-version: 2.9.5
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Type-check canonical Edge Functions
-        run: >-
-          deno check --frozen --config supabase/functions/media-cleanup/deno.json
-          supabase/functions/media-cleanup/index.ts
 
       - name: Migration immutability gate
         env:

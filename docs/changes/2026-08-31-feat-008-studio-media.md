@@ -28,6 +28,10 @@ um teste comportamental intercepta o request real do adapter. O canário usa loc
 checkpoints abandonados depois de 30 minutos, mas só os encerra após a Storage API comprovar ambos os
 paths como `404/NoSuchKey`.
 
+O Deno 2.9.5 que valida a Edge Function fica preso ao `package-lock.json` e integra o gate raiz de
+typecheck nos runners Linux e Windows. O workflow não depende de Action externa e continua compatível
+com a allowlist restrita do repositório.
+
 ## Evidência requerida antes do commit
 
 - reset completo do Supabase local e tipos/schema regenerados;

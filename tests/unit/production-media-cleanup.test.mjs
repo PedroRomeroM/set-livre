@@ -222,6 +222,9 @@ function createProductionHarness({
 describe("production media cleanup configuration", () => {
   it("deploys and checks the canonical TypeScript source without scheduler or extension rename", () => {
     const workflow = readFileSync(resolve(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
+    const packageConfiguration = JSON.parse(
+      readFileSync(resolve(repositoryRoot, "package.json"), "utf8"),
+    );
     const supabaseConfig = readFileSync(resolve(repositoryRoot, "supabase/config.toml"), "utf8");
     const functionDirectory = resolve(repositoryRoot, "supabase/functions/media-cleanup");
 
@@ -232,9 +235,14 @@ describe("production media cleanup configuration", () => {
     expect(existsSync(resolve(functionDirectory, "index.js"))).toBe(false);
     expect(existsSync(resolve(functionDirectory, "cleanup-core.mjs"))).toBe(false);
     expect(supabaseConfig).toContain('entrypoint = "./functions/media-cleanup/index.ts"');
-    expect(workflow).toContain(
-      "deno check --frozen --config supabase/functions/media-cleanup/deno.json",
+    expect(packageConfiguration.scripts.typecheck).toContain("npm run typecheck:edge");
+    expect(packageConfiguration.scripts["typecheck:edge"]).toBe(
+      "deno check --frozen --config supabase/functions/media-cleanup/deno.json " +
+        "supabase/functions/media-cleanup/index.ts",
     );
+    expect(packageConfiguration.devDependencies.deno).toBe("2.9.5");
+    expect(workflow).toContain("run: npm run typecheck");
+    expect(workflow).not.toContain("denoland/setup-deno");
     expect(workflow).toContain("--read-active-release-sha");
     expect(workflow).toContain(
       "ACTIVE_PUBLIC_RELEASE_SHA: ${{ steps.active_public_release.outputs.sha }}",

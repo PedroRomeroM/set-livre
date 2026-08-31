@@ -193,8 +193,9 @@
           mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
           servidores E2E usam um perfil explícito que suporta a matriz multibrowser sem alterar os
           limites de produção, e o preflight rejeita qualquer identidade QA residual. O CI valida
-          diretamente com <code>deno check</code> a fonte TypeScript estrita da Edge Function de
-          cleanup e implanta o mesmo grafo sem renomear extensões. O ledger terminaliza
+          pelo gate raiz de typecheck, usando Deno 2.9.5 fixado no lockfile, a fonte TypeScript
+          estrita da Edge Function de cleanup em Linux e Windows; nenhuma Action externa é
+          necessária, e o deploy implanta o mesmo grafo sem renomear extensões. O ledger terminaliza
           automaticamente runs abandonados depois de 30 minutos e exige sucesso posterior para
           restaurar readiness. O canário é serializado, recupera probes abandonados e só registra
           ausência física após <code>404/NoSuchKey</code>; a secret key moderna trafega apenas em
