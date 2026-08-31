@@ -7,6 +7,8 @@ import {
   backofficeUserSummarySchema,
   platformRolesSchema,
 } from "@set-livre/contracts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -14,13 +16,24 @@ import {
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
+import { useBackofficeHydrated } from "../../apps/backoffice/src/domains/backoffice/components/use-backoffice-hydrated";
 import { backofficeAuthNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/auth-rate-limit-profile";
 
 const actorId = "10000000-0000-4000-8000-000000000001";
 const targetId = "10000000-0000-4000-8000-000000000002";
 const idempotencyKey = "10000000-0000-4000-8000-000000000003";
 
+function BackofficeHydrationProbe() {
+  return createElement("span", null, useBackofficeHydrated() ? "open" : "closed");
+}
+
 describe("backoffice contracts", () => {
+  it("exposes a closed server snapshot for backoffice hydration boundaries", () => {
+    expect(renderToStaticMarkup(createElement(BackofficeHydrationProbe))).toBe(
+      "<span>closed</span>",
+    );
+  });
+
   it("accepts only the canonical runtime unlock key format", () => {
     const runtimeKey = "A".repeat(43);
     expect(backofficeRuntimeUnlockPayloadSchema.parse({ key: runtimeKey })).toEqual({
@@ -237,7 +250,31 @@ describe("backoffice contracts", () => {
         action: "backoffice.taxonomy.setActive",
         expectedScope: actorId,
         idempotencyKey,
-        payload: { active: false, id: targetId, kind: "tag" },
+        payload: { active: false, expectedVersion: 2, id: targetId, kind: "tag" },
+      }).success,
+    ).toBe(false);
+    expect(
+      backofficeCommandSchema.parse({
+        action: "backoffice.taxonomy.archive",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { expectedVersion: 2, id: targetId, kind: "tag" },
+      }),
+    ).toMatchObject({ action: "backoffice.taxonomy.archive" });
+    expect(
+      backofficeCommandSchema.parse({
+        action: "backoffice.taxonomy.reactivate",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { expectedVersion: 3, id: targetId, kind: "tag" },
+      }),
+    ).toMatchObject({ action: "backoffice.taxonomy.reactivate" });
+    expect(
+      backofficeCommandSchema.safeParse({
+        action: "backoffice.taxonomy.archive",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { active: false, expectedVersion: 2, id: targetId, kind: "tag" },
       }).success,
     ).toBe(false);
     expect(

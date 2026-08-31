@@ -18,6 +18,7 @@ import {
   notifyBackofficeSessionChanged,
   subscribeToBackofficeSessionChanges,
 } from "./session-events";
+import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
 
@@ -36,6 +37,7 @@ export function BackofficeShell({
   navigation: ReactNode;
   session: AuthenticatedSession;
 }>) {
+  const isHydrated = useBackofficeHydrated();
   const router = useRouter();
   const queryClient = useQueryClient();
   const intentionalLogout = useRef(false);
@@ -116,6 +118,8 @@ export function BackofficeShell({
     currentSessionData?.authenticated === true
       ? currentSessionData.runtimeUnlockExpiresAt
       : session.runtimeUnlockExpiresAt;
+  const runtimeControlsDisabled =
+    !isHydrated || !currentSession.isFetchedAfterMount || unlock.isPending;
 
   if (privateViewUnsafe) {
     return (
@@ -148,9 +152,22 @@ export function BackofficeShell({
         </div>
       </header>
       {navigation}
+      {isHydrated ? null : (
+        <p className={styles.runtimeUnlockPreparation} role="status">
+          Preparando o desbloqueio seguro…
+        </p>
+      )}
+      <noscript>
+        <p className={styles.globalError} role="alert">
+          Habilite o JavaScript e recarregue a página para desbloquear operações críticas.
+        </p>
+      </noscript>
       <form
         aria-label="Desbloqueio de operações críticas"
+        aria-busy={runtimeControlsDisabled}
         className={styles.runtimeUnlock}
+        inert={!isHydrated}
+        method="post"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
@@ -160,35 +177,42 @@ export function BackofficeShell({
         }}
         ref={unlockForm}
       >
-        <Field
-          description="A chave não é armazenada no navegador. O desbloqueio expira em cinco minutos."
-          label="Chave local de desbloqueio"
-          required
-        >
-          <PasswordInput autoComplete="off" name="runtimeUnlockKey" />
-        </Field>
-        <Button
-          disabled={!currentSession.isFetchedAfterMount}
-          loading={unlock.isPending}
-          loadingLabel="Desbloqueando"
-          type="submit"
-        >
-          Desbloquear operações
-        </Button>
-        {runtimeUnlockExpiresAt === null ? (
-          <p className={styles.muted}>Operações críticas bloqueadas neste runtime.</p>
-        ) : (
-          <p role="status">
-            Operações desbloqueadas até{" "}
-            {new Date(runtimeUnlockExpiresAt).toLocaleTimeString("pt-BR", {
-              timeZone: "America/Sao_Paulo",
-            })}
-            .
-          </p>
-        )}
-        {unlock.isError ? (
-          <Alert variant="error">{runtimeUnlockErrorMessage(unlock.error)}</Alert>
-        ) : null}
+        <fieldset className={styles.runtimeUnlockBoundary} disabled={!isHydrated}>
+          <Field
+            description="A chave não é armazenada no navegador. O desbloqueio expira em cinco minutos."
+            label="Chave local de desbloqueio"
+            required
+          >
+            <PasswordInput
+              autoComplete="off"
+              disabled={runtimeControlsDisabled}
+              maxLength={43}
+              name="runtimeUnlockKey"
+            />
+          </Field>
+          <Button
+            disabled={runtimeControlsDisabled}
+            loading={unlock.isPending}
+            loadingLabel="Desbloqueando"
+            type="submit"
+          >
+            Desbloquear operações
+          </Button>
+          {runtimeUnlockExpiresAt === null ? (
+            <p className={styles.muted}>Operações críticas bloqueadas neste runtime.</p>
+          ) : (
+            <p role="status">
+              Operações desbloqueadas até{" "}
+              {new Date(runtimeUnlockExpiresAt).toLocaleTimeString("pt-BR", {
+                timeZone: "America/Sao_Paulo",
+              })}
+              .
+            </p>
+          )}
+          {unlock.isError ? (
+            <Alert variant="error">{runtimeUnlockErrorMessage(unlock.error)}</Alert>
+          ) : null}
+        </fieldset>
       </form>
       {logout.isError ? (
         <p className={styles.globalError} role="alert">

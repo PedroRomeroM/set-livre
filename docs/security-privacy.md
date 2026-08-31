@@ -27,9 +27,13 @@ concreto, conforme ADR-022.
   SSR;
 - conta suspensa não executa comando e backoffice revalida papel no servidor.
 
-Os formulários com segredo não podem funcionar antes da hidratação se isso permitir fallback GET. Rede,
-timeout ou resposta inválida depois de uma possível publicação de sessão são tratados como ambíguos e
-terminais, com cleanup restrito aos cookies canônicos.
+Os formulários com segredo não podem funcionar antes da hidratação se isso permitir fallback HTTP ou
+perda silenciosa de entrada quando o React assume o HTML. Cadastro público, login operacional e chave
+local usam estado servidor-fechado, `inert`, método POST e controles nativos desabilitados; a
+ausência de JavaScript mantém a fronteira fechada e mostra recuperação explícita por habilitação e
+reload. A reautenticação de papel só é criada depois de uma ação já hidratada. Rede, timeout ou resposta inválida
+depois de uma possível publicação de sessão são tratados como ambíguos e terminais, com cleanup restrito
+aos cookies canônicos.
 
 ## Autorização e banco
 

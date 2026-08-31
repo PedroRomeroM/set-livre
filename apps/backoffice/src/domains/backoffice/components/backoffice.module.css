@@ -101,11 +101,25 @@
   font-weight: 700;
 }
 
+.runtimeUnlockPreparation {
+  width: min(100% - 2rem, 78rem);
+  margin: 1rem auto -0.5rem;
+  color: var(--sl-color-ink-muted);
+}
+
+.hydrationStatus {
+  margin: 0;
+  color: var(--sl-color-ink-muted);
+}
+
+.secureFormBoundary {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .runtimeUnlock {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  align-items: end;
   width: min(100% - 2rem, 78rem);
   margin: 1rem auto 0;
   padding: 1rem;
@@ -114,8 +128,19 @@
   border-radius: var(--sl-radius-lg);
 }
 
-.runtimeUnlock p,
-.runtimeUnlock [role="alert"] {
+.runtimeUnlockBoundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.runtimeUnlockBoundary p,
+.runtimeUnlockBoundary [role="alert"] {
   grid-column: 1 / -1;
   margin: 0;
 }
@@ -306,11 +331,11 @@
 
   .taxonomyForm,
   .definitionList,
-  .runtimeUnlock {
+  .runtimeUnlockBoundary {
     grid-template-columns: 1fr;
   }
 
-  .runtimeUnlock > button {
+  .runtimeUnlockBoundary > button {
     width: 100%;
   }
 

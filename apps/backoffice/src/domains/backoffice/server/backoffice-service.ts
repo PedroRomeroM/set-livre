@@ -16,7 +16,7 @@ import {
   listBackofficeTaxonomies,
   listBackofficeUsers,
   revealBackofficeUserPii,
-  setBackofficeTaxonomyActive,
+  transitionBackofficeTaxonomy,
   setBackofficeUserRole,
   setBackofficeUserStatus,
   upsertBackofficeTaxonomy,
@@ -156,8 +156,9 @@ export async function executeBackofficeCommand(commandInput: BackofficeCommand, 
       case "backoffice.taxonomy.upsert":
         data = await upsertBackofficeTaxonomy({ auth: route.auth, command, requestId });
         break;
-      case "backoffice.taxonomy.setActive":
-        data = await setBackofficeTaxonomyActive({ auth: route.auth, command, requestId });
+      case "backoffice.taxonomy.archive":
+      case "backoffice.taxonomy.reactivate":
+        data = await transitionBackofficeTaxonomy({ auth: route.auth, command, requestId });
         break;
     }
     return { data, responseHeaders: route.responseHeaders };

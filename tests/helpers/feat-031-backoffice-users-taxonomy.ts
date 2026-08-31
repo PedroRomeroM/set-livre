@@ -105,12 +105,17 @@ export async function loginFeat031Backoffice(
   const login = await page.goto(`${safeE2EEnvironment.backofficeBaseUrl}/entrar`);
   expect(login?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Operação Set Livre" })).toBeVisible();
-  await page.getByRole("textbox", { name: "E-mail" }).fill(operator.email);
-  await stageFeat002PasswordForSubmission(
-    getFeat002PasswordControl(page, "Senha"),
-    operator.password,
-  );
-  await page.getByRole("button", { name: "Entrar no backoffice" }).click();
+  const emailControl = page.getByRole("textbox", { name: "E-mail" });
+  const passwordControl = getFeat002PasswordControl(page, "Senha");
+  const submit = page.getByRole("button", { name: "Entrar no backoffice" });
+  await expect(page.getByText("Preparando o acesso seguro…", { exact: true })).toHaveCount(0);
+  await expect(emailControl).toBeEnabled();
+  await expect(passwordControl).toBeEnabled();
+  await expect(submit).toBeEnabled();
+  await emailControl.fill(operator.email);
+  await stageFeat002PasswordForSubmission(passwordControl, operator.password);
+  await expect(emailControl).toHaveValue(operator.email);
+  await submit.click();
   await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toBe("/usuarios");
   await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
   if (options.unlockRuntime === false) return;
@@ -119,12 +124,16 @@ export async function loginFeat031Backoffice(
 
 export async function unlockFeat031Backoffice(page: Page) {
   const safeE2EEnvironment = readSafeE2EEnvironment();
+  const runtimeKeyControl = page.getByLabel("Chave local de desbloqueio");
+  const submit = page.getByRole("button", { name: "Desbloquear operações" });
+  await expect(runtimeKeyControl).toBeEnabled();
+  await expect(submit).toBeEnabled();
   await stageFeat002PasswordForSubmission(
-    page.getByLabel("Chave local de desbloqueio"),
+    runtimeKeyControl,
     safeE2EEnvironment.backofficeRuntimeUnlockKey,
     ["runtimeUnlockKey"],
   );
-  await page.getByRole("button", { name: "Desbloquear operações" }).click();
+  await submit.click();
   await expect(
     page.getByRole("status").filter({ hasText: "Operações desbloqueadas" }),
   ).toBeVisible();

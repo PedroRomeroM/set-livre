@@ -1919,6 +1919,7 @@ describe("local tooling contracts", () => {
         },
         platform: "win32",
         resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+        root: "C:\\Users\\thefe\\set-livre",
       });
     } catch (error) {
       thrown = String(error);
@@ -1927,6 +1928,7 @@ describe("local tooling contracts", () => {
     expect(invocations[0]?.command).toBe("wsl.exe");
     expect(invocations[1]?.argumentsList).toContain("SetLivreDocker");
     expect(invocations[1]?.argumentsList).toContain("/usr/bin/supabase");
+    expect(invocations[1]?.argumentsList).toContain("/mnt/c/Users/thefe/set-livre");
     expect(invocations[1]?.argumentsList).toContain("/mnt/c/Users/thefe/schema.sql");
     expect(invocationOptions?.stdio).toEqual(["ignore", "inherit", "pipe"]);
     expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");

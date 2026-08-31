@@ -179,7 +179,12 @@ export function executeBackofficeUserCommand(
 export function executeBackofficeTaxonomyCommand(
   command: Extract<
     BackofficeCommand,
-    { action: "backoffice.taxonomy.setActive" | "backoffice.taxonomy.upsert" }
+    {
+      action:
+        | "backoffice.taxonomy.archive"
+        | "backoffice.taxonomy.reactivate"
+        | "backoffice.taxonomy.upsert";
+    }
   >,
 ): Promise<BackofficeTaxonomyItem> {
   return backofficeRequest("/api/commands", backofficeTaxonomyItemSchema, {

@@ -8,7 +8,7 @@ import type {
 import { Alert, Button, Field, PasswordInput } from "@set-livre/ui";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState } from "react";
 
 import {
   BackofficeClientError,
@@ -18,21 +18,10 @@ import {
   loginBackofficeClient,
 } from "./backoffice-api";
 import styles from "./backoffice.module.css";
+import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
 type AccessAction = BackofficeAccessCommand["action"];
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
-
-function subscribeToHydration() {
-  return () => undefined;
-}
-
-function readHydratedClientSnapshot() {
-  return true;
-}
-
-function readHydratedServerSnapshot() {
-  return false;
-}
 
 export type BackofficeAccessTransition = Readonly<{
   action: AccessAction;
@@ -111,11 +100,7 @@ export function AccessRoleActions({
   user: BackofficeUserSummary;
 }) {
   const router = useRouter();
-  const interactive = useSyncExternalStore(
-    subscribeToHydration,
-    readHydratedClientSnapshot,
-    readHydratedServerSnapshot,
-  );
+  const interactive = useBackofficeHydrated();
   const [selected, setSelected] = useState<BackofficeAccessTransition>();
   const [needsReauthentication, setNeedsReauthentication] = useState(false);
   const [notice, setNotice] = useState<string>();
@@ -150,6 +135,7 @@ export function AccessRoleActions({
       router.refresh();
     },
   });
+  const retryAvailable = mutation.isError && isAmbiguousBackofficeError(mutation.error);
 
   return (
     <section aria-label="Ações de acesso" className={styles.pageStack}>
@@ -170,7 +156,7 @@ export function AccessRoleActions({
       <div className={styles.actions}>
         {transitions.map((transition) => (
           <Button
-            disabled={!interactive}
+            disabled={!interactive || mutation.isPending || retryAvailable}
             key={transition.action}
             onClick={() => {
               pendingCommand.current = undefined;
@@ -210,9 +196,10 @@ export function AccessRoleActions({
                 mutation.mutate();
               }}
             >
-              Confirmar alteração
+              {retryAvailable ? "Repetir mesma tentativa" : "Confirmar alteração"}
             </Button>
             <Button
+              disabled={mutation.isPending || retryAvailable}
               onClick={() => {
                 pendingCommand.current = undefined;
                 mutation.reset();

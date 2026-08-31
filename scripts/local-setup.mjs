@@ -610,14 +610,14 @@ function mapWindowsArgumentToWsl(value) {
   return assignment === null ? value : `${assignment[1]}${windowsPathToWslPath(assignment[2])}`;
 }
 
-function windowsWslSupabaseArguments(argumentsList) {
+function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot) {
   return [
     "--distribution",
     windowsDockerDistribution,
     "--user",
     "root",
     "--cd",
-    windowsPathToWslPath(repositoryRoot),
+    windowsPathToWslPath(root),
     "--exec",
     "/usr/bin/env",
     "-i",
@@ -739,6 +739,7 @@ export function runSupabase(
     network = false,
     platform = process.platform,
     resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+    root = repositoryRoot,
   } = {},
 ) {
   const localDockerEnvironment = resolveLocalDockerEnvironment();
@@ -750,8 +751,8 @@ export function runSupabase(
   if (platform === "win32") {
     executable = "wsl.exe";
     invocationEnvironment = localWslLauncherEnvironment(localDockerEnvironment);
-    const version = execute(executable, windowsWslSupabaseArguments(["--version"]), {
-      cwd: repositoryRoot,
+    const version = execute(executable, windowsWslSupabaseArguments(["--version"], root), {
+      cwd: root,
       encoding: "utf8",
       env: invocationEnvironment,
       maxBuffer: 1024 * 1024,
@@ -767,11 +768,11 @@ export function runSupabase(
         `A distro ${windowsDockerDistribution} precisa da Supabase CLI ${supabasePackage.version}.`,
       );
     }
-    executableArguments = windowsWslSupabaseArguments(commandArguments);
+    executableArguments = windowsWslSupabaseArguments(commandArguments, root);
   }
 
   const result = execute(executable, executableArguments, {
-    cwd: repositoryRoot,
+    cwd: root,
     encoding: "utf8",
     env: invocationEnvironment,
     maxBuffer: 128 * 1024 * 1024,

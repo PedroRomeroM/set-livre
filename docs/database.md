@@ -21,12 +21,13 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260829124200_feat_007_studio_taxonomy_content` e
 `20260829224738_feat_031_backoffice_users_taxonomy`, seguida pelas correções
 `20260830164500_backoffice_session_monotonic_clock` e
-`20260830173000_business_timestamp_monotonicity`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260830173000_business_timestamp_monotonicity` e
+`20260830204500_backoffice_taxonomy_explicit_transitions`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e oito suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 375 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 379 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios e backoffice.
 
 A baseline implementada inclui:
@@ -775,8 +776,8 @@ Implementados:
 - `private.set_backoffice_user_role(...)` deriva somente uma das quatro actions explícitas de
   concessão/revogação `support/admin`, compara `expectedAccountVersion`, exige admin com autenticação
   recente e protege o último admin ativo;
-- `private.upsert_backoffice_taxonomy(...)` e `private.set_backoffice_taxonomy_active(...)` exigem
-  admin, versão otimista e preservação histórica.
+- `private.upsert_backoffice_taxonomy(...)` e `private.transition_backoffice_taxonomy(...)` exigem
+  admin, versão otimista e preservação histórica; a transição deriva o estado da action explícita.
 
 Planejados por suas features proprietárias:
 

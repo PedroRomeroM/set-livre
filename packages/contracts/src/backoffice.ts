@@ -184,14 +184,20 @@ export const backofficeTaxonomyUpsertCommandSchema = idempotentBackofficeCommand
     }),
 });
 
-export const backofficeTaxonomySetActiveCommandSchema = idempotentBackofficeCommandSchema.extend({
-  action: z.literal("backoffice.taxonomy.setActive"),
-  payload: z.strictObject({
-    active: z.boolean(),
-    expectedVersion: z.number().int().nonnegative(),
-    id: z.uuid(),
-    kind: backofficeTaxonomyKindSchema,
-  }),
+const backofficeTaxonomyStatusPayloadSchema = z.strictObject({
+  expectedVersion: z.number().int().nonnegative(),
+  id: z.uuid(),
+  kind: backofficeTaxonomyKindSchema,
+});
+
+export const backofficeTaxonomyArchiveCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.taxonomy.archive"),
+  payload: backofficeTaxonomyStatusPayloadSchema,
+});
+
+export const backofficeTaxonomyReactivateCommandSchema = idempotentBackofficeCommandSchema.extend({
+  action: z.literal("backoffice.taxonomy.reactivate"),
+  payload: backofficeTaxonomyStatusPayloadSchema,
 });
 
 export const backofficeCommandSchema = z.discriminatedUnion("action", [
@@ -203,7 +209,8 @@ export const backofficeCommandSchema = z.discriminatedUnion("action", [
   backofficeAccessGrantAdminCommandSchema,
   backofficeAccessRevokeAdminCommandSchema,
   backofficeTaxonomyUpsertCommandSchema,
-  backofficeTaxonomySetActiveCommandSchema,
+  backofficeTaxonomyArchiveCommandSchema,
+  backofficeTaxonomyReactivateCommandSchema,
 ]);
 
 export type BackofficeAccessCommand =
@@ -222,9 +229,9 @@ export type BackofficeTaxonomyImpact = z.infer<typeof backofficeTaxonomyImpactSc
 export type BackofficeTaxonomyItem = z.infer<typeof backofficeTaxonomyItemSchema>;
 export type BackofficeTaxonomyKind = z.infer<typeof backofficeTaxonomyKindSchema>;
 export type BackofficeTaxonomyList = z.infer<typeof backofficeTaxonomyListSchema>;
-export type BackofficeTaxonomySetActiveCommand = z.infer<
-  typeof backofficeTaxonomySetActiveCommandSchema
->;
+export type BackofficeTaxonomyStatusCommand =
+  | z.infer<typeof backofficeTaxonomyArchiveCommandSchema>
+  | z.infer<typeof backofficeTaxonomyReactivateCommandSchema>;
 export type BackofficeTaxonomyUpsertCommand = z.infer<typeof backofficeTaxonomyUpsertCommandSchema>;
 export type BackofficeUserList = z.infer<typeof backofficeUserListSchema>;
 export type BackofficeUserPii = z.infer<typeof backofficeUserPiiSchema>;

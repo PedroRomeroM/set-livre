@@ -70,11 +70,17 @@
                 FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. O
                 PR incremental contém núcleo/revisões e conteúdo de estúdio, além do backoffice
                 separado para usuários, comandos explícitos de suspensão/restauração, PII temporária
-                auditada, papéis <code>support/admin</code> e administração versionada de
-                taxonomias. O diretório não entrega nome bruto nem papéis ao browser; a autorização
-                permanece no servidor e o cliente observa somente uma versão opaca. Polling passivo
-                não renova a inatividade, PII concluída em aba oculta é descartada e toda mutação
-                exige um desbloqueio local HttpOnly de cinco minutos. Estado concorrente exige nova
+                auditada, papéis <code>support/admin</code> e administração versionada de taxonomias
+                por ações explícitas de arquivar/reativar, sem status escolhido pelo cliente. O
+                diretório não entrega nome bruto nem papéis ao browser; a autorização permanece no
+                servidor e o cliente observa somente uma versão opaca. Polling passivo não renova a
+                inatividade, PII concluída em aba oculta é descartada e toda mutação exige um
+                desbloqueio local HttpOnly de cinco minutos. Resposta perdida de status, acesso ou
+                taxonomia conserva a tentativa idempotente até replay ou releitura autoritativa, sem
+                permitir cancelamento ou troca de ação, inclusive enquanto a requisição ainda está
+                em voo. Login e chave local ficam inertes e nativamente desabilitados até a
+                hidratação, impedindo perda de entrada antecipada e fallback HTML de segredos; sem
+                JavaScript, orientam habilitação e recarga. Estado concorrente exige nova
                 leitura/confirmação e o catálogo possui teto transacional de 500 itens. A sessão
                 administrativa e os timestamps de atualização do domínio permanecem monotônicos
                 mesmo se o relógio de parede do host for corrigido para trás. A origem de produção

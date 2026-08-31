@@ -4,7 +4,7 @@ import {
   type BackofficeSession,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyKind,
-  type BackofficeTaxonomySetActiveCommand,
+  type BackofficeTaxonomyStatusCommand,
   type BackofficeTaxonomyUpsertCommand,
 } from "@set-livre/contracts";
 import { Alert, Button, Field, Input, Select } from "@set-livre/ui";
@@ -39,6 +39,7 @@ function taxonomyError(error: unknown) {
 }
 
 function TaxonomyForm({
+  blocked,
   editing,
   generation,
   onCancel,
@@ -47,6 +48,7 @@ function TaxonomyForm({
   pending,
   retrying,
 }: {
+  blocked: boolean;
   editing?: BackofficeTaxonomyItem | undefined;
   generation: number;
   onCancel: () => void;
@@ -60,7 +62,7 @@ function TaxonomyForm({
   pending: boolean;
   retrying: boolean;
 }) {
-  const locked = pending || retrying;
+  const locked = blocked || pending || retrying;
   return (
     <form
       className={styles.taxonomyForm}
@@ -127,7 +129,7 @@ function TaxonomyForm({
         />
       </Field>
       <div className={styles.actions}>
-        <Button loading={pending} loadingLabel="Salvando" type="submit">
+        <Button disabled={blocked} loading={pending} loadingLabel="Salvando" type="submit">
           {retrying
             ? "Repetir mesma tentativa"
             : editing === undefined
@@ -152,7 +154,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   const [activationRetryAvailable, setActivationRetryAvailable] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [upsertRetryAvailable, setUpsertRetryAvailable] = useState(false);
-  const pendingActivationCommand = useRef<BackofficeTaxonomySetActiveCommand>(undefined);
+  const pendingActivationCommand = useRef<BackofficeTaxonomyStatusCommand>(undefined);
   const pendingUpsertCommand = useRef<BackofficeTaxonomyUpsertCommand>(undefined);
   const taxonomies = useQuery({
     queryFn: listBackofficeTaxonomiesClient,
@@ -193,7 +195,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       await invalidate();
     },
   });
-  const setActive = useMutation({
+  const transition = useMutation({
     mutationFn: () => {
       if (pendingActivationCommand.current === undefined) {
         throw new Error("O arquivamento não possui solicitação idempotente preparada.");
@@ -245,6 +247,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
         </h2>
         {upsert.isError ? <Alert variant="error">{taxonomyError(upsert.error)}</Alert> : null}
         <TaxonomyForm
+          blocked={transition.isPending || activationRetryAvailable}
           editing={editing}
           generation={formGeneration}
           onCancel={() => {
@@ -306,6 +309,12 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                   </p>
                   <div className={styles.actions}>
                     <Button
+                      disabled={
+                        activationRetryAvailable ||
+                        transition.isPending ||
+                        upsert.isPending ||
+                        upsertRetryAvailable
+                      }
                       onClick={() => {
                         pendingUpsertCommand.current = undefined;
                         setUpsertRetryAvailable(false);
@@ -318,10 +327,16 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                       Editar
                     </Button>
                     <Button
+                      disabled={
+                        activationRetryAvailable ||
+                        transition.isPending ||
+                        upsert.isPending ||
+                        upsertRetryAvailable
+                      }
                       onClick={() => {
                         pendingActivationCommand.current = undefined;
                         setActivationRetryAvailable(false);
-                        setActive.reset();
+                        transition.reset();
                         setNotice(undefined);
                         setActivationTarget(item);
                       }}
@@ -339,7 +354,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       {activationTarget === undefined ? null : (
         <section aria-labelledby="taxonomy-impact-title" className={styles.confirmation}>
           <h2 id="taxonomy-impact-title">
-            Impacto da {activationTarget.active ? "desativação" : "reativação"}
+            Impacto do {activationTarget.active ? "arquivamento" : "retorno às novas seleções"}
           </h2>
           <p>
             <strong>{activationTarget.name}</strong> possui {activationTarget.usageCount}{" "}
@@ -348,26 +363,28 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
               ? "Ela deixará de aceitar novas seleções, mas todas as referências existentes continuarão legíveis."
               : "Ela voltará a aparecer em novas seleções; o histórico não será alterado."}
           </p>
-          {setActive.isError ? (
-            <Alert variant="error">{taxonomyError(setActive.error)}</Alert>
+          {transition.isError ? (
+            <Alert variant="error">{taxonomyError(transition.error)}</Alert>
           ) : null}
           <div className={styles.actions}>
             <Button
-              loading={setActive.isPending}
+              disabled={upsert.isPending || upsertRetryAvailable}
+              loading={transition.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
                 pendingActivationCommand.current ??= {
-                  action: "backoffice.taxonomy.setActive",
+                  action: activationTarget.active
+                    ? "backoffice.taxonomy.archive"
+                    : "backoffice.taxonomy.reactivate",
                   expectedScope: session.scope,
                   idempotencyKey: crypto.randomUUID(),
                   payload: {
-                    active: !activationTarget.active,
                     expectedVersion: activationTarget.version,
                     id: activationTarget.id,
                     kind: activationTarget.kind,
                   },
                 };
-                setActive.mutate();
+                transition.mutate();
               }}
             >
               {!activationRetryAvailable
@@ -375,11 +392,11 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                 : "Repetir mesma tentativa"}
             </Button>
             <Button
-              disabled={activationRetryAvailable}
+              disabled={transition.isPending || activationRetryAvailable}
               onClick={() => {
                 pendingActivationCommand.current = undefined;
                 setActivationRetryAvailable(false);
-                setActive.reset();
+                transition.reset();
                 setActivationTarget(undefined);
               }}
               variant="ghost"

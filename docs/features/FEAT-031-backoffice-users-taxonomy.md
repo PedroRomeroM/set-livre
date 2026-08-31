@@ -57,6 +57,10 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Taxonomia usada é arquivada, não excluída.
 - Slug unique.
 - Item inativo não aceita nova seleção, mas continua em histórico.
+- Arquivar e reativar são ações explícitas; o cliente nunca escolhe diretamente o status final.
+- Enquanto uma mutação está em voo, cancelamento e troca de alvo permanecem bloqueados. Depois de uma
+  resposta perdida, a tentativa idempotente não pode ser abandonada até replay ou releitura
+  autoritativa.
 
 ## Dados canônicos afetados
 
@@ -72,7 +76,7 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 
 - backoffice.user.suspend/restore/revealPii
 - backoffice.access.grantSupport/revokeSupport/grantAdmin/revokeAdmin
-- backoffice.taxonomy.upsert/setActive
+- backoffice.taxonomy.upsert/archive/reactivate
 
 ## UX e estados obrigatórios
 
@@ -83,6 +87,8 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Filters/cursor.
 - Ações interativas renderizadas pelo servidor permanecem desabilitadas até a hidratação, sem aceitar
   cliques que ainda não possuem handler no cliente.
+- Login e chave local permanecem inertes e nativamente desabilitados até a hidratação, sem apagar
+  valores digitados durante a transição SSR → cliente nem oferecer fallback HTML para segredos.
 
 Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
@@ -106,20 +112,23 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 
 ## Playwright obrigatório
 
-| ID              | Prioridade | Suíte         | Viewport       | Cenário                                                                 | Spec                                                                 |
-| --------------- | ---------- | ------------- | -------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| SL-F031-E2E-001 | P0         | critical      | desktop        | support suspende/restaura usuário e comandos bloqueiam                  | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-002 | P0         | critical      | desktop        | somente admin gerencia roles                                            | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-003 | P0         | critical      | desktop        | não remover último admin                                                | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-004 | P0         | critical      | desktop        | arquivar taxonomia remove novas seleções e preserva o histórico público | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-005 | P1         | regression    | desktop        | dados pessoais ficam mascarados até revelação autorizada e auditada     | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
-| SL-F031-E2E-006 | P1         | regression    | desktop        | cursor e busca de usuários são processados no servidor                  | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
-| SL-F031-E2E-007 | P1         | accessibility | desktop/mobile | backoffice passa axe, teclado, toque e 320 px sem revelar PII           | `tests/e2e/accessibility/feat-031-backoffice-users-taxonomy.spec.ts` |
-| SL-F031-E2E-008 | P1         | regression    | desktop        | mudança de papel encerra a composição privada anterior                  | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
-| SL-F031-E2E-009 | P1         | regression    | desktop        | conflitos de conta e papel exigem nova revisão                          | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
-| SL-F031-E2E-010 | P1         | regression    | desktop        | conflito de taxonomia descarta o editor obsoleto                        | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
-| SL-F031-E2E-011 | P0         | critical      | desktop        | runtime bloqueado rejeita mutação até desbloqueio local                 | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-012 | P1         | regression    | desktop        | resposta de PII concluída em aba oculta é descartada                    | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| ID              | Prioridade | Suíte         | Viewport       | Cenário                                                             | Spec                                                                 |
+| --------------- | ---------- | ------------- | -------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| SL-F031-E2E-001 | P0         | critical      | desktop        | support suspende/restaura usuário e comandos bloqueiam              | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-002 | P0         | critical      | desktop        | somente admin gerencia roles                                        | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-003 | P0         | critical      | desktop        | não remover último admin                                            | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-004 | P0         | critical      | desktop        | replay de arquivamento preserva histórico e bloqueia novas seleções | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-005 | P1         | regression    | desktop        | dados pessoais ficam mascarados até revelação autorizada e auditada | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-006 | P1         | regression    | desktop        | cursor e busca de usuários são processados no servidor              | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-007 | P1         | accessibility | desktop/mobile | backoffice passa axe, teclado, toque e 320 px sem revelar PII       | `tests/e2e/accessibility/feat-031-backoffice-users-taxonomy.spec.ts` |
+| SL-F031-E2E-008 | P1         | regression    | desktop        | mudança de papel encerra a composição privada anterior              | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-009 | P1         | regression    | desktop        | conflitos de conta e papel exigem nova revisão                      | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-010 | P1         | regression    | desktop        | conflito de taxonomia descarta o editor obsoleto                    | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-011 | P0         | critical      | desktop        | runtime bloqueado rejeita mutação até desbloqueio local             | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-012 | P1         | regression    | desktop        | resposta de PII concluída em aba oculta é descartada                | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
+| SL-F031-E2E-013 | P0         | critical      | desktop        | resposta perdida preserva replay idempotente e bloqueia abandono    | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-014 | P0         | critical      | desktop        | resposta perdida de acesso exige replay da mesma transição          | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-015 | P0         | critical      | desktop        | login e desbloqueio sem hidratação ficam fechados com recuperação   | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
 
 Regras:
 

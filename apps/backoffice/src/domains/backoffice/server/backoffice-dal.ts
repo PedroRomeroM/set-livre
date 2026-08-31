@@ -8,7 +8,7 @@ import {
   backofficeUserSummarySchema,
   platformRolesSchema,
   type BackofficeAccessCommand,
-  type BackofficeTaxonomySetActiveCommand,
+  type BackofficeTaxonomyStatusCommand,
   type BackofficeTaxonomyUpsertCommand,
   type BackofficeUserRevealPiiCommand,
   type BackofficeUserStatusCommand,
@@ -314,23 +314,23 @@ export async function upsertBackofficeTaxonomy(input: {
   ).result;
 }
 
-export async function setBackofficeTaxonomyActive(input: {
+export async function transitionBackofficeTaxonomy(input: {
   auth: BackofficeAuthContext;
-  command: BackofficeTaxonomySetActiveCommand;
+  command: BackofficeTaxonomyStatusCommand;
   requestId: string;
 }) {
   const { payload } = input.command;
   const result = await backofficeDalPool().query(
-    `select private.set_backoffice_taxonomy_active(
+    `select private.transition_backoffice_taxonomy(
        $1::uuid, $2::uuid, $3::timestamptz, $4::text, $5::uuid,
-       $6::bigint, $7::boolean, $8::uuid, $9::uuid
+       $6::bigint, $7::text, $8::uuid, $9::uuid
      ) as result`,
     [
       ...bindingArguments(input.auth),
       payload.kind,
       payload.id,
       payload.expectedVersion,
-      payload.active,
+      input.command.action,
       input.command.idempotencyKey,
       input.requestId,
     ],
@@ -338,6 +338,6 @@ export async function setBackofficeTaxonomyActive(input: {
   return exactlyOne(
     result.rows,
     z.strictObject({ result: taxonomyMutationResultSchema }),
-    "set_backoffice_taxonomy_active",
+    "transition_backoffice_taxonomy",
   ).result;
 }

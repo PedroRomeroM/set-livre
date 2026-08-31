@@ -220,6 +220,9 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   compacta e tema escuro preservam os mesmos controles e alvos de 44 px;
 - resposta ambígua bloqueia os campos afetados e apresenta repetição da mesma tentativa idempotente,
   sem spinner permanente nem criação de um novo comando silencioso.
+- login e desbloqueio reutilizam um único snapshot de hidratação do backoffice. Antes do cliente estar
+  pronto, status textual precede o formulário, `inert` e `fieldset disabled` fecham toda interação e
+  cada controle permanece desabilitado; depois da hidratação, a composição visual original é mantida.
 
 ## 4. Contratos
 

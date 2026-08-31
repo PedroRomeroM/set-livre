@@ -286,23 +286,25 @@ Comandos validam hora cheia e ownership.
 
 ### 5.7 Admin/backoffice
 
-| Action                                 | Papel                      |
-| -------------------------------------- | -------------------------- |
-| `admin.studio.approve`                 | reviewer/admin             |
-| `admin.studio.reject`                  | reviewer/admin             |
-| `admin.studio.disable`                 | admin                      |
-| `admin.studio.restore`                 | admin                      |
-| `backoffice.user.suspend/restore`      | support/admin              |
-| `backoffice.user.revealPii`            | support/admin              |
-| `backoffice.access.grantSupport`       | admin + autenticação forte |
-| `backoffice.access.revokeSupport`      | admin + autenticação forte |
-| `backoffice.access.grantAdmin`         | admin + autenticação forte |
-| `backoffice.access.revokeAdmin`        | admin + autenticação forte |
-| `backoffice.taxonomy.upsert/setActive` | admin                      |
-| `admin.refund.request/retry`           | finance/admin              |
-| `admin.payout.retry/block/unblock`     | finance/admin              |
-| `admin.fiscal.export`                  | finance/admin              |
-| `admin.account.deletion.execute`       | admin + confirmação forte  |
+| Action                             | Papel                      |
+| ---------------------------------- | -------------------------- |
+| `admin.studio.approve`             | reviewer/admin             |
+| `admin.studio.reject`              | reviewer/admin             |
+| `admin.studio.disable`             | admin                      |
+| `admin.studio.restore`             | admin                      |
+| `backoffice.user.suspend/restore`  | support/admin              |
+| `backoffice.user.revealPii`        | support/admin              |
+| `backoffice.access.grantSupport`   | admin + autenticação forte |
+| `backoffice.access.revokeSupport`  | admin + autenticação forte |
+| `backoffice.access.grantAdmin`     | admin + autenticação forte |
+| `backoffice.access.revokeAdmin`    | admin + autenticação forte |
+| `backoffice.taxonomy.upsert`       | admin                      |
+| `backoffice.taxonomy.archive`      | admin                      |
+| `backoffice.taxonomy.reactivate`   | admin                      |
+| `admin.refund.request/retry`       | finance/admin              |
+| `admin.payout.retry/block/unblock` | finance/admin              |
+| `admin.fiscal.export`              | finance/admin              |
+| `admin.account.deletion.execute`   | admin + confirmação forte  |
 
 Toda action administrativa gera `audit.events`.
 
@@ -316,13 +318,14 @@ O recorte implementado do backoffice usa endpoints próprios na aplicação `:30
 - `GET /api/taxonomies` devolve catálogo, versão e contagem de uso somente para admin;
 - `/acessos/[userId]` compõe papéis no Server Component por uma fachada admin-only; listas e DTOs do
   browser nunca carregam o conjunto de papéis;
-- `POST /api/commands` aceita exclusivamente a união discriminada das nove actions
+- `POST /api/commands` aceita exclusivamente a união discriminada das dez actions
   `backoffice.*` acima.
 
 Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
 distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.
 Cada concessão/revogação de papel é uma action explícita e recebe somente `expectedAccountVersion`;
-o cliente nunca envia o conjunto desejado. Taxonomia recebe sua versão. O servidor ignora qualquer
+o cliente nunca envia o conjunto desejado. Taxonomia recebe sua versão em actions separadas de
+arquivamento/reativação, e o banco deriva o booleano final; o cliente nunca envia `active`. O servidor ignora qualquer
 autoridade implícita nesses campos, revalida sessão/papel no banco e converte estado obsoleto para
 `409/STALE_STATE`. Nesse caso a UI remove a confirmação, limpa o alvo versionado e relê o read model
 antes de permitir outra ação. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna
@@ -330,6 +333,8 @@ replay somente enquanto as versões canônicas continuam idênticas. Toda mutaç
 PII, exige o desbloqueio local vigente; ausência ou expiração retorna `423/RUNTIME_LOCKED` antes da DAL.
 Chave ausente no processo retorna `503/RUNTIME_UNLOCK_UNAVAILABLE` e chave divergente retorna
 `403/RUNTIME_UNLOCK_DENIED`. Nenhuma resposta expõe SQL, provider, chave ou detalhe de autorização.
+Antes de validar a action, falhas de origem, limite, JSON e schema são registradas apenas como
+`backoffice.command`; a telemetria recebe a action específica somente depois do discriminador Zod.
 
 ## 6. Read models e DTOs
 

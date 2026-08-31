@@ -94,7 +94,11 @@ O binding curto mantém `last_seen_at` e `closed_at` monotônicos em relação �
 banco normaliza correções regressivas do relógio de parede, e a validação usa o maior valor entre o
 horário observado e a última atividade; um ajuste de relógio não quebra a sessão nem amplia sua janela.
 
-O formulário global de desbloqueio envia a chave local somente ao endpoint de autenticação. O valor não
+O login e o formulário global de desbloqueio permanecem `inert`, com controles nativos desabilitados,
+até o snapshot client-side de hidratação; assim, digitação antecipada nunca é apagada quando o React
+assume a tela e a ausência de JavaScript não publica segredo por fallback HTML, mas explica que o
+recurso precisa ser habilitado antes de recarregar. O formulário global de
+desbloqueio envia a chave local somente ao endpoint de autenticação. O valor não
 é guardado em state, cache, storage ou cookie: após comparação em tempo constante, o servidor emite um
 cookie HttpOnly/SameSite estrito, assinado, não renovável por polling e vinculado ao usuário e ao
 `session_id` Auth. Ele expira em cinco minutos e é apagado em login, logout ou invalidação da sessão.
@@ -107,7 +111,8 @@ criar, editar, arquivar e reativar. Não existe exclusão física: a tela mostra
 uso, e arquivamento remove o item de novas seleções sem apagar referências históricas. O catálogo
 combinado aceita no máximo 500 itens; criação toma lock transacional e falha antes do item 501,
 enquanto atualizações continuam disponíveis no limite. Conflito de versão fecha o editor/impacto
-obsoleto e relê o catálogo antes de uma nova decisão.
+obsoleto e relê o catálogo antes de uma nova decisão. Arquivamento e reativação são actions distintas;
+o payload não aceita `active` e a função privada deriva o destino da action validada.
 
 O primeiro admin é criado uma única vez por `private.bootstrap_first_platform_admin(...)`, sob lock e
 somente para perfil ativo/concluído enquanto nenhum papel existir. A função não é concedida à DAL; o
@@ -168,7 +173,8 @@ Audit é append-only para operadores. Export controlado.
 - DAL executa somente as onze fachadas allowlisted e não lê tabelas diretamente;
 - ledger idempotente guarda hash de payload/resultado, mas PII guarda apenas versões para detectar
   replay stale, nunca valor ou hash reutilizável;
-- erros públicos são allowlisted e logs usam request ID sem e-mail, documento ou payload.
+- erros públicos são allowlisted e logs usam request ID sem e-mail, documento ou payload; falha
+  anterior ao parse é registrada como `backoffice.command`, nunca como uma mutação específica falsa.
 
 ## 10. QA
 
@@ -177,6 +183,7 @@ Audit é append-only para operadores. Export controlado.
 - `support` opera conta/PII, mas não enxerga nem chama acessos/taxonomias;
 - admin recente gerencia papéis e o último admin permanece protegido;
 - lista/sessão do browser não expõem papéis e o detalhe de acesso é composto no servidor;
+- login e desbloqueio permanecem fechados antes da hidratação, sem perder entrada antecipada;
 - runtime bloqueado não executa mutação; desbloqueio expira, não atravessa sessão e nunca persiste a chave;
 - arquivamento preserva referência e bloqueia nova seleção;
 - PII permanece mascarada, temporária e auditada;
@@ -186,5 +193,7 @@ Audit é append-only para operadores. Export controlado.
 - polling passivo não mantém uma sessão inativa viva;
 - correção regressiva do relógio preserva atividade/encerramento monotônicos sem violar constraints;
 - conflitos de conta, papel e taxonomia exigem novo read model e nova confirmação;
+- status, acesso e taxonomia bloqueiam cancelamento/troca enquanto a requisição está em voo; se a
+  resposta se perder, conservam a mesma chave/tentativa até o replay autoritativo;
 - desktop é a composição principal, com operação íntegra em 390 px, 320 px e altura compacta;
 - P0 roda em Chromium, Firefox e WebKit; axe cobre desktop, mobile, 320 px e tema escuro.

@@ -178,12 +178,17 @@ redigida.
 
 ## Matriz da FEAT-031
 
-Os doze cenários `SL-F031-E2E-001..012` expandem para 43 execuções:
+Os quinze cenários `SL-F031-E2E-001..015` expandem para 52 execuções:
 
 - P0 de suspensão/restauração, bloqueio de comandos, papéis/último admin e taxonomia histórica nos
   três engines;
 - P0 prova que o runtime bloqueado retorna `423` sem mutação e que somente o desbloqueio local válido
   permite prosseguir, nos três engines;
+- P0 segura respostas de status, acesso e taxonomia ainda em voo para provar que cancelamento e troca
+  de ação ficam bloqueados; depois perde cada resposta já commitada e repete a tentativa idempotente
+  até obter o resultado autoritativo, nos três engines;
+- P0 desabilita JavaScript e prova que login e desbloqueio SSR permanecem inertes, sem fallback de
+  segredos e com instrução explícita de recuperação, nos três engines;
 - PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
   altura compacta;
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
@@ -195,12 +200,12 @@ Os doze cenários `SL-F031-E2E-001..012` expandem para 43 execuções:
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
 QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
-restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 53
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 57
 asserções para grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo possui nove arquivos e 375 testes. A regressão transversal de tempo força timestamps
+runner completo possui nove arquivos e 379 testes. A regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
 

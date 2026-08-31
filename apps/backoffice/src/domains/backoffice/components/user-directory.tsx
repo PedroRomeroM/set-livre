@@ -156,11 +156,13 @@ function UserCard({
   mode,
   onStatusChange,
   session,
+  statusChangeDisabled,
   user,
 }: {
   mode: Mode;
   onStatusChange: (user: BackofficeUserSummary) => void;
   session: AuthenticatedSession;
+  statusChangeDisabled: boolean;
   user: BackofficeUserSummary;
 }) {
   return (
@@ -184,6 +186,7 @@ function UserCard({
       {mode === "users" ? (
         <>
           <Button
+            disabled={statusChangeDisabled}
             onClick={() => onStatusChange(user)}
             variant={user.status === "active" ? "secondary" : "primary"}
           >
@@ -206,6 +209,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const [activeFilter, setActiveFilter] = useState({ fingerprint: "empty", query: "" });
   const [statusTarget, setStatusTarget] = useState<BackofficeUserSummary>();
   const [statusImpactConfirmed, setStatusImpactConfirmed] = useState(false);
+  const [statusRetryAvailable, setStatusRetryAvailable] = useState(false);
   const [notice, setNotice] = useState<string>();
   const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
   const users = useInfiniteQuery({
@@ -234,16 +238,20 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       if (isStaleBackofficeError(error)) {
         pendingStatusCommand.current = undefined;
         setStatusImpactConfirmed(false);
+        setStatusRetryAvailable(false);
         setStatusTarget(undefined);
         setNotice("A conta mudou. A lista foi recarregada; revise o estado atual antes de agir.");
         await resetUsers();
         return;
       }
-      if (!isAmbiguousBackofficeError(error)) pendingStatusCommand.current = undefined;
+      const ambiguous = isAmbiguousBackofficeError(error);
+      setStatusRetryAvailable(ambiguous);
+      if (!ambiguous) pendingStatusCommand.current = undefined;
     },
     onSuccess: async (user) => {
       pendingStatusCommand.current = undefined;
       setStatusImpactConfirmed(false);
+      setStatusRetryAvailable(false);
       setStatusTarget(undefined);
       setNotice(
         user.status === "active"
@@ -300,9 +308,11 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               statusMutation.reset();
               setNotice(undefined);
               setStatusImpactConfirmed(false);
+              setStatusRetryAvailable(false);
               setStatusTarget(target);
             }}
             session={session}
+            statusChangeDisabled={statusMutation.isPending || statusRetryAvailable}
             user={user}
           />
         ))}
@@ -319,6 +329,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           </p>
           <Checkbox
             checked={statusImpactConfirmed}
+            disabled={statusMutation.isPending || statusRetryAvailable}
             label="Revisei o impacto desta alteração"
             onChange={(event) => setStatusImpactConfirmed(event.target.checked)}
             required
@@ -328,7 +339,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           ) : null}
           <div className={styles.actions}>
             <Button
-              disabled={!statusImpactConfirmed}
+              disabled={!statusImpactConfirmed || statusMutation.isPending}
               loading={statusMutation.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
@@ -347,13 +358,15 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
                 statusMutation.mutate();
               }}
             >
-              Confirmar
+              {statusRetryAvailable ? "Repetir mesma tentativa" : "Confirmar"}
             </Button>
             <Button
+              disabled={statusMutation.isPending || statusRetryAvailable}
               onClick={() => {
                 pendingStatusCommand.current = undefined;
                 statusMutation.reset();
                 setStatusImpactConfirmed(false);
+                setStatusRetryAvailable(false);
                 setStatusTarget(undefined);
               }}
               variant="ghost"

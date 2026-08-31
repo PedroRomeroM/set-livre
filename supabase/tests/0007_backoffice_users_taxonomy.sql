@@ -104,7 +104,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(53);
+select plan(57);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -114,6 +114,12 @@ select has_table(
   'ledger administrativo existe'
 );
 select has_column('public', 'profiles', 'account_version', 'status da conta possui versão própria');
+select ok(
+  pg_catalog.to_regprocedure(
+    'private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)'
+  ) is null,
+  'função legada de status escolhido pelo cliente foi removida'
+);
 select ok(
   exists (
     select 1
@@ -212,7 +218,7 @@ select ok(
         ('private.reveal_backoffice_user_pii(uuid,uuid,timestamptz,uuid,text,uuid,uuid)'),
         ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.upsert_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,text,integer,uuid,uuid)'),
-        ('private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)')
+        ('private.transition_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,uuid,uuid)')
     ) as entrypoint(signature)
     where pg_catalog.has_function_privilege(
       forbidden_role.role_name,
@@ -234,7 +240,7 @@ select ok(
         ('private.reveal_backoffice_user_pii(uuid,uuid,timestamptz,uuid,text,uuid,uuid)'),
         ('private.set_backoffice_user_role(uuid,uuid,timestamptz,uuid,bigint,text,uuid,uuid)'),
         ('private.upsert_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,text,integer,uuid,uuid)'),
-        ('private.set_backoffice_taxonomy_active(uuid,uuid,timestamptz,text,uuid,bigint,boolean,uuid,uuid)')
+        ('private.transition_backoffice_taxonomy(uuid,uuid,timestamptz,text,uuid,bigint,text,uuid,uuid)')
     ) as entrypoint(signature)
     where not pg_catalog.has_function_privilege('app_dal', entrypoint.signature, 'EXECUTE')
   ),
@@ -1037,22 +1043,88 @@ select private.update_studio_revision_taxonomy(
   array[pg_catalog.current_setting('set_livre.test.f031_tag_id')::uuid],
   array['63000000-0000-4000-8000-000000000001']::uuid[]
 );
+reset role;
+select matches(
+  private.feat031_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.transition_backoffice_taxonomy(
+          '81000000-0000-4000-8000-000000000001',
+          '82000000-0000-4000-8000-000000000001',
+          pg_catalog.clock_timestamp() + interval '30 minutes',
+          'tag', %L, 1, 'backoffice.taxonomy.setActive',
+          '87000000-0000-4000-8000-000000000019',
+          '86000000-0000-4000-8000-000000000019'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.f031_tag_id')
+    )
+  ),
+  '^22023:invalid_backoffice_taxonomy_transition$',
+  'função privada rejeita o comando legado em vez de aceitar estado escolhido pelo cliente'
+);
+set local role app_dal;
 select pg_catalog.set_config(
   'set_livre.test.f031_tag_archived',
-  private.set_backoffice_taxonomy_active(
+  private.transition_backoffice_taxonomy(
     '81000000-0000-4000-8000-000000000001',
     '82000000-0000-4000-8000-000000000001',
     pg_catalog.clock_timestamp() + interval '30 minutes',
     'tag',
     pg_catalog.current_setting('set_livre.test.f031_tag_id')::uuid,
     1,
-    false,
+    'backoffice.taxonomy.archive',
     '87000000-0000-4000-8000-000000000017',
     '86000000-0000-4000-8000-000000000017'
   )::text,
   true
 );
+select pg_catalog.set_config(
+  'set_livre.test.f031_tag_archived_replay',
+  private.transition_backoffice_taxonomy(
+    '81000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000001',
+    pg_catalog.clock_timestamp() + interval '30 minutes',
+    'tag',
+    pg_catalog.current_setting('set_livre.test.f031_tag_id')::uuid,
+    1,
+    'backoffice.taxonomy.archive',
+    '87000000-0000-4000-8000-000000000017',
+    '86000000-0000-4000-8000-000000000097'
+  )::text,
+  true
+);
 reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_tag_archived_replay')::jsonb
+    = pg_catalog.current_setting('set_livre.test.f031_tag_archived')::jsonb
+  and (
+    select pg_catalog.count(*) = 1
+    from audit.events
+    where action = 'backoffice.taxonomy_archived'
+      and idempotency_key = '87000000-0000-4000-8000-000000000017'
+  ),
+  'replay de arquivamento devolve o mesmo resultado sem repetir versão ou auditoria'
+);
+select matches(
+  private.feat031_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.transition_backoffice_taxonomy(
+          '81000000-0000-4000-8000-000000000001',
+          '82000000-0000-4000-8000-000000000001',
+          pg_catalog.clock_timestamp() + interval '30 minutes',
+          'tag', %L, 1, 'backoffice.taxonomy.reactivate',
+          '87000000-0000-4000-8000-000000000017',
+          '86000000-0000-4000-8000-000000000098'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.f031_tag_id')
+    )
+  ),
+  '^40001:backoffice_idempotency_conflict$',
+  'a mesma chave não pode trocar arquivamento por reativação'
+);
 select ok(
   pg_catalog.current_setting('set_livre.test.f031_tag_archived')::jsonb
     @> '{"active":false,"usageCount":1,"version":2}'::jsonb
@@ -1094,14 +1166,14 @@ reset role;
 set local role app_dal;
 select pg_catalog.set_config(
   'set_livre.test.f031_tag_reactivated',
-  private.set_backoffice_taxonomy_active(
+  private.transition_backoffice_taxonomy(
     '81000000-0000-4000-8000-000000000001',
     '82000000-0000-4000-8000-000000000001',
     pg_catalog.clock_timestamp() + interval '30 minutes',
     'tag',
     pg_catalog.current_setting('set_livre.test.f031_tag_id')::uuid,
     2,
-    true,
+    'backoffice.taxonomy.reactivate',
     '87000000-0000-4000-8000-000000000018',
     '86000000-0000-4000-8000-000000000018'
   )::text,
@@ -1351,7 +1423,7 @@ reset role;
 revoke app_dal from postgres granted by current_user;
 
 select ok(
-  private.check_readiness('20260830173000'),
+  private.check_readiness('20260830204500'),
   'readiness inclui a migration FEAT-031 e a allowlist DAL exata'
 );
 
