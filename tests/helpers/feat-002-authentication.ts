@@ -21,6 +21,14 @@ import {
 } from "./local-auth-mailpit";
 
 const authUserRowsSchema = z.array(z.strictObject({ id: z.uuid() })).max(1);
+const browserSessionReadSchema = z.discriminatedUnion("connected", [
+  z.strictObject({ connected: z.literal(false) }),
+  z.strictObject({
+    connected: z.literal(true),
+    source: z.string(),
+    status: z.number().int().min(100).max(599),
+  }),
+]);
 const passwordSentinelSchema = z
   .string()
   .min(8)
@@ -211,9 +219,34 @@ export async function readFeat002AuthenticatedSession(page: Page) {
 }
 
 export async function readFeat002IdentitySession(page: Page) {
-  const response = await page.request.get("/api/auth/session");
-  await expect(response).toBeOK();
-  const payload: unknown = await response.json();
+  const response = browserSessionReadSchema.parse(
+    await page.evaluate(async () => {
+      try {
+        const result = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        return {
+          connected: true as const,
+          source: await result.text(),
+          status: result.status,
+        };
+      } catch {
+        return { connected: false as const };
+      }
+    }),
+  );
+  if (!response.connected) {
+    throw new Error("A leitura da sessão Auth pelo navegador não alcançou o servidor local.");
+  }
+  expect(response.status).toBe(200);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(response.source);
+  } catch {
+    throw new Error("A leitura da sessão Auth não retornou JSON válido.");
+  }
   return apiSuccessSchema(identitySessionSchema).parse(payload).data;
 }
 

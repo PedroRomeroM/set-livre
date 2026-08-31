@@ -68,7 +68,10 @@ export function handleAmbiguousLoginTransportError(
   actions.clearEphemeralCredentials();
   actions.hideAndResetCredentialForm();
   actions.beginSessionTransition();
-  actions.redactPrivateCaches();
-  actions.reloadAuthoritativeSession();
+  try {
+    actions.redactPrivateCaches();
+  } finally {
+    actions.reloadAuthoritativeSession();
+  }
   return true;
 }

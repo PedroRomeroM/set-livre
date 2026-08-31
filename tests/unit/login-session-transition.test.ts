@@ -53,6 +53,31 @@ describe("ambiguous login session transition", () => {
     ]);
   });
 
+  it("still reloads authoritatively when private cache redaction throws", () => {
+    const cacheError = new Error("cache clear failed");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => calls.push("hide-session-boundary"),
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => {
+          calls.push("clear-cache");
+          throw cacheError;
+        },
+        reloadAuthoritativeSession: () => calls.push("reload-ssr"),
+      }),
+    ).toThrow(cacheError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "hide-session-boundary",
+      "clear-cache",
+      "reload-ssr",
+    ]);
+  });
+
   it("also redacts a valid API response that reports ambiguous cookie publication", () => {
     const calls: string[] = [];
     const handled = handleAmbiguousLoginTransportError(
