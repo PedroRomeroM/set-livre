@@ -94,13 +94,15 @@
                 administrativa e os timestamps de atualização do domínio permanecem monotônicos
                 mesmo se o relógio de parede do host for corrigido para trás. A origem de produção
                 do backoffice corresponde ao loopback acessado por túnel SSH, sem domínio público
-                fictício. Sessão curta, reautenticação, idempotência, concorrência, grants/RLS e
-                regressões multiengine foram comprovados localmente. Pools PostgreSQL são únicos por
-                processo e respeitam o orçamento conjunto de seis das dez conexões do runtime. A
-                raiz pública ainda informa o estado técnico, enquanto a raiz do backoffice encaminha
-                visitantes sem sessão para a autenticação real; a suíte transversal valida cada
-                superfície pelo seu próprio contrato. O candidato ainda depende de review limpo,
-                merge e deploy. Outras 28 features permanecem planejadas.
+                fictício. Login ambíguo redige credenciais e caches e solicita a releitura SSR antes
+                de publicar a fronteira visual fail-closed. Sessão curta, reautenticação,
+                idempotência, concorrência, grants/RLS e regressões multiengine foram comprovados
+                localmente. Pools PostgreSQL são únicos por processo e respeitam o orçamento
+                conjunto de seis das dez conexões do runtime. A raiz pública ainda informa o estado
+                técnico, enquanto a raiz do backoffice encaminha visitantes sem sessão para a
+                autenticação real; a suíte transversal valida cada superfície pelo seu próprio
+                contrato. O candidato ainda depende de review limpo, merge e deploy. Outras 28
+                features permanecem planejadas.
               </td>
             </tr>
             <tr>

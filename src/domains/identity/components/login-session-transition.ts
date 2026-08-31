@@ -56,11 +56,14 @@ export function handleAmbiguousLoginTransportError(
 
   actions.clearEphemeralCredentials();
   actions.hideAndResetCredentialForm();
-  actions.beginSessionTransition();
   try {
     actions.redactPrivateCaches();
   } finally {
-    actions.reloadAuthoritativeSession();
+    try {
+      actions.reloadAuthoritativeSession();
+    } finally {
+      actions.beginSessionTransition();
+    }
   }
   return true;
 }

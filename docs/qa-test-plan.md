@@ -85,6 +85,9 @@ de cada aplicação, sem impor ao backoffice o placeholder removido. A regressã
 prova que login preserva os destinos canônicos de criação e edição de estúdio sem aceitar URL externa,
 codificação alternativa ou UUID inválido; uma rota de edição com UUID válido em maiúsculas é
 redirecionada primeiro ao path minúsculo e somente esse destino canônico atravessa o login.
+Em resultado de login ambíguo, credenciais efêmeras, formulário e caches privados são redigidos antes
+de o browser solicitar a releitura SSR; a fronteira visual fail-closed só é publicada depois dessa
+solicitação. O cenário P0 exige a requisição de documento e o resultado autoritativo nos três engines.
 
 ## Segurança do E2E
 

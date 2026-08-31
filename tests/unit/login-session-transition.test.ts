@@ -50,9 +50,9 @@ describe("ambiguous login session transition", () => {
     expect(calls).toEqual([
       "clear-ref",
       "redact-form",
-      "hide-session-boundary",
       "clear-cache",
       "reload-ssr",
+      "hide-session-boundary",
     ]);
   });
 
@@ -75,9 +75,34 @@ describe("ambiguous login session transition", () => {
     expect(calls).toEqual([
       "clear-ref",
       "redact-form",
-      "hide-session-boundary",
       "clear-cache",
       "reload-ssr",
+      "hide-session-boundary",
+    ]);
+  });
+
+  it("keeps the client fail-closed when the browser rejects the reload request", () => {
+    const reloadError = new Error("reload rejected");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => calls.push("hide-session-boundary"),
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => calls.push("clear-cache"),
+        reloadAuthoritativeSession: () => {
+          calls.push("reload-ssr");
+          throw reloadError;
+        },
+      }),
+    ).toThrow(reloadError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "clear-cache",
+      "reload-ssr",
+      "hide-session-boundary",
     ]);
   });
 
@@ -101,9 +126,9 @@ describe("ambiguous login session transition", () => {
     expect(calls).toEqual([
       "clear-ref",
       "redact-form",
-      "hide-session-boundary",
       "clear-cache",
       "reload-ssr",
+      "hide-session-boundary",
     ]);
   });
 
