@@ -475,6 +475,10 @@ stop_application_services() {
   done
 }
 
+run_media_cleanup_once() {
+  systemctl start set-livre-media-cleanup.service
+}
+
 # BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES
 root_owned_without_unprivileged_write() {
   local path="$1"
@@ -1799,6 +1803,17 @@ if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
     == "/opt/set-livre/releases/${active_release_sha}" ]] \
     || fail "release ativa mudou durante o bootstrap."
   if [[ ${active_release_compatible} == true ]]; then
+    if ! run_media_cleanup_once; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      systemctl reset-failed set-livre-web.service set-livre-backoffice.service || true
+      [[ -L /opt/set-livre/current \
+        && $(readlink --canonicalize-existing /opt/set-livre/current) \
+          == "/opt/set-livre/releases/${active_release_sha}" ]] \
+        || fail "release ativa mudou durante o cleanup pós-bootstrap."
+      publish_bootstrap_in_progress "$host_configuration_digest" \
+        || fail "não foi possível preservar o bloqueio após falha do cleanup inicial."
+      fail "cleanup inicial falhou; release e estado de recovery foram preservados para retry."
+    fi
     if ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_active_health "$active_release_sha" \
       || ! wait_for_active_public_health "$active_release_sha"; then

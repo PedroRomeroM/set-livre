@@ -452,6 +452,23 @@ function HydratedStudioMediaPanel({
     runtime.uploadConfirmed = false;
   }
 
+  function ensureFinalizeCommand(runtime: UploadRuntime) {
+    const preparation = runtime.preparation;
+    if (preparation === undefined) return undefined;
+    runtime.finalizeCommand ??= {
+      action: "studio.media.upload.finalize",
+      expectedScope: userId,
+      idempotencyKey: crypto.randomUUID(),
+      payload: {
+        expectedRevisionId: preparation.revisionId,
+        expectedRevisionVersion: preparation.revisionVersion,
+        mediaId: preparation.mediaId,
+        studioId,
+      },
+    };
+    return runtime.finalizeCommand;
+  }
+
   async function handleUploadError(
     id: string,
     error: unknown,
@@ -461,6 +478,27 @@ function HydratedStudioMediaPanel({
     const local = galleryReference.current;
     const runtime = uploadRuntimeReference.current.get(id);
     if (isConflictError(error) && local !== undefined) {
+      if (stage === "preparo" && runtime !== undefined) {
+        const finalizeCommand = ensureFinalizeCommand(runtime);
+        if (finalizeCommand !== undefined) {
+          try {
+            const finalized = await finalizeMutation.mutateAsync(finalizeCommand);
+            return finishUpload(id, finalizeCommand.payload.mediaId, finalized);
+          } catch (settlementError) {
+            if (boundaryChanged(settlementError)) return "blocked";
+            if (!isConflictError(settlementError)) {
+              updateAttempt(id, {
+                message:
+                  "A galeria mudou, mas a liberação da reserva ainda não foi confirmada. Verifique o estado antes de renovar.",
+                phase: "ambiguous",
+                retry: "verify",
+              });
+              await recoverConflict(`upload (${stage})`, local);
+              return "blocked";
+            }
+          }
+        }
+      }
       if (runtime !== undefined) resetUploadReservation(runtime);
       updateAttempt(id, {
         message: "A galeria mudou durante esta tentativa. Aceite a versão salva e renove o envio.",
@@ -560,39 +598,24 @@ function HydratedStudioMediaPanel({
         });
         try {
           runtime.preparation = await prepareMutation.mutateAsync(runtime.prepareCommand);
-          const currentGallery = galleryReference.current;
+          ensureFinalizeCommand(runtime);
+          const preparedGallery = await refreshAuthoritativeGallery();
           if (
-            currentGallery === undefined ||
-            currentGallery.revisionId !== runtime.preparation.revisionId ||
-            currentGallery.revisionVersion !== runtime.preparation.revisionVersion
+            preparedGallery.revisionId !== runtime.preparation.revisionId ||
+            preparedGallery.revisionVersion !== runtime.preparation.revisionVersion
           ) {
-            const preparedGallery = await refreshAuthoritativeGallery();
-            if (
-              preparedGallery.revisionId !== runtime.preparation.revisionId ||
-              preparedGallery.revisionVersion !== runtime.preparation.revisionVersion
-            ) {
-              throw new StudioApiError(
-                "CONFLICT",
-                "A galeria mudou depois que o envio foi preparado.",
-              );
-            }
+            throw new StudioApiError(
+              "CONFLICT",
+              "A galeria mudou depois que o envio foi preparado.",
+            );
           }
         } catch (error) {
           return handleUploadError(id, error, "preparo");
         }
       }
 
-      runtime.finalizeCommand ??= {
-        action: "studio.media.upload.finalize",
-        expectedScope: userId,
-        idempotencyKey: crypto.randomUUID(),
-        payload: {
-          expectedRevisionId: runtime.preparation.revisionId,
-          expectedRevisionVersion: runtime.preparation.revisionVersion,
-          mediaId: runtime.preparation.mediaId,
-          studioId,
-        },
-      };
+      const finalizeCommand = ensureFinalizeCommand(runtime);
+      if (finalizeCommand === undefined) return "blocked";
 
       if (runtime.uploadConfirmed !== true) {
         updateAttempt(id, {
@@ -612,7 +635,7 @@ function HydratedStudioMediaPanel({
               retry: undefined,
             });
             try {
-              const finalized = await finalizeMutation.mutateAsync(runtime.finalizeCommand);
+              const finalized = await finalizeMutation.mutateAsync(finalizeCommand);
               return await finishUpload(id, runtime.preparation.mediaId, finalized);
             } catch (settlementError) {
               return handleUploadError(id, settlementError, "verificação");
@@ -628,7 +651,7 @@ function HydratedStudioMediaPanel({
         retry: undefined,
       });
       try {
-        const finalized = await finalizeMutation.mutateAsync(runtime.finalizeCommand);
+        const finalized = await finalizeMutation.mutateAsync(finalizeCommand);
         return await finishUpload(id, runtime.preparation.mediaId, finalized);
       } catch (error) {
         return handleUploadError(id, error, "verificação");

@@ -598,12 +598,15 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! run_media_cleanup_once \
       || ! wait_for_health "$recovered_release" \
-      || ! wait_for_public_health "$recovered_release" \
-      || ! start_media_cleanup_schedule; then
+      || ! wait_for_public_health "$recovered_release"; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
       fail "a release recuperada não atingiu readiness; serviços interrompidos."
     fi
     rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
+    if [[ -n ${recovered_release} ]] && ! start_media_cleanup_schedule; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      fail "o timer de cleanup não foi ativado após terminalizar o bootstrap; serviços interrompidos."
+    fi
     rm -f -- "$ROLLBACK_MARKER"
     authenticated_bootstrap_recovery_digest=""
     printf 'Ativação interrompida recuperada e serviços estabilizados.\n'

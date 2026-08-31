@@ -153,12 +153,17 @@ só então sua troca ativa a unidade inteira, reinicia os serviços e exige read
 HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units estáticas, sem vínculo
 direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
-`set-livre-release-recovery.service` e a oneshot `set-livre-media-cleanup.service` terminem com sucesso
-antes de iniciá-las. O cleanup é explicitamente ordenado depois da recovery, de modo que lê apenas o
-symlink e o runtime já recuperados. Suas pré-condições de release, ambientes e ausência de blockers
-usam assertions do systemd: qualquer ausência ou corrupção falha a unit e impede o gate de iniciar os
-aplicativos, em vez de pular silenciosamente o cleanup. Isso restaura o ledger antes de concluir um
-boot frio, enquanto o timer periódico só é iniciado depois desse gate. A mesma recovery unit é
+`set-livre-release-recovery.service` termine com sucesso; em seguida, o próprio gate inicia
+sincronamente a oneshot `set-livre-media-cleanup.service` e somente depois inicia os aplicativos. A
+oneshot não declara ordenação de volta para a recovery, pois deploy e recovery também a invocam
+sincronamente e essa aresta criaria espera circular. Assim ela sempre lê o symlink já estabilizado pelo
+control plane que a chamou. Suas pré-condições de release, ambientes e ausência do blocker principal
+usam assertions do systemd; o próprio gate de aplicação também exige ausência das duas fases do
+bootstrap. Qualquer ausência, corrupção ou fase residual falha a inicialização dos aplicativos, em vez
+de pular silenciosamente o cleanup. A fase durável de recovery não bloqueia a oneshot controlada, mas
+bloqueia o timer periódico. O timer não exige nem ordena o gate de aplicação, eliminando o ciclo
+automático `timer -> oneshot -> gate -> timer`, e só é reativado após readiness. Isso restaura o ledger
+antes de concluir um boot frio. A mesma recovery unit é
 disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
 links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
 depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
@@ -605,9 +610,13 @@ depois de 30 minutos, a primeira execução com outra identidade o fecha como
 `cleanup_run_abandoned`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
 única forma de restaurar readiness. A ausência de qualquer sucesso terminal nos últimos 30 minutos
 também degrada readiness, cobrindo falhas que acontecem antes de o worker conseguir abrir o ledger. A
-ativação normal, a recuperação de uma ativação interrompida e o rollback executam a oneshot do slug da
-release ativa antes dos health checks internos e público; o timer de dez minutos só volta depois dessa
-prova. Não existe edição manual do banco como procedimento operacional.
+ativação normal, a recuperação de uma ativação interrompida, o rollback e o bootstrap com release
+compatível executam a oneshot do slug da release ativa antes dos health checks internos e público; o
+timer de dez minutos só volta depois dessa prova. No recovery, a fase durável do bootstrap é removida
+antes de iniciar o timer, e o rollback só é consumido depois de comprovar que o timer ficou ativo. Se a
+oneshot falhar durante um bootstrap compatível, o symlink da release, o blocker autenticado e os
+marcadores de recovery permanecem íntegros para nova tentativa, com os serviços parados. Não existe
+edição manual do banco como procedimento operacional.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a

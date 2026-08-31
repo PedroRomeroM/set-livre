@@ -33,7 +33,7 @@ const validPngChecksum = createHash("sha256").update(validPngBuffer).digest("hex
 type MediaAction = StudioMediaCommand["action"];
 type HarnessBehavior = Readonly<{
   action: MediaAction;
-  kind: "conflict" | "expired" | "lost-response" | "validation";
+  kind: "advance-after-prepare" | "conflict" | "expired" | "lost-response" | "validation";
 }>;
 
 type PendingUpload = {
@@ -47,10 +47,13 @@ export type Feat008QaIdentity = Feat006QaIdentity;
 
 type Feat008MediaHarness = Readonly<{
   actions: readonly MediaAction[];
+  advanceGalleryAfterNextPrepare: () => void;
   conflictNext: (action: MediaAction) => void;
   expireNextFinalize: () => void;
   gallery: () => StudioMediaGallery;
+  idempotencyKeysFor: (action: MediaAction) => readonly string[];
   loseNextResponse: (action: MediaAction) => void;
+  loseNextSupersededFinalizeResponse: () => void;
   loseNextUploadAfterPersistence: () => void;
   loseNextUploadBeforePersistence: () => void;
   rejectNextUploadDefinitively: () => void;
@@ -251,11 +254,13 @@ export function feat008OversizedPngFile(name: string) {
 
 export async function installFeat008MediaHarness(page: Page, editor: StudioEditor) {
   const actions: MediaAction[] = [];
+  const commands: StudioMediaCommand[] = [];
   const pendingUploads = new Map<string, PendingUpload>();
   const replayLedger = new Map<string, unknown>();
   const releasedReservations = new Set<string>();
   const uploadAttempts: string[] = [];
   let behavior: HarnessBehavior | undefined;
+  let loseSupersededFinalizeResponse = false;
   let uploadFailure: "after-persistence" | "before-persistence" | "definitive" | undefined;
   let gallery = studioMediaGallerySchema.parse({
     items: [],
@@ -404,6 +409,7 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
     }
     const command = parsed.data;
     actions.push(command.action);
+    commands.push(command);
     const activeBehavior = behavior?.action === command.action ? behavior : undefined;
     if (activeBehavior !== undefined) behavior = undefined;
 
@@ -432,6 +438,21 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
       await fulfillJson(route, errorPayload("CONFLICT", "A galeria mudou em outra sessão."), 409);
       return;
     }
+    if (
+      command.action === "studio.media.upload.finalize" &&
+      (command.payload.expectedRevisionId !== gallery.revisionId ||
+        command.payload.expectedRevisionVersion !== gallery.revisionVersion)
+    ) {
+      releasedReservations.add(command.payload.mediaId);
+      pendingUploads.delete(command.payload.mediaId);
+      if (loseSupersededFinalizeResponse) {
+        loseSupersededFinalizeResponse = false;
+        await route.abort("failed");
+        return;
+      }
+      await fulfillJson(route, errorPayload("CONFLICT", "A galeria mudou em outra sessão."), 409);
+      return;
+    }
     if (command.action === "studio.media.upload.finalize") {
       const pending = pendingUploads.get(command.payload.mediaId);
       if (pending === undefined || !pending.stored) {
@@ -449,6 +470,12 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
     }
 
     const result = execute(command);
+    if (activeBehavior?.kind === "advance-after-prepare") {
+      if (command.action !== "studio.media.upload.prepare") {
+        throw new Error("O avanço pós-preparo recebeu uma ação incompatível.");
+      }
+      publish({ ...gallery, revisionVersion: gallery.revisionVersion + 1 });
+    }
     if (activeBehavior?.kind === "lost-response") {
       await route.abort("failed");
       return;
@@ -458,6 +485,9 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
 
   return {
     actions,
+    advanceGalleryAfterNextPrepare() {
+      behavior = { action: "studio.media.upload.prepare", kind: "advance-after-prepare" };
+    },
     conflictNext(action) {
       behavior = { action, kind: "conflict" };
     },
@@ -465,8 +495,16 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
       behavior = { action: "studio.media.upload.finalize", kind: "expired" };
     },
     gallery: () => gallery,
+    idempotencyKeysFor(action) {
+      return commands
+        .filter((command) => command.action === action)
+        .map((command) => command.idempotencyKey);
+    },
     loseNextResponse(action) {
       behavior = { action, kind: "lost-response" };
+    },
+    loseNextSupersededFinalizeResponse() {
+      loseSupersededFinalizeResponse = true;
     },
     loseNextUploadAfterPersistence() {
       uploadFailure = "after-persistence";

@@ -276,6 +276,69 @@ test("SL-F008-E2E-012 @p1 conflito no upload exige aceitar a versão salva e cri
   }
 });
 
+test("SL-F008-E2E-014 @p1 avanço após preparo libera a reserva antes de oferecer renovação", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(190_000);
+  const identity = createFeat008QaIdentity(testInfo, "014_prepare_advance_release");
+  try {
+    const { harness } = await provisionFeat008StudioWithHarness(page, identity, "814");
+    harness.advanceGalleryAfterNextPrepare();
+    harness.loseNextSupersededFinalizeResponse();
+
+    await page
+      .getByLabel("Selecionar fotos")
+      .setInputFiles(feat008PngFile("conflito-depois-do-preparo.png"));
+
+    await expect(page.getByText("A galeria mudou em outra sessão", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(
+        "A galeria mudou, mas a liberação da reserva ainda não foi confirmada. Verifique o estado antes de renovar.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(harness.actions.slice(0, 2)).toEqual([
+      "studio.media.upload.prepare",
+      "studio.media.upload.finalize",
+    ]);
+    expect(harness.releasedReservationCount()).toBe(1);
+    expect(harness.uploadAttempts).toHaveLength(0);
+
+    await page.getByRole("button", { name: "Verificar estado atual" }).click();
+    await expect(
+      page.getByText(
+        "A galeria mudou durante esta tentativa. Aceite a versão salva e renove o envio.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(
+      harness.actions.filter((action) => action === "studio.media.upload.finalize"),
+    ).toHaveLength(2);
+    const settlementKeys = harness.idempotencyKeysFor("studio.media.upload.finalize");
+    expect(settlementKeys).toHaveLength(2);
+    expect(new Set(settlementKeys).size).toBe(1);
+    expect(harness.releasedReservationCount()).toBe(1);
+
+    const renewUpload = page.getByRole("button", { name: "Renovar envio" });
+    await expect(renewUpload).toBeDisabled();
+    await page.getByRole("button", { name: "Usar versão salva" }).click();
+    await expect(renewUpload).toBeEnabled();
+    await renewUpload.click();
+
+    await expect(page.getByText("1 de 20 fotos", { exact: true })).toBeVisible();
+    expect(
+      harness.actions.filter((action) => action === "studio.media.upload.prepare"),
+    ).toHaveLength(2);
+    expect(
+      harness.actions.filter((action) => action === "studio.media.upload.finalize"),
+    ).toHaveLength(3);
+    expect(harness.uploadAttempts).toHaveLength(1);
+  } finally {
+    await closeFeat008PageBeforeCleanup(page);
+    await cleanupFeat008QaIdentity(identity);
+  }
+});
+
 test("SL-F008-E2E-009 @p1 sem JavaScript nenhuma mídia ou controle privado é renderizado", async ({
   browser,
   page,

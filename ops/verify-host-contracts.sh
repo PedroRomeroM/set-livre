@@ -908,6 +908,19 @@ if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" 
 fi
 state="${SET_LIVRE_TEST_STATE:?}"
 printf '%s\n' "$*" >> "$state/systemctl.log"
+if [[ ${1:-} == "stop" && " $* " == *" set-livre-media-cleanup.timer "* ]]; then
+  rm -f -- "$state/media-cleanup-timer-active"
+fi
+if [[ ${1:-} == "start" && ${2:-} == "set-livre-media-cleanup.timer" ]]; then
+  if [[ -e /etc/set-livre/bootstrap-in-progress.sha256 \
+    || -L /etc/set-livre/bootstrap-in-progress.sha256 \
+    || -e /etc/set-livre/bootstrap-recovery-in-progress.sha256 \
+    || -L /etc/set-livre/bootstrap-recovery-in-progress.sha256 ]]; then
+    touch "$state/media-cleanup-timer-skipped"
+    exit 0
+  fi
+  touch "$state/media-cleanup-timer-active"
+fi
 if [[ ${1:-} == "restart" && ${phase} == "services" && ! -e "$state/services-once" ]]; then
   touch "$state/services-once"
   exit 1
@@ -1459,6 +1472,9 @@ assert_current_release() {
 
 recover_services_successfully() {
   local expected="$1"
+  rm -f -- \
+    "$test_state/media-cleanup-timer-active" \
+    "$test_state/media-cleanup-timer-skipped"
   sudo env \
     PATH="$fake_bin:$PATH" \
     SET_LIVRE_TEST_PHASE=success \
@@ -1468,6 +1484,9 @@ recover_services_successfully() {
   grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
     "$test_state/systemctl.log" >/dev/null \
     || fail "recuperação terminal não reativou o timer de cleanup."
+  [[ -e ${test_state}/media-cleanup-timer-active \
+    && ! -e ${test_state}/media-cleanup-timer-skipped ]] \
+    || fail "recuperação terminal aceitou timer condicionado como se estivesse ativo."
   ! privileged_path_exists /etc/set-livre/bootstrap-in-progress.sha256 \
     || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }

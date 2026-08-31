@@ -1,8 +1,10 @@
 [Unit]
 Description=Schedule Set Livre production media cleanup
-Requires=set-livre-application-start.service
-After=set-livre-application-start.service
+After=network-online.target
+Wants=network-online.target
 ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs
+ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
+ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256
 
 [Timer]
 OnBootSec=5min

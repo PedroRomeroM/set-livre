@@ -51,6 +51,10 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
   explícita tanto antes quanto depois de uma resposta perdida;
 - recusa definitiva da Storage API ainda exige verificação server-side; renovação só aparece depois de
   `object_missing` persistido liberar a reserva antiga;
+- todo preparo é seguido por uma releitura autoritativa antes do upload. Se outra sessão avançou a
+  revisão nesse intervalo, a reserva retida é terminalizada no servidor antes de a UI permitir uma
+  nova identidade de upload; resposta ambígua nessa terminalização mantém a mesma chave idempotente,
+  exige replay de verificação e só libera a renovação depois de confirmar o fato terminal;
 - respostas atrasadas nunca fazem o cache regredir: número da revisão e versão formam o fence
   monotônico, e toda mutação bem-sucedida termina com releitura autoritativa; descartar a draft remove
   a query exata de mídia antes de restaurar a revisão publicada;
@@ -85,21 +89,22 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
 
 ## Cenários de aceitação
 
-| ID              | Prioridade | Suíte      | Viewport | Cenário                                                       |
-| --------------- | ---------- | ---------- | -------- | ------------------------------------------------------------- |
-| SL-F008-E2E-001 | P0         | critical   | desktop  | upload válido, finalização, capa e ordenação                  |
-| SL-F008-E2E-002 | P0         | critical   | desktop  | MIME forjado e arquivo acima do limite são rejeitados         |
-| SL-F008-E2E-003 | P0         | critical   | desktop  | mídia pendente não aparece e falha permite recuperação segura |
-| SL-F008-E2E-004 | P1         | regression | matriz   | prévia expirada e cancelamento recuperam estado e foco        |
-| SL-F008-E2E-005 | P1         | regression | desktop  | dimensões reservadas evitam salto na galeria privada          |
-| SL-F008-E2E-006 | P0         | critical   | desktop  | dono A não lê nem obtém upload para o estúdio do dono B       |
-| SL-F008-E2E-007 | P1         | regression | desktop  | hidratação fecha dados e resposta perdida não duplica comando |
-| SL-F008-E2E-008 | P1         | regression | desktop  | conflito bloqueia ações até aceitar o estado autoritativo     |
-| SL-F008-E2E-009 | P1         | regression | desktop  | sem JavaScript não há mídia nem controle privado no DOM       |
-| SL-F008-E2E-010 | P1         | axe        | matriz   | teclado, foco, tema escuro e viewports passam acessibilidade  |
-| SL-F008-E2E-011 | P2         | reflow     | 200%     | galeria, fila e lightbox permanecem operáveis sem overflow    |
-| SL-F008-E2E-012 | P1         | regression | matriz   | conflito libera reserva, exige estado salvo e ação nova       |
-| SL-F008-E2E-013 | P0         | critical   | desktop  | recusa do Storage libera a reserva antes de renovar           |
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                        |
+| --------------- | ---------- | ---------- | -------- | -------------------------------------------------------------- |
+| SL-F008-E2E-001 | P0         | critical   | desktop  | upload válido, finalização, capa e ordenação                   |
+| SL-F008-E2E-002 | P0         | critical   | desktop  | MIME forjado e arquivo acima do limite são rejeitados          |
+| SL-F008-E2E-003 | P0         | critical   | desktop  | mídia pendente não aparece e falha permite recuperação segura  |
+| SL-F008-E2E-004 | P1         | regression | matriz   | prévia expirada e cancelamento recuperam estado e foco         |
+| SL-F008-E2E-005 | P1         | regression | desktop  | dimensões reservadas evitam salto na galeria privada           |
+| SL-F008-E2E-006 | P0         | critical   | desktop  | dono A não lê nem obtém upload para o estúdio do dono B        |
+| SL-F008-E2E-007 | P1         | regression | desktop  | hidratação fecha dados e resposta perdida não duplica comando  |
+| SL-F008-E2E-008 | P1         | regression | desktop  | conflito bloqueia ações até aceitar o estado autoritativo      |
+| SL-F008-E2E-009 | P1         | regression | desktop  | sem JavaScript não há mídia nem controle privado no DOM        |
+| SL-F008-E2E-010 | P1         | axe        | matriz   | teclado, foco, tema escuro e viewports passam acessibilidade   |
+| SL-F008-E2E-011 | P2         | reflow     | 200%     | galeria, fila e lightbox permanecem operáveis sem overflow     |
+| SL-F008-E2E-012 | P1         | regression | matriz   | conflito libera reserva, exige estado salvo e ação nova        |
+| SL-F008-E2E-013 | P0         | critical   | desktop  | recusa do Storage libera a reserva antes de renovar            |
+| SL-F008-E2E-014 | P1         | regression | matriz   | avanço pós-preparo repete settlement e confirma terminalização |
 
 Os P0 atravessam a UI. Setup e limpeza usam apenas o Supabase local, dados com namespace QA,
 locators semânticos, sem `waitForTimeout`, `.skip`, `.only` ou retry que esconda flakiness.
@@ -109,7 +114,7 @@ locators semânticos, sem `waitForTimeout`, `.skip`, `.only` ou retry que escond
 - unitários: envelopes estritos, formatos/decodificação e orquestração do cleanup;
 - pgTAP: constraints, grants, RLS A/B, limite 20, liberação de reserva rejeitada, clone de revisão,
   idempotência, concorrência, claims e heartbeat do cleanup;
-- Playwright: os treze cenários acima, incluindo mobile, teclado, axe e reflow;
+- Playwright: os catorze cenários acima, incluindo mobile, teclado, axe e reflow;
 - gates completos, review limpo no SHA, merge, migration, bucket e Function imutável em produção,
   canário HTTPS real da candidata, oneshot/timer de dez minutos na VM, ledger saudável e health público
   verde.

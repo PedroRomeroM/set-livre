@@ -406,12 +406,19 @@ describe("local tooling contracts", () => {
       expect(unit).not.toContain("WantedBy=multi-user.target");
       expect(unit).not.toContain("set-livre-release-recovery@link.service");
     }
-    expect(applicationStartUnit).toContain(
+    expect(applicationStartUnit).toContain("Requires=set-livre-release-recovery.service");
+    expect(applicationStartUnit).toContain("After=set-livre-release-recovery.service");
+    expect(applicationStartUnit).not.toContain(
       "Requires=set-livre-release-recovery.service set-livre-media-cleanup.service",
     );
-    expect(applicationStartUnit).toContain(
-      "After=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    const initialCleanup = applicationStartUnit.indexOf(
+      "ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service",
     );
+    const applicationStart = applicationStartUnit.indexOf(
+      "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
+    );
+    expect(initialCleanup).toBeGreaterThan(-1);
+    expect(applicationStart).toBeGreaterThan(initialCleanup);
     expect(applicationStartUnit).toContain(
       "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
     );
@@ -466,25 +473,40 @@ describe("local tooling contracts", () => {
     expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/web.env");
     expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/release.env");
     expect(service).toContain("AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
-    expect(service).toContain(
+    expect(service).not.toContain("bootstrap-recovery-in-progress.sha256");
+    expect(service).not.toContain("ConditionPath");
+    expect(service).toContain("After=network-online.target");
+    expect(service).not.toContain("set-livre-release-recovery.service");
+    expect(service).not.toContain("Authorization");
+    expect(timer).not.toContain("set-livre-application-start.service");
+    expect(timer).toContain("After=network-online.target");
+    expect(timer).toContain("Wants=network-online.target");
+    expect(timer).toContain("OnBootSec=5min");
+    const applicationStart = readFileSync(
+      new URL("../../ops/systemd/set-livre-application-start.service", import.meta.url),
+      "utf8",
+    );
+    expect(applicationStart).toContain("Requires=set-livre-release-recovery.service");
+    expect(applicationStart).toContain(
+      "ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service",
+    );
+    expect(applicationStart).not.toContain(
+      "After=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    );
+    expect(applicationStart).toContain(
+      "AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256",
+    );
+    expect(applicationStart).toContain(
       "AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
     );
-    expect(service).not.toContain("ConditionPath");
-    expect(service).toContain("After=network-online.target set-livre-release-recovery.service");
-    expect(service).not.toContain("Authorization");
-    expect(timer).toContain("Requires=set-livre-application-start.service");
-    expect(timer).toContain("After=set-livre-application-start.service");
-    expect(timer).toContain("OnBootSec=5min");
-    expect(
-      readFileSync(
-        new URL("../../ops/systemd/set-livre-application-start.service", import.meta.url),
-        "utf8",
-      ),
-    ).toContain("Requires=set-livre-release-recovery.service set-livre-media-cleanup.service");
     expect(timer).toContain("OnUnitActiveSec=10min");
     expect(timer).toContain("WantedBy=timers.target");
     expect(timer).toContain(
       "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(timer).toContain("ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
+    expect(timer).toContain(
+      "ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
     );
 
     for (const contract of [bootstrap, deploy, hostVerification, release]) {
@@ -492,6 +514,7 @@ describe("local tooling contracts", () => {
       expect(contract).toContain("set-livre-media-cleanup.timer");
     }
     expect(bootstrap).toContain("systemd-analyze verify \\");
+    expect(bootstrap).toContain("run_media_cleanup_once");
     expect(bootstrap).toContain("systemctl start set-livre-media-cleanup.timer");
     expect(hostVerification).toContain("preflight SSH aceitou timer de cleanup desabilitado");
     expect(hostVerification).toContain("ativação não executou o cleanup inicial");
@@ -582,6 +605,25 @@ describe("local tooling contracts", () => {
     expect(servicesRecovery.indexOf("begin_interrupted_bootstrap_recovery")).toBeLessThan(
       servicesRecovery.indexOf("activate_recovered_link"),
     );
+    const recoveryPublicHealth = servicesRecovery.indexOf(
+      'wait_for_public_health "$recovered_release"',
+    );
+    const recoveryPhaseRemoval = servicesRecovery.indexOf(
+      'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
+      recoveryPublicHealth,
+    );
+    const recoveryTimerStart = servicesRecovery.indexOf(
+      "start_media_cleanup_schedule",
+      recoveryPhaseRemoval,
+    );
+    const recoveryMarkerRemoval = servicesRecovery.indexOf(
+      'rm -f -- "$ROLLBACK_MARKER"',
+      recoveryTimerStart,
+    );
+    expect(recoveryPublicHealth).toBeGreaterThan(-1);
+    expect(recoveryPhaseRemoval).toBeGreaterThan(recoveryPublicHealth);
+    expect(recoveryTimerStart).toBeGreaterThan(recoveryPhaseRemoval);
+    expect(recoveryMarkerRemoval).toBeGreaterThan(recoveryTimerStart);
     expect(hostVerification).toContain("privileged_regular_file_exists");
     expect(hostVerification).toContain(
       "recovery ${recovery_mode} aceitou digests divergentes no bootstrap",
@@ -1470,6 +1512,9 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
     );
+    expect(serviceRecovery.indexOf('rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"')).toBeLessThan(
+      serviceRecovery.indexOf("start_media_cleanup_schedule"),
+    );
     expect(deploy).toContain('lock_policy="timeout=${RECOVERY_LOCK_TIMEOUT_SECONDS}"');
     expect(serviceRecovery).not.toContain("set-livre-deploy.lock");
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
@@ -1537,6 +1582,7 @@ describe("local tooling contracts", () => {
       previousDigestRemoved,
     );
     const bootstrapRestart = bootstrap.indexOf("systemctl restart set-livre-web.service");
+    const bootstrapMediaCleanup = bootstrap.lastIndexOf("run_media_cleanup_once", bootstrapRestart);
     const bootstrapReadiness = bootstrap.indexOf(
       'wait_for_active_public_health "$active_release_sha"',
       bootstrapRestart,
@@ -1567,6 +1613,7 @@ describe("local tooling contracts", () => {
       recoveryPhaseArmed,
       previousDigestRemoved,
       bootstrapGateReleased,
+      bootstrapMediaCleanup,
       bootstrapRestart,
       bootstrapReadiness,
       recoveryPhaseDisarmed,
@@ -1582,7 +1629,15 @@ describe("local tooling contracts", () => {
     expect(recoveryArmed).toBeLessThan(recoveryPhaseArmed);
     expect(recoveryPhaseArmed).toBeLessThan(previousDigestRemoved);
     expect(previousDigestRemoved).toBeLessThan(bootstrapGateReleased);
-    expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
+    expect(bootstrapGateReleased).toBeLessThan(bootstrapMediaCleanup);
+    expect(bootstrapMediaCleanup).toBeLessThan(bootstrapRestart);
+    const bootstrapCleanupFailure = bootstrap.slice(bootstrapMediaCleanup, bootstrapRestart);
+    expect(bootstrapCleanupFailure).toContain(
+      'publish_bootstrap_in_progress "$host_configuration_digest"',
+    );
+    expect(bootstrapCleanupFailure).not.toContain("rm -f -- /opt/set-livre/current");
+    expect(bootstrapCleanupFailure).not.toContain("$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS");
+    expect(bootstrapCleanupFailure).not.toContain("$ROLLBACK_MARKER");
     expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
     expect(bootstrapReadiness).toBeLessThan(recoveryPhaseDisarmed);
     expect(recoveryPhaseDisarmed).toBeLessThan(recoveryDisarmed);
@@ -1597,7 +1652,7 @@ describe("local tooling contracts", () => {
     );
     expect(
       bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(bootstrap).toContain(
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );

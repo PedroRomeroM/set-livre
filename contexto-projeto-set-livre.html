@@ -213,11 +213,15 @@
           Playwright ou uma operação real de banco; importar helpers puros em Vitest não exige
           credenciais E2E e também não cria fallback. Durante suítes longas, o setup global executa
           o cleanup local real a cada dez minutos e reprova qualquer resultado não terminal,
-          reproduzindo o timer da VM sem deixar o readiness expirar artificialmente. No boot frio, a
-          oneshot de cleanup também termina antes de os aplicativos serem considerados iniciados;
-          suas pré-condições são assertions fail-closed, portanto artefato, ambientes ou blockers
-          inválidos falham o boot da aplicação em vez de pular o gate. Os resultados permanecem no
-          PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
+          reproduzindo o timer da VM sem deixar o readiness expirar artificialmente. No boot frio e
+          no bootstrap com release compatível, a oneshot de cleanup também termina antes dos health
+          checks; assertions no cleanup e no gate fecham artefato, ambientes, blocker principal ou
+          fase residual inválidos. O timer periódico é bloqueado durante transições e não possui uma
+          dependência reversa do gate, evitando ciclo de ordenação no systemd. O recovery remove a
+          fase durável antes de iniciar o timer e preserva release e marcadores se a oneshot falhar,
+          permitindo retry fail-closed sem exigir novo deploy. O gate sequencia recovery, oneshot e
+          apps sem fazer a oneshot aguardar pela própria recovery. Os resultados permanecem no PR e
+          nos checks. Os contratos técnicos ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

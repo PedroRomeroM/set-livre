@@ -65,7 +65,9 @@ e continua com os arquivos seguintes quando a falha atual é definitiva e isolad
 Storage API recusa diretamente o upload, a UI pede ao servidor que verifique o objeto antes de oferecer
 renovação. Expiração ou ausência comprovada encerram a reserva antiga no banco: ela deixa de consumir a
 cota, entra no cleanup e só então a recuperação cria outra idempotência, mídia, path e token, sem tentar
-reviver uma autorização vencida.
+reviver uma autorização vencida. Se a galeria avançar logo depois do preparo, a mesma finalização
+terminaliza a reserva como `superseded`; uma resposta perdida conserva a chave dessa finalização até o
+replay confirmar o conflito terminal, sem consumir outra vaga ou iniciar o upload.
 
 Toda conclusão de mutação relê a galeria canônica. O DTO inclui o número imutável da revisão e sua
 versão; uma resposta atrasada de revisão ou versão anterior é descartada e identidades contraditórias
@@ -104,9 +106,15 @@ preservando candidata e versão anunciada pelo health vivo. Não há Cron, `pg_n
 container adicional. Roles da aplicação continuam sem acesso a `net` ou `maintenance`; `service_role`
 executa somente as fachadas RPC estreitas. Readiness reprova execução travada ou falha sem recuperação
 posterior. Também reprova quando nenhum sucesso terminal foi registrado nos últimos 30 minutos, mesmo
-que a falha aconteça antes de o worker abrir uma linha nova no ledger. Deploy, recovery e rollback
-executam uma oneshot antes dos health checks e só então reativam o timer. Objetos do Storage nunca são
-apagados por SQL direto.
+que a falha aconteça antes de o worker abrir uma linha nova no ledger. Deploy, recovery, rollback e
+bootstrap de um host com release compatível executam uma oneshot antes dos health checks e só então
+reativam o timer. O timer não depende do gate de boot em sentido inverso: ele permanece suspenso por
+blockers durante transições controladas, evitando ciclo de ordenação com a oneshot inicial. Recovery
+remove a fase de bootstrap antes de iniciar o timer e só depois consome o rollback; falha da oneshot
+durante bootstrap preserva release, blocker e marcadores para retry. No boot, o gate espera a recovery,
+chama a mesma oneshot sincronamente e só então inicia os apps; a oneshot não espera pela recovery de
+volta, portanto o caminho acionado pelo marcador também não forma deadlock. Objetos do Storage nunca
+são apagados por SQL direto.
 
 O configurador serializa o canário por advisory lock de sessão. Antes de criar uma nova identidade,
 ele recupera probes `prepared` ou `queued` sem atualização há 30 minutos: remove os dois paths pela
