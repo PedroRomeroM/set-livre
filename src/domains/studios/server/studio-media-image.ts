@@ -16,6 +16,12 @@ import sharp from "sharp";
 
 const studioMediaCapacityQueueLimit = 3;
 const studioMediaCapacityWaitMs = 4_000;
+export const studioMediaServerVerificationDeadlineMs = 15_000;
+
+export type StudioMediaProcessingDeadline = Readonly<{
+  deadlineAt: number;
+  signal: AbortSignal;
+}>;
 
 type CapacityWaiter = Readonly<{
   reject: (reason: StudioMediaCapacityError) => void;
@@ -100,11 +106,56 @@ export class StudioMediaCapacityError extends Error {
   }
 }
 
-export async function withStudioMediaImageCapacity<T>(work: () => Promise<T>) {
+export class StudioMediaDeadlineError extends Error {
+  constructor() {
+    super("O prazo seguro de processamento da foto foi excedido.");
+    this.name = "StudioMediaDeadlineError";
+  }
+}
+
+function deadlineError(deadline: StudioMediaProcessingDeadline) {
+  return deadline.signal.reason instanceof StudioMediaDeadlineError
+    ? deadline.signal.reason
+    : new StudioMediaDeadlineError();
+}
+
+function assertWithinDeadline(deadline: StudioMediaProcessingDeadline) {
+  if (deadline.signal.aborted || Date.now() >= deadline.deadlineAt) {
+    throw deadlineError(deadline);
+  }
+}
+
+function remainingSharpSeconds(deadline: StudioMediaProcessingDeadline) {
+  assertWithinDeadline(deadline);
+  return Math.max(1, Math.ceil((deadline.deadlineAt - Date.now()) / 1_000));
+}
+
+function sharpTimedOut(error: unknown) {
+  return error instanceof Error && /(?:^|\s)timeout:\s/iu.test(error.message);
+}
+
+export async function withStudioMediaImageCapacity<T>(
+  work: (deadline: StudioMediaProcessingDeadline) => Promise<T>,
+) {
   const release = await acquireCapacity();
+  const controller = new AbortController();
+  const deadline: StudioMediaProcessingDeadline = {
+    deadlineAt: Date.now() + studioMediaServerVerificationDeadlineMs,
+    signal: controller.signal,
+  };
+  const timer = setTimeout(
+    () => controller.abort(new StudioMediaDeadlineError()),
+    studioMediaServerVerificationDeadlineMs,
+  );
   try {
-    return await work();
+    const result = await work(deadline);
+    assertWithinDeadline(deadline);
+    return result;
+  } catch (error) {
+    if (deadline.signal.aborted) throw deadlineError(deadline);
+    throw error;
   } finally {
+    clearTimeout(timer);
     release();
   }
 }
@@ -135,7 +186,9 @@ export function detectStudioMediaMimeType(bytes: Uint8Array) {
 export async function verifyStudioMediaImage(
   blob: Blob,
   candidate: StudioMediaUploadCandidate,
+  deadline: StudioMediaProcessingDeadline,
 ): Promise<VerifiedStudioMediaImage> {
+  assertWithinDeadline(deadline);
   if (
     blob.size < 1 ||
     blob.size > studioMediaMaximumBytes ||
@@ -145,6 +198,7 @@ export async function verifyStudioMediaImage(
   }
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  assertWithinDeadline(deadline);
   const detectedMimeType = detectStudioMediaMimeType(bytes);
   if (
     detectedMimeType === undefined ||
@@ -167,8 +221,9 @@ export async function verifyStudioMediaImage(
       failOn: "error",
       limitInputPixels: studioMediaMaximumPixels,
       sequentialRead: true,
-    });
+    }).timeout({ seconds: remainingSharpSeconds(deadline) });
     const metadata = await image.metadata();
+    assertWithinDeadline(deadline);
     const width = metadata.autoOrient.width;
     const height = metadata.autoOrient.height;
     if (
@@ -184,6 +239,7 @@ export async function verifyStudioMediaImage(
     }
     const previewBytes = await image
       .clone()
+      .timeout({ seconds: remainingSharpSeconds(deadline) })
       .autoOrient()
       .resize({
         fit: "inside",
@@ -193,6 +249,7 @@ export async function verifyStudioMediaImage(
       })
       .webp({ effort: 4, quality: 80 })
       .toBuffer();
+    assertWithinDeadline(deadline);
     if (previewBytes.byteLength < 1 || previewBytes.byteLength > studioMediaPreviewMaximumBytes) {
       throw new StudioMediaImageError("DECODE_FAILED");
     }
@@ -206,6 +263,8 @@ export async function verifyStudioMediaImage(
     return { previewBytes, verification };
   } catch (error) {
     if (error instanceof StudioMediaImageError) throw error;
+    if (error instanceof StudioMediaDeadlineError) throw error;
+    if (deadline.signal.aborted || sharpTimedOut(error)) throw deadlineError(deadline);
     throw new StudioMediaImageError("DECODE_FAILED");
   }
 }

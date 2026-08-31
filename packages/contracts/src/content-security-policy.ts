@@ -5,20 +5,32 @@ export const contentSecurityPolicyHeaderName = "Content-Security-Policy";
 export const contentSecurityPolicyNonceHeaderName = "x-nonce";
 
 interface ContentSecurityPolicyOptions {
+  allowLoopbackHttpConnectOrigins?: boolean;
   allowLoopbackHttpImageOrigins?: boolean;
+  connectOrigins?: readonly string[];
   imageOrigins?: readonly string[];
 }
 
-function normalizeImageOrigins(origins: readonly string[], allowLoopbackHttp: boolean) {
-  return [...new Set(origins.map((origin) => normalizeImageOrigin(origin, allowLoopbackHttp)))];
+function normalizeOrigins(
+  origins: readonly string[],
+  allowLoopbackHttp: boolean,
+  resource: "conexão" | "imagem",
+) {
+  return [
+    ...new Set(origins.map((origin) => normalizeOrigin(origin, allowLoopbackHttp, resource))),
+  ];
 }
 
-function normalizeImageOrigin(origin: string, allowLoopbackHttp: boolean) {
+function normalizeOrigin(
+  origin: string,
+  allowLoopbackHttp: boolean,
+  resource: "conexão" | "imagem",
+) {
   let parsed: URL;
   try {
     parsed = new URL(origin);
   } catch {
-    throw new Error("Uma origem de imagem da Content Security Policy é inválida.");
+    throw new Error(`Uma origem de ${resource} da Content Security Policy é inválida.`);
   }
 
   const isSecure = parsed.protocol === "https:";
@@ -30,7 +42,7 @@ function normalizeImageOrigin(origin: string, allowLoopbackHttp: boolean) {
     parsed.password !== "" ||
     (!isSecure && !isLocalDevelopment)
   ) {
-    throw new Error("Uma origem de imagem da Content Security Policy é inválida.");
+    throw new Error(`Uma origem de ${resource} da Content Security Policy é inválida.`);
   }
   return parsed.origin;
 }
@@ -39,14 +51,25 @@ export function createContentSecurityPolicy(
   nonce: string,
   isDevelopment: boolean,
   {
+    allowLoopbackHttpConnectOrigins = isDevelopment,
     allowLoopbackHttpImageOrigins = isDevelopment,
+    connectOrigins = [],
     imageOrigins = [],
   }: ContentSecurityPolicyOptions = {},
 ) {
   if (!contentSecurityPolicyNoncePattern.test(nonce)) {
     throw new Error("O nonce da Content Security Policy possui formato inválido.");
   }
-  const normalizedImageOrigins = normalizeImageOrigins(imageOrigins, allowLoopbackHttpImageOrigins);
+  const normalizedConnectOrigins = normalizeOrigins(
+    connectOrigins,
+    allowLoopbackHttpConnectOrigins,
+    "conexão",
+  );
+  const normalizedImageOrigins = normalizeOrigins(
+    imageOrigins,
+    allowLoopbackHttpImageOrigins,
+    "imagem",
+  );
 
   return [
     "default-src 'self'",
@@ -59,6 +82,11 @@ export function createContentSecurityPolicy(
     "object-src 'none'",
     "style-src 'self' 'unsafe-inline'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDevelopment ? " 'unsafe-eval'" : ""}`,
-    `connect-src 'self'${isDevelopment ? " http://127.0.0.1:* ws://127.0.0.1:*" : ""}`,
+    [
+      "connect-src",
+      "'self'",
+      ...normalizedConnectOrigins,
+      ...(isDevelopment ? ["http://127.0.0.1:*", "ws://127.0.0.1:*"] : []),
+    ].join(" "),
   ].join("; ");
 }

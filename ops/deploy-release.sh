@@ -192,6 +192,10 @@ start_media_cleanup_schedule() {
   systemctl start set-livre-media-cleanup.timer
 }
 
+run_media_cleanup_once() {
+  systemctl start set-livre-media-cleanup.service
+}
+
 activate_link() {
   local target="$1"
   local candidate="${CURRENT_LINK}.next"
@@ -592,6 +596,7 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
         || fail "não foi possível estabilizar o host sem release anterior."
     elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
+      || ! run_media_cleanup_once \
       || ! wait_for_health "$recovered_release" \
       || ! wait_for_public_health "$recovered_release" \
       || ! start_media_cleanup_schedule; then
@@ -719,6 +724,7 @@ rollback_activation() {
     return 0
   fi
   if systemctl restart set-livre-web.service set-livre-backoffice.service \
+    && run_media_cleanup_once \
     && wait_for_health "$recovered_release" \
     && wait_for_public_health "$recovered_release" \
     && start_media_cleanup_schedule; then
@@ -1327,12 +1333,12 @@ activation_failure="troca do symlink"
 activate_link "$release_directory" || fail "$activation_failure"
 activation_failure="reinício dos serviços"
 systemctl restart set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
+activation_failure="cleanup inicial de mídia"
+run_media_cleanup_once || fail "$activation_failure"
 activation_failure="readiness interno"
 wait_for_health "$release_sha" || fail "$activation_failure"
 activation_failure="readiness HTTPS público"
 wait_for_public_health "$release_sha" || fail "$activation_failure"
-activation_failure="cleanup inicial de mídia"
-systemctl start set-livre-media-cleanup.service || fail "$activation_failure"
 activation_failure="reativação do timer de cleanup"
 start_media_cleanup_schedule || fail "$activation_failure"
 

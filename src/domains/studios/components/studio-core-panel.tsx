@@ -38,6 +38,7 @@ import {
   assertStudioEditorBoundary,
   publishStudioEditor,
   recomposeStudioClientBoundary,
+  removeStudioMediaGallery,
   studioEditorCanRender,
   studioRevisionToken,
   StudioScopeChangedError,
@@ -900,6 +901,7 @@ function EditStudioForm({
         setPendingConflictRecovery(undefined);
         setConflict(undefined);
         setConfirmDiscard(false);
+        await removeStudioMediaGallery(queryClient, userId, initialEditor.studioId);
         if (result.studioDeleted) {
           await queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey });
           queryClient.removeQueries({ exact: true, queryKey: editorQueryKey });

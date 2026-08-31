@@ -194,6 +194,41 @@ test("SL-F008-E2E-003 @p0 resposta de upload perdida recupera estados antes e de
   }
 });
 
+test("SL-F008-E2E-013 @p0 rejeição definitiva libera a reserva no servidor antes de renovar", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat008QaIdentity(testInfo, "013_release_before_renewal");
+  try {
+    const { harness } = await provisionFeat008StudioWithHarness(page, identity, "813");
+    harness.rejectNextUploadDefinitively();
+
+    await page.getByLabel("Selecionar fotos").setInputFiles(feat008PngFile("token-recusado.png"));
+
+    await expect(
+      page.getByText(/O arquivo não chegou ao armazenamento.+nova reserva/iu),
+    ).toBeVisible();
+    expect(harness.actions).toEqual([
+      "studio.media.upload.prepare",
+      "studio.media.upload.finalize",
+    ]);
+    expect(harness.releasedReservationCount()).toBe(1);
+
+    await page.getByRole("button", { name: "Renovar envio" }).click();
+    await expect(page.getByText("1 de 20 fotos", { exact: true })).toBeVisible();
+    expect(
+      harness.actions.filter((action) => action === "studio.media.upload.prepare"),
+    ).toHaveLength(2);
+    expect(
+      harness.actions.filter((action) => action === "studio.media.upload.finalize"),
+    ).toHaveLength(2);
+    expect(new Set(harness.uploadAttempts).size).toBe(2);
+  } finally {
+    await closeFeat008PageBeforeCleanup(page);
+    await cleanupFeat008QaIdentity(identity);
+  }
+});
+
 test("SL-F008-E2E-006 @p0 dono B recebe 404 segura e não vê a mídia privada do dono A", async ({
   browser,
   page,

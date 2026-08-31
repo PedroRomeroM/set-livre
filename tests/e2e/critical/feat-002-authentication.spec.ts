@@ -534,6 +534,11 @@ test("SL-F002-E2E-008 @p0 login preserva o retorno privado de criação e ediç�
       path: "/dono/estudios/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/dados",
       requestedPath: "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
     },
+    {
+      heading: "Fotos do estúdio",
+      path: "/dono/estudios/11111111-1111-4111-8111-111111111111/midia",
+      requestedPath: "/dono/estudios/11111111-1111-4111-8111-111111111111/midia",
+    },
   ] as const;
 
   try {

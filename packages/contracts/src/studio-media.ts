@@ -222,7 +222,6 @@ function validateStudioMediaOrderAndCover(
         identity === undefined ||
         identity.scope !== gallery.scope ||
         identity.studioId !== gallery.studioId ||
-        identity.revisionId !== gallery.revisionId ||
         identity.mediaId !== item.id
       ) {
         context.addIssue({

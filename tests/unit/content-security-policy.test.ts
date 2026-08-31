@@ -39,14 +39,16 @@ describe("Content Security Policy nonce contract", () => {
     expect(policy.get("connect-src")).toEqual(["'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*"]);
   });
 
-  it("admits only the exact Supabase image origin required by signed private previews", () => {
+  it("admits only the exact Supabase origin required by uploads and signed private previews", () => {
     const production = directives(
       createContentSecurityPolicy(nonce, false, {
+        connectOrigins: ["https://project.supabase.co", "https://project.supabase.co"],
         imageOrigins: ["https://project.supabase.co", "https://project.supabase.co"],
       }),
     );
     const local = directives(
       createContentSecurityPolicy(nonce, true, {
+        connectOrigins: ["http://127.0.0.1:54321"],
         imageOrigins: ["http://127.0.0.1:54321"],
       }),
     );
@@ -57,7 +59,14 @@ describe("Content Security Policy nonce contract", () => {
       "blob:",
       "https://project.supabase.co",
     ]);
+    expect(production.get("connect-src")).toEqual(["'self'", "https://project.supabase.co"]);
     expect(local.get("img-src")).toEqual(["'self'", "data:", "blob:", "http://127.0.0.1:54321"]);
+    expect(local.get("connect-src")).toEqual([
+      "'self'",
+      "http://127.0.0.1:54321",
+      "http://127.0.0.1:*",
+      "ws://127.0.0.1:*",
+    ]);
   });
 
   it.each([
@@ -73,7 +82,25 @@ describe("Content Security Policy nonce contract", () => {
     );
   });
 
+  it.each([
+    "http://project.supabase.co",
+    "https://project.supabase.co/path",
+    "https://project.supabase.co/",
+    "https://user:secret@project.supabase.co",
+    "https://project.supabase.co; connect-src *",
+    "http://192.168.0.2:54321",
+  ])("rejects a broad, injected or non-canonical connection origin", (candidate) => {
+    expect(() =>
+      createContentSecurityPolicy(nonce, false, { connectOrigins: [candidate] }),
+    ).toThrow("origem de conexão da Content Security Policy é inválida");
+  });
+
   it("rejects loopback HTTP outside development", () => {
+    expect(() =>
+      createContentSecurityPolicy(nonce, false, {
+        connectOrigins: ["http://127.0.0.1:54321"],
+      }),
+    ).toThrow("origem de conexão da Content Security Policy é inválida");
     expect(() =>
       createContentSecurityPolicy(nonce, false, {
         imageOrigins: ["http://127.0.0.1:54321"],
@@ -84,12 +111,15 @@ describe("Content Security Policy nonce contract", () => {
   it("allows test-mode loopback without enabling development script evaluation", () => {
     const policy = directives(
       createContentSecurityPolicy(nonce, false, {
+        allowLoopbackHttpConnectOrigins: true,
         allowLoopbackHttpImageOrigins: true,
+        connectOrigins: ["http://127.0.0.1:54321"],
         imageOrigins: ["http://127.0.0.1:54321"],
       }),
     );
 
     expect(policy.get("img-src")).toContain("http://127.0.0.1:54321");
+    expect(policy.get("connect-src")).toContain("http://127.0.0.1:54321");
     expect(policy.get("script-src")).not.toContain("'unsafe-eval'");
   });
 

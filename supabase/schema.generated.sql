@@ -5405,7 +5405,7 @@ $$;
 ALTER FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_revision_id" "uuid", "p_revision_version" bigint, "p_media_id" "uuid", "p_result" "jsonb") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text" DEFAULT 'validation_failed'::"text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -5423,6 +5423,8 @@ begin
     or p_expected_revision_version < 1
     or p_media_id is null
     or p_request_id is null
+    or p_rejection_code is null
+    or p_rejection_code <> all (array['validation_failed'::text, 'object_missing'::text])
   then
     raise exception using errcode = '22023', message = 'invalid_studio_media_reject';
   end if;
@@ -5459,7 +5461,7 @@ begin
     update public.studio_media as candidate
     set
       status = 'rejected',
-      rejection_code = 'validation_failed',
+      rejection_code = p_rejection_code,
       rejected_at = rejected_time,
       cleanup_after = greatest(rejected_time, media.upload_expires_at),
       cleanup_next_attempt_at = null
@@ -5475,11 +5477,12 @@ begin
         'mediaId', p_media_id,
         'revisionId', draft_revision_id,
         'revisionVersion', draft_revision_version,
-        'rejectionCode', 'validation_failed'
+        'rejectionCode', p_rejection_code
       )
     );
   else
     rejected_time := media.rejected_at;
+    p_rejection_code := media.rejection_code;
   end if;
 
   result := pg_catalog.jsonb_build_object(
@@ -5489,7 +5492,7 @@ begin
     'revisionVersion', draft_revision_version,
     'mediaId', p_media_id,
     'status', 'rejected',
-    'rejectionCode', 'validation_failed',
+    'rejectionCode', p_rejection_code,
     'rejectedAt', rejected_time
   );
   return result;
@@ -5497,10 +5500,10 @@ end;
 $$;
 
 
-ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") IS 'Rejeita de forma naturalmente idempotente um candidato cuja verificação de bytes falhou.';
+COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza uma reserva pendente com motivo server-side permitido; replay preserva o primeiro fato e libera a quota imediatamente.';
 
 
 
@@ -6788,7 +6791,15 @@ CREATE OR REPLACE FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() R
     SET "search_path" TO ''
     AS $$
   select
-    not exists (
+    coalesce(
+      (
+        select pg_catalog.max(succeeded_run.completed_at)
+        from maintenance.studio_media_cleanup_runs as succeeded_run
+        where succeeded_run.status = 'succeeded'
+      ) >= pg_catalog.now() - interval '30 minutes',
+      false
+    )
+    and not exists (
       select 1
       from maintenance.studio_media_cleanup_runs as run
       where run.status = 'running'
@@ -6811,6 +6822,10 @@ $$;
 
 
 ALTER FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() IS 'Fail-closed quando falta sucesso terminal recente, existe execução envelhecida ou uma falha posterior ao último sucesso.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."studio_media_payload_hash"("p_action" "text", "p_payload" "jsonb") RETURNS "text"
@@ -10782,8 +10797,8 @@ REVOKE ALL ON FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid
 
 
 
-REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") TO "app_dal";
 
 
 

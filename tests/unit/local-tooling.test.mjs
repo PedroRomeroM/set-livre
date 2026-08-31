@@ -23,6 +23,7 @@ import {
   parseSupabaseCliError,
   parseSupabaseStatus,
   reconcileSupabaseNetworkAfterReset,
+  runLocalMediaCleanup,
   runNextBuildWithCacheCleanup,
   runSupabase,
   runWindowsDatabaseTests,
@@ -51,6 +52,68 @@ describe("local tooling contracts", () => {
     NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
     SUPABASE_SECRET_KEY: localServiceRoleKey,
   };
+
+  it("runs the real cleanup handler before local readiness and rejects ambiguous completion", async () => {
+    const requests = [];
+    const configurations = [];
+    const clientFactory = () => {
+      throw new Error("O handler falso não deve criar cliente.");
+    };
+    const createHandler = (configuration) => {
+      configurations.push(configuration);
+      return async (request) => {
+        requests.push(request);
+        return Response.json({ claimed: 0, deleted: 0, failed: 0 });
+      };
+    };
+    const runId = "8a000000-0000-4000-8000-000000000001";
+    await expect(
+      runLocalMediaCleanup(
+        {
+          API_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+          SERVICE_ROLE_KEY: localServiceRoleKey,
+        },
+        { createHandler, createSupabaseClient: clientFactory, runId },
+      ),
+    ).resolves.toEqual({ claimed: 0, deleted: 0, failed: 0 });
+
+    expect(configurations).toHaveLength(1);
+    expect(configurations[0].createSupabaseClient).toBe(clientFactory);
+    expect(configurations[0].readConfiguration()).toEqual({
+      secretKey: localServiceRoleKey,
+      url: "http://127.0.0.1:54321",
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toMatch(
+      /^http:\/\/127\.0\.0\.1:54321\/functions\/v1\/media-cleanup-[0-9a-f]{40}$/u,
+    );
+    expect(requests[0].headers.get("apikey")).toBe(localServiceRoleKey);
+    await expect(requests[0].json()).resolves.toEqual({ runId });
+
+    await expect(
+      runLocalMediaCleanup(
+        {
+          API_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+          SERVICE_ROLE_KEY: localServiceRoleKey,
+        },
+        {
+          createHandler: () => async () =>
+            Response.json({ claimed: 1, deleted: 0, failed: 1 }, { status: 503 }),
+          runId,
+        },
+      ),
+    ).rejects.toThrow("terminal saudável");
+
+    const localSetup = readFileSync(
+      new URL("../../scripts/local-setup.mjs", import.meta.url),
+      "utf8",
+    );
+    const resetStart = localSetup.indexOf("async function resetLocalEnvironment() {");
+    const cleanup = localSetup.indexOf("await runLocalMediaCleanup(values);", resetStart);
+    const readiness = localSetup.indexOf("await provisionLocalRuntime(values);", cleanup);
+    expect(cleanup).toBeGreaterThan(resetStart);
+    expect(readiness).toBeGreaterThan(cleanup);
+  });
 
   it("launches local apps only with the generated runtime contract", () => {
     const environment = createLocalApplicationEnvironment({
@@ -425,18 +488,17 @@ describe("local tooling contracts", () => {
     const rollbackMarker = deploy.indexOf('write_rollback_marker "$previous_release"');
     const stopSchedule = deploy.indexOf("stop_media_cleanup_schedule", rollbackMarker);
     const activateLink = deploy.indexOf('activate_link "$release_directory"', stopSchedule);
-    const publicHealth = deploy.indexOf('wait_for_public_health "$release_sha"', activateLink);
-    const initialCleanup = deploy.indexOf(
-      "systemctl start set-livre-media-cleanup.service",
-      publicHealth,
-    );
+    const initialCleanup = deploy.indexOf("run_media_cleanup_once", activateLink);
+    const internalHealth = deploy.indexOf('wait_for_health "$release_sha"', initialCleanup);
+    const publicHealth = deploy.indexOf('wait_for_public_health "$release_sha"', internalHealth);
     const startSchedule = deploy.indexOf("start_media_cleanup_schedule", initialCleanup);
     const terminalMarkerRemoval = deploy.indexOf('rm -f -- "$ROLLBACK_MARKER"', startSchedule);
     expect(rollbackMarker).toBeGreaterThan(-1);
     expect(stopSchedule).toBeGreaterThan(rollbackMarker);
     expect(activateLink).toBeGreaterThan(stopSchedule);
-    expect(publicHealth).toBeGreaterThan(activateLink);
-    expect(initialCleanup).toBeGreaterThan(publicHealth);
+    expect(initialCleanup).toBeGreaterThan(activateLink);
+    expect(internalHealth).toBeGreaterThan(initialCleanup);
+    expect(publicHealth).toBeGreaterThan(internalHealth);
     expect(startSchedule).toBeGreaterThan(initialCleanup);
     expect(terminalMarkerRemoval).toBeGreaterThan(startSchedule);
   });
@@ -1387,6 +1449,9 @@ describe("local tooling contracts", () => {
     );
     const serviceRecoveryEnd = deploy.indexOf("\nverify_only=false", serviceRecoveryStart);
     const serviceRecovery = deploy.slice(serviceRecoveryStart, serviceRecoveryEnd);
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeLessThan(
+      serviceRecovery.indexOf('wait_for_health "$recovered_release"'),
+    );
     expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
     );
@@ -1409,6 +1474,9 @@ describe("local tooling contracts", () => {
     const rollbackStart = deploy.indexOf("rollback_activation() {");
     const rollbackEnd = deploy.indexOf("\non_exit() {", rollbackStart);
     const rollback = deploy.slice(rollbackStart, rollbackEnd);
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeLessThan(
+      rollback.indexOf('wait_for_health "$recovered_release"'),
+    );
     expect(rollback).toContain('wait_for_health "$recovered_release"');
     expect(rollback).toContain('wait_for_public_health "$recovered_release"');
     expect(rollback.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(

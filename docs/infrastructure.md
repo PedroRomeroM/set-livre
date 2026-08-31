@@ -598,7 +598,11 @@ outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
 O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
 depois de 30 minutos, a primeira execução com outra identidade o fecha como
 `cleanup_run_abandoned`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
-única forma de restaurar readiness; não existe edição manual do banco como procedimento operacional.
+única forma de restaurar readiness. A ausência de qualquer sucesso terminal nos últimos 30 minutos
+também degrada readiness, cobrindo falhas que acontecem antes de o worker conseguir abrir o ledger. A
+ativação normal, a recuperação de uma ativação interrompida e o rollback executam a oneshot do slug da
+release ativa antes dos health checks internos e público; o timer de dez minutos só volta depois dessa
+prova. Não existe edição manual do banco como procedimento operacional.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a

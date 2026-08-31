@@ -9,8 +9,10 @@ import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 
 import { Client } from "pg";
+import { createClient } from "@supabase/supabase-js";
 
 import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
+import { createCleanupRequestHandler } from "../supabase/functions/media-cleanup/index.ts";
 
 import { generateDatabaseArtifacts, verifyDatabaseArtifacts } from "./database-artifacts.mjs";
 
@@ -1203,6 +1205,56 @@ async function provisionLocalRuntime(values) {
   return { dalDatabaseUrl: dalDatabaseUrl.toString(), databaseMarker };
 }
 
+function isHealthyLocalCleanupResult(value) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).sort().join("\0") === "claimed\0deleted\0failed" &&
+    Number.isSafeInteger(value.claimed) &&
+    value.claimed >= 0 &&
+    Number.isSafeInteger(value.deleted) &&
+    value.deleted >= 0 &&
+    value.failed === 0 &&
+    value.claimed === value.deleted
+  );
+}
+
+export async function runLocalMediaCleanup(
+  values,
+  {
+    createHandler = createCleanupRequestHandler,
+    createSupabaseClient = createClient,
+    runId = randomUUID(),
+  } = {},
+) {
+  const functionSlug = `media-cleanup-${databaseMigrationHead.padEnd(40, "0")}`;
+  const handler = createHandler({
+    createSupabaseClient,
+    readConfiguration: () => ({ secretKey: values.SERVICE_ROLE_KEY, url: values.API_URL }),
+  });
+  const response = await handler(
+    new Request(`${values.API_URL}/functions/v1/${functionSlug}`, {
+      body: JSON.stringify({ runId }),
+      headers: {
+        apikey: values.SERVICE_ROLE_KEY,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    }),
+  );
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error("O cleanup local não retornou JSON terminal válido.");
+  }
+  if (response.status !== 200 || !isHealthyLocalCleanupResult(result)) {
+    throw new Error("O cleanup local não comprovou uma execução terminal saudável.");
+  }
+  return result;
+}
+
 async function verifyProductionRoleStartupAssumption(values) {
   const runtimePassword = randomBytes(32).toString("base64url");
   const administratorUrl = new URL(values.DB_URL);
@@ -1287,6 +1339,8 @@ async function resetLocalEnvironment() {
   runSupabase(["db", "reset", "--local"], { capture: true, network: true });
   reconcileSupabaseNetworkAfterReset();
   const values = localStatus();
+  process.stdout.write("Executando o cleanup local real...\n");
+  await runLocalMediaCleanup(values);
   process.stdout.write("Provisionando a role DAL local...\n");
   const { dalDatabaseUrl, databaseMarker } = await provisionLocalRuntime(values);
   const backofficeRuntimeUnlockKey = randomBytes(32).toString("base64url");

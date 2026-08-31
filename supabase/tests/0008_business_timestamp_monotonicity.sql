@@ -68,11 +68,15 @@ select is(
 savepoint future_catalog_timestamp;
 
 alter table public.studio_types disable trigger user;
-select pg_catalog.set_config(
-  'set_livre.test.future_catalog_timestamp',
-  (pg_catalog.clock_timestamp() + interval '2 seconds')::text,
-  true
-);
+do $block$
+begin
+  perform pg_catalog.set_config(
+    'set_livre.test.future_catalog_timestamp',
+    (pg_catalog.clock_timestamp() + interval '2 seconds')::text,
+    true
+  );
+end;
+$block$;
 update public.studio_types as studio_type
 set
   created_at = pg_catalog.current_setting('set_livre.test.future_catalog_timestamp')::timestamptz,

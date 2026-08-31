@@ -120,6 +120,16 @@ export function publishStudioMediaGallery(
   return selected;
 }
 
+export async function removeStudioMediaGallery(
+  queryClient: QueryClient,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  const queryKey = studioQueryKeys.media(expectedUserId, expectedStudioId);
+  await queryClient.cancelQueries({ exact: true, queryKey });
+  queryClient.removeQueries({ exact: true, queryKey });
+}
+
 function studioEditorMatchesBoundary(
   editor: StudioEditor | undefined,
   expectedUserId: string,

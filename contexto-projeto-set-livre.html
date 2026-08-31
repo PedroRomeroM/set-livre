@@ -70,8 +70,11 @@
                 FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. A
                 FEAT-008 está em validação no PR incremental: galeria privada versionada, upload
                 direto ao Storage com verificação autoritativa, originais preservados, prévias WebP
-                limitadas e assinadas e cleanup de ambos os objetos pela Storage API em Function
-                imutável por SHA. O mesmo PR contém núcleo/revisões e conteúdo de estúdio, além do
+                limitadas e assinadas, deadline server-side único de 15 segundos e cleanup de ambos
+                os objetos pela Storage API em Function imutável por SHA. Recusa de upload só libera
+                renovação depois de o servidor persistir a ausência do objeto; clones conservam o
+                path imutável da revisão de origem e descartar uma draft expulsa sua galeria privada
+                do cache. O mesmo PR contém núcleo/revisões e conteúdo de estúdio, além do
                 backoffice separado para usuários, comandos explícitos de suspensão/restauração, PII
                 temporária auditada, papéis
                 <code>support/admin</code> e administração versionada de taxonomias por ações
@@ -197,15 +200,17 @@
           estrita da Edge Function de cleanup em Linux e Windows; nenhuma Action externa é
           necessária, e o deploy implanta o mesmo grafo sem renomear extensões. O ledger terminaliza
           automaticamente runs abandonados depois de 30 minutos e exige sucesso posterior para
-          restaurar readiness. O canário é serializado, recupera probes abandonados e só registra
-          ausência física após <code>404/NoSuchKey</code>; a secret key moderna trafega apenas em
-          <code>apikey</code>, sem edição manual do banco. O runner mantém um pool PostgreSQL
-          administrativo e um DAL por processo, com cliente exclusivo por operação, evitando churn
-          de conexões e esgotamento de portas efêmeras no Windows; páginas são encerradas antes da
-          limpeza destrutiva para não competir com refetches ainda ativos. A configuração destrutiva
-          é lida somente ao iniciar Playwright ou uma operação real de banco; importar helpers puros
-          em Vitest não exige credenciais E2E e também não cria fallback. Os resultados permanecem
-          no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
+          restaurar readiness; a ausência de qualquer sucesso terminal nesse intervalo também fecha
+          o health, e ativação, recovery e rollback executam a oneshot antes de testar readiness. O
+          canário é serializado, recupera probes abandonados e só registra ausência física após
+          <code>404/NoSuchKey</code>; a secret key moderna trafega apenas em <code>apikey</code>,
+          sem edição manual do banco. O runner mantém um pool PostgreSQL administrativo e um DAL por
+          processo, com cliente exclusivo por operação, evitando churn de conexões e esgotamento de
+          portas efêmeras no Windows; páginas são encerradas antes da limpeza destrutiva para não
+          competir com refetches ainda ativos. A configuração destrutiva é lida somente ao iniciar
+          Playwright ou uma operação real de banco; importar helpers puros em Vitest não exige
+          credenciais E2E e também não cria fallback. Os resultados permanecem no PR e nos checks.
+          Os contratos técnicos ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

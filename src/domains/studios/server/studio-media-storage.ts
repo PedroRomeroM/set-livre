@@ -32,7 +32,7 @@ export class StudioMediaStorageError extends Error {
 
 export type StudioMediaStorage = Readonly<{
   createUploadToken: (path: string) => Promise<string>;
-  download: (path: string) => Promise<Blob>;
+  download: (path: string, signal: AbortSignal) => Promise<Blob>;
   signGalleryPreviews: (gallery: StudioMediaGalleryRecord) => Promise<StudioMediaGallery>;
   uploadPreview: (path: string, bytes: Uint8Array) => Promise<void>;
 }>;
@@ -73,9 +73,9 @@ function createStudioMediaStorage(client: Pick<StorageClient, "from">): StudioMe
       return data.token;
     },
 
-    async download(rawPath) {
+    async download(rawPath, signal) {
       const path = studioMediaPathSchema.parse(rawPath);
-      const { data, error } = await bucket.download(path);
+      const { data, error } = await bucket.download(path, {}, { cache: "no-store", signal });
       if (error !== null) {
         throw new StudioMediaStorageError(
           "download",

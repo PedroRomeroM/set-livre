@@ -18,6 +18,7 @@ import {
 } from "./studio-media-dal";
 import {
   StudioMediaCapacityError,
+  StudioMediaDeadlineError,
   StudioMediaImageError,
   verifyStudioMediaImage,
   withStudioMediaImageCapacity,
@@ -46,6 +47,13 @@ function handleMediaError(error: unknown): never {
       503,
       "SERVICE_UNAVAILABLE",
       "O processamento seguro de fotos está ocupado. Tente novamente em instantes.",
+    );
+  }
+  if (error instanceof StudioMediaDeadlineError) {
+    throw new ApiRouteError(
+      503,
+      "SERVICE_UNAVAILABLE",
+      "A verificação segura da foto excedeu o prazo. Confirme o estado antes de repetir.",
     );
   }
   if (error instanceof StudioMediaStorageError) {
@@ -136,16 +144,25 @@ export async function executeStudioMediaCommand(
           return storage.signGalleryPreviews(replay);
         }
         const candidate = await readStudioMediaUploadCandidate(input);
-        const verification = await withStudioMediaImageCapacity(async () => {
+        const verification = await withStudioMediaImageCapacity(async (deadline) => {
           let verified;
           try {
             verified = await verifyStudioMediaImage(
-              await storage.download(candidate.path),
+              await storage.download(candidate.path, deadline.signal),
               candidate,
+              deadline,
             );
           } catch (error) {
-            if (!(error instanceof StudioMediaImageError)) throw error;
-            await rejectStudioMediaUpload(input);
+            const objectMissing =
+              error instanceof StudioMediaStorageError &&
+              error.operation === "download" &&
+              error.reason === "not-found";
+            if (!objectMissing && !(error instanceof StudioMediaImageError)) throw error;
+            await rejectStudioMediaUpload({
+              ...input,
+              rejectionCode: objectMissing ? "object_missing" : "validation_failed",
+            });
+            if (objectMissing) throw error;
             throw new ApiRouteError(
               422,
               "VALIDATION_FAILED",

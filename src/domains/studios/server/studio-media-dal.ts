@@ -173,16 +173,27 @@ export async function rejectStudioMediaUpload(input: {
   expectedRevisionVersion: number;
   mediaId: string;
   requestId: string;
+  rejectionCode: "object_missing" | "validation_failed";
   studioId: string;
   userId: string;
 }) {
   const revision = parseRevisionIdentity(input);
   const parsed = z
-    .strictObject({ mediaId: z.uuid(), requestId: z.uuid(), userId: z.uuid() })
-    .parse({ mediaId: input.mediaId, requestId: input.requestId, userId: input.userId });
+    .strictObject({
+      mediaId: z.uuid(),
+      rejectionCode: z.enum(["object_missing", "validation_failed"]),
+      requestId: z.uuid(),
+      userId: z.uuid(),
+    })
+    .parse({
+      mediaId: input.mediaId,
+      rejectionCode: input.rejectionCode,
+      requestId: input.requestId,
+      userId: input.userId,
+    });
   await commandDalPool().query(
     `select private.reject_studio_media_upload(
-       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid
+       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid, $7::text
      )`,
     [
       parsed.userId,
@@ -191,6 +202,7 @@ export async function rejectStudioMediaUpload(input: {
       revision.expectedRevisionVersion,
       parsed.mediaId,
       parsed.requestId,
+      parsed.rejectionCode,
     ],
   );
 }

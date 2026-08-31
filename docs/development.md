@@ -30,6 +30,11 @@ separadamente os timeouts da instância e da VM somente quando não há mais ati
 Supabase de uma nova jornada reinicia o serviço. Não há tarefa agendada nem aplicativo residente na
 área de notificação.
 
+Depois de um reset, o wrapper executa uma vez o mesmo handler e core TypeScript do cleanup contra Auth,
+RPCs e Storage locais reais. Somente um resultado terminal saudável cria o heartbeat necessário; a
+role DAL é provisionada e testada depois dessa execução. O setup não insere sucesso artificial no
+ledger e falha fechado se o worker ou sua resposta forem ambíguos.
+
 A porta 2375 não usa TLS porque existe somente no loopback da mesma máquina. Ela concede controle total
 do daemon a processos locais e, portanto, nunca pode ser encaminhada, publicada na LAN ou reutilizada
 com credenciais/dados reais. Docker e Supabase de desenvolvimento contêm apenas QA descartável.

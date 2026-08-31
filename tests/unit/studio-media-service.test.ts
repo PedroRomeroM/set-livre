@@ -45,6 +45,7 @@ vi.mock("../../src/domains/studios/server/studio-media-dal", () => ({
 
 vi.mock("../../src/domains/studios/server/studio-media-image", () => {
   class StudioMediaCapacityError extends Error {}
+  class StudioMediaDeadlineError extends Error {}
   class StudioMediaImageError extends Error {
     constructor(readonly reason: string) {
       super("invalid image");
@@ -53,6 +54,7 @@ vi.mock("../../src/domains/studios/server/studio-media-image", () => {
   }
   return {
     StudioMediaCapacityError,
+    StudioMediaDeadlineError,
     StudioMediaImageError,
     verifyStudioMediaImage: mocks.verifyStudioMediaImage,
     withStudioMediaImageCapacity: mocks.withStudioMediaImageCapacity,
@@ -62,6 +64,7 @@ vi.mock("../../src/domains/studios/server/studio-media-image", () => {
 import { executeStudioMediaCommand } from "../../src/domains/studios/server/studio-media-service";
 import {
   StudioMediaCapacityError,
+  StudioMediaDeadlineError,
   StudioMediaImageError,
 } from "../../src/domains/studios/server/studio-media-image";
 import { StudioMediaStorageError } from "../../src/domains/studios/server/studio-media-storage";
@@ -157,7 +160,10 @@ describe("studio media service", () => {
     mocks.readStudioMediaUploadCandidate.mockResolvedValue(candidate);
     mocks.replayStudioMediaFinalize.mockResolvedValue(null);
     mocks.signGalleryPreviews.mockResolvedValue(gallery);
-    mocks.withStudioMediaImageCapacity.mockImplementation((work: () => Promise<unknown>) => work());
+    mocks.withStudioMediaImageCapacity.mockImplementation(
+      (work: (deadline: { deadlineAt: number; signal: AbortSignal }) => Promise<unknown>) =>
+        work({ deadlineAt: Date.now() + 15_000, signal: new AbortController().signal }),
+    );
     mocks.verifyStudioMediaImage.mockResolvedValue({
       previewBytes: new Uint8Array([1, 2, 3]),
       verification: {
@@ -205,8 +211,12 @@ describe("studio media service", () => {
     } as const;
 
     await expect(executeStudioMediaCommand(command, context)).resolves.toEqual(gallery);
-    expect(mocks.download).toHaveBeenCalledWith(mediaPath);
-    expect(mocks.verifyStudioMediaImage).toHaveBeenCalledWith(expect.any(Blob), candidate);
+    expect(mocks.download).toHaveBeenCalledWith(mediaPath, expect.any(AbortSignal));
+    expect(mocks.verifyStudioMediaImage).toHaveBeenCalledWith(
+      expect.any(Blob),
+      candidate,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(mocks.uploadPreview).toHaveBeenCalledWith(previewPath, new Uint8Array([1, 2, 3]));
     expect(mocks.finalizeStudioMediaUpload).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -259,7 +269,34 @@ describe("studio media service", () => {
       status: 422,
     });
     expect(mocks.rejectStudioMediaUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ mediaId, userId: studioTestIds.userId }),
+      expect.objectContaining({
+        mediaId,
+        rejectionCode: "validation_failed",
+        userId: studioTestIds.userId,
+      }),
+    );
+    expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
+  });
+
+  it("tombstones a missing Storage object before authorizing a renewed reservation", async () => {
+    mocks.download.mockRejectedValueOnce(new StudioMediaStorageError("download", "not-found"));
+    const command = {
+      action: "studio.media.upload.finalize",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: { ...boundary, mediaId },
+    } as const;
+
+    await expect(executeStudioMediaCommand(command, context)).rejects.toMatchObject({
+      code: "UPLOAD_OBJECT_MISSING",
+      status: 409,
+    });
+    expect(mocks.rejectStudioMediaUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaId,
+        rejectionCode: "object_missing",
+        userId: studioTestIds.userId,
+      }),
     );
     expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
   });
@@ -298,6 +335,23 @@ describe("studio media service", () => {
       status: 503,
     });
     expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  it("maps an exhausted server verification deadline without rejecting the reservation", async () => {
+    mocks.withStudioMediaImageCapacity.mockRejectedValueOnce(new StudioMediaDeadlineError());
+    const command = {
+      action: "studio.media.upload.finalize",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: { ...boundary, mediaId },
+    } as const;
+
+    await expect(executeStudioMediaCommand(command, context)).rejects.toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+      status: 503,
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(mocks.rejectStudioMediaUpload).not.toHaveBeenCalled();
   });
 
   it.each([

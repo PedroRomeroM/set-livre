@@ -222,20 +222,22 @@ domínio que mantêm `created_at/updated_at`.
 
 ## Matriz da FEAT-008
 
-Os doze cenários `SL-F008-E2E-001..012` expandem para 43 execuções:
+Os treze cenários `SL-F008-E2E-001..013` expandem para 46 execuções e cobrem:
 
 - P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
-  antes/depois da persistência e isolamento entre donos nos três engines;
+  antes/depois da persistência, recusa definitiva com liberação server-side da reserva e isolamento
+  entre donos nos três engines;
 - regressões em desktop, 390 px, 320 px e altura compacta provam controles acessíveis, dimensões
   reservadas/CLS, hidratação fail-closed, conflito autoritativo de galeria e upload com reserva nova,
-  além da ausência de controles privados sem JavaScript;
+  além da ausência de controles privados sem JavaScript. `SL-F007-E2E-008` prova também que descartar
+  a draft expulsa do cache a galeria da revisão removida antes de restaurar a publicação;
 - axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
-prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 51 asserções para
-schema, grants/RLS e Storage A/B, limite, clone, idempotência, concorrência com `dblink`, claims
-cercados e backoff do cleanup.
+prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 89 asserções para
+schema, grants/RLS e Storage A/B, limite e liberação de reservas rejeitadas, clone, idempotência,
+concorrência com `dblink`, claims cercados, backoff e heartbeat do cleanup.
 
 ## Contrato por feature
 

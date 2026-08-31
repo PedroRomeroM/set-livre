@@ -7,6 +7,7 @@ import {
   publishStudioEditor,
   publishStudioMediaGallery,
   preserveNewestStudioMediaGallery,
+  removeStudioMediaGallery,
   studioEditorCanRender,
   studioMediaOrderMatchesIntent,
   StudioScopeChangedError,
@@ -114,6 +115,19 @@ describe("studio private query cache", () => {
         studioTestIds.studioId,
       ),
     ).toThrow(StudioMediaScopeChangedError);
+  });
+
+  it("remove somente a galeria do estúdio quando um descarte volta à revisão publicada", async () => {
+    const queryClient = new QueryClient();
+    const discarded = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
+    const sibling = studioQueryKeys.media(studioTestIds.userId, studioTestIds.otherStudioId);
+    queryClient.setQueryData(discarded, { revisionNumber: 2 });
+    queryClient.setQueryData(sibling, { revisionNumber: 7 });
+
+    await removeStudioMediaGallery(queryClient, studioTestIds.userId, studioTestIds.studioId);
+
+    expect(queryClient.getQueryData(discarded)).toBeUndefined();
+    expect(queryClient.getQueryData(sibling)).toEqual({ revisionNumber: 7 });
   });
 
   it("confirma uma ordem somente quando cardinalidade e sequência são exatas", () => {

@@ -53,8 +53,11 @@ type Feat008MediaHarness = Readonly<{
   loseNextResponse: (action: MediaAction) => void;
   loseNextUploadAfterPersistence: () => void;
   loseNextUploadBeforePersistence: () => void;
+  rejectNextUploadDefinitively: () => void;
   rejectNextFinalize: () => void;
+  releasedReservationCount: () => number;
   replaceCoverRemotely: (mediaId: string) => void;
+  replaceGalleryBoundary: (nextEditor: StudioEditor) => void;
   uploadAttempts: readonly string[];
 }>;
 
@@ -250,9 +253,10 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
   const actions: MediaAction[] = [];
   const pendingUploads = new Map<string, PendingUpload>();
   const replayLedger = new Map<string, unknown>();
+  const releasedReservations = new Set<string>();
   const uploadAttempts: string[] = [];
   let behavior: HarnessBehavior | undefined;
-  let uploadFailure: "after-persistence" | "before-persistence" | undefined;
+  let uploadFailure: "after-persistence" | "before-persistence" | "definitive" | undefined;
   let gallery = studioMediaGallerySchema.parse({
     items: [],
     previewExpiresAt: "2026-09-01T00:00:00.000Z",
@@ -372,6 +376,19 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
       await route.abort("failed");
       return;
     }
+    if (activeFailure === "definitive") {
+      await fulfillJson(
+        route,
+        JSON.stringify({
+          code: "InvalidUploadToken",
+          error: "Invalid request",
+          message: "The signed upload token was rejected.",
+          statusCode: "422",
+        }),
+        422,
+      );
+      return;
+    }
     pendingUploads.set(mediaId, { ...pending, stored: true });
     if (activeFailure === "after-persistence") {
       await route.abort("failed");
@@ -414,6 +431,7 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
     if (command.action === "studio.media.upload.finalize") {
       const pending = pendingUploads.get(command.payload.mediaId);
       if (pending === undefined || !pending.stored) {
+        releasedReservations.add(command.payload.mediaId);
         await fulfillJson(
           route,
           errorPayload(
@@ -452,9 +470,13 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
     loseNextUploadBeforePersistence() {
       uploadFailure = "before-persistence";
     },
+    rejectNextUploadDefinitively() {
+      uploadFailure = "definitive";
+    },
     rejectNextFinalize() {
       behavior = { action: "studio.media.upload.finalize", kind: "validation" };
     },
+    releasedReservationCount: () => releasedReservations.size,
     replaceCoverRemotely(mediaId) {
       if (!gallery.items.some((item) => item.id === mediaId)) {
         throw new Error("A mutação remota recebeu uma foto desconhecida.");
@@ -463,6 +485,20 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
         ...gallery,
         items: gallery.items.map((item) => ({ ...item, isCover: item.id === mediaId })),
         revisionVersion: gallery.revisionVersion + 1,
+      });
+    },
+    replaceGalleryBoundary(nextEditor) {
+      if (nextEditor.scope !== editor.scope || nextEditor.studioId !== editor.studioId) {
+        throw new Error("A troca remota da galeria recebeu outro escopo de estúdio.");
+      }
+      publish({
+        items: [],
+        previewExpiresAt: "2026-09-01T00:00:00.000Z",
+        revisionId: nextEditor.revision.id,
+        revisionNumber: nextEditor.revision.number,
+        revisionVersion: nextEditor.revision.version,
+        scope: nextEditor.scope,
+        studioId: nextEditor.studioId,
       });
     },
     uploadAttempts,

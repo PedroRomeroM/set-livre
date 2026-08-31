@@ -17,6 +17,8 @@ explícitas para evitar layout shift e não depende de transformação paga do S
   `pending_upload → ready/rejected → delete_pending → deleted`;
 - `studio_revision_media` associa objetos a uma revisão, com posição contínua e no máximo uma capa;
 - ao clonar uma revisão publicada para novo rascunho, as associações compartilham os mesmos objetos;
+  por isso os paths imutáveis conservam o ID da revisão em que o objeto nasceu, enquanto a associação
+  prova a revisão atual;
 - alterar ou excluir no rascunho nunca remove a foto ainda referenciada pela revisão publicada;
 - exclusão física só é elegível quando nenhuma associação permanece.
 
@@ -46,18 +48,23 @@ consomem.
 5. O servidor compara tamanho declarado, assinatura de bytes, MIME decodificado, página única,
    dimensões, orçamento total de pixels e checksum opcional; um decode mínimo prova que o conteúdo não
    é apenas um header. Download, decode e geração da prévia compartilham um único slot global, fila
-   limitada e deadline compatíveis com a VM de 1 GiB.
+   limitada e um deadline absoluto server-side de 15 segundos. O mesmo `AbortSignal` interrompe o
+   download e o tempo restante limita o Sharp, preservando a VM de 1 GiB sem liberar o slot antes do
+   trabalho subjacente terminar.
 6. Arquivo válido produz a prévia WebP privada; retry aceita uma derivada preexistente somente quando
    os bytes são exatamente iguais.
-7. O objeto vira `ready` e é associado à revisão na mesma transação. Arquivo inválido vira `rejected`,
-   sem detalhe interno do decoder na resposta.
+7. O objeto vira `ready` e é associado à revisão na mesma transação. Arquivo inválido vira `rejected`
+   com `validation_failed`; ausência comprovada no Storage vira `object_missing`. Ambos liberam a cota
+   imediatamente, sem expor detalhe interno do decoder.
 8. O retorno autoritativo substitui a galeria privada e invalida o editor relacionado.
 
 O download de verificação é bounded e não transforma a VM em proxy de upload. Erro de rede ou resposta
 ambígua exige releitura antes de retry; a UI reutiliza a mesma idempotência quando repete a mesma etapa
-e continua com os arquivos seguintes quando a falha atual é definitiva e isolada. Expiração ou objeto
-ausente encerram a reserva antiga: ela deixa de consumir a cota, entra no cleanup e a recuperação cria
-outra idempotência, mídia, path e token, sem tentar reviver uma autorização vencida.
+e continua com os arquivos seguintes quando a falha atual é definitiva e isolada. Mesmo quando a
+Storage API recusa diretamente o upload, a UI pede ao servidor que verifique o objeto antes de oferecer
+renovação. Expiração ou ausência comprovada encerram a reserva antiga no banco: ela deixa de consumir a
+cota, entra no cleanup e só então a recuperação cria outra idempotência, mídia, path e token, sem tentar
+reviver uma autorização vencida.
 
 Toda conclusão de mutação relê a galeria canônica. O DTO inclui o número imutável da revisão e sua
 versão; uma resposta atrasada de revisão ou versão anterior é descartada e identidades contraditórias
@@ -95,7 +102,10 @@ aciona o rollback atômico da aplicação; sucesso conserva no máximo quatro Fu
 preservando candidata e versão anunciada pelo health vivo. Não há Cron, `pg_net`, Vault, daemon ou
 container adicional. Roles da aplicação continuam sem acesso a `net` ou `maintenance`; `service_role`
 executa somente as fachadas RPC estreitas. Readiness reprova execução travada ou falha sem recuperação
-posterior. Objetos do Storage nunca são apagados por SQL direto.
+posterior. Também reprova quando nenhum sucesso terminal foi registrado nos últimos 30 minutos, mesmo
+que a falha aconteça antes de o worker abrir uma linha nova no ledger. Deploy, recovery e rollback
+executam uma oneshot antes dos health checks e só então reativam o timer. Objetos do Storage nunca são
+apagados por SQL direto.
 
 O configurador serializa o canário por advisory lock de sessão. Antes de criar uma nova identidade,
 ele recupera probes `prepared` ou `queued` sem atualização há 30 minutos: remove os dois paths pela
@@ -112,7 +122,8 @@ idempotente se o mesmo invocador conseguir repeti-lo antes dessa recuperação.
 ## Entrega e qualidade visual
 
 - previews privadas são assinadas em lote por cinco minutos, usam cache privado de 60 segundos e a
-  origem Supabase HTTPS exata — ou o loopback local canônico — é a única origem remota admitida pela CSP,
+  origem Supabase HTTPS exata — ou o loopback local canônico — é a única origem remota admitida pela CSP
+  tanto em `img-src` quanto em `connect-src`,
   `next/image`, `sizes` por composição e dimensões persistidas; o DTO carrega a expiração e o cache
   preserva a assinatura mais recente quando respostas da mesma revisão chegam fora de ordem;
 - a capa futura pode receber prioridade somente quando for realmente LCP;

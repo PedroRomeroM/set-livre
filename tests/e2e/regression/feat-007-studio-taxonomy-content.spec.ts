@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { apiSuccessSchema, studioEditorSchema } from "@set-livre/contracts";
+import {
+  apiSuccessSchema,
+  studioDraftDiscardResultSchema,
+  studioEditorSchema,
+} from "@set-livre/contracts";
 import { expect, test } from "@playwright/test";
 import { z } from "zod";
 
@@ -19,6 +23,10 @@ import {
   saveFeat007ContentThroughUi,
   saveFeat007TaxonomyThroughUi,
 } from "../../helpers/feat-007-studio-taxonomy-content";
+import {
+  installFeat008MediaHarness,
+  uploadFeat008Photos,
+} from "../../helpers/feat-008-studio-media";
 
 test("SL-F007-E2E-002 @p1 reordena FAQ no mobile e preserva o conteúdo", async ({
   page,
@@ -101,7 +109,7 @@ test("SL-F007-E2E-004 @p1 aceita YouTube permitido e bloqueia host externo antes
   }
 });
 
-test("SL-F007-E2E-008 @p1 descartar draft restaura todo o conteúdo publicado", async ({
+test("SL-F007-E2E-008 @p1 descarte restaura conteúdo e remove a galeria da draft", async ({
   page,
 }, testInfo) => {
   test.setTimeout(220_000);
@@ -153,6 +161,18 @@ test("SL-F007-E2E-008 @p1 descartar draft restaura todo o conteúdo publicado", 
     const draftContent = await saveFeat007ContentThroughUi(page);
     expect(draftContent.response.status()).toBe(200);
     expect(draftContent.editor?.revision.id).not.toBe(initialContent.editor?.revision.id);
+    if (draftContent.editor === undefined) {
+      throw new Error("O conteúdo da draft não retornou o editor esperado para a galeria.");
+    }
+
+    const mediaHarness = await installFeat008MediaHarness(page, draftContent.editor);
+    const mediaNavigation = await page.goto(`/dono/estudios/${draftContent.editor.studioId}/midia`);
+    expect(mediaNavigation?.status()).toBe(200);
+    await expect(page.getByRole("heading", { level: 1, name: "Fotos do estúdio" })).toBeVisible();
+    await uploadFeat008Photos(page, ["draft-removida.png"]);
+    await expect(page.getByText("1 de 20 fotos", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Dados e conteúdo" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Dados do estúdio" })).toBeVisible();
 
     const discardResponsePromise = page.waitForResponse((response) => {
       if (
@@ -168,6 +188,13 @@ test("SL-F007-E2E-008 @p1 descartar draft restaura todo o conteúdo publicado", 
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     const discardResponse = await discardResponsePromise;
     expect(discardResponse.status()).toBe(200);
+    const discardResult = apiSuccessSchema(studioDraftDiscardResultSchema).parse(
+      await discardResponse.json(),
+    ).data;
+    if (discardResult.studioDeleted) {
+      throw new Error("O descarte da segunda revisão não deveria excluir o estúdio publicado.");
+    }
+    mediaHarness.replaceGalleryBoundary(discardResult.editor);
 
     await expect(
       page.getByText("O rascunho foi descartado; a versão publicada permaneceu intacta."),
@@ -176,6 +203,13 @@ test("SL-F007-E2E-008 @p1 descartar draft restaura todo o conteúdo publicado", 
     await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toBeChecked();
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(publishedRules);
     await expect(page.getByRole("textbox", { name: "Pergunta 1" })).toHaveValue(publishedQuestion);
+
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { level: 1, name: "Fotos do estúdio" })).toBeVisible();
+    await expect(page.getByText("0 de 20 fotos", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Visualizar foto/iu })).toHaveCount(0);
+    await page.getByRole("link", { name: "Dados e conteúdo" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Dados do estúdio" })).toBeVisible();
 
     const recreatedTaxonomy = await saveFeat007TaxonomyThroughUi(page);
     expect(recreatedTaxonomy.response.status()).toBe(200);

@@ -168,7 +168,7 @@ const accountLoginReturnTargets = [
   "/dono/recebimentos",
   "/dono/estudios/novo",
 ] as const;
-type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/dados`;
+type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/${"dados" | "midia"}`;
 
 export type AccountLoginReturnTarget =
   (typeof accountLoginReturnTargets)[number] | StudioEditorLoginReturnTarget;
@@ -182,7 +182,7 @@ function resolveStudioEditorLoginReturnTarget(
     segments[0] !== "" ||
     segments[1] !== "dono" ||
     segments[2] !== "estudios" ||
-    segments[4] !== "dados"
+    (segments[4] !== "dados" && segments[4] !== "midia")
   ) {
     return undefined;
   }
@@ -191,7 +191,7 @@ function resolveStudioEditorLoginReturnTarget(
   if (!studioId.success || studioId.data !== studioId.data.toLowerCase()) {
     return undefined;
   }
-  return `/dono/estudios/${studioId.data}/dados`;
+  return `/dono/estudios/${studioId.data}/${segments[4]}`;
 }
 
 export function resolveAccountLoginReturnTarget(

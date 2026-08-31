@@ -563,7 +563,9 @@ Na FEAT-008, a galeria usa `owner/private/studio-media/<userId>/<studioId>`. O S
 composição do cliente permanecem neutros até o GET autoritativo da mesma identidade/estúdio. Sucesso
 publica somente na key já observada e invalida o editor irmão; resposta perdida conserva a
 idempotência e primeiro relê a galeria. Logout, troca de conta ou perda de autoridade limpam também
-todas as URLs assinadas privadas do cache.
+todas as URLs assinadas privadas do cache. Descartar uma draft remove primeiro a query exata da
+galeria — inclusive URLs e revisão mais nova — antes de publicar o editor restaurado ou excluir o
+estúdio; assim o fence monotônico não preserva no cliente uma galeria pertencente à revisão descartada.
 
 ## 10. Rate limits iniciais
 

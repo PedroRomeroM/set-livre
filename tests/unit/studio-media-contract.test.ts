@@ -1,5 +1,6 @@
 import {
   studioMediaCommandSchema,
+  studioMediaGalleryRecordSchema,
   studioMediaGallerySchema,
   studioMediaMaximumBytes,
   studioMediaMaximumDimension,
@@ -21,6 +22,8 @@ vi.mock("server-only", () => ({}));
 
 import {
   detectStudioMediaMimeType,
+  StudioMediaDeadlineError,
+  studioMediaServerVerificationDeadlineMs,
   verifyStudioMediaImage,
   withStudioMediaImageCapacity,
 } from "@/domains/studios/server/studio-media-image";
@@ -31,6 +34,10 @@ const revisionId = "87000000-0000-4000-8000-000000000003";
 const mediaId = "87000000-0000-4000-8000-000000000004";
 const path = `owners/${scope}/studios/${studioId}/revisions/${revisionId}/${mediaId}.jpg`;
 const previewPath = `owners/${scope}/studios/${studioId}/revisions/${revisionId}/${mediaId}.preview.webp`;
+
+function processingDeadline(milliseconds = 60_000) {
+  return { deadlineAt: Date.now() + milliseconds, signal: new AbortController().signal };
+}
 
 function candidate(
   byteSize: number,
@@ -162,6 +169,43 @@ describe("studio media contracts", () => {
       }),
     ).toThrow("exatamente uma capa");
   });
+
+  it("preserva o namespace da revisão de origem quando uma associação é clonada", () => {
+    const sourceRevisionId = "87000000-0000-4000-8000-000000000005";
+    const clonedPreviewPath = previewPath.replace(revisionId, sourceRevisionId);
+    const item = {
+      byteSize: 100,
+      checksumSha256: "a".repeat(64),
+      height: 3,
+      id: mediaId,
+      isCover: true,
+      mimeType: "image/jpeg" as const,
+      position: 1,
+      previewStoragePath: clonedPreviewPath,
+      width: 4,
+    };
+    const gallery = {
+      items: [item],
+      revisionId,
+      revisionNumber: 2,
+      revisionVersion: 1,
+      scope,
+      studioId,
+    };
+
+    expect(studioMediaGalleryRecordSchema.parse(gallery)).toEqual(gallery);
+    expect(() =>
+      studioMediaGalleryRecordSchema.parse({
+        ...gallery,
+        items: [
+          {
+            ...item,
+            previewStoragePath: clonedPreviewPath.replace(studioId, scope),
+          },
+        ],
+      }),
+    ).toThrow("identidade da galeria");
+  });
 });
 
 describe("studio media byte verification", () => {
@@ -178,6 +222,7 @@ describe("studio media byte verification", () => {
     const verified = await verifyStudioMediaImage(
       blob,
       candidate(bytes.byteLength, mimeType, checksumSha256),
+      processingDeadline(),
     );
     expect(verified.verification).toEqual({
       byteSize: bytes.byteLength,
@@ -199,12 +244,13 @@ describe("studio media byte verification", () => {
     const bytes = await image("png");
     const blob = new Blob([bytes], { type: "image/jpeg" });
     await expect(
-      verifyStudioMediaImage(blob, candidate(bytes.byteLength, "image/jpeg")),
+      verifyStudioMediaImage(blob, candidate(bytes.byteLength, "image/jpeg"), processingDeadline()),
     ).rejects.toMatchObject({ reason: "MIME_MISMATCH" });
     await expect(
       verifyStudioMediaImage(
         new Blob([bytes], { type: "image/png" }),
         candidate(bytes.byteLength, "image/png", "0".repeat(64)),
+        processingDeadline(),
       ),
     ).rejects.toMatchObject({ reason: "CHECKSUM_MISMATCH" });
   });
@@ -215,6 +261,7 @@ describe("studio media byte verification", () => {
       verifyStudioMediaImage(
         new Blob([bytes], { type: "image/png" }),
         candidate(bytes.byteLength, "image/png"),
+        processingDeadline(),
       ),
     ).rejects.toMatchObject({ reason: "DIMENSIONS_INVALID" });
   });
@@ -240,11 +287,33 @@ describe("studio media byte verification", () => {
     expect(entered).toEqual(["first", "second"]);
   });
 
+  it("aborta trabalho estagnado e só então libera a capacidade global", async () => {
+    vi.useFakeTimers();
+    try {
+      const timedOut = withStudioMediaImageCapacity(
+        (deadline) =>
+          new Promise<never>((_resolve, reject) => {
+            deadline.signal.addEventListener("abort", () => reject(deadline.signal.reason), {
+              once: true,
+            });
+          }),
+      );
+      await Promise.resolve();
+      const deadlineFailure = expect(timedOut).rejects.toBeInstanceOf(StudioMediaDeadlineError);
+      await vi.advanceTimersByTimeAsync(studioMediaServerVerificationDeadlineMs);
+      await deadlineFailure;
+      await expect(withStudioMediaImageCapacity(async () => "released")).resolves.toBe("released");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("limita a maior aresta da prévia privada derivada", async () => {
     const bytes = await image("jpeg", 2_560, 1_440);
     const verified = await verifyStudioMediaImage(
       new Blob([bytes], { type: "image/jpeg" }),
       candidate(bytes.byteLength, "image/jpeg"),
+      processingDeadline(),
     );
     const metadata = await sharp(verified.previewBytes).metadata();
     expect(Math.max(metadata.width ?? 0, metadata.height ?? 0)).toBe(studioMediaPreviewMaximumEdge);

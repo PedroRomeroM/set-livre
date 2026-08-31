@@ -83,8 +83,11 @@ export async function proxy(request: NextRequest) {
   }
 
   const environment = readSupabaseEnvironment();
+  const allowLoopbackSupabaseOrigin = new URL(environment.supabaseOrigin).protocol === "http:";
   const contentSecurityPolicy = createContentSecurityPolicy(nonce, isDevelopment, {
-    allowLoopbackHttpImageOrigins: new URL(environment.supabaseOrigin).protocol === "http:",
+    allowLoopbackHttpConnectOrigins: allowLoopbackSupabaseOrigin,
+    allowLoopbackHttpImageOrigins: allowLoopbackSupabaseOrigin,
+    connectOrigins: [environment.supabaseOrigin],
     imageOrigins: [environment.supabaseOrigin],
   });
 

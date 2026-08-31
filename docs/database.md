@@ -13,7 +13,7 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot e tipos são gerados.
 
-### 1.1 Estado versionado até a FEAT-031
+### 1.1 Estado versionado atual
 
 A árvore possui a baseline inicial `20260824000100`, a migration de role de produção
 `20260828174500_default_production_dal_role` e as migrations append-only
@@ -24,12 +24,13 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260830173000_business_timestamp_monotonicity` e
 `20260830204500_backoffice_taxonomy_explicit_transitions`,
 `20260831021612_harden_studio_reads_and_backoffice_search` e
-`20260831082000_feat_008_studio_media`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260831082000_feat_008_studio_media` e o hardening append-only
+`20260831170000_harden_studio_media_review_findings`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e nove suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 473 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 475 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios, mídia e backoffice.
 
 A baseline implementada inclui:
@@ -313,7 +314,8 @@ Constraints:
 - declaração e fatos verificados permanecem imutáveis depois de preenchidos;
 - transições de estado seguem somente o ciclo permitido;
 - relação só pode ser alterada em revisão draft e referencia mídia `ready` do mesmo estúdio;
-- no máximo 20 associações ou candidatos pendentes por revisão, sob lock;
+- no máximo 20 associações ou candidatos pendentes por revisão, sob lock; `rejected` deixa a quota
+  imediatamente, mas preserva o objeto até a janela segura de cleanup;
 - candidato `pending_upload` expirado não consome cota e não pode ser finalizado; renovação cria nova
   identidade, enquanto o objeto anterior segue para cleanup;
 - remover a última associação agenda o par de objetos para cleanup em vez de apagar linha do Storage.
@@ -321,14 +323,15 @@ Constraints:
 As tabelas e `storage.objects` não concedem ao browser os paths, leitura do objeto nem assinatura
 arbitrária. O dono elegível lê o JSON estrito apenas pela rotina privada do DAL; toda escrita direta
 permanece revogada. O DAL recebe somente `execute` nas rotinas privadas de
-leitura/prepare/replay/finalize/ordem/capa/exclusão. A manutenção expõe ao `service_role` apenas as
+leitura/prepare/replay/rejeição/finalize/ordem/capa/exclusão. A manutenção expõe ao `service_role` apenas as
 fachadas RPC estreitas do cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da
 aplicação alcança `net`. Cron, `pg_net` e Vault não fazem parte desse fluxo.
 
 `maintenance.studio_media_cleanup_runs` registra `run_id`, slug imutável, estado e contagens terminais,
 sem paths ou secrets. A criação entra diretamente em `running`; a conclusão é somente
 `succeeded`/`failed`, com replay idêntico e fechamento obrigatório `claimed = deleted + failed`.
-Readiness reprova execução travada por 30 minutos ou falha sem sucesso posterior. Ao abrir um novo
+Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
+ou falha sem sucesso posterior. Ao abrir um novo
 run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu
 `running` além desse limite; leases vencidos continuam elegíveis ao claim seguinte e um sucesso
 posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma

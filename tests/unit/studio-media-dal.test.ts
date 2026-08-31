@@ -143,6 +143,7 @@ describe("studio media DAL", () => {
       rejectStudioMediaUpload({
         ...revision,
         mediaId,
+        rejectionCode: "object_missing",
         requestId: studioTestIds.requestId,
         userId: studioTestIds.userId,
       }),
@@ -163,6 +164,15 @@ describe("studio media DAL", () => {
     ).resolves.toEqual(gallery);
 
     expect(mocks.query).toHaveBeenCalledTimes(4);
+    expect(mocks.query.mock.calls[2]?.[1]).toEqual([
+      studioTestIds.userId,
+      studioTestIds.studioId,
+      studioTestIds.revisionId,
+      3,
+      mediaId,
+      studioTestIds.requestId,
+      "object_missing",
+    ]);
   });
 
   it("projects strict identities for every gallery mutation", async () => {

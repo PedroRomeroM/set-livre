@@ -474,10 +474,10 @@ function HydratedStudioMediaPanel({
       error instanceof StudioApiError && error.code === "STORAGE_UPLOAD_REJECTED";
     const objectMissing = error instanceof StudioApiError && error.code === "UPLOAD_OBJECT_MISSING";
     const uploadExpired = error instanceof StudioApiError && error.code === "UPLOAD_EXPIRED";
-    const renewalRequired = uploadRejected || objectMissing || uploadExpired;
+    const renewalRequired = objectMissing || uploadExpired;
     if (renewalRequired && runtime !== undefined) resetUploadReservation(runtime);
     const ambiguous =
-      !renewalRequired && ((stage === "envio" && !uploadRejected) || isAmbiguousStudioError(error));
+      !renewalRequired && (uploadRejected || stage === "envio" || isAmbiguousStudioError(error));
     const validationRejected =
       error instanceof StudioApiError && error.code === "VALIDATION_FAILED";
     if (validationRejected) uploadRuntimeReference.current.delete(id);
@@ -604,6 +604,20 @@ function HydratedStudioMediaPanel({
           await uploadStudioMediaObject(runtime.preparation, runtime.file, controller.signal);
           runtime.uploadConfirmed = true;
         } catch (error) {
+          if (error instanceof StudioApiError && error.code === "STORAGE_UPLOAD_REJECTED") {
+            updateAttempt(id, {
+              message:
+                "O armazenamento recusou o envio. Confirmando no servidor antes de liberar a reserva.",
+              phase: "finalizing",
+              retry: undefined,
+            });
+            try {
+              const finalized = await finalizeMutation.mutateAsync(runtime.finalizeCommand);
+              return await finishUpload(id, runtime.preparation.mediaId, finalized);
+            } catch (settlementError) {
+              return handleUploadError(id, settlementError, "verificação");
+            }
+          }
           return handleUploadError(id, error, "envio");
         }
       }
@@ -614,8 +628,8 @@ function HydratedStudioMediaPanel({
         retry: undefined,
       });
       try {
-        await finalizeMutation.mutateAsync(runtime.finalizeCommand);
-        return await finishUpload(id, runtime.preparation.mediaId);
+        const finalized = await finalizeMutation.mutateAsync(runtime.finalizeCommand);
+        return await finishUpload(id, runtime.preparation.mediaId, finalized);
       } catch (error) {
         return handleUploadError(id, error, "verificação");
       }

@@ -348,7 +348,32 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(87);
+select plan(89);
+
+insert into maintenance.studio_media_cleanup_runs (
+  run_id,
+  function_slug,
+  status,
+  claimed_count,
+  deleted_count,
+  failed_count,
+  error_code,
+  started_at,
+  completed_at,
+  updated_at
+)
+values (
+  '8c000000-0000-4000-8000-000000000000',
+  'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  'succeeded',
+  0,
+  0,
+  0,
+  null,
+  pg_catalog.clock_timestamp() - interval '1 second',
+  pg_catalog.clock_timestamp(),
+  pg_catalog.clock_timestamp()
+);
 
 select has_table('public', 'studio_media', 'objetos de mídia existem');
 select has_table('public', 'studio_revision_media', 'associações versionadas existem');
@@ -423,7 +448,7 @@ select ok(
         ('private.prepare_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text,bigint,text)'),
         ('private.replay_studio_media_finalize(uuid,uuid,uuid,bigint,uuid,uuid)'),
         ('private.get_studio_media_upload_candidate(uuid,uuid,uuid,bigint,uuid)'),
-        ('private.reject_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid)'),
+        ('private.reject_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text)'),
         ('private.finalize_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,bigint,integer,integer,text)'),
         ('private.reorder_studio_media(uuid,uuid,uuid,bigint,uuid,uuid,uuid[])'),
         ('private.set_studio_media_cover(uuid,uuid,uuid,bigint,uuid,uuid,uuid)'),
@@ -1921,6 +1946,69 @@ select matches(
 
 set local role app_dal;
 select pg_catalog.set_config(
+  'set_livre.test.f008_limit_reject',
+  private.reject_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    1,
+    '88000000-0000-4000-8000-000000000001',
+    '8a000000-0000-4000-8000-000000000001',
+    'object_missing'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_limit_replacement',
+  private.prepare_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    1,
+    '8a000000-0000-4000-8000-000000000002',
+    '8a000000-0000-4000-8000-000000000003',
+    'image/jpeg',
+    10,
+    null
+  )::text,
+  true
+);
+reset role;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.f008_limit_reject')::jsonb
+      ->> 'rejectionCode' = 'object_missing'
+    and pg_catalog.current_setting('set_livre.test.f008_limit_replacement')::jsonb
+      ->> 'mediaId' is not null
+    and (
+      select pg_catalog.count(*) filter (where media.status = 'pending_upload') = 20
+        and pg_catalog.count(*) filter (
+          where media.status = 'rejected'
+            and media.rejection_code = 'object_missing'
+        ) = 1
+      from public.studio_media as media
+      where media.prepared_revision_id = (
+        pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+          #>> '{revision,id}'
+      )::uuid
+    ),
+  'rejeição server-side libera a quota antes de preparar uma identidade de upload nova'
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
   'set_livre.test.f008_expired_limit_create',
   private.create_studio(
     '81000000-0000-4000-8000-000000000001',
@@ -3356,6 +3444,41 @@ select ok(
 rollback to savepoint cleanup_stale_health;
 release savepoint cleanup_stale_health;
 
+savepoint cleanup_stale_success_health;
+delete from maintenance.studio_media_cleanup_probes;
+delete from maintenance.studio_media_cleanup_runs;
+insert into maintenance.studio_media_cleanup_runs (
+  run_id,
+  function_slug,
+  status,
+  claimed_count,
+  deleted_count,
+  failed_count,
+  error_code,
+  started_at,
+  completed_at,
+  updated_at
+)
+values (
+  '8d000000-0000-4000-8000-000000000002',
+  'media-cleanup-cccccccccccccccccccccccccccccccccccccccc',
+  'succeeded',
+  0,
+  0,
+  0,
+  null,
+  pg_catalog.clock_timestamp() - interval '31 minutes 1 second',
+  pg_catalog.clock_timestamp() - interval '31 minutes',
+  pg_catalog.clock_timestamp() - interval '31 minutes'
+);
+select ok(
+  not private.studio_media_cleanup_runs_are_healthy()
+    and not private.managed_runtime_boundaries_are_ready(),
+  'health/readiness degradam quando o worker deixa de publicar sucesso por trinta minutos'
+);
+rollback to savepoint cleanup_stale_success_health;
+release savepoint cleanup_stale_success_health;
+
 create extension if not exists dblink with schema extensions;
 create temporary table feat008_concurrency_results (
   label text primary key,
@@ -3633,7 +3756,7 @@ $block$;
 
 select ok(
   (
-    select pg_catalog.count(*) = 11
+    select pg_catalog.count(*) = 12
     from private.studio_command_requests as request
     where request.owner_user_id = '81000000-0000-4000-8000-000000000001'
       and request.action like 'studio.media.%'
