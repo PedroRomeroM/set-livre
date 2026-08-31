@@ -1,7 +1,17 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
+
 import { Pool, type PoolClient } from "pg";
 import { z } from "zod";
 
 import { readSafeE2EEnvironment } from "./e2e-environment";
+import { createPlaywrightOperationalEnvironment } from "./playwright-web-server";
+
+const execFileAsync = promisify(execFile);
+const repositoryRoot = resolve(import.meta.dirname, "../..");
+const mediaCleanupIntervalMs = 10 * 60 * 1_000;
+const mediaCleanupTimeoutMs = 60_000;
 
 const identitySchema = z
   .array(
@@ -106,6 +116,54 @@ export async function withE2EDalClient<T>(operation: (client: E2EDatabaseClient)
   return withDatabaseClient("dal", operation);
 }
 
+async function runLocalMediaCleanupCommand() {
+  try {
+    await execFileAsync(
+      process.execPath,
+      [resolve(repositoryRoot, "scripts/local-setup.mjs"), "cleanup"],
+      {
+        cwd: repositoryRoot,
+        env: {
+          ...createPlaywrightOperationalEnvironment(process.env),
+          NODE_ENV: "test",
+        },
+        timeout: mediaCleanupTimeoutMs,
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    throw new Error("O heartbeat de cleanup do ambiente E2E não atingiu estado terminal.", {
+      cause: error,
+    });
+  }
+}
+
+export async function startE2EMaintenanceHeartbeat({
+  intervalMs = mediaCleanupIntervalMs,
+  run = runLocalMediaCleanupCommand,
+}: Readonly<{ intervalMs?: number; run?: () => Promise<void> }> = {}) {
+  await run();
+  let failure: unknown;
+  let pending: Promise<void> | undefined;
+  const tick = () => {
+    if (pending !== undefined) return;
+    pending = run()
+      .catch((error: unknown) => {
+        failure ??= error;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
+  };
+  const timer = setInterval(tick, intervalMs);
+
+  return async () => {
+    clearInterval(timer);
+    await pending;
+    if (failure !== undefined) throw failure;
+  };
+}
+
 export default async function e2eDatabasePreflight() {
   const identity = await assertE2EDatabaseSafety();
   if (identity.stale_qa_identities !== 0) {
@@ -113,4 +171,5 @@ export default async function e2eDatabasePreflight() {
       `O banco E2E contém ${identity.stale_qa_identities} identidades QA residuais. Execute npm run supabase:reset antes de repetir a suíte.`,
     );
   }
+  return startE2EMaintenanceHeartbeat();
 }

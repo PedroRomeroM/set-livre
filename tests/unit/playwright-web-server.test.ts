@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createPlaywrightNextCommand,
+  createPlaywrightOperationalEnvironment,
   createPlaywrightWebServerEnvironmentOverlay,
 } from "../helpers/playwright-web-server";
 
@@ -72,6 +73,7 @@ describe("Playwright webServer process boundary", () => {
     };
 
     const overlay = createPlaywrightWebServerEnvironmentOverlay(inherited, applicationEnvironment);
+    const operational = createPlaywrightOperationalEnvironment(inherited);
 
     expect(Object.keys(inherited).every((name) => Object.hasOwn(overlay, name))).toBe(true);
     expect(overlay).toMatchObject({
@@ -96,6 +98,11 @@ describe("Playwright webServer process boundary", () => {
       npm_config__authToken: "",
     });
     expect(JSON.stringify(overlay)).not.toMatch(
+      /admin-secret|cloud:database-secret|cloud-secret-that-must-not-win|host-anon|hostile|registry-secret|service-role-secret/u,
+    );
+    expect(operational.HOME).toBe("/home/tester");
+    expect(operational.PATH).toBe(["/opt/node/bin", "/usr/bin"].join(delimiter));
+    expect(JSON.stringify(operational)).not.toMatch(
       /admin-secret|cloud:database-secret|cloud-secret-that-must-not-win|host-anon|hostile|registry-secret|service-role-secret/u,
     );
 

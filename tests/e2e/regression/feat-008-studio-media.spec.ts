@@ -253,6 +253,7 @@ test("SL-F008-E2E-012 @p1 conflito no upload exige aceitar a versão salva e cri
         { exact: true },
       ),
     ).toBeVisible();
+    expect(harness.releasedReservationCount()).toBe(1);
     const renewUpload = page.getByRole("button", { name: "Renovar envio" });
     await expect(renewUpload).toBeDisabled();
 

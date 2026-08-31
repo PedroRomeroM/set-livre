@@ -5422,7 +5422,9 @@ begin
     or p_media_id is null
     or p_request_id is null
     or p_rejection_code is null
-    or p_rejection_code <> all (array['validation_failed'::text, 'object_missing'::text])
+    or p_rejection_code <> all (
+      array['validation_failed'::text, 'object_missing'::text, 'superseded'::text]
+    )
   then
     raise exception using errcode = '22023', message = 'invalid_studio_media_reject';
   end if;
@@ -5514,7 +5516,7 @@ $$;
 ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza a reserva pela identidade persistida, sem depender da versão corrente da galeria; replay preserva o primeiro fato e libera a quota imediatamente.';
+COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza uma reserva pela identidade persistida, inclusive quando a revisão foi supersedida; replay preserva o primeiro fato e libera a quota imediatamente.';
 
 
 
@@ -9365,7 +9367,7 @@ CASE "declared_mime_type"
     ELSE NULL::"text"
 END)) AND ("split_part"("storage_path", '/'::"text", 8) = ''::"text"))),
     CONSTRAINT "studio_media_preview_path_identity_check" CHECK ((("preview_storage_path" = "regexp_replace"("storage_path", '\.(avif|jpg|png|webp)$'::"text", '.preview.webp'::"text")) AND ("split_part"("preview_storage_path", '/'::"text", 7) = "format"('%s.preview.webp'::"text", "id")))),
-    CONSTRAINT "studio_media_rejection_code_check" CHECK ((("rejection_code" IS NULL) OR ("rejection_code" = ANY (ARRAY['validation_failed'::"text", 'object_missing'::"text", 'mime_mismatch'::"text", 'size_mismatch'::"text", 'checksum_mismatch'::"text", 'decode_failed'::"text", 'dimension_invalid'::"text"])))),
+    CONSTRAINT "studio_media_rejection_code_check" CHECK ((("rejection_code" IS NULL) OR ("rejection_code" = ANY (ARRAY['validation_failed'::"text", 'object_missing'::"text", 'superseded'::"text", 'mime_mismatch'::"text", 'size_mismatch'::"text", 'checksum_mismatch'::"text", 'decode_failed'::"text", 'dimension_invalid'::"text"])))),
     CONSTRAINT "studio_media_state_coherence_check" CHECK (((("status" = 'pending_upload'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" >= ("prepared_at" + '24:00:00'::interval))) OR (("status" = 'ready'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NOT NULL) AND ("actual_size_bytes" IS NOT NULL) AND ("width" IS NOT NULL) AND ("height" IS NOT NULL) AND ("checksum_sha256" IS NOT NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NOT NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NULL)) OR (("status" = 'rejected'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NOT NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NOT NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'delete_pending'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'deleted'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NOT NULL) AND ("cleanup_after" IS NULL)))),
     CONSTRAINT "studio_media_status_check" CHECK (("status" = ANY (ARRAY['pending_upload'::"text", 'ready'::"text", 'rejected'::"text", 'delete_pending'::"text", 'deleted'::"text"]))),
     CONSTRAINT "studio_media_timestamps_check" CHECK ((("updated_at" >= "prepared_at") AND (("finalized_at" IS NULL) OR ("finalized_at" >= "prepared_at")) AND (("rejected_at" IS NULL) OR ("rejected_at" >= "prepared_at")) AND (("delete_requested_at" IS NULL) OR ("delete_requested_at" >= "prepared_at")) AND (("deleted_at" IS NULL) OR ("deleted_at" >= "delete_requested_at")))),

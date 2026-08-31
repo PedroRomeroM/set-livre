@@ -306,6 +306,32 @@ describe("studio media service", () => {
     expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
   });
 
+  it("terminalizes a prepared upload before exposing a concurrent revision conflict", async () => {
+    const conflict = {
+      code: "40001",
+      message: "studio_revision_conflict",
+    };
+    mocks.readStudioMediaUploadCandidate.mockRejectedValueOnce(conflict);
+    const command = {
+      action: "studio.media.upload.finalize",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: { ...boundary, mediaId },
+    } as const;
+
+    await expect(executeStudioMediaCommand(command, context)).rejects.toBe(conflict);
+    expect(mocks.rejectStudioMediaUpload).toHaveBeenCalledWith({
+      ...command.payload,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      rejectionCode: "superseded",
+      requestId: studioTestIds.requestId,
+      userId: studioTestIds.userId,
+    });
+    expect(mocks.download).not.toHaveBeenCalled();
+    expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
+    expect(mocks.handleStudioDatabaseError).toHaveBeenCalledWith(conflict);
+  });
+
   it("maps a Storage outage to a recoverable service response", async () => {
     mocks.createUploadToken.mockRejectedValueOnce(new StudioMediaStorageError("upload-token"));
     const command = {

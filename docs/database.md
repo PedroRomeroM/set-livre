@@ -24,8 +24,10 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260830173000_business_timestamp_monotonicity` e
 `20260830204500_backoffice_taxonomy_explicit_transitions`,
 `20260831021612_harden_studio_reads_and_backoffice_search` e
-`20260831082000_feat_008_studio_media` e o hardening append-only
-`20260831192100_harden_studio_media_terminal_rejection`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260831082000_feat_008_studio_media` e os hardenings append-only
+`20260831170000_harden_studio_media_review_findings`,
+`20260831192100_harden_studio_media_terminal_rejection` e
+`20260831193500_harden_studio_media_superseded_reservations`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
@@ -40,6 +42,8 @@ A baseline implementada inclui:
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
 - núcleo de estúdio/revisão, taxonomias ativas, conteúdo comercial, concorrência otimista, ownership e
   descarte seguro;
+- mídia privada cuja reserva persistida é terminalizada como `superseded` antes de um conflito de
+  revisão autorizar nova preparação, liberando a quota sem depender da versão corrente;
 - usuários administrativos, binding curto de sessão, papéis `support/admin`, PII temporária,
   taxonomias versionadas, idempotência e auditoria redigida;
 - relógio lógico monotônico no binding administrativo e nos dez pares `created_at/updated_at` do

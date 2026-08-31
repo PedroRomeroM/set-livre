@@ -73,6 +73,76 @@ describe("trusted studio media storage", () => {
     expect(observedCache).toBe("no-store");
   });
 
+  it("aborts the underlying signed preview request with the read deadline", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    let observedSignal: AbortSignal | null | undefined;
+    const fetchImplementation: typeof fetch = vi.fn((_input, init) => {
+      observedSignal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const controller = new AbortController();
+    const operation = createTrustedStudioMediaStorage(fetchImplementation).signGalleryPreviews(
+      {
+        items: [
+          {
+            byteSize: 512,
+            checksumSha256: "8".repeat(64),
+            height: 720,
+            id: mediaId,
+            isCover: true,
+            mimeType: "image/jpeg",
+            position: 1,
+            previewStoragePath: previewPath,
+            width: 1280,
+          },
+        ],
+        revisionId: studioTestIds.revisionId,
+        revisionNumber: 1,
+        revisionVersion: 3,
+        scope: studioTestIds.userId,
+        studioId: studioTestIds.studioId,
+      },
+      controller.signal,
+    );
+    const failure = expect(operation).rejects.toMatchObject({ message: "deadline reached" });
+
+    await vi.waitFor(() => expect(observedSignal).toBe(controller.signal));
+    controller.abort(new Error("deadline reached"));
+    await failure;
+  });
+
+  it("honors an already-aborted read deadline even for an empty gallery", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    const controller = new AbortController();
+    controller.abort(new Error("deadline reached"));
+
+    await expect(
+      createTrustedStudioMediaStorage(vi.fn()).signGalleryPreviews(
+        {
+          items: [],
+          revisionId: studioTestIds.revisionId,
+          revisionNumber: 1,
+          revisionVersion: 3,
+          scope: studioTestIds.userId,
+          studioId: studioTestIds.studioId,
+        },
+        controller.signal,
+      ),
+    ).rejects.toThrow("deadline reached");
+  });
+
   it("aborts the underlying preview upload with the absolute server deadline", async () => {
     vi.stubEnv("APP_ENV", "production");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");

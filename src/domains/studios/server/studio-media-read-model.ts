@@ -54,7 +54,9 @@ export async function readOwnerStudioMedia(
         if (record === null) throw new StudioMediaNotFoundError();
         return assertStudioMediaBoundary(record, parsedUserId, parsedStudioId);
       })
-      .then((gallery) => createTrustedStudioMediaStorage().signGalleryPreviews(gallery));
+      .then((gallery) =>
+        createTrustedStudioMediaStorage().signGalleryPreviews(gallery, controller.signal),
+      );
     return await Promise.race([galleryOutcome, abortOutcome]);
   } finally {
     if (deadline !== undefined) clearTimeout(deadline);

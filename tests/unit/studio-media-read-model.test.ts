@@ -82,7 +82,7 @@ describe("studio media read model", () => {
       studioId: studioTestIds.studioId,
       userId: studioTestIds.userId,
     });
-    expect(mocks.signGalleryPreviews).toHaveBeenCalledWith(galleryRecord);
+    expect(mocks.signGalleryPreviews).toHaveBeenCalledWith(galleryRecord, expect.any(AbortSignal));
   });
 
   it("returns safe not-found semantics and rejects projection boundary drift", async () => {
@@ -112,10 +112,17 @@ describe("studio media read model", () => {
 
   it("mantém a assinatura em lote dentro do mesmo deadline da leitura", async () => {
     vi.useFakeTimers();
-    mocks.signGalleryPreviews.mockReturnValueOnce(new Promise(() => undefined));
+    let signingSignal: AbortSignal | undefined;
+    mocks.signGalleryPreviews.mockImplementationOnce((_gallery: unknown, signal: AbortSignal) => {
+      signingSignal = signal;
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
     const result = readOwnerStudioMedia(studioTestIds.userId, studioTestIds.studioId);
     const rejection = expect(result).rejects.toMatchObject({ name: "AbortError" });
     await vi.advanceTimersByTimeAsync(2_001);
     await rejection;
+    expect(signingSignal?.aborted).toBe(true);
   });
 });

@@ -425,6 +425,10 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
     }
     if (activeBehavior?.kind === "conflict") {
       publish({ ...gallery, revisionVersion: gallery.revisionVersion + 1 });
+      if (command.action === "studio.media.upload.finalize") {
+        releasedReservations.add(command.payload.mediaId);
+        pendingUploads.delete(command.payload.mediaId);
+      }
       await fulfillJson(route, errorPayload("CONFLICT", "A galeria mudou em outra sessão."), 409);
       return;
     }

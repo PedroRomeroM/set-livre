@@ -33,7 +33,10 @@ export class StudioMediaStorageError extends Error {
 export type StudioMediaStorage = Readonly<{
   createUploadToken: (path: string) => Promise<string>;
   download: (path: string, signal: AbortSignal) => Promise<Blob>;
-  signGalleryPreviews: (gallery: StudioMediaGalleryRecord) => Promise<StudioMediaGallery>;
+  signGalleryPreviews: (
+    gallery: StudioMediaGalleryRecord,
+    signal?: AbortSignal,
+  ) => Promise<StudioMediaGallery>;
   uploadPreview: (path: string, bytes: Uint8Array, signal: AbortSignal) => Promise<void>;
 }>;
 
@@ -81,6 +84,12 @@ function createDeadlineFetch(
   };
 }
 
+function throwStorageAbort(signal: AbortSignal | undefined) {
+  if (signal?.aborted !== true) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException("A operação privada de Storage foi interrompida.", "AbortError");
+}
+
 function createStudioMediaStorage(createBucket: StudioMediaBucketFactory): StudioMediaStorage {
   const bucket = createBucket();
 
@@ -104,18 +113,28 @@ function createStudioMediaStorage(createBucket: StudioMediaBucketFactory): Studi
       return data;
     },
 
-    async signGalleryPreviews(gallery) {
+    async signGalleryPreviews(gallery, signal) {
       const previewExpiresAt = new Date(
         Date.now() + studioMediaPreviewLifetimeSeconds * 1_000,
       ).toISOString();
+      throwStorageAbort(signal);
       if (gallery.items.length === 0) return { ...gallery, items: [], previewExpiresAt };
       const paths = gallery.items.map((item) =>
         studioMediaPreviewPathSchema.parse(item.previewStoragePath),
       );
-      const { data, error } = await bucket.createSignedUrls(
-        paths,
-        studioMediaPreviewLifetimeSeconds,
-      );
+      const signingBucket = createBucket(signal);
+      let signingResult: Awaited<ReturnType<StudioMediaBucket["createSignedUrls"]>>;
+      try {
+        signingResult = await signingBucket.createSignedUrls(
+          paths,
+          studioMediaPreviewLifetimeSeconds,
+        );
+      } catch {
+        throwStorageAbort(signal);
+        throw new StudioMediaStorageError("preview");
+      }
+      throwStorageAbort(signal);
+      const { data, error } = signingResult;
       if (error !== null || data.length !== paths.length) {
         throw new StudioMediaStorageError("preview");
       }

@@ -109,6 +109,11 @@ contratos gerados.
 O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs importam o componente
 diretamente e não iniciam um servidor Vite aninhado.
 
+O setup global do Playwright executa o cleanup local real antes da primeira spec e a cada dez minutos
+enquanto a suíte existir, reproduzindo a cadência operacional da VM. As execuções são serializadas e
+um resultado não terminal reprova o gate no teardown; assim, uma suíte longa não perde readiness por
+ausência artificial do timer de produção.
+
 No Windows, `npm run test:db` usa a imagem pinada
 `public.ecr.aws/supabase/pg_prove:3.36` em um container efêmero na rede local oficial do Supabase.
 Os testes são copiados com `docker cp`, sem bind mount sujeito a permissões/compartilhamento do

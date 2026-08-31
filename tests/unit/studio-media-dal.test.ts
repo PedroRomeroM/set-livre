@@ -143,7 +143,7 @@ describe("studio media DAL", () => {
       rejectStudioMediaUpload({
         ...revision,
         mediaId,
-        rejectionCode: "object_missing",
+        rejectionCode: "superseded",
         requestId: studioTestIds.requestId,
         userId: studioTestIds.userId,
       }),
@@ -171,7 +171,7 @@ describe("studio media DAL", () => {
       3,
       mediaId,
       studioTestIds.requestId,
-      "object_missing",
+      "superseded",
     ]);
   });
 

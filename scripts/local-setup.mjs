@@ -1454,7 +1454,10 @@ export async function main(command = "reset") {
   }
 
   const values = localStatus();
-  if (command === "generate-schema") {
+  if (command === "cleanup") {
+    await runLocalMediaCleanup(values);
+    process.stdout.write("Cleanup local concluído em estado terminal saudável.\n");
+  } else if (command === "generate-schema") {
     await generateDatabaseArtifacts(runSupabase, { schema: true, types: false });
   } else if (command === "generate-types") {
     await generateDatabaseArtifacts(runSupabase, { schema: false, types: true });

@@ -583,13 +583,12 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     ).toBeVisible();
     await expect(page.getByText(identity.email, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Saindo" })).toHaveCount(0);
+    const ambiguousLogoutNavigation = page.waitForURL(
+      (address) => `${address.pathname}${address.search}` === "/entrar?saida=verificar",
+      { timeout: 15_000, waitUntil: "commit" },
+    );
     releaseLogoutRequest.resolve();
-    await expect
-      .poll(() => {
-        const address = new URL(page.url());
-        return `${address.pathname}${address.search}`;
-      })
-      .toBe("/entrar?saida=verificar");
+    await ambiguousLogoutNavigation;
     await expect(page.getByText("A sessão ainda está ativa", { exact: true })).toBeVisible();
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
     await page.evaluate(() => {

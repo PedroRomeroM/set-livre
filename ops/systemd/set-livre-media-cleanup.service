@@ -1,6 +1,6 @@
 [Unit]
 Description=Set Livre production media cleanup
-After=network-online.target
+After=network-online.target set-livre-release-recovery.service
 Wants=network-online.target
 ConditionPathIsSymbolicLink=/opt/set-livre/current
 ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs

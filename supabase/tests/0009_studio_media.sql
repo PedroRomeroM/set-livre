@@ -1968,7 +1968,7 @@ select pg_catalog.set_config(
     1,
     '88000000-0000-4000-8000-000000000001',
     '8a000000-0000-4000-8000-000000000001',
-    'object_missing'
+    'superseded'
   )::text,
   true
 );
@@ -1997,7 +1997,7 @@ reset role;
 
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_limit_reject')::jsonb
-      ->> 'rejectionCode' = 'object_missing'
+      ->> 'rejectionCode' = 'superseded'
     and pg_catalog.current_setting('set_livre.test.f008_limit_reject')::jsonb
       ->> 'revisionVersion' = '1'
     and pg_catalog.current_setting('set_livre.test.f008_limit_replacement')::jsonb
@@ -2008,7 +2008,7 @@ select ok(
       select pg_catalog.count(*) filter (where media.status = 'pending_upload') = 20
         and pg_catalog.count(*) filter (
           where media.status = 'rejected'
-            and media.rejection_code = 'object_missing'
+            and media.rejection_code = 'superseded'
         ) = 1
       from public.studio_media as media
       where media.prepared_revision_id = (
@@ -2016,7 +2016,7 @@ select ok(
           #>> '{revision,id}'
       )::uuid
     ),
-  'rejeição por identidade libera a quota mesmo após a versão da galeria avançar'
+  'supersessão por identidade libera a quota mesmo após a versão da galeria avançar'
 );
 
 set local role app_dal;

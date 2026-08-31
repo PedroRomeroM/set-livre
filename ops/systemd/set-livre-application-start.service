@@ -1,7 +1,7 @@
 [Unit]
-Description=Start Set Livre applications after release recovery
-Requires=set-livre-release-recovery.service
-After=set-livre-release-recovery.service
+Description=Start Set Livre applications after recovery and initial media cleanup
+Requires=set-livre-release-recovery.service set-livre-media-cleanup.service
+After=set-livre-release-recovery.service set-livre-media-cleanup.service
 
 [Service]
 Type=oneshot

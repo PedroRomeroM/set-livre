@@ -72,12 +72,13 @@
                 direto ao Storage com verificação autoritativa, originais preservados, prévias WebP
                 limitadas e assinadas, deadline server-side único de 15 segundos que aborta
                 download, geração e upload da prévia, e cleanup de ambos os objetos pela Storage API
-                em Function imutável por SHA. Recusa de upload libera a reserva pela identidade
-                persistida mesmo se outra aba avançar a galeria, e só então autoriza renovação;
-                clones conservam o path imutável da revisão de origem e descartar uma draft expulsa
-                sua galeria privada do cache. O mesmo PR contém núcleo/revisões e conteúdo de
-                estúdio, além do backoffice separado para usuários, comandos explícitos de
-                suspensão/restauração, PII temporária auditada, papéis
+                em Function imutável por SHA. Recusa ou supersessão concorrente libera a reserva
+                pela identidade persistida mesmo se outra aba avançar a galeria, e só então autoriza
+                renovação; o deadline de leitura também cancela a assinatura privilegiada de
+                previews; clones conservam o path imutável da revisão de origem e descartar uma
+                draft expulsa sua galeria privada do cache. O mesmo PR contém núcleo/revisões e
+                conteúdo de estúdio, além do backoffice separado para usuários, comandos explícitos
+                de suspensão/restauração, PII temporária auditada, papéis
                 <code>support/admin</code> e administração versionada de taxonomias por ações
                 explícitas de arquivar/reativar, sem status escolhido pelo cliente. O diretório não
                 entrega nome bruto nem papéis ao browser; a autorização permanece no servidor e o
@@ -210,9 +211,12 @@
           portas efêmeras no Windows; páginas são encerradas antes da limpeza destrutiva para não
           competir com refetches ainda ativos. A configuração destrutiva é lida somente ao iniciar
           Playwright ou uma operação real de banco; importar helpers puros em Vitest não exige
-          credenciais E2E e também não cria fallback. Os resultados permanecem no PR e nos checks.
-          Os contratos técnicos ficam nas fontes canônicas de
-          <a href="docs/development.md">desenvolvimento</a>,
+          credenciais E2E e também não cria fallback. Durante suítes longas, o setup global executa
+          o cleanup local real a cada dez minutos e reprova qualquer resultado não terminal,
+          reproduzindo o timer da VM sem deixar o readiness expirar artificialmente. No boot frio, a
+          oneshot de cleanup também termina antes de os aplicativos serem considerados iniciados. Os
+          resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas
+          de <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.
         </p>

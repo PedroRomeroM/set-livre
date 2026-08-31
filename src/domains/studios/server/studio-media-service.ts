@@ -33,6 +33,15 @@ const mediaDatabaseErrorSchema = z.object({
   message: z.string().optional(),
 });
 
+function isStudioMediaRevisionConflict(error: unknown) {
+  const parsed = mediaDatabaseErrorSchema.safeParse(error);
+  return (
+    parsed.success &&
+    parsed.data.code === "40001" &&
+    parsed.data.message === "studio_revision_conflict"
+  );
+}
+
 function mediaStorage(context: PrivateCommandContext) {
   if (context.studioMediaStorage === undefined) {
     throw new Error("O adaptador privado de mídia não foi configurado na rota de comandos.");
@@ -143,42 +152,49 @@ export async function executeStudioMediaCommand(
         if (replay !== null) {
           return storage.signGalleryPreviews(replay);
         }
-        const candidate = await readStudioMediaUploadCandidate(input);
-        const verification = await withStudioMediaImageCapacity(async (deadline) => {
-          let verified;
-          try {
-            verified = await verifyStudioMediaImage(
-              await storage.download(candidate.path, deadline.signal),
-              candidate,
-              deadline,
+        try {
+          const candidate = await readStudioMediaUploadCandidate(input);
+          const verification = await withStudioMediaImageCapacity(async (deadline) => {
+            let verified;
+            try {
+              verified = await verifyStudioMediaImage(
+                await storage.download(candidate.path, deadline.signal),
+                candidate,
+                deadline,
+              );
+            } catch (error) {
+              const objectMissing =
+                error instanceof StudioMediaStorageError &&
+                error.operation === "download" &&
+                error.reason === "not-found";
+              if (!objectMissing && !(error instanceof StudioMediaImageError)) throw error;
+              await rejectStudioMediaUpload({
+                ...input,
+                rejectionCode: objectMissing ? "object_missing" : "validation_failed",
+              });
+              if (objectMissing) throw error;
+              throw new ApiRouteError(
+                422,
+                "VALIDATION_FAILED",
+                "A foto enviada não corresponde ao tipo, tamanho ou conteúdo informado.",
+              );
+            }
+            await storage.uploadPreview(
+              candidate.previewPath,
+              verified.previewBytes,
+              deadline.signal,
             );
-          } catch (error) {
-            const objectMissing =
-              error instanceof StudioMediaStorageError &&
-              error.operation === "download" &&
-              error.reason === "not-found";
-            if (!objectMissing && !(error instanceof StudioMediaImageError)) throw error;
-            await rejectStudioMediaUpload({
-              ...input,
-              rejectionCode: objectMissing ? "object_missing" : "validation_failed",
-            });
-            if (objectMissing) throw error;
-            throw new ApiRouteError(
-              422,
-              "VALIDATION_FAILED",
-              "A foto enviada não corresponde ao tipo, tamanho ou conteúdo informado.",
-            );
-          }
-          await storage.uploadPreview(
-            candidate.previewPath,
-            verified.previewBytes,
-            deadline.signal,
+            return verified.verification;
+          });
+          return storage.signGalleryPreviews(
+            await finalizeStudioMediaUpload({ ...input, verification }),
           );
-          return verified.verification;
-        });
-        return storage.signGalleryPreviews(
-          await finalizeStudioMediaUpload({ ...input, verification }),
-        );
+        } catch (error) {
+          if (isStudioMediaRevisionConflict(error)) {
+            await rejectStudioMediaUpload({ ...input, rejectionCode: "superseded" });
+          }
+          throw error;
+        }
       }
       case "studio.media.reorder":
         return storage.signGalleryPreviews(

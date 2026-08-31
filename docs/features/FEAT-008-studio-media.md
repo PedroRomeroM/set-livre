@@ -27,6 +27,9 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
   decodificação, dimensões e SHA-256, gera uma prévia WebP de até 1.280 px/3 MiB e só então associa o
   objeto à revisão. Download, decode e preview compartilham um deadline absoluto server-side de 15
   segundos e um único slot, sem `Promise.race` que abandone trabalho nativo;
+- se outra ação avançar a revisão entre preparo e finalização, o servidor terminaliza a reserva pela
+  identidade persistida como `superseded` antes de devolver o conflito; somente então a UI oferece
+  uma nova preparação;
 - `studio.media.reorder`, `studio.media.cover.set` e `studio.media.delete` usam versão otimista da
   revisão, idempotência e retorno autoritativo;
 - a associação é versionada por revisão. Criar um novo rascunho preserva os mesmos objetos da revisão
@@ -74,7 +77,8 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
   `pg_net` e Vault não pertencem ao fluxo, `maintenance` permanece privado e `service_role` recebe
   apenas as fachadas RPC estreitas;
 - o retorno ao browser omite `storagePath`; grants de tabela/Storage não permitem descoberta nem
-  assinatura direta e URL assinada não entra em persistência nem cache público.
+  assinatura direta e URL assinada não entra em persistência nem cache público. O deadline da leitura
+  também aborta a requisição de assinatura no cliente Storage privilegiado, sem trabalho secreto órfão;
 - a CSP admite a origem Supabase exata em `img-src` e `connect-src`, e o canário interrompido permanece
   recuperável: após 30 minutos, ausência dos dois paths precisa ser provada por `404/NoSuchKey` antes
   de o checkpoint virar `aborted`.
@@ -94,7 +98,7 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
 | SL-F008-E2E-009 | P1         | regression | desktop  | sem JavaScript não há mídia nem controle privado no DOM       |
 | SL-F008-E2E-010 | P1         | axe        | matriz   | teclado, foco, tema escuro e viewports passam acessibilidade  |
 | SL-F008-E2E-011 | P2         | reflow     | 200%     | galeria, fila e lightbox permanecem operáveis sem overflow    |
-| SL-F008-E2E-012 | P1         | regression | matriz   | conflito no upload exige estado salvo e reserva nova          |
+| SL-F008-E2E-012 | P1         | regression | matriz   | conflito libera reserva, exige estado salvo e ação nova       |
 | SL-F008-E2E-013 | P0         | critical   | desktop  | recusa do Storage libera a reserva antes de renovar           |
 
 Os P0 atravessam a UI. Setup e limpeza usam apenas o Supabase local, dados com namespace QA,

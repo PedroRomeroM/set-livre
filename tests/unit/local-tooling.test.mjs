@@ -406,8 +406,12 @@ describe("local tooling contracts", () => {
       expect(unit).not.toContain("WantedBy=multi-user.target");
       expect(unit).not.toContain("set-livre-release-recovery@link.service");
     }
-    expect(applicationStartUnit).toContain("Requires=set-livre-release-recovery.service");
-    expect(applicationStartUnit).toContain("After=set-livre-release-recovery.service");
+    expect(applicationStartUnit).toContain(
+      "Requires=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    );
+    expect(applicationStartUnit).toContain(
+      "After=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    );
     expect(applicationStartUnit).toContain(
       "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
     );
@@ -462,10 +466,17 @@ describe("local tooling contracts", () => {
     expect(service).toContain(
       "ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
     );
+    expect(service).toContain("After=network-online.target set-livre-release-recovery.service");
     expect(service).not.toContain("Authorization");
     expect(timer).toContain("Requires=set-livre-application-start.service");
     expect(timer).toContain("After=set-livre-application-start.service");
     expect(timer).toContain("OnBootSec=5min");
+    expect(
+      readFileSync(
+        new URL("../../ops/systemd/set-livre-application-start.service", import.meta.url),
+        "utf8",
+      ),
+    ).toContain("Requires=set-livre-release-recovery.service set-livre-media-cleanup.service");
     expect(timer).toContain("OnUnitActiveSec=10min");
     expect(timer).toContain("WantedBy=timers.target");
     expect(timer).toContain(

@@ -173,7 +173,7 @@ export async function rejectStudioMediaUpload(input: {
   expectedRevisionVersion: number;
   mediaId: string;
   requestId: string;
-  rejectionCode: "object_missing" | "validation_failed";
+  rejectionCode: "object_missing" | "superseded" | "validation_failed";
   studioId: string;
   userId: string;
 }) {
@@ -181,7 +181,7 @@ export async function rejectStudioMediaUpload(input: {
   const parsed = z
     .strictObject({
       mediaId: z.uuid(),
-      rejectionCode: z.enum(["object_missing", "validation_failed"]),
+      rejectionCode: z.enum(["object_missing", "superseded", "validation_failed"]),
       requestId: z.uuid(),
       userId: z.uuid(),
     })
