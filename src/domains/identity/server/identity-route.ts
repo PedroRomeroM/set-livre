@@ -27,6 +27,7 @@ async function runPostRoute(
     responseHeaders?: HeadersInit | undefined;
     status?: number | undefined;
   }>,
+  options: { enforceFacadeRateLimit: boolean } = { enforceFacadeRateLimit: true },
 ) {
   const startedAt = performance.now();
   const requestId = requestIdFrom(request);
@@ -36,10 +37,7 @@ async function runPostRoute(
   let responseHeaders: HeadersInit | undefined;
   try {
     assertTrustedRequestOrigin(request);
-    enforceIdentityRateLimit(`${action}.request`, requestRateLimitDiscriminator(request), {
-      limit: 300,
-      windowMs: 60_000,
-    });
+    if (options.enforceFacadeRateLimit) enforcePostRouteFacadeRateLimit(request, action);
     const result = await execute(
       requestId,
       (nextAction) => {
@@ -74,6 +72,17 @@ async function runPostRoute(
   }
 }
 
+function enforcePostRouteFacadeRateLimit(request: Request, action: OperationalAction) {
+  enforceIdentityRateLimit(`${action}.request`, requestRateLimitDiscriminator(request), {
+    limit: 300,
+    windowMs: 60_000,
+  });
+}
+
+export function enforcePrivateCommandFacadeRateLimit(request: Request) {
+  enforcePostRouteFacadeRateLimit(request, "private.command");
+}
+
 export function runIdentityPostRoute(
   request: Request,
   action: OperationalAction,
@@ -86,5 +95,7 @@ export function runPrivateCommandPostRoute(
   request: Request,
   execute: Parameters<typeof runPostRoute>[3],
 ) {
-  return runPostRoute(request, "private.command", "private.command", execute);
+  return runPostRoute(request, "private.command", "private.command", execute, {
+    enforceFacadeRateLimit: false,
+  });
 }

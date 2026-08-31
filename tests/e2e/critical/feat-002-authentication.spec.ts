@@ -512,3 +512,63 @@ test("SL-F002-E2E-005 @p0 returnTo externo é rejeitado com fallback literal", a
     await cleanupFeat002QaIdentity(identity);
   }
 });
+
+test("SL-F002-E2E-008 @p0 login preserva o retorno privado de criação e edição de estúdio", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const identity = createFeat002QaIdentity(testInfo, "006_studio_return");
+  const targets = [
+    {
+      heading: "Novo estúdio",
+      path: "/dono/estudios/novo",
+      requestedPath: "/dono/estudios/novo",
+    },
+    {
+      heading: "Dados do estúdio",
+      path: "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+      requestedPath: "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+    },
+    {
+      heading: "Dados do estúdio",
+      path: "/dono/estudios/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/dados",
+      requestedPath: "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
+    },
+  ] as const;
+
+  try {
+    const notBefore = await submitFeat002Registration(page, identity, "Pessoa física");
+    await confirmFeat002Registration(page, identity, notBefore);
+    await logoutFeat002Identity(page);
+
+    for (const [index, target] of targets.entries()) {
+      if (index > 0) {
+        await gotoExpectedPage(page, "/entrar", "Entre na sua conta");
+        await logoutFeat002Identity(page);
+      }
+
+      const navigation = await page.goto(target.requestedPath);
+      expect(navigation?.status()).toBe(200);
+      await expectCurrentPath(page, `/entrar?retorno=${encodeURIComponent(target.path)}`);
+
+      await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
+      await stageFeat002PasswordForSubmission(
+        getFeat002PasswordControl(page, "Senha"),
+        identity.password,
+      );
+      const loginResponse = page.waitForResponse((response) => {
+        const address = new URL(response.url());
+        return response.request().method() === "POST" && address.pathname === "/api/auth/login";
+      });
+      await page.getByRole("button", { exact: true, name: "Entrar" }).click();
+
+      expect((await loginResponse).status()).toBe(200);
+      await expectCurrentPath(page, target.path);
+      await expect(
+        page.getByRole("heading", { exact: true, level: 1, name: target.heading }),
+      ).toBeVisible();
+    }
+  } finally {
+    await cleanupFeat002QaIdentity(identity);
+  }
+});

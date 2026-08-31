@@ -19,6 +19,7 @@ import {
   listBackofficeTaxonomiesClient,
 } from "./backoffice-api";
 import { backofficeQueryKeys } from "./query-keys";
+import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 import styles from "./backoffice.module.css";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
@@ -42,6 +43,7 @@ function TaxonomyForm({
   blocked,
   editing,
   generation,
+  interactive,
   onCancel,
   onRetry,
   onSubmit,
@@ -51,6 +53,7 @@ function TaxonomyForm({
   blocked: boolean;
   editing?: BackofficeTaxonomyItem | undefined;
   generation: number;
+  interactive: boolean;
   onCancel: () => void;
   onRetry: () => void;
   onSubmit: (value: {
@@ -62,11 +65,16 @@ function TaxonomyForm({
   pending: boolean;
   retrying: boolean;
 }) {
-  const locked = blocked || pending || retrying;
+  const fieldsLocked = !interactive || blocked || pending || retrying;
+  const submitLocked = !interactive || blocked;
   return (
     <form
+      aria-busy={!interactive || pending}
       className={styles.taxonomyForm}
+      inert={!interactive}
       key={`${editing?.id ?? "new"}:${generation}`}
+      method="post"
+      noValidate
       onSubmit={(event) => {
         event.preventDefault();
         if (retrying) {
@@ -82,72 +90,78 @@ function TaxonomyForm({
         });
       }}
     >
-      <Field label="Grupo" required>
-        <Select
-          defaultValue={editing?.kind ?? "studioType"}
-          disabled={editing !== undefined || locked}
-          name="kind"
-        >
-          {Object.entries(kindLabels).map(([kind, label]) => (
-            <option key={kind} value={kind}>
-              {label}
-            </option>
-          ))}
-        </Select>
-      </Field>
-      <Field label="Ordem" required>
-        <Input
-          defaultValue={editing?.sortOrder ?? 0}
-          disabled={locked}
-          max={32767}
-          min={0}
-          name="sortOrder"
-          type="number"
-        />
-      </Field>
-      <Field label="Nome" required>
-        <Input
-          defaultValue={editing?.name}
-          disabled={locked}
-          maxLength={80}
-          minLength={2}
-          name="name"
-        />
-      </Field>
-      <Field
-        description="Letras minúsculas, números e hífens; precisa ser único no grupo."
-        label="Slug"
-        required
+      <fieldset
+        className={`${styles.secureFormBoundary} ${styles.taxonomyFormBoundary}`}
+        disabled={!interactive}
       >
-        <Input
-          defaultValue={editing?.slug}
-          disabled={locked}
-          maxLength={80}
-          minLength={2}
-          name="slug"
-          pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
-        />
-      </Field>
-      <div className={styles.actions}>
-        <Button disabled={blocked} loading={pending} loadingLabel="Salvando" type="submit">
-          {retrying
-            ? "Repetir mesma tentativa"
-            : editing === undefined
-              ? "Criar taxonomia"
-              : "Salvar edição"}
-        </Button>
-        {editing === undefined ? null : (
-          <Button disabled={locked} onClick={onCancel} variant="ghost">
-            Cancelar edição
+        <Field label="Grupo" required>
+          <Select
+            defaultValue={editing?.kind ?? "studioType"}
+            disabled={editing !== undefined || fieldsLocked}
+            name="kind"
+          >
+            {Object.entries(kindLabels).map(([kind, label]) => (
+              <option key={kind} value={kind}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Ordem" required>
+          <Input
+            defaultValue={editing?.sortOrder ?? 0}
+            disabled={fieldsLocked}
+            max={32767}
+            min={0}
+            name="sortOrder"
+            type="number"
+          />
+        </Field>
+        <Field label="Nome" required>
+          <Input
+            defaultValue={editing?.name}
+            disabled={fieldsLocked}
+            maxLength={80}
+            minLength={2}
+            name="name"
+          />
+        </Field>
+        <Field
+          description="Letras minúsculas, números e hífens; precisa ser único no grupo."
+          label="Slug"
+          required
+        >
+          <Input
+            defaultValue={editing?.slug}
+            disabled={fieldsLocked}
+            maxLength={80}
+            minLength={2}
+            name="slug"
+            pattern="[a-z0-9]+(?:-[a-z0-9]+)*"
+          />
+        </Field>
+        <div className={styles.actions}>
+          <Button disabled={submitLocked} loading={pending} loadingLabel="Salvando" type="submit">
+            {retrying
+              ? "Repetir mesma tentativa"
+              : editing === undefined
+                ? "Criar taxonomia"
+                : "Salvar edição"}
           </Button>
-        )}
-      </div>
+          {editing === undefined ? null : (
+            <Button disabled={fieldsLocked} onClick={onCancel} variant="ghost">
+              Cancelar edição
+            </Button>
+          )}
+        </div>
+      </fieldset>
     </form>
   );
 }
 
 export function TaxonomyManager({ session }: { session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
+  const interactive = useBackofficeHydrated();
   const [editing, setEditing] = useState<BackofficeTaxonomyItem>();
   const [formGeneration, setFormGeneration] = useState(0);
   const [activationTarget, setActivationTarget] = useState<BackofficeTaxonomyItem>();
@@ -231,7 +245,12 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   const items = taxonomies.data?.items ?? [];
 
   return (
-    <section aria-labelledby="taxonomies-title" className={styles.pageStack}>
+    <section
+      aria-busy={!interactive}
+      aria-labelledby="taxonomies-title"
+      className={styles.pageStack}
+      inert={!interactive}
+    >
       <header>
         <p className={styles.eyebrow}>Filtros públicos</p>
         <h1 id="taxonomies-title">Taxonomias</h1>
@@ -250,6 +269,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
           blocked={transition.isPending || activationRetryAvailable}
           editing={editing}
           generation={formGeneration}
+          interactive={interactive}
           onCancel={() => {
             pendingUpsertCommand.current = undefined;
             setUpsertRetryAvailable(false);
@@ -310,6 +330,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                   <div className={styles.actions}>
                     <Button
                       disabled={
+                        !interactive ||
                         activationRetryAvailable ||
                         transition.isPending ||
                         upsert.isPending ||
@@ -328,6 +349,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                     </Button>
                     <Button
                       disabled={
+                        !interactive ||
                         activationRetryAvailable ||
                         transition.isPending ||
                         upsert.isPending ||
@@ -368,7 +390,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
           ) : null}
           <div className={styles.actions}>
             <Button
-              disabled={upsert.isPending || upsertRetryAvailable}
+              disabled={!interactive || upsert.isPending || upsertRetryAvailable}
               loading={transition.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
@@ -392,7 +414,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                 : "Repetir mesma tentativa"}
             </Button>
             <Button
-              disabled={transition.isPending || activationRetryAvailable}
+              disabled={!interactive || transition.isPending || activationRetryAvailable}
               onClick={() => {
                 pendingActivationCommand.current = undefined;
                 setActivationRetryAvailable(false);

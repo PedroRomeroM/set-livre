@@ -345,12 +345,54 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
     expect((await discardConflict).status()).toBe(409);
     await expect(page.getByRole("group", { name: "Confirmar descarte" })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(localRules);
+    await expect(
+      page.getByRole("heading", {
+        level: 2,
+        name: "Revise o rascunho atual antes de descartar",
+      }),
+    ).toBeVisible();
+    await expect(page.getByText(/versão de edição 1 para 2/iu)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
+
+    await page.getByRole("button", { name: "Recarregar rascunho atual" }).click();
+    await expect(
+      page.getByRole("heading", {
+        level: 2,
+        name: "Revise o rascunho atual antes de descartar",
+      }),
+    ).toHaveCount(0);
+    await expect(page.getByText("Versão de edição 2", { exact: true })).toBeVisible();
+    await page.getByRole("textbox", { name: "Nome do estúdio" }).fill("Nome local ainda não salvo");
+    await page.getByRole("textbox", { name: "Regras de uso" }).fill(localRules);
+    await page.getByRole("textbox", { name: "Resposta 1" }).fill(localAnswer);
 
     const savedCore = await saveFeat006StudioThroughUi(page);
     expect(savedCore.response.status()).toBe(200);
     expect(savedCore.editor?.revision.version).toBe(3);
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(localRules);
     await expect(page.getByRole("textbox", { name: "Resposta 1" })).toHaveValue(localAnswer);
+
+    const latestConcurrentResponse = await page.request.post("/api/commands", {
+      data: {
+        action: "studio.revision.updateContent",
+        expectedScope: identity.userId,
+        idempotencyKey: randomUUID(),
+        payload: {
+          expectedRevisionId: editor.revision.id,
+          expectedRevisionVersion: 3,
+          faqs: [{ answer: remoteAnswer, question: sharedQuestion }],
+          studioId: editor.studioId,
+          usageRules: remoteRules,
+          youtubeVideoId: null,
+        },
+      },
+      headers: { origin: new URL(page.url()).origin },
+    });
+    expect(latestConcurrentResponse.status()).toBe(200);
+    expectFeat007EditorVersion(
+      apiSuccessSchema(studioEditorSchema).parse(await latestConcurrentResponse.json()).data,
+      4,
+    );
 
     await page.route(`**/api/owner/studios/${editor.studioId}`, (route) => route.abort("failed"), {
       times: 1,
@@ -360,7 +402,7 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
     await expect(
       page.getByRole("alert").filter({ hasText: "Não foi possível carregar a comparação" }),
     ).toBeVisible();
-    expect(submittedVersions).toEqual([1]);
+    expect(submittedVersions).toEqual([3]);
 
     await page.getByRole("button", { name: "Tentar carregar a comparação novamente" }).click();
     await expect(
@@ -383,8 +425,8 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
 
     const rebased = await saveFeat007ContentThroughUi(page);
     expect(rebased.response.status()).toBe(200);
-    expectFeat007EditorVersion(rebased.editor, 4);
-    expect(submittedVersions).toEqual([1, 3]);
+    expectFeat007EditorVersion(rebased.editor, 5);
+    expect(submittedVersions).toEqual([3, 4]);
     const evidence = await readFeat007Evidence(editor.revision.id);
     expect(evidence.usage_rules).toBe(localRules);
     expect(evidence.faqs).toEqual([

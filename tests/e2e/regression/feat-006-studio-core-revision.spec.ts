@@ -327,7 +327,6 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
   test.setTimeout(180_000);
   const identity = createFeat006QaIdentity(testInfo, "011_discard_conflict");
   const discardCommands: Array<{ expectedRevisionVersion: number; idempotencyKey: string }> = [];
-  const updateVersions: number[] = [];
   try {
     await provisionFeat006Owner(page, identity, "011");
     await fillFeat006Core(page);
@@ -348,9 +347,6 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
           expectedRevisionVersion: body.data.payload.expectedRevisionVersion,
           idempotencyKey: body.data.idempotencyKey,
         });
-      }
-      if (body.success && body.data.action === "studio.revision.updateCore") {
-        updateVersions.push(body.data.payload.expectedRevisionVersion);
       }
     });
 
@@ -401,22 +397,32 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
       feat006DefaultCore.name,
     );
-
-    const updateConflict = page.waitForResponse((response) => {
-      const body = z.object({ action: z.string() }).safeParse(response.request().postDataJSON());
-      return body.success && body.data.action === "studio.revision.updateCore";
-    });
-    await page.getByRole("button", { name: "Salvar rascunho" }).click();
-    expect((await updateConflict).status()).toBe(409);
-    expect(updateVersions).toEqual([1]);
     await expect(
-      page.getByRole("heading", { level: 2, name: "Compare antes de continuar" }),
+      page.getByRole("heading", {
+        level: 2,
+        name: "Revise o rascunho atual antes de descartar",
+      }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Usar versão salva" }).click();
+    await expect(
+      page.getByRole("table", { name: "Diferenças do rascunho antes do descarte" }),
+    ).toContainText("Rascunho concorrente para descarte");
+    await expect(page.getByRole("button", { name: "Descartar rascunho" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeDisabled();
+    expect(discardCommands).toHaveLength(1);
+
+    await page.getByRole("button", { name: "Recarregar rascunho atual" }).click();
+    await expect(
+      page.getByRole("heading", {
+        level: 2,
+        name: "Revise o rascunho atual antes de descartar",
+      }),
+    ).toHaveCount(0);
     await expect(page.getByText("Versão de edição 2", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
       "Rascunho concorrente para descarte",
     );
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeEnabled();
 
     await page.getByRole("button", { name: "Descartar rascunho" }).click();
     const successResponse = page.waitForResponse((response) => {

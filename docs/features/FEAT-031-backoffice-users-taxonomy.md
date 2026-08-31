@@ -52,6 +52,12 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Mudanças de papel exigem admin e reautenticação.
 - Nenhum papel ou conjunto completo de usuários é publicado ao browser; acessos são lidos no servidor
   somente para o alvo administrativo selecionado.
+- A busca comum aceita somente prefixo de e-mail ou UUID exato; nome bruto permanece exclusivo da
+  revelação justificada e auditada.
+- Comandos, diretório e taxonomias validam a sessão e a binding antes de consumir o bucket de rede ou
+  ler o body privado.
+- Renovação ou limpeza de cookie ocorrida nessa autenticação também alcança respostas de erro das
+  etapas seguintes.
 - GET passivo de sessão não renova a janela de inatividade.
 - Atividade e encerramento permanecem monotônicos sob correção regressiva do relógio do host.
 - Taxonomia usada é arquivada, não excluída.
@@ -87,14 +93,18 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Filters/cursor.
 - Ações interativas renderizadas pelo servidor permanecem desabilitadas até a hidratação, sem aceitar
   cliques que ainda não possuem handler no cliente.
-- Login e chave local permanecem inertes e nativamente desabilitados até a hidratação, sem apagar
-  valores digitados durante a transição SSR → cliente nem oferecer fallback HTML para segredos.
+- Login, chave local, busca de usuários e gestão de taxonomias permanecem inertes e nativamente
+  desabilitados até a hidratação. A fronteira não apaga valores digitados durante a transição SSR →
+  cliente, não oferece fallback HTML para segredos e não aceita uma ação sem handler ativo.
+- Resposta ambígua de criação ou edição mantém campos/cancelamento bloqueados, mas conserva habilitado
+  o replay da mesma `idempotencyKey` até obter o resultado autoritativo.
 
 Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
 
 ## Segurança e privacidade
 
 - O papel é validado no servidor.
+- Requisições sem sessão não consomem a capacidade compartilhada das superfícies privadas.
 - Papéis ficam no Server Component e nunca entram no DTO de sessão ou usuário do browser.
 - Toda mutação falha fechada com `423/RUNTIME_LOCKED` sem desbloqueio local válido.
 - O último admin não pode ser removido sem salvaguarda.
@@ -128,7 +138,7 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 | SL-F031-E2E-012 | P1         | regression    | desktop        | resposta de PII concluída em aba oculta é descartada                | `tests/e2e/regression/feat-031-backoffice-users-taxonomy.spec.ts`    |
 | SL-F031-E2E-013 | P0         | critical      | desktop        | resposta perdida preserva replay idempotente e bloqueia abandono    | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
 | SL-F031-E2E-014 | P0         | critical      | desktop        | resposta perdida de acesso exige replay da mesma transição          | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
-| SL-F031-E2E-015 | P0         | critical      | desktop        | login e desbloqueio sem hidratação ficam fechados com recuperação   | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
+| SL-F031-E2E-015 | P0         | critical      | desktop        | ações SSR privadas sem hidratação ficam fechadas com recuperação    | `tests/e2e/critical/feat-031-backoffice-users-taxonomy.spec.ts`      |
 
 Regras:
 

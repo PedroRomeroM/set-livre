@@ -90,7 +90,7 @@ revoke all on function private.feat006_capture_error(text)
 revoke all on function private.feat006_create_owner(uuid, text, text, integer)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(42);
+select plan(47);
 
 select private.feat006_create_owner(
   '61000000-0000-4000-8000-000000000001',
@@ -803,6 +803,142 @@ select is(
   ),
   1,
   'read model autenticado retorna o editor do próprio dono'
+);
+
+reset role;
+update public.profiles as profile
+set status = 'suspended'
+where profile.id = '61000000-0000-4000-8000-000000000001';
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '61000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 0 from public.studios)
+    and (select pg_catalog.count(*) = 0 from public.studio_revisions)
+    and (
+      select pg_catalog.count(*) = 0
+      from public.get_owner_studio_editor(
+        pg_catalog.current_setting('set_livre.test.studio_a')::uuid
+      )
+    ),
+  'conta suspensa perde a leitura direta e o editor no limite do banco'
+);
+
+reset role;
+update public.profiles as profile
+set status = 'active'
+where profile.id = '61000000-0000-4000-8000-000000000001';
+alter table public.profiles disable trigger profiles_enforce_lifecycle;
+update public.profiles as profile
+set
+  name = null,
+  phone_e164 = null,
+  tax_id = null,
+  additional_document = null,
+  completed_at = null
+where profile.id = '61000000-0000-4000-8000-000000000001';
+alter table public.profiles enable trigger profiles_enforce_lifecycle;
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '61000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 0 from public.studios)
+    and (select pg_catalog.count(*) = 0 from public.studio_revisions)
+    and (
+      select pg_catalog.count(*) = 0
+      from public.get_owner_studio_editor(
+        pg_catalog.current_setting('set_livre.test.studio_a')::uuid
+      )
+    ),
+  'perfil incompleto perde a leitura direta e o editor no limite do banco'
+);
+
+reset role;
+alter table public.profiles disable trigger profiles_enforce_lifecycle;
+update public.profiles as profile
+set
+  name = 'Dono QA FEAT 006',
+  phone_e164 = '+5541999999900',
+  tax_id = '52998224725',
+  completed_at = pg_catalog.clock_timestamp()
+where profile.id = '61000000-0000-4000-8000-000000000001';
+alter table public.profiles enable trigger profiles_enforce_lifecycle;
+savepoint owner_blocked_read_gate;
+update public.owner_profiles as owner
+set
+  status = 'blocked',
+  owner_version = owner.owner_version + 1
+where owner.user_id = '61000000-0000-4000-8000-000000000001';
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '61000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 0 from public.studios)
+    and (select pg_catalog.count(*) = 0 from public.studio_revisions)
+    and (
+      select pg_catalog.count(*) = 0
+      from public.get_owner_studio_editor(
+        pg_catalog.current_setting('set_livre.test.studio_a')::uuid
+      )
+    ),
+  'dono bloqueado perde a leitura direta e o editor no limite do banco'
+);
+
+reset role;
+rollback to savepoint owner_blocked_read_gate;
+release savepoint owner_blocked_read_gate;
+savepoint expired_owner_contract_read_gate;
+alter table public.terms_versions disable trigger terms_versions_protect_immutability;
+update public.terms_versions as legal_version
+set retired_at = pg_catalog.transaction_timestamp() - interval '1 microsecond'
+where legal_version.id = '00000000-0000-4000-8000-000000000204';
+alter table public.terms_versions enable trigger terms_versions_protect_immutability;
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '61000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 0 from public.studios)
+    and (select pg_catalog.count(*) = 0 from public.studio_revisions)
+    and (
+      select pg_catalog.count(*) = 0
+      from public.get_owner_studio_editor(
+        pg_catalog.current_setting('set_livre.test.studio_a')::uuid
+      )
+    ),
+  'contrato vencido perde a leitura direta e o editor no limite do banco'
+);
+
+reset role;
+rollback to savepoint expired_owner_contract_read_gate;
+release savepoint expired_owner_contract_read_gate;
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '61000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 1 from public.studios)
+    and (select pg_catalog.count(*) = 1 from public.studio_revisions)
+    and (
+      select pg_catalog.count(*) = 1
+      from public.get_owner_studio_editor(
+        pg_catalog.current_setting('set_livre.test.studio_a')::uuid
+      )
+    ),
+  'restaurar todos os fatos canônicos devolve a leitura elegível do dono'
 );
 
 select pg_catalog.set_config(

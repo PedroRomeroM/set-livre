@@ -21,7 +21,7 @@ import {
   setBackofficeUserStatus,
   upsertBackofficeTaxonomy,
 } from "./backoffice-dal";
-import { requireRouteBackofficeSession } from "./backoffice-session";
+import type { RequiredRouteBackofficeSession } from "./backoffice-session";
 import { requireBackofficeRuntimeUnlock } from "./runtime-unlock";
 
 const databaseErrorSchema = z.object({
@@ -85,8 +85,10 @@ function translateBackofficeDatabaseError(error: unknown): never {
   throw error;
 }
 
-export async function readBackofficeUsers(query: BackofficeUserQuery) {
-  const route = await requireRouteBackofficeSession();
+export async function readBackofficeUsers(
+  route: RequiredRouteBackofficeSession,
+  query: BackofficeUserQuery,
+) {
   try {
     return {
       data: await listBackofficeUsers({
@@ -100,8 +102,7 @@ export async function readBackofficeUsers(query: BackofficeUserQuery) {
   }
 }
 
-export async function readBackofficeTaxonomies() {
-  const route = await requireRouteBackofficeSession();
+export async function readBackofficeTaxonomies(route: RequiredRouteBackofficeSession) {
   try {
     return {
       data: await listBackofficeTaxonomies(route.auth),
@@ -126,9 +127,12 @@ export async function readBackofficeUserAccess(input: {
   }
 }
 
-export async function executeBackofficeCommand(commandInput: BackofficeCommand, requestId: string) {
+export async function executeBackofficeCommand(
+  commandInput: BackofficeCommand,
+  context: { requestId: string; route: RequiredRouteBackofficeSession },
+) {
   const command = backofficeCommandSchema.parse(commandInput);
-  const route = await requireRouteBackofficeSession();
+  const { requestId, route } = context;
   if (command.expectedScope !== route.session.scope) {
     throw new BackofficeApiError(
       409,

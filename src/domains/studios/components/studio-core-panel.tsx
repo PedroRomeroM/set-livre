@@ -65,6 +65,11 @@ type StudioCoreFormState = {
 type CreateCommand = Parameters<typeof createStudio>[0];
 type UpdateCommand = Parameters<typeof updateStudioCore>[0];
 type DiscardCommand = Parameters<typeof discardStudioDraft>[0];
+type StudioCoreConflictKind = "discard" | "update";
+type StudioCoreConflict = Readonly<{
+  kind: StudioCoreConflictKind;
+  remote: StudioEditor;
+}>;
 
 class StudioCreationEligibilityChangedError extends Error {
   constructor() {
@@ -632,36 +637,61 @@ function conflictRows(
     }));
 }
 
-function StudioConflictComparison({
-  local,
-  onKeepLocal,
-  onUseRemote,
-  remote,
-  studioTypes,
-}: Readonly<{
-  local: StudioCoreFormState;
-  onKeepLocal: () => void;
-  onUseRemote: () => void;
-  remote: StudioCoreFormState;
-  studioTypes: readonly StudioTypeOption[];
-}>) {
+type StudioConflictComparisonProps = Readonly<
+  {
+    local: StudioCoreFormState;
+    remote: StudioCoreFormState;
+    studioTypes: readonly StudioTypeOption[];
+  } & (
+    | {
+        kind: "discard";
+        localRevision: StudioRevisionToken;
+        onReload: () => void;
+        remoteRevision: StudioRevisionToken;
+      }
+    | {
+        kind: "update";
+        onKeepLocal: () => void;
+        onUseRemote: () => void;
+      }
+  )
+>;
+
+function StudioConflictComparison(props: StudioConflictComparisonProps) {
   const rows = useMemo(
-    () => conflictRows(local, remote, studioTypes),
-    [local, remote, studioTypes],
+    () => conflictRows(props.local, props.remote, props.studioTypes),
+    [props.local, props.remote, props.studioTypes],
   );
+  const titleId =
+    props.kind === "discard" ? "studio-discard-conflict-title" : "studio-conflict-title";
   return (
-    <section aria-labelledby="studio-conflict-title" className={styles.conflict}>
-      <h2 className={styles.sectionTitle} id="studio-conflict-title">
-        Compare antes de continuar
+    <section aria-labelledby={titleId} className={styles.conflict}>
+      <h2 className={styles.sectionTitle} id={titleId}>
+        {props.kind === "discard"
+          ? "Revise o rascunho atual antes de descartar"
+          : "Compare antes de continuar"}
       </h2>
       <p className={styles.sectionDescription}>
-        Seus valores foram preservados. Escolha a versão salva ou mantenha suas alterações sobre o
-        token mais recente; nenhuma opção salva automaticamente.
+        {props.kind === "discard"
+          ? `A revisão autoritativa avançou da versão de edição ${props.localRevision.version} para ${props.remoteRevision.version}. O descarte continua bloqueado para não apagar mudanças ainda não reconciliadas. Recarregue o rascunho inteiro; depois revise-o e abra uma nova confirmação.`
+          : "Seus valores foram preservados. Escolha a versão salva ou mantenha suas alterações sobre o token mais recente; nenhuma opção salva automaticamente."}
       </p>
       {rows.length === 0 ? (
-        <p className={styles.sectionDescription}>Somente a versão técnica da revisão mudou.</p>
+        <p className={styles.sectionDescription}>
+          {props.kind === "discard"
+            ? "Os dados centrais são iguais, mas outra parte do rascunho ou sua versão técnica mudou."
+            : "Somente a versão técnica da revisão mudou."}
+        </p>
       ) : (
-        <div className={styles.conflictTable} role="table" aria-label="Diferenças do estúdio">
+        <div
+          className={styles.conflictTable}
+          role="table"
+          aria-label={
+            props.kind === "discard"
+              ? "Diferenças do rascunho antes do descarte"
+              : "Diferenças do estúdio"
+          }
+        >
           <div className={styles.conflictHeader} role="row">
             <span role="columnheader">Campo</span>
             <span role="columnheader">Sua versão</span>
@@ -687,10 +717,18 @@ function StudioConflictComparison({
         </div>
       )}
       <div className={styles.actions}>
-        <Button onClick={onUseRemote} variant="secondary">
-          Usar versão salva
-        </Button>
-        <Button onClick={onKeepLocal}>Continuar com minhas alterações</Button>
+        {props.kind === "discard" ? (
+          <Button onClick={props.onReload} variant="secondary">
+            Recarregar rascunho atual
+          </Button>
+        ) : (
+          <>
+            <Button onClick={props.onUseRemote} variant="secondary">
+              Usar versão salva
+            </Button>
+            <Button onClick={props.onKeepLocal}>Continuar com minhas alterações</Button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -706,7 +744,6 @@ function EditStudioForm({
   onAuthoritativeRevisionReplacement,
   onCommandFinish,
   onCommandStart,
-  onDiscardRevisionChange,
   onFormRevisionChange,
   onStudioDeleted,
   userId,
@@ -717,10 +754,9 @@ function EditStudioForm({
   initialEditor: StudioEditor;
   initialTypes: readonly StudioTypeOption[];
   onAuthoritativeRevisionAdvance: ((editor: StudioEditor) => void) | undefined;
-  onAuthoritativeRevisionReplacement: ((editor: StudioEditor) => void) | undefined;
+  onAuthoritativeRevisionReplacement: (editor: StudioEditor) => void;
   onCommandFinish: () => void;
   onCommandStart: () => void;
-  onDiscardRevisionChange: (revision: StudioRevisionToken) => void;
   onFormRevisionChange: (revision: StudioRevisionToken) => void;
   onStudioDeleted: (() => void) | undefined;
   userId: string;
@@ -732,7 +768,9 @@ function EditStudioForm({
     [initialEditor.studioId, userId],
   );
   const [studioDeleted, setStudioDeleted] = useState(false);
-  const [pendingConflictRecovery, setPendingConflictRecovery] = useState<"discard" | "update">();
+  const [pendingConflictRecovery, setPendingConflictRecovery] = useState<StudioCoreConflictKind>();
+  const [conflict, setConflict] = useState<StudioCoreConflict>();
+  const conflictRecoveryIdle = pendingConflictRecovery === undefined && conflict === undefined;
   const editorQuery = useQuery({
     enabled: !studioDeleted,
     initialData: initialEditor,
@@ -744,15 +782,14 @@ function EditStudioForm({
       ),
     queryKey: editorQueryKey,
     refetchOnMount: "always",
-    refetchOnReconnect: pendingConflictRecovery === undefined,
-    refetchOnWindowFocus: pendingConflictRecovery === undefined ? "always" : false,
+    refetchOnReconnect: conflictRecoveryIdle,
+    refetchOnWindowFocus: conflictRecoveryIdle ? "always" : false,
     retry: false,
     staleTime: 0,
   });
   const pendingUpdate = useRef<UpdateCommand>(undefined);
   const pendingDiscard = useRef<DiscardCommand>(undefined);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const [conflictRemote, setConflictRemote] = useState<StudioEditor>();
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
   const [successMessage, setSuccessMessage] = useState<string>();
@@ -777,6 +814,7 @@ function EditStudioForm({
     onError: async (error) => {
       if (isAmbiguousStudioError(error)) return;
       pendingUpdate.current = undefined;
+      let keepCommandLocked = false;
       try {
         if (isStudioBoundaryChangedError(error)) {
           recomposeStudioClientBoundary(queryClient);
@@ -784,26 +822,27 @@ function EditStudioForm({
         }
         if (isStudioTypeUnavailableError(error)) {
           setPendingConflictRecovery(undefined);
-          setConflictRemote(undefined);
+          setConflict(undefined);
           setFormState((current) => ({ ...current, studioTypeId: "" }));
           await typesQuery.refetch();
           return;
         }
         if (error instanceof StudioApiError && error.code === "CONFLICT") {
+          keepCommandLocked = true;
           setPendingConflictRecovery("update");
-          setConflictRemote(undefined);
+          setConflict(undefined);
           const refreshed = await editorQuery.refetch();
           if (refreshed.isSuccess) recoverVerifiedConflict("update", refreshed.data);
         }
       } finally {
-        onCommandFinish();
+        if (!keepCommandLocked) onCommandFinish();
       }
     },
     onSuccess: async (editor) => {
       try {
         pendingUpdate.current = undefined;
         setPendingConflictRecovery(undefined);
-        setConflictRemote(undefined);
+        setConflict(undefined);
         setFieldErrors({});
         setFormState(editorFormState(editor));
         await queryClient.cancelQueries({
@@ -837,25 +876,29 @@ function EditStudioForm({
     onError: async (error) => {
       if (isAmbiguousStudioError(error)) return;
       pendingDiscard.current = undefined;
+      let keepCommandLocked = false;
       try {
         if (isStudioBoundaryChangedError(error)) {
           recomposeStudioClientBoundary(queryClient);
           return;
         }
         if (error instanceof StudioApiError && error.code === "CONFLICT") {
+          keepCommandLocked = true;
           setConfirmDiscard(false);
           setPendingConflictRecovery("discard");
+          setConflict(undefined);
           const refreshed = await editorQuery.refetch();
           if (refreshed.isSuccess) recoverVerifiedConflict("discard", refreshed.data);
         }
       } finally {
-        onCommandFinish();
+        if (!keepCommandLocked) onCommandFinish();
       }
     },
     onSuccess: async (result) => {
       try {
         pendingDiscard.current = undefined;
         setPendingConflictRecovery(undefined);
+        setConflict(undefined);
         setConfirmDiscard(false);
         if (result.studioDeleted) {
           await queryClient.cancelQueries({ exact: true, queryKey: editorQueryKey });
@@ -878,7 +921,7 @@ function EditStudioForm({
         }
         setFormState(editorFormState(result.editor));
         setSuccessMessage("O rascunho foi descartado; a versão publicada permaneceu intacta.");
-        onAuthoritativeRevisionReplacement?.(result.editor);
+        onAuthoritativeRevisionReplacement(result.editor);
       } finally {
         onCommandFinish();
       }
@@ -890,14 +933,33 @@ function EditStudioForm({
     setFormState((current) => ({ ...current, [field]: value }));
   }
 
-  function recoverVerifiedConflict(kind: "discard" | "update", editor: StudioEditor) {
-    const revision = studioRevisionToken(editor);
-    if (kind === "update") {
-      setConflictRemote(editor);
-    } else {
-      onDiscardRevisionChange(revision);
-    }
+  function recoverVerifiedConflict(kind: StudioCoreConflictKind, editor: StudioEditor) {
+    setConflict({ kind, remote: editor });
     setPendingConflictRecovery(undefined);
+  }
+
+  function resolveUpdateConflict(useRemote: boolean) {
+    if (conflict?.kind !== "update") return;
+    const revision = studioRevisionToken(conflict.remote);
+    if (useRemote) setFormState(editorFormState(conflict.remote));
+    setFieldErrors({});
+    updateMutation.reset();
+    onFormRevisionChange(revision);
+    setConflict(undefined);
+    onCommandFinish();
+  }
+
+  function resolveDiscardConflict() {
+    if (conflict?.kind !== "discard") return;
+    const editor = conflict.remote;
+    setFormState(editorFormState(editor));
+    setFieldErrors({});
+    setSuccessMessage(undefined);
+    updateMutation.reset();
+    discardMutation.reset();
+    setConflict(undefined);
+    onAuthoritativeRevisionReplacement(editor);
+    onCommandFinish();
   }
 
   async function verifyEditor() {
@@ -999,7 +1061,7 @@ function EditStudioForm({
     [
       initialEditor.studioType,
       editor.studioType,
-      ...(conflictRemote === undefined ? [] : [conflictRemote.studioType]),
+      ...(conflict === undefined ? [] : [conflict.remote.studioType]),
     ],
   );
   const unavailableTypeId = types.some((type) => type.id === editor.studioType.id)
@@ -1014,6 +1076,7 @@ function EditStudioForm({
     hasAmbiguousUpdate ||
     hasAmbiguousDiscard ||
     pendingConflictRecovery !== undefined ||
+    conflict !== undefined ||
     externalCommandLocked ||
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
@@ -1072,24 +1135,26 @@ function EditStudioForm({
             {successMessage}
           </Alert>
         )}
-        {conflictRemote === undefined ? null : (
+        {conflict?.kind === "discard" ? (
           <StudioConflictComparison
+            kind="discard"
             local={formState}
-            onKeepLocal={() => {
-              const revision = studioRevisionToken(conflictRemote);
-              onFormRevisionChange(revision);
-              setConflictRemote(undefined);
-            }}
-            onUseRemote={() => {
-              setFormState(editorFormState(conflictRemote));
-              const revision = studioRevisionToken(conflictRemote);
-              onFormRevisionChange(revision);
-              setConflictRemote(undefined);
-            }}
-            remote={editorFormState(conflictRemote)}
+            localRevision={discardRevision}
+            onReload={resolveDiscardConflict}
+            remote={editorFormState(conflict.remote)}
+            remoteRevision={studioRevisionToken(conflict.remote)}
             studioTypes={conflictTypes}
           />
-        )}
+        ) : conflict?.kind === "update" ? (
+          <StudioConflictComparison
+            kind="update"
+            local={formState}
+            onKeepLocal={() => resolveUpdateConflict(false)}
+            onUseRemote={() => resolveUpdateConflict(true)}
+            remote={editorFormState(conflict.remote)}
+            studioTypes={conflictTypes}
+          />
+        ) : null}
         {selectedTypeIsUnavailable ? (
           <Alert title="Tipo de estúdio arquivado" variant="error">
             O tipo histórico continua visível, mas não pode ser salvo em uma nova alteração. Escolha
@@ -1168,10 +1233,9 @@ export function StudioCorePanel(
         initialTypes: readonly StudioTypeOption[];
         mode: "edit";
         onAuthoritativeRevisionAdvance?: (editor: StudioEditor) => void;
-        onAuthoritativeRevisionReplacement?: (editor: StudioEditor) => void;
+        onAuthoritativeRevisionReplacement: (editor: StudioEditor) => void;
         onCommandFinish: () => void;
         onCommandStart: () => void;
-        onDiscardRevisionChange: (revision: StudioRevisionToken) => void;
         onFormRevisionChange: (revision: StudioRevisionToken) => void;
         onStudioDeleted?: () => void;
         userId: string;
@@ -1199,7 +1263,6 @@ export function StudioCorePanel(
       onAuthoritativeRevisionReplacement={props.onAuthoritativeRevisionReplacement}
       onCommandFinish={props.onCommandFinish}
       onCommandStart={props.onCommandStart}
-      onDiscardRevisionChange={props.onDiscardRevisionChange}
       onFormRevisionChange={props.onFormRevisionChange}
       onStudioDeleted={props.onStudioDeleted}
       userId={props.userId}

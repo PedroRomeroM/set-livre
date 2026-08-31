@@ -3467,10 +3467,6 @@ begin
         pg_catalog.lower(auth_user.email),
         pg_catalog.lower(normalized_query)
       )
-      or pg_catalog.starts_with(
-        pg_catalog.lower(coalesce(profile.name, '')),
-        pg_catalog.lower(normalized_query)
-      )
       or profile.id::text = normalized_query
     )
     and (
@@ -3486,7 +3482,7 @@ $$;
 ALTER FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) IS 'Busca privada prefixada e paginada por cursor; retorna somente email mascarado.';
+COMMENT ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_query" "text", "p_cursor_created_at" timestamp with time zone, "p_cursor_id" "uuid", "p_limit" integer) IS 'Diretório privado paginado: busca somente por prefixo de e-mail ou UUID exato e nunca avalia nome bruto.';
 
 
 
@@ -7108,11 +7104,36 @@ CREATE OR REPLACE FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uui
     on revision.id = coalesce(studio.draft_revision_id, studio.published_revision_id)
   join public.studio_types as studio_type on studio_type.id = revision.studio_type_id
   where studio.id = p_studio_id
-    and studio.owner_user_id = (select auth.uid());
+    and studio.owner_user_id = (select auth.uid())
+    and exists (
+      select 1
+      from public.profiles as profile
+      join public.owner_profiles as owner on owner.user_id = profile.id
+      join public.terms_versions as legal_version
+        on legal_version.id = owner.accepted_owner_contract_version_id
+      join public.terms_acceptances as acceptance
+        on acceptance.user_id = owner.user_id
+        and acceptance.terms_version_id = legal_version.id
+        and acceptance.accepted_content_hash = legal_version.content_hash
+      where profile.id = studio.owner_user_id
+        and profile.status = 'active'
+        and profile.completed_at is not null
+        and owner.status = 'active'
+        and legal_version.kind = 'owner_contract'
+        and legal_version.effective_at <= pg_catalog.now()
+        and (
+          legal_version.retired_at is null
+          or pg_catalog.now() < legal_version.retired_at
+        )
+    );
 $$;
 
 
 ALTER FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."get_owner_studio_editor"("p_studio_id" "uuid") IS 'Editor privado limitado ao auth.uid elegível, com perfil completo, dono ativo e contrato vigente aceito.';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."list_active_studio_taxonomies"() RETURNS "jsonb"
@@ -8518,8 +8539,16 @@ ALTER TABLE "public"."studio_revisions" ENABLE ROW LEVEL SECURITY;
 
 
 CREATE POLICY "studio_revisions_select_own" ON "public"."studio_revisions" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
-   FROM "public"."studios" "studio"
-  WHERE (("studio"."id" = "studio_revisions"."studio_id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+   FROM (((("public"."studios" "studio"
+     JOIN "public"."profiles" "profile" ON (("profile"."id" = "studio"."owner_user_id")))
+     JOIN "public"."owner_profiles" "owner" ON (("owner"."user_id" = "profile"."id")))
+     JOIN "public"."terms_versions" "legal_version" ON (("legal_version"."id" = "owner"."accepted_owner_contract_version_id")))
+     JOIN "public"."terms_acceptances" "acceptance" ON ((("acceptance"."user_id" = "owner"."user_id") AND ("acceptance"."terms_version_id" = "legal_version"."id") AND ("acceptance"."accepted_content_hash" = "legal_version"."content_hash"))))
+  WHERE (("studio"."id" = "studio_revisions"."studio_id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profile"."status" = 'active'::"text") AND ("profile"."completed_at" IS NOT NULL) AND ("owner"."status" = 'active'::"text") AND ("legal_version"."kind" = 'owner_contract'::"text") AND ("legal_version"."effective_at" <= "now"()) AND (("legal_version"."retired_at" IS NULL) OR ("now"() < "legal_version"."retired_at"))))));
+
+
+
+COMMENT ON POLICY "studio_revisions_select_own" ON "public"."studio_revisions" IS 'Lê revisões somente sob ownership e elegibilidade canônica vigente do dono.';
 
 
 
@@ -8536,7 +8565,16 @@ CREATE POLICY "studio_types_select_active" ON "public"."studio_types" FOR SELECT
 ALTER TABLE "public"."studios" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "studios_select_own" ON "public"."studios" FOR SELECT TO "authenticated" USING ((( SELECT "auth"."uid"() AS "uid") = "owner_user_id"));
+CREATE POLICY "studios_select_own" ON "public"."studios" FOR SELECT TO "authenticated" USING ((("owner_user_id" = ( SELECT "auth"."uid"() AS "uid")) AND (EXISTS ( SELECT 1
+   FROM ((("public"."profiles" "profile"
+     JOIN "public"."owner_profiles" "owner" ON (("owner"."user_id" = "profile"."id")))
+     JOIN "public"."terms_versions" "legal_version" ON (("legal_version"."id" = "owner"."accepted_owner_contract_version_id")))
+     JOIN "public"."terms_acceptances" "acceptance" ON ((("acceptance"."user_id" = "owner"."user_id") AND ("acceptance"."terms_version_id" = "legal_version"."id") AND ("acceptance"."accepted_content_hash" = "legal_version"."content_hash"))))
+  WHERE (("profile"."id" = "studios"."owner_user_id") AND ("profile"."status" = 'active'::"text") AND ("profile"."completed_at" IS NOT NULL) AND ("owner"."status" = 'active'::"text") AND ("legal_version"."kind" = 'owner_contract'::"text") AND ("legal_version"."effective_at" <= "now"()) AND (("legal_version"."retired_at" IS NULL) OR ("now"() < "legal_version"."retired_at")))))));
+
+
+
+COMMENT ON POLICY "studios_select_own" ON "public"."studios" IS 'Lê somente estúdios do auth.uid elegível: conta ativa, perfil completo, dono ativo e contrato vigente aceito.';
 
 
 

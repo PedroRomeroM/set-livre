@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { z } from "zod";
 
-import { readBackofficeSupabaseEnvironment } from "@/lib/supabase/config";
+import { readBackofficeSupabaseEnvironment } from "../supabase/config";
 
 const jsonContentTypePattern = /^application\/json(?:\s*;\s*charset=utf-8)?$/iu;
 
@@ -298,6 +298,7 @@ export async function runBackofficeRoute(
   execute: (
     requestId: string,
     setAction: (action: BackofficeOperationalAction) => void,
+    setResponseHeaders: (headers: HeadersInit) => void,
   ) => Promise<{
     data: unknown;
     responseHeaders?: HeadersInit | undefined;
@@ -310,16 +311,28 @@ export async function runBackofficeRoute(
   let status = 503;
   let outcome: "accepted" | "rejected" | "unavailable" = "unavailable";
   let operationalAction = action;
+  let responseHeaders: HeadersInit | undefined;
   try {
     assertTrustedBackofficeRequest(request, options);
-    const result = await execute(requestId, (nextAction) => {
-      operationalAction = nextAction;
-    });
+    const result = await execute(
+      requestId,
+      (nextAction) => {
+        operationalAction = nextAction;
+      },
+      (headers) => {
+        responseHeaders = headers;
+      },
+    );
     status = result.status ?? 200;
     outcome = "accepted";
-    return backofficeSuccessResponse(result.data, requestId, status, result.responseHeaders);
+    return backofficeSuccessResponse(
+      result.data,
+      requestId,
+      status,
+      result.responseHeaders ?? responseHeaders,
+    );
   } catch (error) {
-    const response = backofficeErrorResponse(error, requestId);
+    const response = backofficeErrorResponse(error, requestId, responseHeaders);
     status = response.status;
     outcome = status >= 500 ? "unavailable" : "rejected";
     return response;

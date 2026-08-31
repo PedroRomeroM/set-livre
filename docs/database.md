@@ -22,12 +22,13 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260829224738_feat_031_backoffice_users_taxonomy`, seguida pelas correções
 `20260830164500_backoffice_session_monotonic_clock` e
 `20260830173000_business_timestamp_monotonicity` e
-`20260830204500_backoffice_taxonomy_explicit_transitions`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260830204500_backoffice_taxonomy_explicit_transitions` e
+`20260831021612_harden_studio_reads_and_backoffice_search`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e oito suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 379 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 386 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios e backoffice.
 
 A baseline implementada inclui:
@@ -708,7 +709,8 @@ Implementados nas FEAT-002/003/004/006/007:
   ativas para `authenticated`;
 - `public.get_owner_studio_editor(uuid)`: retorna 0/1 editor do próprio `auth.uid()`, escolhe o draft
   atual ou a revisão publicada, preserva descritores de tipo, tags e comodidades históricas arquivadas
-  e nunca revela a existência do estúdio de outro dono.
+  e nunca revela a existência do estúdio de outro dono; tanto a função quanto o RLS exigem ainda
+  conta ativa, perfil completo, autoridade de dono ativa e aceite íntegro do `owner_contract` vigente.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -730,8 +732,9 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 
 ### Backoffice/private implementados
 
-- `private.list_backoffice_users(...)` usa busca server-side e paginação keyset por
-  `created_at + id`, devolvendo somente e-mail mascarado, status e versão opaca, sem papéis;
+- `private.list_backoffice_users(...)` usa busca server-side somente por prefixo de e-mail ou UUID
+  exato e paginação keyset por `created_at + id`, devolvendo somente e-mail mascarado, status e versão
+  opaca, sem papéis; nome bruto não participa do filtro e permanece exclusivo da revelação auditada;
 - `private.get_backoffice_user_access(...)` exige admin e compõe no servidor uma única conta com seus
   papéis para a rota de detalhe;
 - `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
@@ -827,11 +830,15 @@ Usuário lê somente as colunas seguras necessárias aos read models invoker do 
 
 ### 8.2 Estúdios
 
-Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões;
-as policies usam `auth.uid()` e outro dono obtém zero linhas. `anon`, `service_role` e `app_dal` não
-recebem acesso às tabelas; a DAL executa apenas cinco funções privadas. As policies de tipo, tags e
-comodidades permitem item ativo ou referência histórica do próprio dono, enquanto os read models de
-seleção continuam filtrando somente ativos. Conteúdo ainda não aprovado não possui read model público.
+Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões.
+Além de `auth.uid()`, as policies e `get_owner_studio_editor` derivam no banco a elegibilidade canônica:
+conta ativa, perfil completo, `owner_profiles.status = active` e aceite cujo hash corresponde ao
+`owner_contract` vigente. Suspensão, perfil incompleto, bloqueio do dono ou expiração do contrato
+retornam zero linhas também em acesso direto pela Data API. Outro dono igualmente obtém zero linhas.
+`anon`, `service_role` e `app_dal` não recebem acesso às tabelas; a DAL executa apenas cinco funções
+privadas. As policies de tipo, tags e comodidades permitem item ativo ou referência histórica do dono
+elegível, enquanto os read models de seleção continuam filtrando somente ativos. Conteúdo ainda não
+aprovado não possui read model público.
 
 ### 8.3 Reservas
 

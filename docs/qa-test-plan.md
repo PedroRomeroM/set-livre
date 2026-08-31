@@ -81,7 +81,10 @@ permanente nem `waitForTimeout`. O gate `docs:check` varre todos os specs TypeSc
 Os cenários transversais usam marcadores semânticos próprios de cada superfície. A raiz pública ainda
 expõe o estado técnico; a raiz do backoffice, após a FEAT-031, redireciona visitantes sem sessão para
 a autenticação real. Responsividade, ampliação textual e reflow precisam validar o conteúdo terminal
-de cada aplicação, sem impor ao backoffice o placeholder removido.
+de cada aplicação, sem impor ao backoffice o placeholder removido. A regressão autenticada também
+prova que login preserva os destinos canônicos de criação e edição de estúdio sem aceitar URL externa,
+codificação alternativa ou UUID inválido; uma rota de edição com UUID válido em maiúsculas é
+redirecionada primeiro ao path minúsculo e somente esse destino canônico atravessa o login.
 
 ## Segurança do E2E
 
@@ -154,7 +157,7 @@ fixture de conflito avança uma versão já observada, sem competir com o refetc
 herdam a retenção global de
 trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência localmente.
 
-No banco, `0005_studio_core_revision.sql` possui 41 asserções de domínio/segurança. O setup
+No banco, `0005_studio_core_revision.sql` possui 47 asserções de domínio/segurança. O setup
 `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
 
 ## Matriz da FEAT-007
@@ -172,7 +175,7 @@ Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
 - axe, teclado, toque e alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
-`0006_studio_taxonomy_content.sql` possui 42 asserções para schema, grants/RLS, isolamento entre
+`0006_studio_taxonomy_content.sql` possui 43 asserções para schema, grants/RLS, isolamento entre
 donos, idempotência, concorrência, clone de publicado, taxonomia ativa, FAQ/vídeo e auditoria
 redigida.
 
@@ -186,9 +189,11 @@ Os quinze cenários `SL-F031-E2E-001..015` expandem para 52 execuções:
   permite prosseguir, nos três engines;
 - P0 segura respostas de status, acesso e taxonomia ainda em voo para provar que cancelamento e troca
   de ação ficam bloqueados; depois perde cada resposta já commitada e repete a tentativa idempotente
-  até obter o resultado autoritativo, nos três engines;
-- P0 desabilita JavaScript e prova que login e desbloqueio SSR permanecem inertes, sem fallback de
-  segredos e com instrução explícita de recuperação, nos três engines;
+  até obter o resultado autoritativo, nos três engines. Criação e edição de taxonomia também perdem a
+  resposta e comprovam que os campos ficam congelados enquanto o botão de replay permanece alcançável;
+- P0 desabilita JavaScript e prova que login, desbloqueio, busca de usuários e gestão de taxonomias
+  permanecem inertes, sem fallback de segredos ou ação sem handler e com instrução explícita de
+  recuperação, nos três engines;
 - PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
   altura compacta;
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
@@ -200,12 +205,12 @@ Os quinze cenários `SL-F031-E2E-001..015` expandem para 52 execuções:
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
 QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
-restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 57
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 58
 asserções para grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo possui nove arquivos e 379 testes. A regressão transversal de tempo força timestamps
+runner completo possui nove arquivos e 386 testes. A regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
 

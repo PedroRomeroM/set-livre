@@ -1,23 +1,12 @@
+import {
+  resolveAccountLoginReturnTarget,
+  type AccountLoginReturnTarget,
+} from "@set-livre/contracts";
+
 import { IdentityApiError } from "./identity-api";
 
-const accountLoginReturnTargets = [
-  "/conta",
-  "/conta/seguranca",
-  "/dono",
-  "/dono/recebimentos",
-] as const;
-
-export type AccountLoginReturnTarget = (typeof accountLoginReturnTargets)[number];
-
-export function resolveAccountLoginReturnTarget(
-  candidate: string | readonly string[] | undefined,
-): AccountLoginReturnTarget | undefined {
-  if (typeof candidate !== "string") return undefined;
-  for (const target of accountLoginReturnTargets) {
-    if (candidate === target) return target;
-  }
-  return undefined;
-}
+export { resolveAccountLoginReturnTarget };
+export type { AccountLoginReturnTarget };
 
 type LoginCredentialForm = {
   hidden: boolean;

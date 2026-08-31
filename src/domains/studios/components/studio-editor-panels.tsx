@@ -91,7 +91,6 @@ export function StudioEditorPanels({
         onAuthoritativeRevisionReplacement={replaceAuthoritativeEditor}
         onCommandFinish={() => finishCommand("core")}
         onCommandStart={() => setCommandSurface("core")}
-        onDiscardRevisionChange={(discard) => setRevisions((current) => ({ ...current, discard }))}
         onFormRevisionChange={(core) => setRevisions((current) => ({ ...current, core }))}
         onStudioDeleted={() => setStudioDeleted(true)}
         userId={userId}

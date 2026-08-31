@@ -66,7 +66,9 @@ mantém valores sensíveis apenas pelo tempo da ação e não os coloca em query
 evidência Playwright.
 
 Na FEAT-006, nome, descrição e endereço de revisão ainda não aprovada são acessíveis somente ao próprio
-dono autenticado por grants de coluna, `auth.uid()` e RLS; outro dono recebe o mesmo `404` de ausência.
+dono autenticado e elegível por grants de coluna, `auth.uid()` e RLS. A policy e o read model derivam
+novamente perfil ativo/completo, autoridade de dono ativa e aceite íntegro do contrato vigente; qualquer
+revogação retorna zero linhas mesmo em chamada direta à Data API, e outro dono recebe a mesma ausência.
 `app_dal` não lê tabelas e executa apenas as cinco fachadas privadas de estúdio. Cada uma revalida perfil
 ativo/completo, autoridade e contrato vigente antes inclusive de replay idempotente. O ledger guarda
 somente hash e referências; auditoria e logs operacionais não recebem conteúdo ou endereço. O browser
@@ -90,8 +92,9 @@ lista enviada ao browser carregam somente uma versão opaca de autorização; o 
 é composto por fachada admin-only no Server Component. Cada concessão/revogação é uma action explícita
 contra `expectedAccountVersion`. O último admin ativo é protegido sob lock global.
 
-PII aparece mascarada no read model; nome bruto fica exclusivamente na revelação por motivo
-allowlisted, fora de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver
+PII aparece mascarada no read model. A busca comum aceita somente prefixo de e-mail ou UUID exato e
+nunca avalia `profiles.name`; nome bruto fica exclusivamente na revelação por motivo allowlisted, fora
+de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver
 visível e é descartada se terminar durante ocultação. Um observador relê a sessão no mount, foco,
 intervalo curto e eventos entre abas; identidade ou versão de autorização divergente ocultam o DOM
 privado e limpam o cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo,

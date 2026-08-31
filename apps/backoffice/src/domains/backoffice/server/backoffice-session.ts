@@ -167,6 +167,10 @@ export async function requireRouteBackofficeSession() {
   return { ...route, auth: state.auth, session: state.session };
 }
 
+export type RequiredRouteBackofficeSession = Awaited<
+  ReturnType<typeof requireRouteBackofficeSession>
+>;
+
 function providerLoginError() {
   return new BackofficeApiError(401, "AUTH_INVALID", "E-mail ou senha inválidos.");
 }

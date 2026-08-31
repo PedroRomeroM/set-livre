@@ -91,6 +91,15 @@ describe("profile command route", () => {
         session: { authenticated: false },
       });
       const request = commandRequest(body);
+      const { requestRateLimitDiscriminator } = await import("../../src/lib/server/api-route");
+      const { enforceIdentityRateLimit } = await import("../../src/lib/server/rate-limit");
+      const discriminator = requestRateLimitDiscriminator(request);
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        enforceIdentityRateLimit("private.command.request", discriminator, {
+          limit: 300,
+          windowMs: 60_000,
+        });
+      }
       const { POST } = await import("../../src/app/api/commands/route");
       const response = await POST(request);
 
@@ -105,6 +114,31 @@ describe("profile command route", () => {
       expect(mocks.updateProfile).not.toHaveBeenCalled();
     },
   );
+
+  it("enforces the private facade bucket after authentication and before reading the body", async () => {
+    const request = commandRequest({
+      action: "profile.complete",
+      expectedScope: userId,
+      payload: completionPayload,
+    });
+    const { requestRateLimitDiscriminator } = await import("../../src/lib/server/api-route");
+    const { enforceIdentityRateLimit } = await import("../../src/lib/server/rate-limit");
+    const discriminator = requestRateLimitDiscriminator(request);
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      enforceIdentityRateLimit("private.command.request", discriminator, {
+        limit: 300,
+        windowMs: 60_000,
+      });
+    }
+
+    const { POST } = await import("../../src/app/api/commands/route");
+    const response = await POST(request);
+
+    expect(response.status).toBe(429);
+    expect(request.bodyUsed).toBe(false);
+    expect(mocks.readRouteIdentitySession).toHaveBeenCalledOnce();
+    expect(mocks.completeProfile).not.toHaveBeenCalled();
+  });
 
   it("does not create an authenticated session dependency for guest registration", async () => {
     const { POST } = await import("../../src/app/api/auth/register/route");

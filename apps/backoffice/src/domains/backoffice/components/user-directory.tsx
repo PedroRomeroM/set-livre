@@ -21,6 +21,7 @@ import {
   revealBackofficePiiWithoutCaching,
 } from "./backoffice-api";
 import { backofficeFilterFingerprint, backofficeQueryKeys } from "./query-keys";
+import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 import styles from "./backoffice.module.css";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
@@ -43,9 +44,11 @@ function errorMessage(error: unknown) {
 }
 
 function UserPiiReveal({
+  interactive,
   session,
   user,
 }: {
+  interactive: boolean;
   session: AuthenticatedSession;
   user: BackofficeUserSummary;
 }) {
@@ -93,7 +96,7 @@ function UserPiiReveal({
     <div className={styles.confirmation}>
       <Field label="Motivo auditado">
         <Select
-          disabled={retryAvailable}
+          disabled={!interactive || retryAvailable}
           onChange={(event) => setReason(event.target.value as BackofficePiiReason)}
           value={reason}
         >
@@ -106,6 +109,7 @@ function UserPiiReveal({
       </Field>
       <div className={styles.actions}>
         <Button
+          disabled={!interactive}
           loading={reveal.isPending}
           loadingLabel="Revelando"
           onClick={() => {
@@ -153,12 +157,14 @@ function UserPiiReveal({
 }
 
 function UserCard({
+  interactive,
   mode,
   onStatusChange,
   session,
   statusChangeDisabled,
   user,
 }: {
+  interactive: boolean;
   mode: Mode;
   onStatusChange: (user: BackofficeUserSummary) => void;
   session: AuthenticatedSession;
@@ -192,7 +198,7 @@ function UserCard({
           >
             {user.status === "active" ? "Revisar suspensão" : "Revisar restauração"}
           </Button>
-          <UserPiiReveal session={session} user={user} />
+          <UserPiiReveal interactive={interactive} session={session} user={user} />
         </>
       ) : (
         <ButtonLink href={`/acessos/${user.id}`} variant="secondary">
@@ -205,6 +211,7 @@ function UserCard({
 
 export function UserDirectory({ mode, session }: { mode: Mode; session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
+  const interactive = useBackofficeHydrated();
   const [draftQuery, setDraftQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState({ fingerprint: "empty", query: "" });
   const [statusTarget, setStatusTarget] = useState<BackofficeUserSummary>();
@@ -264,7 +271,12 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const items = users.data?.pages.flatMap((page) => page.items) ?? [];
 
   return (
-    <section aria-labelledby={`${mode}-title`} className={styles.pageStack}>
+    <section
+      aria-busy={!interactive}
+      aria-labelledby={`${mode}-title`}
+      className={styles.pageStack}
+      inert={!interactive}
+    >
       <header>
         <p className={styles.eyebrow}>{mode === "users" ? "Contas" : "Menor privilégio"}</p>
         <h1 id={`${mode}-title`}>{mode === "users" ? "Usuários" : "Acessos"}</h1>
@@ -276,7 +288,11 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       </header>
       {notice === undefined ? null : <Alert>{notice}</Alert>}
       <form
+        aria-busy={!interactive}
         className={styles.toolbar}
+        inert={!interactive}
+        method="post"
+        noValidate
         onSubmit={async (event) => {
           event.preventDefault();
           const normalized = draftQuery.trim();
@@ -285,13 +301,25 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           setActiveFilter({ fingerprint, query: normalized });
         }}
       >
-        <Field
-          description="Prefixo de nome/e-mail ou UUID completo. O filtro não é colocado na URL."
-          label="Buscar usuários"
+        <fieldset
+          className={`${styles.secureFormBoundary} ${styles.toolbarBoundary}`}
+          disabled={!interactive}
         >
-          <Input onChange={(event) => setDraftQuery(event.target.value)} value={draftQuery} />
-        </Field>
-        <Button type="submit">Buscar</Button>
+          <Field
+            description="Prefixo de e-mail ou UUID completo. Nome exige revelação auditada; o filtro não é colocado na URL."
+            label="Buscar usuários"
+          >
+            <Input
+              disabled={!interactive}
+              name="query"
+              onChange={(event) => setDraftQuery(event.target.value)}
+              value={draftQuery}
+            />
+          </Field>
+          <Button disabled={!interactive} type="submit">
+            Buscar
+          </Button>
+        </fieldset>
       </form>
       {users.isPending ? <p role="status">Carregando usuários…</p> : null}
       {users.isError ? <Alert variant="error">{errorMessage(users.error)}</Alert> : null}
@@ -301,6 +329,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       <div className={styles.cardGrid}>
         {items.map((user) => (
           <UserCard
+            interactive={interactive}
             key={user.id}
             mode={mode}
             onStatusChange={(target) => {
@@ -312,7 +341,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               setStatusTarget(target);
             }}
             session={session}
-            statusChangeDisabled={statusMutation.isPending || statusRetryAvailable}
+            statusChangeDisabled={!interactive || statusMutation.isPending || statusRetryAvailable}
             user={user}
           />
         ))}
@@ -329,7 +358,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           </p>
           <Checkbox
             checked={statusImpactConfirmed}
-            disabled={statusMutation.isPending || statusRetryAvailable}
+            disabled={!interactive || statusMutation.isPending || statusRetryAvailable}
             label="Revisei o impacto desta alteração"
             onChange={(event) => setStatusImpactConfirmed(event.target.checked)}
             required
@@ -339,7 +368,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           ) : null}
           <div className={styles.actions}>
             <Button
-              disabled={!statusImpactConfirmed || statusMutation.isPending}
+              disabled={!interactive || !statusImpactConfirmed || statusMutation.isPending}
               loading={statusMutation.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
@@ -361,7 +390,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               {statusRetryAvailable ? "Repetir mesma tentativa" : "Confirmar"}
             </Button>
             <Button
-              disabled={statusMutation.isPending || statusRetryAvailable}
+              disabled={!interactive || statusMutation.isPending || statusRetryAvailable}
               onClick={() => {
                 pendingStatusCommand.current = undefined;
                 statusMutation.reset();
@@ -379,6 +408,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       {users.hasNextPage ? (
         <div className={styles.pagination}>
           <Button
+            disabled={!interactive}
             loading={users.isFetchingNextPage}
             loadingLabel="Carregando"
             onClick={() => users.fetchNextPage()}

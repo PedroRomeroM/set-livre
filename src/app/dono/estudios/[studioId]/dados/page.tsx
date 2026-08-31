@@ -43,14 +43,14 @@ export default async function StudioCorePage({
   params,
 }: Readonly<{ params: Promise<{ studioId: string }> }>) {
   const { studioId: rawStudioId } = await params;
-  const parsedStudioId = z.uuid().safeParse(rawStudioId);
+  const parsedStudioId = z.uuid().safeParse(rawStudioId.toLowerCase());
   if (!parsedStudioId.success) notFound();
+  const canonicalPath = `/dono/estudios/${parsedStudioId.data}/dados` as const;
+  if (rawStudioId !== parsedStudioId.data) redirect(canonicalPath);
 
   const session = await readComponentIdentitySession();
   if (!session.authenticated) {
-    redirect(
-      `/entrar?retorno=${encodeURIComponent(`/dono/estudios/${parsedStudioId.data}/dados`)}`,
-    );
+    redirect(`/entrar?retorno=${encodeURIComponent(canonicalPath)}`);
   }
 
   let content;

@@ -49,6 +49,8 @@ Criar a entidade estúdio e uma revisão editável com dados públicos completos
 - Um estúdio tem no máximo um rascunho ativo.
 - Revisão submetida é imutável.
 - Editar publicado clona revisão aprovada.
+- Leituras privadas exigem, além do ownership, conta ativa, perfil completo, dono ativo e aceite
+  íntegro do contrato vigente.
 - Endereço completo será público após aprovação.
 - Revision number cresce monotonicamente.
 - `updated_at` nunca recua nem viola `created_at`, mesmo após correção regressiva do relógio do host.
@@ -73,6 +75,8 @@ Criar a entidade estúdio e uma revisão editável com dados públicos completos
 - Form por seções.
 - Salvar explícito.
 - Conflito de versão mostra recarregar/comparar.
+- Conflito durante descarte bloqueia todos os painéis e nunca avança somente o token; o dono precisa
+  recarregar o editor autoritativo inteiro e abrir uma nova confirmação.
 - A pré-visualização não é publicada.
 - Campos longos com contador.
 
@@ -81,6 +85,7 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 ## Segurança e privacidade
 
 - Ownership em todas as referências.
+- Perda de elegibilidade retorna zero linhas também nas relações de tag, comodidade e FAQ.
 - Endereço/PII não aparece antes de aprovado.
 - Zod + checks de banco.
 - Não aceitar status nem número de revisão enviados pelo cliente.

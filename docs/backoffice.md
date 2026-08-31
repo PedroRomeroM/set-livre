@@ -66,8 +66,9 @@ Aprovação é atômica e audita. Reviewer não altera conteúdo em nome do dono
 
 ## 4. Usuários
 
-- busca server-side por prefixo de nome/e-mail ou UUID exato, enviada por `POST` para não persistir o
-  filtro na URL, logs ou histórico;
+- busca server-side por prefixo de e-mail ou UUID exato, enviada por `POST` para não persistir o filtro
+  na URL, logs ou histórico; nome bruto nunca participa desse filtro para não criar um oráculo fora da
+  revelação auditada;
 - paginação keyset de 50 itens por `created_at + id`, com cursor opaco e precisão de microssegundos;
 - e-mail mascarado e nenhuma PII crua — inclusive nome — no read model;
 - revelação explícita por motivo allowlisted, auditada, fora do QueryCache e removida após 60 segundos
@@ -94,15 +95,18 @@ O binding curto mantém `last_seen_at` e `closed_at` monotônicos em relação �
 banco normaliza correções regressivas do relógio de parede, e a validação usa o maior valor entre o
 horário observado e a última atividade; um ajuste de relógio não quebra a sessão nem amplia sua janela.
 
-O login e o formulário global de desbloqueio permanecem `inert`, com controles nativos desabilitados,
-até o snapshot client-side de hidratação; assim, digitação antecipada nunca é apagada quando o React
-assume a tela e a ausência de JavaScript não publica segredo por fallback HTML, mas explica que o
-recurso precisa ser habilitado antes de recarregar. O formulário global de
+Login, desbloqueio, busca de usuários e gestão de taxonomias permanecem `inert`, com controles nativos
+desabilitados, até o snapshot client-side de hidratação; assim, uma interação antecipada nunca executa
+sem handler ativo, a digitação não é apagada quando o React assume a tela e a ausência de JavaScript
+não publica segredo por fallback HTML, mas explica que o recurso precisa ser habilitado antes de
+recarregar. O formulário global de
 desbloqueio envia a chave local somente ao endpoint de autenticação. O valor não
 é guardado em state, cache, storage ou cookie: após comparação em tempo constante, o servidor emite um
 cookie HttpOnly/SameSite estrito, assinado, não renovável por polling e vinculado ao usuário e ao
 `session_id` Auth. Ele expira em cinco minutos e é apagado em login, logout ou invalidação da sessão.
 Sem cookie válido, `/api/commands` falha fechado com `423/RUNTIME_LOCKED` antes de chamar a DAL.
+Comandos, diretório e taxonomias autenticam a binding administrativa antes de consumir o bucket de
+rede ou ler qualquer body privado; o serviço recebe esse mesmo contexto verificado até a DAL.
 O formulário possui nome acessível próprio e constitui um landmark entre a navegação e o conteúdo
 principal.
 
@@ -183,7 +187,8 @@ Audit é append-only para operadores. Export controlado.
 - `support` opera conta/PII, mas não enxerga nem chama acessos/taxonomias;
 - admin recente gerencia papéis e o último admin permanece protegido;
 - lista/sessão do browser não expõem papéis e o detalhe de acesso é composto no servidor;
-- login e desbloqueio permanecem fechados antes da hidratação, sem perder entrada antecipada;
+- login, desbloqueio, busca e taxonomias permanecem fechados antes da hidratação, sem perder entrada
+  antecipada nem aceitar ação sem handler;
 - runtime bloqueado não executa mutação; desbloqueio expira, não atravessa sessão e nunca persiste a chave;
 - arquivamento preserva referência e bloqueia nova seleção;
 - PII permanece mascarada, temporária e auditada;

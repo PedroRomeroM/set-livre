@@ -116,6 +116,32 @@ async function expectBackofficeRuntimeClosedWithoutHydration(
     await expect(form.locator("fieldset")).toHaveAttribute("disabled", "");
     await expect(form.locator('input[name="runtimeUnlockKey"]')).toHaveAttribute("disabled", "");
     await expect(form.locator('button[type="submit"]')).toHaveAttribute("disabled", "");
+
+    const searchForm = page.locator("form", {
+      has: page.locator('input[name="query"]'),
+    });
+    await expect(searchForm).toHaveAttribute("inert", "");
+    await expect(searchForm).toHaveAttribute("method", "post");
+    await expect(searchForm.locator("fieldset")).toHaveAttribute("disabled", "");
+    await expect(searchForm.locator('input[name="query"]')).toHaveAttribute("disabled", "");
+    await expect(searchForm.locator('button[type="submit"]')).toHaveAttribute("disabled", "");
+
+    const taxonomyNavigation = await page.goto(
+      `${safeE2EEnvironment.backofficeBaseUrl}/taxonomias`,
+    );
+    expect(taxonomyNavigation?.status()).toBe(200);
+    await expect(page.locator("h1", { hasText: /^Taxonomias$/u })).toBeAttached();
+    const taxonomyForm = page.locator("form", {
+      has: page.locator('input[name="slug"]'),
+    });
+    await expect(taxonomyForm).toHaveAttribute("inert", "");
+    await expect(taxonomyForm).toHaveAttribute("method", "post");
+    await expect(taxonomyForm.locator("fieldset")).toHaveAttribute("disabled", "");
+    await expect(taxonomyForm.locator('select[name="kind"]')).toHaveAttribute("disabled", "");
+    await expect(taxonomyForm.locator('input[name="sortOrder"]')).toHaveAttribute("disabled", "");
+    await expect(taxonomyForm.locator('input[name="name"]')).toHaveAttribute("disabled", "");
+    await expect(taxonomyForm.locator('input[name="slug"]')).toHaveAttribute("disabled", "");
+    await expect(taxonomyForm.locator('button[type="submit"]')).toHaveAttribute("disabled", "");
   } finally {
     await context.close();
   }
@@ -266,7 +292,7 @@ test("SL-F031-E2E-014 @p0 resposta perdida de acesso exige replay da mesma trans
   }
 });
 
-test("SL-F031-E2E-015 @p0 segredos ficam fechados antes da hidratação", async ({
+test("SL-F031-E2E-015 @p0 ações SSR ficam fechadas antes da hidratação", async ({
   browser,
   page,
 }, testInfo) => {
@@ -432,8 +458,13 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
   test.setTimeout(210_000);
   const admin = createFeat031Operator(testInfo, "004_taxonomy");
   const owner = await createFeat031DirectIdentity("Dono taxonomia", true);
-  const slug = `arquivo-qa-${Date.now().toString(36)}`;
+  const suffix = Date.now().toString(36);
+  const name = `Arquivo histórico QA ${suffix}`;
+  const editedName = `Arquivo histórico editado QA ${suffix}`;
+  const slug = `arquivo-qa-${suffix}`;
   const editedSlug = `${slug}-editado`;
+  const lostCreateResponse = createHeldResponseGate({ outcome: "abort" });
+  const lostEditResponse = createHeldResponseGate({ outcome: "abort" });
   const lostArchiveResponse = createHeldResponseGate({ outcome: "abort" });
   let tagId: string | undefined;
   try {
@@ -441,29 +472,51 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Taxonomias" }).click();
     await page.getByRole("combobox", { name: "Grupo" }).selectOption("tag");
-    await page.getByRole("textbox", { name: "Nome" }).fill("Arquivo histórico QA");
+    await page.getByRole("textbox", { name: "Nome" }).fill(name);
     await page.getByRole("textbox", { name: "Slug" }).fill(slug);
     await page.getByRole("spinbutton", { name: "Ordem" }).fill("310");
+    await page.route("**/api/commands", lostCreateResponse.handle);
     await page.getByRole("button", { name: "Criar taxonomia" }).click();
+    await lostCreateResponse.waitUntilReady();
+    await expect(page.getByRole("textbox", { name: "Nome" })).toBeDisabled();
+    lostCreateResponse.release();
+    await expect(page.getByRole("region", { name: "Taxonomias" }).getByRole("alert")).toContainText(
+      "O resultado não pôde ser confirmado. Repita a mesma tentativa",
+    );
+    const createReplay = page.getByRole("button", { name: "Repetir mesma tentativa" });
+    await expect(createReplay).toBeEnabled();
+    await createReplay.click();
     await expect(page.getByRole("status").filter({ hasText: "salva na versão 0" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue("");
+    await page.unroute("**/api/commands", lostCreateResponse.handle);
 
     const createdCard = page
       .getByRole("article")
-      .filter({ has: page.getByRole("heading", { name: "Arquivo histórico QA" }) });
+      .filter({ has: page.getByRole("heading", { exact: true, name }) });
     await createdCard.getByRole("button", { name: "Editar" }).click();
-    await page.getByRole("textbox", { name: "Nome" }).fill("Arquivo histórico editado QA");
+    await page.getByRole("textbox", { name: "Nome" }).fill(editedName);
     await page.getByRole("textbox", { name: "Slug" }).fill(editedSlug);
     await page.getByRole("spinbutton", { name: "Ordem" }).fill("311");
+    await page.route("**/api/commands", lostEditResponse.handle);
     await page.getByRole("button", { name: "Salvar edição" }).click();
+    await lostEditResponse.waitUntilReady();
+    await expect(page.getByRole("textbox", { name: "Nome" })).toBeDisabled();
+    lostEditResponse.release();
+    await expect(page.getByRole("region", { name: "Taxonomias" }).getByRole("alert")).toContainText(
+      "O resultado não pôde ser confirmado. Repita a mesma tentativa",
+    );
+    const editReplay = page.getByRole("button", { name: "Repetir mesma tentativa" });
+    await expect(editReplay).toBeEnabled();
+    await editReplay.click();
     await expect(page.getByRole("status").filter({ hasText: "salva na versão 1" })).toBeVisible();
+    await page.unroute("**/api/commands", lostEditResponse.handle);
 
     const history = await linkFeat031TagToHistory(owner.userId, editedSlug);
     tagId = history.tagId;
     await page.reload();
     const card = page
       .getByRole("article")
-      .filter({ has: page.getByRole("heading", { name: "Arquivo histórico editado QA" }) });
+      .filter({ has: page.getByRole("heading", { exact: true, name: editedName }) });
     await expect(card).toContainText("1 uso");
     await card.getByRole("button", { name: "Revisar arquivamento" }).click();
     const impact = page.getByRole("region", { name: "Impacto do arquivamento" });
@@ -502,17 +555,20 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
 
     const archivedCard = page
       .getByRole("article")
-      .filter({ has: page.getByRole("heading", { name: "Arquivo histórico editado QA" }) });
+      .filter({ has: page.getByRole("heading", { exact: true, name: editedName }) });
     await archivedCard.getByRole("button", { name: "Revisar reativação" }).click();
     await page.getByRole("button", { name: "Confirmar reativação" }).click();
     await expect(
       page.getByRole("status").filter({ hasText: "reativada para novas seleções" }),
     ).toBeVisible();
   } finally {
+    lostCreateResponse.release();
+    lostEditResponse.release();
     lostArchiveResponse.release();
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [owner], operators: [admin] });
-    await cleanupFeat031Taxonomy(tagId);
+    await cleanupFeat031Taxonomy(tagId, editedSlug);
+    await cleanupFeat031Taxonomy(undefined, slug);
   }
 });

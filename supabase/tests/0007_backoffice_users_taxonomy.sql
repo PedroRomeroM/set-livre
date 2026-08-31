@@ -104,7 +104,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(57);
+select plan(58);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -722,6 +722,37 @@ select ok(
     ) as listed_user
   ),
   'busca server-side retorna as cinco personas mascaradas sem papéis no contrato do browser'
+);
+select ok(
+  (
+    select pg_catalog.count(*) = 0
+    from private.list_backoffice_users(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      'Owner FEAT 031',
+      null,
+      null,
+      51
+    )
+  )
+  and (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(id = '81000000-0000-4000-8000-000000000003')
+    from private.list_backoffice_users(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81000000-0000-4000-8000-000000000003',
+      null,
+      null,
+      51
+    )
+  )
+  and pg_catalog.pg_get_functiondef(
+    'private.list_backoffice_users(uuid,uuid,timestamptz,text,timestamptz,uuid,integer)'::pg_catalog.regprocedure
+  ) !~ 'profile[.]name',
+  'busca comum aceita UUID exato, mas nome bruto não funciona como oráculo fora da revelação auditada'
 );
 select ok(
   (
@@ -1423,7 +1454,7 @@ reset role;
 revoke app_dal from postgres granted by current_user;
 
 select ok(
-  private.check_readiness('20260830204500'),
+  private.check_readiness('20260831021612'),
   'readiness inclui a migration FEAT-031 e a allowlist DAL exata'
 );
 

@@ -58,7 +58,7 @@ independentemente de `Content-Length`.
 
 ### 2.1 Superfície implementada na FEAT-002
 
-- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o body e aceita somente os dois comandos de perfil e os três comandos de dono/recebedor registrados; action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
+- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o bucket de fachada ou o body e aceita somente os dois comandos de perfil e os três comandos de dono/recebedor registrados; action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
 - todos os `POST` exigem `Origin` e `Host` exatos de `NEXT_PUBLIC_APP_URL`; em produção, `X-Forwarded-Host` e `X-Forwarded-Proto=https` também precisam ter sido sobrescritos pela borda confiável;
 - um bucket de fachada é consumido antes do parse/Zod; depois do parse, cadastro/login/recovery/callback usam somente hashes de e-mail, usuário ou token. Em produção, a fachada exige um único IP canônico em `X-Forwarded-For`, sobrescrito pelo Nginx da borda confiável descrito em `infrastructure.md`; header ausente, composto ou inválido falha fechado;
 - somente `application/json` e schemas Zod `strict` são aceitos;
@@ -79,7 +79,7 @@ independentemente de `Content-Length`.
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, logout usa uma closure one-shot sem `variables`, `networkMode: "always"` e `expectedScope` UUID como asserção do recorte SSR. O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`, `claimsResult.error` ou contexto assinado ausente retorna `401 UNAUTHENTICATED`, e somente um `userId` válido divergente retorna `409 SESSION_CHANGED`; os três ramos têm zero efeitos destrutivos explícitos de logout. Um erro posterior do provider só pode equivaler a logout concluído quando o cliente server-side comprova ausência da sessão local;
 - depois de `setSession`, a projeção de preferência chama `get_my_profile()` com o `AbortSignal` da operação e deadline server-side de um segundo. Timeout ou falha usa `system`; uma resolução tardia é ignorada e não pode publicar cookie nem iniciar `signOut` depois da resposta;
-- o destino autenticado possui allowlist literal: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono` e `/dono/recebimentos`. A query da rota usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, valor codificado ou array falha fechado para o destino padrão.
+- o destino autenticado possui allowlist canônica: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` e `/dono/estudios/<studioId>/dados`, sendo `studioId` um UUID minúsculo válido e o único segmento variável. A rota dinâmica normaliza uma representação UUID válida não canônica para o path minúsculo antes de produzir o retorno de login. A query usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, UUID inválido, valor codificado ou array falha fechado para o destino padrão.
 
 ## 3. Códigos de erro
 
@@ -320,6 +320,12 @@ O recorte implementado do backoffice usa endpoints próprios na aplicação `:30
   browser nunca carregam o conjunto de papéis;
 - `POST /api/commands` aceita exclusivamente a união discriminada das dez actions
   `backoffice.*` acima.
+
+As rotas privadas de comandos, diretório e taxonomias validam a sessão administrativa e sua binding
+antes de consumir o bucket compartilhado ou ler o body. O contexto já verificado é passado à camada de
+serviço; ela não abre uma segunda janela de autenticação entre o limiter e a DAL. Headers acumulados
+durante renovação ou invalidação da sessão são preservados tanto no sucesso quanto se limiter, parse,
+runtime lock ou DAL rejeitarem a requisição depois dessa autenticação.
 
 Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
 distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.

@@ -90,7 +90,7 @@ revoke all on function private.feat007_capture_error(text)
 revoke all on function private.feat007_create_owner(uuid, text, text, integer)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(42);
+select plan(43);
 
 select has_table('public', 'tags', 'tags existe');
 select has_table('public', 'amenities', 'amenities existe');
@@ -716,6 +716,27 @@ select ok(
     and (select pg_catalog.count(*) > 0 from public.studio_faqs),
   'RLS permite ao dono consultar diretamente somente relações das próprias revisões'
 );
+reset role;
+savepoint suspended_owner_relation_reads;
+update public.profiles as profile
+set status = 'suspended'
+where profile.id = '71000000-0000-4000-8000-000000000001';
+set local role authenticated;
+select pg_catalog.set_config(
+  'request.jwt.claim.sub',
+  '71000000-0000-4000-8000-000000000001',
+  true
+);
+select ok(
+  (select pg_catalog.count(*) = 0 from public.studio_revision_tags)
+    and (select pg_catalog.count(*) = 0 from public.studio_revision_amenities)
+    and (select pg_catalog.count(*) = 0 from public.studio_faqs),
+  'RLS das relações também falha fechado quando o dono perde elegibilidade'
+);
+reset role;
+rollback to savepoint suspended_owner_relation_reads;
+release savepoint suspended_owner_relation_reads;
+set local role authenticated;
 select ok(
   not (public.list_active_studio_taxonomies() -> 'tags') @>
       '[{"id":"62000000-0000-4000-8000-000000000099"}]'::jsonb
