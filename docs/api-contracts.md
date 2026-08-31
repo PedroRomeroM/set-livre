@@ -218,9 +218,11 @@ refetch em segundo plano nunca troca esse token silenciosamente. Conflito de upd
 submit com o token atualizado. Uma mutação própria confirmada pelo servidor avança os tokens de todas
 as superfícies e do descarte para a revisão retornada, sem substituir valores irmãos ainda não
 submetidos; isso evita falso conflito entre saves locais sequenciais sem aceitar mudança externa.
-Descarte mantém token próprio, que também não acompanha refetch em
-segundo plano; conflito fecha a confirmação e avança somente o token de descarte, sem liberar um save
-stale, exigindo nova confirmação explícita antes de agir. `23514 + studio_type_inactive` vira `409
+Descarte mantém token próprio, que também não acompanha refetch em segundo plano. Um conflito fecha a
+confirmação e bloqueia todos os painéis até a releitura autoritativa do editor inteiro; o token de
+descarte nunca avança isoladamente. Somente a escolha explícita de recarregar substitui os valores
+locais, atualiza todos os tokens e permite abrir uma nova confirmação, sem liberar um save stale.
+`23514 + studio_type_inactive` vira `409
 STUDIO_TYPE_UNAVAILABLE`, limpa a
 seleção arquivada, relê `/api/studio-types` e exige opção ativa sem tratar a corrida como conflito de
 conteúdo. `23514 + studio_taxonomy_inactive` vira `409 STUDIO_TAXONOMY_UNAVAILABLE`, relê editor e

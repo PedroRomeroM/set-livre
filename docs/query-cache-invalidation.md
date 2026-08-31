@@ -120,8 +120,9 @@ Medir; não usar Infinity em dado operacional.
   `owner/private/studio-taxonomies`;
 - o token otimista do editor permanece ligado aos valores visíveis durante refetch em foco; update só
   adota o token remoto após escolha explícita na comparação. Descarte mantém token independente e,
-  depois de conflito rejeitado, avança apenas esse token e exige nova confirmação antes de agir; isso
-  não rebaseia silenciosamente um save pendente.
+  depois de conflito rejeitado, bloqueia todos os painéis até a releitura e a aceitação explícita do
+  editor autoritativo inteiro; só então todos os tokens avançam juntos e uma nova confirmação pode ser
+  aberta, sem rebasear silenciosamente um save pendente.
   `STUDIO_TYPE_UNAVAILABLE` limpa a seleção arquivada e refaz a key `types` do usuário atual; erro nessa
   releitura mantém os controles bloqueados e oferece retry somente do GET;
 - o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
