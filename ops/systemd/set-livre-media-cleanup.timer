@@ -1,0 +1,15 @@
+[Unit]
+Description=Schedule Set Livre production media cleanup
+Requires=set-livre-application-start.service
+After=set-livre-application-start.service
+ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=false
+Unit=set-livre-media-cleanup.service
+
+[Install]
+WantedBy=timers.target

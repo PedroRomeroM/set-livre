@@ -21,6 +21,9 @@ export type ApiRouteErrorCode =
   | "CONTENT_TYPE_INVALID"
   | "FORBIDDEN"
   | "INPUT_INVALID"
+  | "MEDIA_COVER_REPLACEMENT_REQUIRED"
+  | "MEDIA_LIMIT_REACHED"
+  | "MEDIA_ORDER_CHANGED"
   | "METHOD_NOT_ALLOWED"
   | "NOT_FOUND"
   | "ORIGIN_INVALID"
@@ -34,6 +37,8 @@ export type ApiRouteErrorCode =
   | "STUDIO_TAXONOMY_UNAVAILABLE"
   | "STUDIO_TYPE_UNAVAILABLE"
   | "UNAUTHENTICATED"
+  | "UPLOAD_EXPIRED"
+  | "UPLOAD_OBJECT_MISSING"
   | "VALIDATION_FAILED";
 
 export class ApiRouteError extends Error {
@@ -281,6 +286,12 @@ const observableActionSchema = z.enum([
   "recipient.onboarding.start",
   "studio.create",
   "studio.draft.discard",
+  "studio.media.cover.set",
+  "studio.media.delete",
+  "studio.media.read",
+  "studio.media.reorder",
+  "studio.media.upload.finalize",
+  "studio.media.upload.prepare",
   "studio.read",
   "studio.revision.updateContent",
   "studio.revision.updateCore",

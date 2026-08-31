@@ -110,6 +110,12 @@ function handleStudioDatabaseError(error: unknown): never {
   throw error;
 }
 
+export const studioServiceBoundary = {
+  assertMutableAccount,
+  enforceStudioMutationRateLimit,
+  handleStudioDatabaseError,
+};
+
 export function createStudioService(
   dependencies: StudioServiceDependencies = studioServiceDefaults,
 ) {

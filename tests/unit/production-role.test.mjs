@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertProductionDeploymentContract,
   assertSupabasePublishableKey,
+  assertSupabaseSecretKey,
   forceProductionRoleDisabled,
   provisionProductionRole,
   productionRoleActivationMode,
@@ -141,6 +142,7 @@ describe("production role provisioning", () => {
     PRODUCTION_PUBLIC_APP_URL: "https://147.15.97.227",
     PRODUCTION_SUPABASE_URL: "https://oirvvnojgkzdppkdvhej.supabase.co",
     PRODUCTION_VM_HOST: "147.15.97.227",
+    PRD_SUPABASE_SECRET_KEY: "sb_secret_production-contract-key",
   };
 
   it("derives explicit TLS admin and restricted runtime connections", () => {
@@ -227,6 +229,15 @@ describe("production role provisioning", () => {
     );
     expect(() => assertSupabasePublishableKey(serviceRoleJwt)).toThrow("chave privilegiada");
     expect(() => assertSupabasePublishableKey("synthetic-anon-value")).toThrow("formato inválido");
+  });
+
+  it("accepts only the dedicated Supabase secret-key class for trusted server operations", () => {
+    expect(() => assertSupabaseSecretKey("sb_secret_production-contract-key")).not.toThrow();
+    expect(() => assertSupabaseSecretKey("sb_publishable_public-contract-key")).toThrow(
+      "secret dedicada",
+    );
+    expect(() => assertSupabaseSecretKey("synthetic-secret")).toThrow("formato inválido");
+    expect(() => assertSupabaseSecretKey("a.b.c")).toThrow("secret dedicada");
   });
 
   it("confirms the configured publishable key against the exact production project", async () => {
@@ -700,7 +711,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v10" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
     const httpsProbe = deployJob.slice(publicHttps, runtimeEnvironment);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");

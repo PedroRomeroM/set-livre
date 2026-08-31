@@ -196,11 +196,20 @@ emissão do certificado, `nosniff`, referrer policy, permissions policy e bloque
 Antes do go-live, Nginx aceita somente o Host do IP reservado, não expõe o backoffice e envia `noindex`
 em toda resposta pública, além de bloquear crawling no `robots.txt`.
 
-Novas origens CSP entram apenas com a integração consumidora e teste. Respostas autenticadas e HTML
-dinâmico não são cacheados; assets com hash podem receber cache imutável.
+Novas origens CSP entram apenas com a integração consumidora e teste. A galeria privada acrescenta em
+`img-src` somente a origem Supabase já validada pelo ambiente: HTTPS exato fora do desenvolvimento e
+o loopback HTTP canônico no stack local. Path, credencial, origem ampla, HTTP remoto e token injetável
+são recusados antes de compor o header. Respostas autenticadas e HTML dinâmico não são cacheados;
+assets com hash podem receber cache imutável.
 
-Uploads futuros usam URL assinada curta, path derivado, allowlist de MIME, validação dos bytes, tamanho
-limitado, Storage RLS e cleanup. SVG e nomes de usuário nunca chegam a processamento shell.
+Uploads de estúdio usam token assinado curto, path derivado, allowlist de MIME, validação real dos
+bytes, limites de tamanho/dimensão/pixels e cleanup pela Storage API. O browser não recebe grants para
+listar registros ou objetos nem para criar URLs de leitura. A secret key moderna existe somente no
+processo web do servidor e no ambiente gerenciado da Edge Function; clientes com a chave moderna a
+enviam exclusivamente em `apikey`, nunca em `Authorization: Bearer`. Na VM ela chega pelo EnvironmentFile
+privado também consumido pela oneshot `systemd` e só é usada depois da autorização DAL ou para invocar o
+slug do SHA ativo. Não entra no backoffice, artifact, log, QueryCache ou bundle público. SVG e nomes de
+usuário nunca chegam a processamento shell.
 
 ## Ambiente local
 

@@ -1,134 +1,137 @@
 # Mídia, qualidade visual e Storage
 
-## 1. Objetivo
+## Contrato de fotos
 
-Fotos precisam preservar qualidade suficiente para decisão de compra sem transferir originais indiscriminadamente. Vídeo será incorporado via YouTube.
+O editor aceita de zero a vinte fotos por revisão. Submissão futura exige ao menos uma foto e uma capa;
+a edição não antecipa essa validação. Cada original pode ter até 15 MiB, 8.192 px por dimensão e 36
+milhões de pixels no total. Os formatos permitidos são JPEG, PNG, WebP e AVIF; SVG, GIF, HEIC e vídeo
+próprio são recusados.
 
-## 2. Limites
+O original é preservado. A aplicação registra MIME comprovado, bytes, dimensões e SHA-256 e gera uma
+prévia privada WebP auto-orientada de até 1.280 px e 3 MiB. A galeria usa essa derivada com dimensões
+explícitas para evitar layout shift e não depende de transformação paga do Storage.
 
-Defaults:
+## Fonte canônica e versionamento
 
-- 1 a 20 fotos por revisão;
-- máximo 15 MB por original;
-- JPEG, PNG, WebP ou AVIF;
-- sem SVG, GIF, HEIC ou vídeo próprio;
-- largura/altura mínimas recomendadas: 1.200 px no lado maior;
-- limite técnico de 12.000 px por dimensão;
-- uma capa obrigatória;
-- alt text derivado do nome/posição, editável se produto decidir.
+- `studio_media` representa o objeto imutável e seu ciclo
+  `pending_upload → ready/rejected → delete_pending → deleted`;
+- `studio_revision_media` associa objetos a uma revisão, com posição contínua e no máximo uma capa;
+- ao clonar uma revisão publicada para novo rascunho, as associações compartilham os mesmos objetos;
+- alterar ou excluir no rascunho nunca remove a foto ainda referenciada pela revisão publicada;
+- exclusão física só é elegível quando nenhuma associação permanece.
 
-Arquivos fora do contrato são rejeitados antes da publicação.
-
-## 3. Buckets
-
-### 3.1 `studio-media`
-
-Bucket privado.
-
-Path:
+O bucket `studio-media` é privado e limita tamanho/MIME. O path é sempre derivado no servidor:
 
 ```text
 owners/<ownerId>/studios/<studioId>/revisions/<revisionId>/<mediaId>.<ext>
+owners/<ownerId>/studios/<studioId>/revisions/<revisionId>/<mediaId>.preview.webp
 ```
 
-Nenhum ID de usuário enviado pelo cliente é aceito sem derivação server-side.
+IDs enviados pelo cliente não provam ownership. O read model atual é exclusivo do próprio dono
+elegível, lê os paths por uma função privada do DAL e usa a secret key somente no servidor para devolver
+URLs assinadas curtas. O browser não recebe `storagePath`, grants de leitura dos registros ou permissão
+para assinar objetos. Reviewer e entrega pública serão adicionados somente pelas features que os
+consomem.
 
-### 3.2 Visibilidade
+## Upload e verificação
 
-- draft/pending: URLs assinadas e curtas para owner/reviewer;
-- approved/published: delivery controlado pela aplicação/CDN;
-- superseded: acessível apenas quando necessário à auditoria/revisão;
-- deleted/orphan: job remove.
+1. A UI faz somente feedback imediato de tipo, tamanho e limite.
+2. `studio.media.upload.prepare` valida sessão, dono, revisão/versionamento e idempotência, cria
+   `pending_upload` e emite token assinado sem sobrescrita.
+3. O browser envia o original diretamente ao Storage, com deadline de 60 segundos; o upload não
+   atravessa a VM. Essa etapa usa o cliente oficial dedicado de Storage com a chave pública e o token
+   assinado, sem criar outro cliente Auth nem persistir sessão no navegador.
+4. `studio.media.upload.finalize` tenta primeiro o replay exato; somente uma tentativa ainda pendente
+   obtém do Storage uma cópia limitada para verificação autoritativa.
+5. O servidor compara tamanho declarado, assinatura de bytes, MIME decodificado, página única,
+   dimensões, orçamento total de pixels e checksum opcional; um decode mínimo prova que o conteúdo não
+   é apenas um header. Download, decode e geração da prévia compartilham um único slot global, fila
+   limitada e deadline compatíveis com a VM de 1 GiB.
+6. Arquivo válido produz a prévia WebP privada; retry aceita uma derivada preexistente somente quando
+   os bytes são exatamente iguais.
+7. O objeto vira `ready` e é associado à revisão na mesma transação. Arquivo inválido vira `rejected`,
+   sem detalhe interno do decoder na resposta.
+8. O retorno autoritativo substitui a galeria privada e invalida o editor relacionado.
 
-## 4. Upload
+O download de verificação é bounded e não transforma a VM em proxy de upload. Erro de rede ou resposta
+ambígua exige releitura antes de retry; a UI reutiliza a mesma idempotência quando repete a mesma etapa
+e continua com os arquivos seguintes quando a falha atual é definitiva e isolada. Expiração ou objeto
+ausente encerram a reserva antiga: ela deixa de consumir a cota, entra no cleanup e a recuperação cria
+outra idempotência, mídia, path e token, sem tentar reviver uma autorização vencida.
 
-1. UI lê arquivo e valida extensão/tamanho como feedback.
-2. `studio.media.upload.prepare` valida sessão, ownership, revisão draft e limite.
-3. Servidor cria media row `uploaded` e signed URL.
-4. Browser envia direto ao Storage.
-5. `studio.media.upload.finalize` verifica objeto real.
-6. Servidor decodifica header/metadados, MIME, tamanho, dimensão e checksum.
-7. Media vira `ready`.
-8. UI invalida editor.
+Toda conclusão de mutação relê a galeria canônica. O DTO inclui o número imutável da revisão e sua
+versão; uma resposta atrasada de revisão ou versão anterior é descartada e identidades contraditórias
+para o mesmo número falham fechado.
 
-Não passar binário pela VM.
+## Capa, ordem e exclusão
 
-## 5. Qualidade e otimização
+Reordenação recebe o conjunto completo de IDs da revisão, sem repetição, e grava posições contínuas sob
+lock e versão otimista. Capa e exclusão obedecem à mesma fronteira. A interface oferece botões de ordem
+usáveis por teclado e touch; drag não é requisito para concluir a ação.
 
-- original é preservado;
-- cards e galeria usam `next/image`;
-- `sizes` explícito por composição;
-- `quality` por caso, sem 100 por padrão;
-- preload somente da imagem LCP;
-- dimensões evitam CLS;
-- lazy load nas demais;
-- cache imutável quando path inclui media ID/hash;
-- não gerar dezenas de variantes antecipadamente;
-- transformação paga do Supabase não é dependência obrigatória;
-- medir egress e cache hit.
+Excluir a capa é permitido somente quando isso não produz uma transição enganosa; a obrigatoriedade de
+capa é revalidada na submissão. Resultado conflitante recompõe a versão remota em vez de manter
+otimismo local.
 
-O artifact Linux x86_64 precisa incluir qualquer dependência nativa realmente usada por `next/image` e
-ser validado no build/smoke de produção.
+## Cleanup físico
 
-## 6. Ordenação e capa
+Upload não finalizado fica elegível após 24 horas. Rejeição e objeto sem associação ficam elegíveis
+imediatamente. Uma Edge Function:
 
-Comando transacional recebe lista completa de IDs pertencentes à revisão.
+- autentica a secret key recebida em `apikey` com comparação em tempo constante;
+- envia a chave moderna apenas em `apikey`; ela nunca é tratada como JWT em `Authorization`;
+- usa a secret key padrão fornecida pelo próprio runtime Supabase; browser nunca a recebe e o processo
+  web da VM a usa somente em sua fronteira server-only separada;
+- chama RPCs públicos concedidos apenas a `service_role`, que delegam a rotinas de manutenção;
+- reivindica até 25 itens com token, `SKIP LOCKED`, lease e replay;
+- remove original e prévia somente pela Storage API;
+- conclui sucesso ou agenda backoff limitado em falha.
 
-Regras:
+Cada release publica `media-cleanup-<SHA>` sem sobrescrever a versão anterior. Um canário cria um par
+real de objetos, invoca a candidata diretamente por HTTPS e exige HTTP 200, remoção física e ledger
+terminal com contagens fechadas. Só depois a VM ativa a release: uma oneshot `systemd` chama o slug
+derivado do SHA ativo e, se ela passar, o timer repete a execução a cada dez minutos. Falha da oneshot
+aciona o rollback atômico da aplicação; sucesso conserva no máximo quatro Functions imutáveis,
+preservando candidata e versão anunciada pelo health vivo. Não há Cron, `pg_net`, Vault, daemon ou
+container adicional. Roles da aplicação continuam sem acesso a `net` ou `maintenance`; `service_role`
+executa somente as fachadas RPC estreitas. Readiness reprova execução travada ou falha sem recuperação
+posterior. Objetos do Storage nunca são apagados por SQL direto.
 
-- sem duplicados;
-- mesmo conjunto atual;
-- posições contínuas;
-- no máximo uma capa;
-- excluir capa exige selecionar outra antes de submit;
-- optimistic UI reverte em erro.
+O configurador serializa o canário por advisory lock de sessão. Antes de criar uma nova identidade,
+ele recupera probes `prepared` ou `queued` sem atualização há 30 minutos: remove os dois paths pela
+Storage API, exige para cada download `404` com código `NoSuchKey` e só então registra `aborted` com
+código allowlisted. `400`, outro código de `404`, resposta ambígua ou interrupção deixam o checkpoint
+não terminal para uma tentativa posterior; assim uma queda entre banco, upload e finalização não
+transforma objeto órfão em sucesso documental.
 
-## 7. Exclusão
+Uma interrupção depois de abrir o ledger não exige reparo manual: a primeira execução posterior fecha
+um run diferente envelhecido como `cleanup_run_abandoned`, reaproveita leases vencidos pelo claim
+normal e só devolve readiness depois de registrar um sucesso mais recente. O UUID original continua
+idempotente se o mesmo invocador conseguir repeti-lo antes dessa recuperação.
 
-- draft sem uso: remover row e objeto;
-- revisão submetida: mídia imutável;
-- para mudar, criar/editar nova revisão;
-- cleanup de upload não finalizado após 24h;
-- falha de Storage gera retry e alerta, não row fantasma.
+## Entrega e qualidade visual
 
-## 8. YouTube
+- previews privadas são assinadas em lote por cinco minutos, usam cache privado de 60 segundos e a
+  origem Supabase HTTPS exata — ou o loopback local canônico — é a única origem remota admitida pela CSP,
+  `next/image`, `sizes` por composição e dimensões persistidas; o DTO carrega a expiração e o cache
+  preserva a assinatura mais recente quando respostas da mesma revisão chegam fora de ordem;
+- a capa futura pode receber prioridade somente quando for realmente LCP;
+- demais imagens permanecem lazy;
+- path imutável admite cache do objeto, mas URL assinada e resposta autenticada não entram em cache
+  público;
+- galeria e lightbox preservam 320 px, zoom de 200%, safe areas, teclado e retorno de foco;
+- dependência nativa de imagem precisa existir no artifact Linux x86_64 e passar no smoke da release.
 
-Aceitar ID de 11 caracteres ou URL HTTPS exata de `youtube.com`, `www.youtube.com`, `m.youtube.com`,
-`youtu.be` e `www.youtube-nocookie.com`. São suportados somente `watch?v=`, `shorts/`, `embed/` e o
-path único de `youtu.be`; userinfo, HTTP, sufixos de host e caminhos extras falham. Persistir apenas
-`youtube_video_id`.
+## YouTube
 
-- validar host/ID;
-- embed sempre em `https://www.youtube-nocookie.com/embed/<id>`, allowlisted no CSP;
-- lazy load;
-- título acessível;
-- sem autoplay;
-- sandbox limitado a scripts, mesma origem e apresentação;
-- a prévia mantém um link seguro para abrir o vídeo fora do iframe, inclusive quando o embed falhar;
-- nenhum HTML arbitrário.
+FEAT-007 persiste somente o ID de 11 caracteres. A entrada aceita ID ou URL HTTPS exata dos hosts e
+paths allowlisted; userinfo, HTTP, sufixos de host e caminhos extras falham. O embed usa
+`https://www.youtube-nocookie.com/embed/<id>`, título acessível, sandbox limitado, sem autoplay e
+com link de recuperação. HTML arbitrário nunca é aceito.
 
-## 9. Moderação
+## Evidência
 
-Reviewer visualiza:
-
-- original/preview;
-- ordem/capa;
-- metadados;
-- conteúdo completo.
-
-Rejeição da revisão inclui motivo. Não existe rejeição isolada que altere revisão submetida; owner corrige em nova draft.
-
-## 10. Testes
-
-- tipo/tamanho inválido;
-- MIME spoof;
-- path/ownership;
-- limite 20;
-- duas capas;
-- reorder concorrente;
-- upload órfão;
-- mídia pending não pública;
-- mídia approved pública;
-- LCP sem layout shift;
-- gallery keyboard/mobile;
-- YouTube inválido.
+A cobertura proporcional inclui contratos/decodificação em Vitest; grants, RLS A/B, constraints,
+idempotência, concorrência real, clone, limite e cleanup em pgTAP; e upload, spoof, ownership,
+respostas perdidas antes/depois da persistência, capa/ordem, mobile, teclado, axe, reflow e estabilidade
+visual em Playwright. Testes destrutivos usam exclusivamente o Supabase local.

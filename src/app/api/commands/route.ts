@@ -9,6 +9,7 @@ import {
 } from "@/domains/identity/server/identity-route";
 import { executeOwnerCommand } from "@/domains/owners/server/owner-command-handler";
 import { executeStudioCommand } from "@/domains/studios/server/studio-command-handler";
+import { createTrustedStudioMediaStorage } from "@/domains/studios/server/studio-media-storage";
 import { ApiRouteError, parseOrInputError, readLimitedJson } from "@/lib/server/api-route";
 
 const executePrivateCommand = createPrivateCommandRegistry({
@@ -35,10 +36,14 @@ export async function POST(request: Request) {
       },
     );
     setAction(command.action);
+    const studioMediaStorage = command.action.startsWith("studio.media.")
+      ? createTrustedStudioMediaStorage()
+      : undefined;
     return {
       data: await executePrivateCommand(command, {
         requestId,
         session: routeIdentity.session,
+        ...(studioMediaStorage === undefined ? {} : { studioMediaStorage }),
         userAgent: request.headers.get("user-agent"),
       }),
       responseHeaders: routeIdentity.responseHeaders,

@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "paths": {
       "@/*": ["./src/*"]
@@ -11,6 +12,7 @@
     "apps/backoffice/next.config.ts",
     "next.config.ts",
     "playwright.config.ts",
+    "supabase/functions/media-cleanup/**/*.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx",
     "vitest.config.ts"

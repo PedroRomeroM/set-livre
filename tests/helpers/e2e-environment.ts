@@ -23,6 +23,7 @@ export function readSafeE2EEnvironment() {
     explicitLocalPermission: environmentValue("E2E_ALLOW_LOCAL"),
     publicBaseUrl: environmentValue("E2E_BASE_URL"),
     supabaseAnonKey: environmentValue("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+    supabaseSecretKey: environmentValue("SUPABASE_SECRET_KEY"),
     supabaseUrl: environmentValue("NEXT_PUBLIC_SUPABASE_URL"),
   });
   return cachedSafeE2EEnvironment;

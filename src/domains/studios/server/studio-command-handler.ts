@@ -12,6 +12,7 @@ import {
   updateStudioCore,
   updateStudioTaxonomy,
 } from "./studio-service";
+import { executeStudioMediaCommand } from "./studio-media-service";
 
 function assertExpectedScope(context: PrivateCommandContext, expectedScope: string) {
   if (context.session.userId !== expectedScope) {
@@ -36,5 +37,11 @@ export async function executeStudioCommand(command: StudioCommand, context: Priv
       return updateStudioContent(command, context);
     case "studio.draft.discard":
       return discardStudio(command, context);
+    case "studio.media.upload.prepare":
+    case "studio.media.upload.finalize":
+    case "studio.media.reorder":
+    case "studio.media.cover.set":
+    case "studio.media.delete":
+      return executeStudioMediaCommand(command, context);
   }
 }

@@ -59,6 +59,7 @@ describe("Playwright webServer process boundary", () => {
       PGPASSWORD: "database-secret",
       SSH_AUTH_SOCK: "/tmp/agent.sock",
       SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
+      SUPABASE_SECRET_KEY: "cloud-secret-that-must-not-win",
       npm_config__authToken: "registry-secret",
     };
     const applicationEnvironment = {
@@ -67,6 +68,7 @@ describe("Playwright webServer process boundary", () => {
       NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_local_contract_key",
       NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+      SUPABASE_SECRET_KEY: "local-server-contract-key",
     };
 
     const overlay = createPlaywrightWebServerEnvironmentOverlay(inherited, applicationEnvironment);
@@ -90,10 +92,23 @@ describe("Playwright webServer process boundary", () => {
       PGPASSWORD: "",
       SSH_AUTH_SOCK: "",
       SUPABASE_SERVICE_ROLE_KEY: "",
+      SUPABASE_SECRET_KEY: "local-server-contract-key",
       npm_config__authToken: "",
     });
     expect(JSON.stringify(overlay)).not.toMatch(
-      /admin-secret|cloud:database-secret|host-anon|hostile|registry-secret|service-role-secret/u,
+      /admin-secret|cloud:database-secret|cloud-secret-that-must-not-win|host-anon|hostile|registry-secret|service-role-secret/u,
     );
+
+    const backofficeApplicationEnvironment = {
+      DATABASE_URL_APP_DAL: applicationEnvironment.DATABASE_URL_APP_DAL,
+      NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3001",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: applicationEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      NEXT_PUBLIC_SUPABASE_URL: applicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+    };
+    const backofficeOverlay = createPlaywrightWebServerEnvironmentOverlay(
+      inherited,
+      backofficeApplicationEnvironment,
+    );
+    expect(backofficeOverlay.SUPABASE_SECRET_KEY).toBe("");
   });
 });

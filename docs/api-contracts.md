@@ -172,7 +172,7 @@ Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo s
 
 ### 5.3 Estúdio e revisão
 
-Implementados nas FEAT-006 e FEAT-007:
+Implementados nas FEAT-006, FEAT-007 e FEAT-008:
 
 | Action                           | Efeito                                             |
 | -------------------------------- | -------------------------------------------------- |
@@ -181,22 +181,22 @@ Implementados nas FEAT-006 e FEAT-007:
 | `studio.revision.updateTaxonomy` | tags e comodidades ativas                          |
 | `studio.revision.updateContent`  | regras, FAQ ordenada e YouTube ID                  |
 | `studio.draft.discard`           | remove draft; preserva publicado ou exclui inédito |
+| `studio.media.upload.prepare`    | reserva objeto e emite token assinado              |
+| `studio.media.upload.finalize`   | valida original, gera prévia e associa             |
+| `studio.media.reorder`           | substitui a ordem completa                         |
+| `studio.media.cover.set`         | define capa única                                  |
+| `studio.media.delete`            | remove associação e agenda órfão                   |
 
 Planejados para features posteriores:
 
-| Action                         | Efeito                    |
-| ------------------------------ | ------------------------- |
-| `studio.revision.submit`       | valida completude e envia |
-| `studio.pause`                 | pausa novas reservas      |
-| `studio.resume`                | retoma se elegível        |
-| `studio.media.upload.prepare`  | emite upload assinado     |
-| `studio.media.upload.finalize` | valida objeto/metadados   |
-| `studio.media.reorder`         | posição                   |
-| `studio.media.cover.set`       | capa                      |
-| `studio.media.delete`          | remove se seguro          |
+| Action                   | Efeito                    |
+| ------------------------ | ------------------------- |
+| `studio.revision.submit` | valida completude e envia |
+| `studio.pause`           | pausa novas reservas      |
+| `studio.resume`          | retoma se elegível        |
 
-Os cinco envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
-payload de criação contém somente os dados centrais. Update e descarte recebem `studioId`,
+Os dez envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
+payload de criação contém somente os dados centrais. Updates, descarte e mídia recebem `studioId`,
 `expectedRevisionId` e `expectedRevisionVersion`; status e número de revisão nunca são aceitos do
 browser. Curitiba/PR, CEP, capacidade, tipo ativo e limites textuais são validados por Zod e pelo
 banco.
@@ -491,18 +491,18 @@ Provider desconhecido = 404. Assinatura inválida = 401/400 sem detalhar.
 
 `studio.media.upload.prepare` recebe:
 
-- studio/revision;
-- nome;
-- MIME;
-- tamanho;
-- checksum opcional.
+- `studioId`, `expectedRevisionId` e `expectedRevisionVersion`;
+- MIME declarado, tamanho em bytes e SHA-256 opcional.
 
 Retorna:
 
-- signed upload URL;
-- path;
-- media draft ID;
-- expiração.
+- bucket/path derivados, `mediaId` e token de upload assinado;
+- escopo, revisão/versão observadas e expiração de duas horas.
+
+O browser usa o cliente oficial de Storage apenas para `uploadToSignedUrl`, com deadline local de 60
+segundos e sem sobrescrita. O token nunca entra no QueryCache ou em persistência. Se a reserva expirar
+ou o objeto não for confirmado, a recuperação cria outra idempotência e outra identidade; a reserva
+antiga não é reativada nem continua consumindo a cota.
 
 ### Finalização
 
@@ -511,13 +511,26 @@ Verifica:
 - objeto existe;
 - tamanho/MIME reais;
 - imagem decodificável;
-- dimensões mínimas/máximas;
+- dimensões entre 1 e 8.192 px e orçamento máximo de 36 milhões de pixels;
 - path esperado;
 - ownership;
 - limite;
 - checksum.
 
-Só então `status=ready`.
+Antes do download, o servidor consulta o replay exato da mesma idempotência. Uma tentativa ainda
+pendente baixa no máximo 15 MiB, valida página única, gera uma prévia privada WebP auto-orientada de
+até 1.280 px/3 MiB e aceita uma derivada preexistente somente quando os bytes coincidem. Só então a
+transação muda `status=ready`, cria a associação e incrementa a revisão uma vez. MIME forjado ou
+decode inválido produz rejeição segura; indisponibilidade permanece ambígua e exige releitura.
+
+Ordem recebe exatamente o conjunto completo e sem duplicatas da galeria observada. Capa e exclusão
+recebem um `mediaId`. As três ações usam a mesma versão otimista; replay pode reconhecer o snapshot
+histórico registrado, mas o cliente sempre relê o GET autoritativo antes de publicar e descarta número
+de revisão ou versão regressivos. Conflito bloqueia novas ações até reconciliação explícita. `GET
+/api/owner/studios/[studioId]/media` obtém paths pela função DAL privada, usa a secret key somente no
+servidor para assinar em lote as prévias por cinco minutos e omite os paths persistidos do payload do
+browser. O DTO inclui `previewExpiresAt`; em número/versão iguais, o cache conserva a assinatura com
+expiração posterior.
 
 ## 9. Query invalidation map
 
@@ -545,6 +558,12 @@ escopo; logout ou troca de identidade remove editores e catálogos privados. `in
 do mesmo usuário/estúdio terminar sem erro; refetch em curso volta ao boundary neutro. Conflito
 otimista relê o editor e preserva os valores locais para comparação. Exclusão de inédito remove a
 família; mudança de sessão, acesso ou contrato limpa o cliente e recompõe a rota SSR.
+
+Na FEAT-008, a galeria usa `owner/private/studio-media/<userId>/<studioId>`. O SSR e a primeira
+composição do cliente permanecem neutros até o GET autoritativo da mesma identidade/estúdio. Sucesso
+publica somente na key já observada e invalida o editor irmão; resposta perdida conserva a
+idempotência e primeiro relê a galeria. Logout, troca de conta ou perda de autoridade limpam também
+todas as URLs assinadas privadas do cache.
 
 ## 10. Rate limits iniciais
 

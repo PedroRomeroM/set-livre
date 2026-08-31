@@ -7,6 +7,7 @@ import {
   studioTaxonomyReferenceSchema,
   studioYoutubeVideoIdSchema,
 } from "./studio-taxonomy-content";
+import { studioMediaCommandActionSchema, studioMediaCommandSchema } from "./studio-media";
 
 export const studioStatusSchema = z.enum([
   "draft",
@@ -229,6 +230,7 @@ export const studioCommandActionSchema = z.enum([
   "studio.revision.updateTaxonomy",
   "studio.revision.updateContent",
   "studio.draft.discard",
+  ...studioMediaCommandActionSchema.options,
 ]);
 
 export const studioCommandSchema = z.discriminatedUnion("action", [
@@ -237,6 +239,7 @@ export const studioCommandSchema = z.discriminatedUnion("action", [
   studioRevisionUpdateTaxonomyCommandSchema,
   studioRevisionUpdateContentCommandSchema,
   studioDraftDiscardCommandSchema,
+  ...studioMediaCommandSchema.options,
 ]);
 
 export const studioDraftDiscardResultSchema = z.discriminatedUnion("studioDeleted", [

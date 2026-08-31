@@ -11,6 +11,7 @@ const safeEnvironmentSchema = z.object({
   explicitLocalPermission: z.literal("1"),
   publicBaseUrl: z.url(),
   supabaseAnonKey: z.string().min(1).max(8_192),
+  supabaseSecretKey: z.string().min(1).max(8_192),
   supabaseUrl: z.url(),
 });
 
@@ -23,6 +24,7 @@ type SafeEnvironmentInput = {
   explicitLocalPermission: string | undefined;
   publicBaseUrl: string | undefined;
   supabaseAnonKey: string | undefined;
+  supabaseSecretKey: string | undefined;
   supabaseUrl: string | undefined;
 };
 
@@ -45,6 +47,23 @@ function assertPublicSupabaseKey(value: string) {
     if (payload.role !== "anon") throw new Error("role inesperada");
   } catch {
     throw new Error("NEXT_PUBLIC_SUPABASE_ANON_KEY precisa usar a role pública anon.");
+  }
+}
+
+function assertLocalServerSupabaseKey(value: string) {
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("SUPABASE_SECRET_KEY não é uma chave server-only local válida.");
+  }
+
+  try {
+    const payload = z
+      .object({ role: z.literal("service_role") })
+      .passthrough()
+      .parse(JSON.parse(Buffer.from(segments[1] ?? "", "base64url").toString("utf8")));
+    if (payload.role !== "service_role") throw new Error("role inesperada");
+  } catch {
+    throw new Error("SUPABASE_SECRET_KEY local precisa usar a role service_role.");
   }
 }
 
@@ -117,6 +136,7 @@ function assertBareOrigin(parsed: URL, label: string) {
 export function assertSafeE2EEnvironment(input: SafeEnvironmentInput) {
   const parsed = safeEnvironmentSchema.parse(input);
   assertPublicSupabaseKey(parsed.supabaseAnonKey);
+  assertLocalServerSupabaseKey(parsed.supabaseSecretKey);
 
   const publicBaseUrl = assertLocalUrl(
     parsed.publicBaseUrl,

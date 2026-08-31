@@ -1,146 +1,105 @@
-# FEAT-008 — Galeria de fotos, capa e ordenação
+# FEAT-008 — Galeria privada do estúdio
 
-## Metadados
+## Estado e recorte
 
-| Campo            | Valor                                                                                                      |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| Status           | Planejada                                                                                                  |
-| Prioridade       | P0                                                                                                         |
-| Domínio          | `media`                                                                                                    |
-| Specs Playwright | `tests/e2e/critical/feat-008-studio-media.spec.ts`<br>`tests/e2e/regression/feat-008-studio-media.spec.ts` |
+| Campo            | Valor                                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status           | Em andamento                                                                                                                                                                                                              |
+| Prioridade       | P0                                                                                                                                                                                                                        |
+| Domínio          | `media`                                                                                                                                                                                                                   |
+| Superfície       | `/dono/estudios/[studioId]/midia`                                                                                                                                                                                         |
+| Specs Playwright | `tests/e2e/critical/feat-008-studio-media.spec.ts`<br>`tests/e2e/regression/feat-008-studio-media.spec.ts`<br>`tests/e2e/accessibility/feat-008-studio-media.spec.ts`<br>`tests/e2e/reflow/feat-008-studio-media.spec.ts` |
 
-## Objetivo
+A feature permite ao dono enviar e organizar as fotos da revisão editável do próprio estúdio. Ela
+depende de FEAT-006 e do Supabase Storage. Revisão editorial, submissão, catálogo público e SEO
+pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipados aqui.
 
-Permitir fotos de alta qualidade com upload direto seguro, capa e ordenação, sem expor mídia não aprovada.
+## Contrato vertical
 
-## Papéis
+- a revisão editável aceita de zero a vinte fotos; a exigência de ao menos uma foto e de uma capa é
+  validada somente ao enviar a revisão;
+- JPEG, PNG, WebP e AVIF são aceitos até 15 MiB, 8.192 px por dimensão e 36 milhões de pixels;
+- `studio.media.upload.prepare` deriva o path e emite token assinado sem sobrescrita. Reserva
+  expirada deixa de consumir a cota imediatamente; renovar cria nova idempotência, mídia, path e token;
+- o browser envia o arquivo diretamente ao bucket privado `studio-media`;
+- `studio.media.upload.finalize` verifica replay antes de baixar, comprova bytes, MIME real,
+  decodificação, dimensões e SHA-256, gera uma prévia WebP de até 1.280 px/3 MiB e só então associa o
+  objeto à revisão;
+- `studio.media.reorder`, `studio.media.cover.set` e `studio.media.delete` usam versão otimista da
+  revisão, idempotência e retorno autoritativo;
+- a associação é versionada por revisão. Criar um novo rascunho preserva os mesmos objetos da revisão
+  publicada até que o dono altere a nova associação;
+- exclusão física ocorre somente sem associação remanescente, via Storage API. A autorização de upload
+  expira em duas horas e deixa de consumir cota; o órfão fica elegível para limpeza após 24 horas,
+  enquanto rejeição e exclusão entram imediatamente na fila com retry cercado por claim;
+- a leitura do dono obtém paths somente por função DAL privada e os assina em lote no servidor com a
+  secret key dedicada por cinco minutos; o browser não recebe paths nem permissão para assinar ou ler
+  objetos e o original ou a revisão nunca se tornam públicos;
+- o runtime x86_64 processa no máximo uma imagem por vez, com fila pequena e deadline explícito. Excesso
+  retorna indisponibilidade recuperável antes de pressionar a VM de 1 GiB.
 
-- dono
-- reviewer
-- visitante
+## UX obrigatória
 
-## Rotas e superfícies
+- hidratação fail-closed e releitura privada por usuário + estúdio;
+- fila sequencial em memória, deadline de upload de 60 segundos, estado por arquivo e recuperação
+  explícita tanto antes quanto depois de uma resposta perdida;
+- respostas atrasadas nunca fazem o cache regredir: número da revisão e versão formam o fence
+  monotônico, e toda mutação bem-sucedida termina com releitura autoritativa;
+- ordenação completa por botões acessíveis e teclado, sem depender de drag;
+- escolha de capa, confirmação de exclusão e lightbox com retorno de foco;
+- composição própria em 320 px, zoom de 200%, touch targets de 44 px e axe no fluxo principal;
+- loading, vazio, erro, conflito, sucesso e expiração de prévia somente onde há transição real.
 
-- /dono/estudios/[studioId]/midia
+## Segurança e dados
 
-## Dependências
+- tabelas `studio_media` e `studio_revision_media`, RLS habilitada e grants mínimos;
+- estados do objeto: `pending_upload`, `ready`, `rejected`, `delete_pending` e `deleted`;
+- paths canônicos `owners/<ownerId>/studios/<studioId>/revisions/<revisionId>/<mediaId>.<ext>` e
+  `<mediaId>.preview.webp`;
+- nenhum ID do cliente prova ownership e nenhuma operação usa secret/service role no browser. A
+  aplicação pública da VM recebe a secret key somente em `EnvironmentFile` root-only para operações
+  estreitas de Storage, depois que sessão, ownership e paths foram validados pelo DAL;
+- Edge Function de cleanup autentica uma secret key exclusivamente no header `apikey`, executa lote
+  limitado e remove o objeto somente pela Storage API;
+- ledger interrompido é recuperado sem edição manual: após 30 minutos, a próxima execução fecha o run
+  abandonado, reassume leases vencidos e precisa concluir com sucesso para restaurar readiness;
+- a VM invoca somente o slug imutável da release ativa por uma oneshot e timer `systemd`; Cron,
+  `pg_net` e Vault não pertencem ao fluxo, `maintenance` permanece privado e `service_role` recebe
+  apenas as fachadas RPC estreitas;
+- o retorno ao browser omite `storagePath`; grants de tabela/Storage não permitem descoberta nem
+  assinatura direta e URL assinada não entra em persistência nem cache público.
+- a CSP admite para prévias somente a origem Supabase exata e o canário interrompido permanece
+  recuperável: após 30 minutos, ausência dos dois paths precisa ser provada por `404/NoSuchKey` antes
+  de o checkpoint virar `aborted`.
 
-- FEAT-006
-- Supabase Storage
-- FEAT-030
+## Cenários de aceitação
 
-## Incluído
+| ID              | Prioridade | Suíte      | Viewport | Cenário                                                       |
+| --------------- | ---------- | ---------- | -------- | ------------------------------------------------------------- |
+| SL-F008-E2E-001 | P0         | critical   | desktop  | upload válido, finalização, capa e ordenação                  |
+| SL-F008-E2E-002 | P0         | critical   | desktop  | MIME forjado e arquivo acima do limite são rejeitados         |
+| SL-F008-E2E-003 | P0         | critical   | desktop  | mídia pendente não aparece e falha permite recuperação segura |
+| SL-F008-E2E-004 | P1         | regression | matriz   | prévia expirada e cancelamento recuperam estado e foco        |
+| SL-F008-E2E-005 | P1         | regression | desktop  | dimensões reservadas evitam salto na galeria privada          |
+| SL-F008-E2E-006 | P0         | critical   | desktop  | dono A não lê nem obtém upload para o estúdio do dono B       |
+| SL-F008-E2E-007 | P1         | regression | desktop  | hidratação fecha dados e resposta perdida não duplica comando |
+| SL-F008-E2E-008 | P1         | regression | desktop  | conflito bloqueia ações até aceitar o estado autoritativo     |
+| SL-F008-E2E-009 | P1         | regression | desktop  | sem JavaScript não há mídia nem controle privado no DOM       |
+| SL-F008-E2E-010 | P1         | axe        | matriz   | teclado, foco, tema escuro e viewports passam acessibilidade  |
+| SL-F008-E2E-011 | P2         | reflow     | 200%     | galeria, fila e lightbox permanecem operáveis sem overflow    |
+| SL-F008-E2E-012 | P1         | regression | matriz   | conflito no upload exige estado salvo e reserva nova          |
 
-- Preparação e finalização do upload.
-- 1–20 fotos.
-- JPEG/PNG/WebP/AVIF até 15MB.
-- Capa.
-- Ordenação.
-- Remoção segura.
-- Pré-visualização para dono/revisor e entrega pública após aprovação.
+Os P0 atravessam a UI. Setup e limpeza usam apenas o Supabase local, dados com namespace QA,
+locators semânticos, sem `waitForTimeout`, `.skip`, `.only` ou retry que esconda flakiness.
 
-## Fora desta feature
+## Evidência antes de concluir
 
-- upload de vídeo
-- editor de imagem
-- SVG/GIF
+- unitários: envelopes estritos, formatos/decodificação e orquestração do cleanup;
+- pgTAP: constraints, grants, RLS A/B, limite 20, clone de revisão, idempotência, concorrência e claims;
+- Playwright: os doze cenários acima, incluindo mobile, teclado, axe e reflow;
+- gates completos, review limpo no SHA, merge, migration, bucket e Function imutável em produção,
+  canário HTTPS real da candidata, oneshot/timer de dez minutos na VM, ledger saudável e health público
+  verde.
 
-## Regras de produto e domínio
-
-- Somente revisão em rascunho.
-- A capa é obrigatória no envio para revisão.
-- Objeto não finalizado limpa em 24h.
-- Original preservado.
-- A reordenação é transacional.
-- Mídia antiga não some da revisão publicada.
-
-## Dados canônicos afetados
-
-- studio_media
-- Storage bucket privado
-
-## Read models
-
-- media URLs assinadas/públicas por revisão
-
-## Comandos e integrações
-
-- studio.media.upload.prepare
-- finalize
-- reorder
-- cover.set
-- delete
-
-## UX e estados obrigatórios
-
-- Progress por arquivo.
-- Erro individual.
-- Reordenação por arrastar com alternativa por botões e teclado.
-- Pré-visualização em lightbox.
-- Mobile grid.
-
-Além do fluxo nominal, a interface contempla somente os estados que possuem transição real nesta feature, como loading, vazio, erro, conflito, timeout, sucesso e recuperação quando aplicáveis. Não se cria estado artificial para preencher checklist.
-
-## Segurança e privacidade
-
-- Signed URL curta.
-- MIME real/dimensões/checksum.
-- Path derivado.
-- RLS Storage.
-- Sem SVG.
-
-## Critérios de aceitação
-
-- Um upload válido é finalizado.
-- Arquivo spoof/maior falha.
-- Uma capa.
-- Mídia pendente não é pública.
-- Approved entrega responsiva.
-- Orphan cleanup.
-
-## Playwright obrigatório
-
-| ID              | Prioridade | Suíte      | Viewport | Cenário                                           | Spec                                                 |
-| --------------- | ---------- | ---------- | -------- | ------------------------------------------------- | ---------------------------------------------------- |
-| SL-F008-E2E-001 | P0         | critical   | desktop  | fazer upload, finalizar, definir capa e reordenar | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
-| SL-F008-E2E-002 | P0         | critical   | desktop  | MIME forjado e tamanho excedido são rejeitados    | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
-| SL-F008-E2E-003 | P0         | critical   | desktop  | mídia em rascunho não é pública                   | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
-| SL-F008-E2E-004 | P1         | regression | mobile   | reordenar por alternativa acessível               | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-005 | P1         | regression | desktop  | galeria aprovada não causa CLS                    | `tests/e2e/regression/feat-008-studio-media.spec.ts` |
-| SL-F008-E2E-006 | P0         | critical   | desktop  | dono A não obtém upload assinado para estúdio B   | `tests/e2e/critical/feat-008-studio-media.spec.ts`   |
-
-Regras:
-
-- fluxos P0 passam pela UI;
-- setup/cleanup pode usar helper de banco somente local;
-- locators semânticos primeiro;
-- axe no cenário indicado ou no principal da feature;
-- sem `waitForTimeout`;
-- trace/screenshot em falha;
-- dados com namespace QA.
-
-## Testes unitários, integração e banco
-
-- unitário: file policy/path
-- integração: Storage fake/local
-- banco: cover unique/RLS
-- cleanup job
-
-## Documentação viva afetada
-
-- media.md
-- security-privacy.md
-- qa-test-plan.md
-
-Enquanto este plano existir, qualquer mudança de escopo atualiza este arquivo e o catálogo QA.
-
-## Definition of Done da feature
-
-- todos os critérios acima comprovados;
-- migration/grants/RLS verdes quando aplicável;
-- read model/command e invalidação documentados;
-- Playwright listado e verde;
-- desktop/mobile/teclado/axe verificados;
-- logs e métricas necessários;
-- rollback/correção definidos;
-- nenhuma funcionalidade fora de escopo introduzida.
+Após esse ciclo, os fatos duráveis são consolidados nos documentos de domínio e este plano transitório
+é removido.

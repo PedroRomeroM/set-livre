@@ -3,14 +3,22 @@ import {
   apiSuccessSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
+  studioMediaGallerySchema,
+  studioMediaPrivateCacheSeconds,
+  studioMediaUploadDeadlineMs,
+  studioMediaUploadPreparationSchema,
   studioTaxonomiesSchema,
   studioTypeOptionsSchema,
   type StudioCommand,
   type StudioDraftDiscardResult,
   type StudioEditor,
+  type StudioMediaCommand,
+  type StudioMediaGallery,
+  type StudioMediaUploadPreparation,
   type StudioTaxonomies,
   type StudioTypeOption,
 } from "@set-livre/contracts";
+import { StorageApiError, StorageClient } from "@supabase/storage-js";
 import { z } from "zod";
 
 const studioRequestTimeoutMs = 10_000;
@@ -168,6 +176,115 @@ export function discardStudioDraft(
     body: JSON.stringify(command),
     method: "POST",
   });
+}
+
+export function readStudioMedia(
+  studioId: string,
+  signal?: AbortSignal,
+): Promise<StudioMediaGallery> {
+  return requestStudio(
+    `/api/owner/studios/${encodeURIComponent(studioId)}/media`,
+    studioMediaGallerySchema,
+    signal === undefined ? undefined : { signal },
+  );
+}
+
+export function prepareStudioMediaUpload(
+  command: Extract<StudioMediaCommand, { action: "studio.media.upload.prepare" }>,
+): Promise<StudioMediaUploadPreparation> {
+  return requestStudio("/api/commands", studioMediaUploadPreparationSchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function finalizeStudioMediaUpload(
+  command: Extract<StudioMediaCommand, { action: "studio.media.upload.finalize" }>,
+) {
+  return requestStudio("/api/commands", studioMediaGallerySchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function reorderStudioMedia(
+  command: Extract<StudioMediaCommand, { action: "studio.media.reorder" }>,
+) {
+  return requestStudio("/api/commands", studioMediaGallerySchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function setStudioMediaCover(
+  command: Extract<StudioMediaCommand, { action: "studio.media.cover.set" }>,
+) {
+  return requestStudio("/api/commands", studioMediaGallerySchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+export function deleteStudioMedia(
+  command: Extract<StudioMediaCommand, { action: "studio.media.delete" }>,
+) {
+  return requestStudio("/api/commands", studioMediaGallerySchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
+function mediaUploadEnvironment() {
+  const origin = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const parsed = z.strictObject({ key: z.string().min(1), origin: z.url() }).parse({ key, origin });
+  return parsed;
+}
+
+export async function uploadStudioMediaObject(
+  preparation: StudioMediaUploadPreparation,
+  file: File,
+  signal: AbortSignal,
+) {
+  const environment = mediaUploadEnvironment();
+  const deadlineController = new AbortController();
+  const deadline = window.setTimeout(() => deadlineController.abort(), studioMediaUploadDeadlineMs);
+  const storage = new StorageClient(
+    new URL("/storage/v1", environment.origin).href.replace(/\/$/u, ""),
+    { apikey: environment.key },
+    (input, init) =>
+      fetch(input, {
+        ...init,
+        signal:
+          init?.signal === undefined || init.signal === null
+            ? AbortSignal.any([signal, deadlineController.signal])
+            : AbortSignal.any([signal, deadlineController.signal, init.signal]),
+      }),
+  );
+  try {
+    const { error } = await storage
+      .from(preparation.bucket)
+      .uploadToSignedUrl(preparation.path, preparation.signedToken, file, {
+        cacheControl: String(studioMediaPrivateCacheSeconds),
+        contentType: file.type,
+        upsert: false,
+      });
+    if (error !== null) {
+      const definitiveRejection =
+        error instanceof StorageApiError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        ![408, 409, 429].includes(error.status);
+      throw new StudioApiError(
+        definitiveRejection ? "STORAGE_UPLOAD_REJECTED" : "STORAGE_UPLOAD_FAILED",
+        definitiveRejection
+          ? "O armazenamento recusou este token sem salvar o arquivo. Renove o envio e tente novamente."
+          : "Não foi possível confirmar o envio. Verifique o estado antes de tentar novamente.",
+      );
+    }
+  } finally {
+    window.clearTimeout(deadline);
+  }
 }
 
 export function isAmbiguousStudioError(error: unknown) {

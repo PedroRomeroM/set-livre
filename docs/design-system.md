@@ -225,6 +225,24 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   interação, os formulários usam `method=post` apenas como fallback seguro e cada controle permanece
   desabilitado; depois da hidratação, a composição visual original é mantida.
 
+### 3.7 Composição da FEAT-008
+
+- a galeria do dono reutiliza `PageFrame`, `Panel`, `Stack`, `Alert`, `Button` e `ButtonLink`; upload,
+  cards e lightbox pertencem ao CSS Module do domínio e não criam primitives globais prematuras;
+- o seletor múltiplo alimenta uma fila sequencial com estado textual por arquivo. Falha definitiva de
+  um item não interrompe os seguintes; resultado ambíguo oferece verificação explícita sem duplicar o
+  comando;
+- expiração do token de upload oferece `Renovar envio` e cria uma reserva nova; expiração de qualquer
+  thumbnail ou da imagem ampliada publica um alerta agregado e uma única ação `Renovar prévias`;
+- ordem usa botões `Subir`/`Descer`, capa e exclusão possuem nomes contextuais, e a confirmação de
+  exclusão permanece em fluxo normal. Drag nunca é requisito;
+- cards reservam a proporção persistida da prévia. A imagem abre um lightbox modal com trap de foco,
+  fechamento por Escape/backdrop e retorno ao acionador; expiração da URL apresenta recuperação;
+- hidratação, refetch, troca de escopo e conflito mantêm a superfície privada fail-closed. A matriz
+  cobre 320 px, mobile, tema escuro, teclado, axe e reflow a 200%, com alvos mínimos de 44 px.
+- anúncios sequenciais usam uma ocorrência nova da live region e incluem o nome do arquivo, evitando
+  que duas conclusões com texto semelhante sejam deduplicadas por tecnologia assistiva.
+
 ## 4. Contratos
 
 ### 4.1 Botões

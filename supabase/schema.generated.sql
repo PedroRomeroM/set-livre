@@ -469,6 +469,68 @@ COMMENT ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "uui
 
 
 
+CREATE OR REPLACE FUNCTION "private"."assert_editable_studio_media_relation"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  target_revision_id uuid;
+  target_revision_status text;
+  target_revision_studio_id uuid;
+  target_media_status text;
+  target_media_studio_id uuid;
+begin
+  target_revision_id := case when tg_op = 'DELETE' then old.revision_id else new.revision_id end;
+
+  select revision.status, revision.studio_id
+  into target_revision_status, target_revision_studio_id
+  from public.studio_revisions as revision
+  where revision.id = target_revision_id
+  for share;
+
+  if tg_op = 'DELETE' then
+    select media.status, media.studio_id
+    into target_media_status, target_media_studio_id
+    from public.studio_media as media
+    where media.id = old.media_id
+    for share;
+
+    if target_revision_status = 'draft'
+      or (found and target_media_status = 'delete_pending')
+    then
+      return old;
+    end if;
+
+    raise exception using errcode = '23514', message = 'studio_media_revision_immutable';
+  end if;
+
+  if target_revision_status is distinct from 'draft' then
+    raise exception using errcode = '23514', message = 'studio_media_revision_immutable';
+  end if;
+
+  if tg_op <> 'DELETE' then
+    select media.status, media.studio_id
+    into target_media_status, target_media_studio_id
+    from public.studio_media as media
+    where media.id = new.media_id
+    for share;
+
+    if not found
+      or target_media_status <> 'ready'
+      or target_media_studio_id is distinct from target_revision_studio_id
+    then
+      raise exception using errcode = '23514', message = 'studio_media_relation_invalid';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."assert_editable_studio_media_relation"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."assert_editable_studio_revision_relation"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -562,6 +624,40 @@ $$;
 
 
 ALTER FUNCTION "private"."assert_studio_owner_mutable"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."audit_studio_media_command"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_studio_id" "uuid", "p_metadata" "jsonb") RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  insert into audit.events (
+    actor_user_id,
+    actor_role,
+    action,
+    target_type,
+    target_id,
+    result,
+    request_id,
+    idempotency_key,
+    ip_hash,
+    metadata
+  )
+  values (
+    p_user_id,
+    'authenticated',
+    p_action,
+    'studio',
+    p_studio_id,
+    'succeeded',
+    p_request_id,
+    p_idempotency_key,
+    null,
+    p_metadata
+  );
+$$;
+
+
+ALTER FUNCTION "private"."audit_studio_media_command"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_studio_id" "uuid", "p_metadata" "jsonb") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."backoffice_payload_hash"("payload" "jsonb") RETURNS "text"
@@ -1704,6 +1800,43 @@ $$;
 ALTER FUNCTION "private"."clone_studio_revision_content_before_insert"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."clone_studio_revision_media_after_insert"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  source_revision_id uuid;
+begin
+  if new.status <> 'draft' then
+    return new;
+  end if;
+
+  select studio.published_revision_id
+  into source_revision_id
+  from public.studios as studio
+  join public.studio_revisions as revision on revision.id = studio.published_revision_id
+  where studio.id = new.studio_id
+    and studio.draft_revision_id is null
+    and revision.status = 'approved';
+
+  if source_revision_id is null then
+    return new;
+  end if;
+
+  insert into public.studio_revision_media (revision_id, media_id, position, is_cover)
+  select new.id, relation.media_id, relation.position, relation.is_cover
+  from public.studio_revision_media as relation
+  where relation.revision_id = source_revision_id
+  order by relation.position;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."clone_studio_revision_media_after_insert"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."clone_studio_revision_relations_after_insert"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -2336,6 +2469,161 @@ COMMENT ON FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_idempotency
 
 
 
+CREATE OR REPLACE FUNCTION "private"."delete_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  media_count integer;
+  media_is_cover boolean;
+  media_status text;
+  payload_hash text;
+  replay jsonb;
+  result jsonb;
+  resulting_revision_version bigint;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_delete';
+  end if;
+
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.delete',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.delete',
+    payload_hash,
+    p_studio_id,
+    p_media_id
+  );
+  if replay is not null then
+    return replay;
+  end if;
+
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+
+  select relation.is_cover,
+    (
+      select pg_catalog.count(*)::integer
+      from public.studio_revision_media as counted
+      where counted.revision_id = draft_revision_id
+    )
+  into media_is_cover, media_count
+  from public.studio_revision_media as relation
+  where relation.revision_id = draft_revision_id
+    and relation.media_id = p_media_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+  if media_is_cover and media_count > 1 then
+    raise exception using errcode = '23514', message = 'studio_media_cover_replacement_required';
+  end if;
+
+  set constraints public.studio_revision_media_position_key deferred;
+
+  delete from public.studio_revision_media as relation
+  where relation.revision_id = draft_revision_id
+    and relation.media_id = p_media_id;
+
+  with ordered as (
+    select relation.media_id,
+      pg_catalog.row_number() over (order by relation.position)::smallint as position
+    from public.studio_revision_media as relation
+    where relation.revision_id = draft_revision_id
+  )
+  update public.studio_revision_media as relation
+  set position = ordered.position
+  from ordered
+  where relation.revision_id = draft_revision_id
+    and relation.media_id = ordered.media_id
+    and relation.position <> ordered.position;
+
+  update public.studio_revisions as revision
+  set revision_version = revision.revision_version + 1
+  where revision.id = draft_revision_id
+    and revision.status = 'draft'
+    and revision.revision_version = draft_revision_version
+  returning revision.revision_version into resulting_revision_version;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_revision_conflict';
+  end if;
+
+  select media.status
+  into media_status
+  from public.studio_media as media
+  where media.id = p_media_id;
+
+  result := private.get_owner_studio_media(p_user_id, p_studio_id);
+  perform private.record_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.delete',
+    payload_hash,
+    p_studio_id,
+    draft_revision_id,
+    resulting_revision_version,
+    p_media_id,
+    result
+  );
+  perform private.audit_studio_media_command(
+    p_user_id,
+    p_request_id,
+    p_idempotency_key,
+    'studio.media_deleted',
+    p_studio_id,
+    pg_catalog.jsonb_build_object(
+      'mediaId', p_media_id,
+      'revisionId', draft_revision_id,
+      'revisionVersion', resulting_revision_version,
+      'objectStatus', media_status
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."delete_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."delete_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") IS 'Remove somente a associação da draft; objeto compartilhado permanece e órfão entra em delete_pending.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -2739,6 +3027,71 @@ $$;
 ALTER FUNCTION "private"."enforce_profile_lifecycle"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."enforce_studio_media_lifecycle"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if old.id is distinct from new.id
+    or old.uploaded_by is distinct from new.uploaded_by
+    or old.storage_bucket is distinct from new.storage_bucket
+    or old.storage_path is distinct from new.storage_path
+    or old.preview_storage_path is distinct from new.preview_storage_path
+    or old.declared_mime_type is distinct from new.declared_mime_type
+    or old.declared_size_bytes is distinct from new.declared_size_bytes
+    or old.declared_checksum_sha256 is distinct from new.declared_checksum_sha256
+    or old.prepared_at is distinct from new.prepared_at
+    or old.upload_expires_at is distinct from new.upload_expires_at
+    or (
+      old.studio_id is distinct from new.studio_id
+      and not (
+        old.studio_id is not null
+        and new.studio_id is null
+        and old.status in ('delete_pending', 'deleted')
+        and new.status in ('delete_pending', 'deleted')
+      )
+    )
+    or (
+      old.prepared_revision_id is distinct from new.prepared_revision_id
+      and not (
+        old.prepared_revision_id is not null
+        and new.prepared_revision_id is null
+        and old.status in ('delete_pending', 'deleted')
+        and new.status in ('delete_pending', 'deleted')
+      )
+    )
+    or (old.actual_mime_type is not null and old.actual_mime_type is distinct from new.actual_mime_type)
+    or (old.actual_size_bytes is not null and old.actual_size_bytes is distinct from new.actual_size_bytes)
+    or (old.width is not null and old.width is distinct from new.width)
+    or (old.height is not null and old.height is distinct from new.height)
+    or (old.checksum_sha256 is not null and old.checksum_sha256 is distinct from new.checksum_sha256)
+    or (old.rejection_code is not null and old.rejection_code is distinct from new.rejection_code)
+    or (old.finalized_at is not null and old.finalized_at is distinct from new.finalized_at)
+    or (old.rejected_at is not null and old.rejected_at is distinct from new.rejected_at)
+    or (old.delete_requested_at is not null and old.delete_requested_at is distinct from new.delete_requested_at)
+    or (old.deleted_at is not null and old.deleted_at is distinct from new.deleted_at)
+  then
+    raise exception using errcode = '23514', message = 'studio_media_object_immutable';
+  end if;
+
+  if old.status <> new.status and not (
+    (old.status = 'pending_upload' and new.status in ('ready', 'rejected', 'delete_pending'))
+    or (old.status = 'ready' and new.status = 'delete_pending')
+    or (old.status = 'rejected' and new.status = 'delete_pending')
+    or (old.status = 'delete_pending' and new.status = 'deleted')
+  ) then
+    raise exception using errcode = '23514', message = 'studio_media_state_transition_invalid';
+  end if;
+
+  new.updated_at := pg_catalog.clock_timestamp();
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."enforce_studio_media_lifecycle"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."enforce_studio_revision_immutability"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -2823,6 +3176,189 @@ ALTER FUNCTION "private"."enforce_studio_revision_pointers"() OWNER TO "postgres
 
 
 COMMENT ON FUNCTION "private"."enforce_studio_revision_pointers"() IS 'Valida ponteiros ao fim da instrução atômica com autoridade interna mínima.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  is_first boolean;
+  media public.studio_media%rowtype;
+  next_position smallint;
+  payload_hash text;
+  replay jsonb;
+  result jsonb;
+  resulting_revision_version bigint;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_media_id is null
+    or p_actual_mime_type is null
+    or p_actual_mime_type <> all (array[
+      'image/jpeg'::text,
+      'image/png'::text,
+      'image/webp'::text,
+      'image/avif'::text
+    ])
+    or p_actual_size_bytes is null
+    or p_actual_size_bytes not between 1 and 15728640
+    or p_width is null
+    or p_width not between 1 and 8192
+    or p_height is null
+    or p_height not between 1 and 8192
+    or p_width::bigint * p_height::bigint > 36000000
+    or p_checksum_sha256 is null
+    or p_checksum_sha256 !~ '^[0-9a-f]{64}$'
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize';
+  end if;
+
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.finalize',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.finalize',
+    payload_hash,
+    p_studio_id,
+    p_media_id
+  );
+  if replay is not null then
+    return replay;
+  end if;
+
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+
+  select candidate.*
+  into media
+  from public.studio_media as candidate
+  where candidate.id = p_media_id
+    and candidate.studio_id = p_studio_id
+    and candidate.prepared_revision_id = draft_revision_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+  if media.status <> 'pending_upload' then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_conflict';
+  end if;
+  if media.upload_expires_at <= pg_catalog.clock_timestamp() then
+    raise exception using errcode = '40001', message = 'studio_media_upload_expired';
+  end if;
+  if media.declared_mime_type <> p_actual_mime_type
+    or media.declared_size_bytes <> p_actual_size_bytes
+    or (
+      media.declared_checksum_sha256 is not null
+      and media.declared_checksum_sha256 <> p_checksum_sha256
+    )
+  then
+    raise exception using errcode = '23514', message = 'studio_media_metadata_mismatch';
+  end if;
+
+  select coalesce(pg_catalog.max(relation.position), 0) + 1,
+    pg_catalog.count(*) = 0
+  into next_position, is_first
+  from public.studio_revision_media as relation
+  where relation.revision_id = draft_revision_id;
+
+  if next_position > 20 then
+    raise exception using errcode = '23514', message = 'studio_media_limit_reached';
+  end if;
+
+  update public.studio_media as candidate
+  set
+    actual_mime_type = p_actual_mime_type,
+    actual_size_bytes = p_actual_size_bytes,
+    width = p_width,
+    height = p_height,
+    checksum_sha256 = p_checksum_sha256,
+    status = 'ready',
+    finalized_at = pg_catalog.clock_timestamp(),
+    cleanup_after = null
+  where candidate.id = media.id;
+
+  insert into public.studio_revision_media (revision_id, media_id, position, is_cover)
+  values (draft_revision_id, p_media_id, next_position, is_first);
+
+  update public.studio_revisions as revision
+  set revision_version = revision.revision_version + 1
+  where revision.id = draft_revision_id
+    and revision.status = 'draft'
+    and revision.revision_version = draft_revision_version
+  returning revision.revision_version into resulting_revision_version;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_revision_conflict';
+  end if;
+
+  result := private.get_owner_studio_media(p_user_id, p_studio_id);
+  perform private.record_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.finalize',
+    payload_hash,
+    p_studio_id,
+    draft_revision_id,
+    resulting_revision_version,
+    p_media_id,
+    result
+  );
+  perform private.audit_studio_media_command(
+    p_user_id,
+    p_request_id,
+    p_idempotency_key,
+    'studio.media_upload_finalized',
+    p_studio_id,
+    pg_catalog.jsonb_build_object(
+      'mediaId', p_media_id,
+      'revisionId', draft_revision_id,
+      'revisionVersion', resulting_revision_version,
+      'mimeType', p_actual_mime_type,
+      'sizeBytes', p_actual_size_bytes,
+      'width', p_width,
+      'height', p_height
+    )
+  );
+
+  return result;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") IS 'Persiste fatos verificados, associa a mídia pronta e incrementa a versão da draft uma vez.';
 
 
 
@@ -2929,6 +3465,153 @@ $$;
 
 
 ALTER FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.jsonb_build_object(
+    'scope', studio.owner_user_id,
+    'studioId', studio.id,
+    'revisionId', revision.id,
+    'revisionNumber', revision.revision_number,
+    'revisionVersion', revision.revision_version,
+    'items', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'id', media.id,
+          'previewStoragePath', media.preview_storage_path,
+          'mimeType', media.actual_mime_type,
+          'byteSize', media.actual_size_bytes,
+          'checksumSha256', media.checksum_sha256,
+          'width', media.width,
+          'height', media.height,
+          'position', relation.position,
+          'isCover', relation.is_cover
+        ) order by relation.position
+      )
+      from public.studio_revision_media as relation
+      join public.studio_media as media on media.id = relation.media_id
+      where relation.revision_id = revision.id
+        and media.status = 'ready'
+    ), '[]'::jsonb)
+  )
+  from public.studios as studio
+  join public.profiles as profile on profile.id = studio.owner_user_id
+  join public.owner_profiles as owner on owner.user_id = profile.id
+  join public.terms_versions as legal_version
+    on legal_version.id = owner.accepted_owner_contract_version_id
+  join public.terms_acceptances as acceptance
+    on acceptance.user_id = owner.user_id
+    and acceptance.terms_version_id = legal_version.id
+    and acceptance.accepted_content_hash = legal_version.content_hash
+  join public.studio_revisions as revision
+    on revision.id = coalesce(studio.draft_revision_id, studio.published_revision_id)
+    and revision.studio_id = studio.id
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+    and studio.status <> 'disabled'
+    and profile.status = 'active'
+    and profile.completed_at is not null
+    and owner.status = 'active'
+    and revision.revision_number >= 1
+    and legal_version.kind = 'owner_contract'
+    and legal_version.effective_at <= pg_catalog.now()
+    and (legal_version.retired_at is null or pg_catalog.now() < legal_version.retired_at)
+    and (
+      (
+        studio.draft_revision_id is not null
+        and revision.id = studio.draft_revision_id
+        and revision.status = 'draft'
+      )
+      or (
+        studio.draft_revision_id is null
+        and studio.published_revision_id is not null
+        and revision.id = studio.published_revision_id
+        and revision.status = 'approved'
+      )
+    );
+$$;
+
+
+ALTER FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid") IS 'Read model privado nullable do dono elegível; paths de prévia chegam somente ao DAL server-only.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  media public.studio_media%rowtype;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_candidate';
+  end if;
+
+  perform private.assert_studio_owner_mutable(p_user_id);
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+
+  select candidate.*
+  into media
+  from public.studio_media as candidate
+  where candidate.id = p_media_id
+    and candidate.studio_id = p_studio_id
+    and candidate.prepared_revision_id = draft_revision_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+  if media.status <> 'pending_upload' then
+    raise exception using errcode = '40001', message = 'studio_media_candidate_not_pending';
+  end if;
+  if pg_catalog.clock_timestamp() >= media.upload_expires_at then
+    raise exception using errcode = '40001', message = 'studio_media_upload_expired';
+  end if;
+
+  return pg_catalog.jsonb_build_object(
+    'scope', p_user_id,
+    'studioId', p_studio_id,
+    'revisionId', draft_revision_id,
+    'revisionVersion', draft_revision_version,
+    'mediaId', media.id,
+    'bucket', media.storage_bucket,
+    'path', media.storage_path,
+    'previewPath', media.preview_storage_path,
+    'expiresAt', media.upload_expires_at,
+    'declaredMimeType', media.declared_mime_type,
+    'declaredByteSize', media.declared_size_bytes,
+    'declaredChecksumSha256', media.declared_checksum_sha256
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") IS 'Retorna ao DAL o bucket/path canônicos ainda válidos para emitir o token de upload.';
+
 
 
 CREATE OR REPLACE FUNCTION "private"."has_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid") RETURNS boolean
@@ -3486,6 +4169,26 @@ COMMENT ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid", 
 
 
 
+CREATE OR REPLACE FUNCTION "private"."lock_studio_media_revision"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint) RETURNS TABLE("locked_revision_id" "uuid", "locked_revision_version" bigint)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  return query
+  select prepared.revision_id, prepared.revision_version
+  from private.prepare_studio_revision_draft(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as prepared;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."lock_studio_media_revision"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint) OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
@@ -3546,7 +4249,7 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
             namespace.oid,
             'CREATE'
           )
-      )
+        )
     ) as ready
   ),
   application_database_access_is_restricted as (
@@ -3582,9 +4285,6 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
     join pg_catalog.pg_roles as member on member.oid = membership.member
     where granted.rolname = 'app_runtime_production'
   )
-  -- ADR-019 treats these as compensating safeguards: Supabase Cloud owns the managed catalogs as
-  -- supabase_admin, so the project role cannot remove every provider-managed read ACL. A readable
-  -- catalog is accepted only while no role/database setting has a sensitive name.
   select coalesce(
     (
       (select ready from sensitive_catalog_access_is_restricted)
@@ -3592,7 +4292,8 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
     )
     and (select ready from managed_http_access_is_restricted)
     and (select ready from application_database_access_is_restricted)
-    and (select ready from production_runtime_members_are_restricted),
+    and (select ready from production_runtime_members_are_restricted)
+    and private.studio_media_cleanup_runs_are_healthy(),
     false
   );
 $_$;
@@ -4101,6 +4802,204 @@ $$;
 ALTER FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" "uuid", "p_action" "text", "p_idempotency_key" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."prepare_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_declared_mime_type" "text", "p_declared_size_bytes" bigint, "p_declared_checksum_sha256" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $_$
+declare
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  extension text;
+  media_id uuid := extensions.gen_random_uuid();
+  payload_hash text;
+  prepared_time timestamptz := pg_catalog.clock_timestamp();
+  replay jsonb;
+  result jsonb;
+  preview_storage_path text;
+  storage_path text;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_declared_mime_type is null
+    or p_declared_mime_type <> all (array[
+      'image/jpeg'::text,
+      'image/png'::text,
+      'image/webp'::text,
+      'image/avif'::text
+    ])
+    or p_declared_size_bytes is null
+    or p_declared_size_bytes not between 1 and 15728640
+    or (
+      p_declared_checksum_sha256 is not null
+      and p_declared_checksum_sha256 !~ '^[0-9a-f]{64}$'
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_prepare';
+  end if;
+
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.prepare',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'declaredMimeType', p_declared_mime_type,
+      'declaredSizeBytes', p_declared_size_bytes,
+      'declaredChecksumSha256', p_declared_checksum_sha256
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.prepare',
+    payload_hash,
+    p_studio_id,
+    null
+  );
+  if replay is not null then
+    return replay;
+  end if;
+
+  select prepared.revision_id, prepared.revision_version
+  into draft_revision_id, draft_revision_version
+  from private.prepare_studio_revision_draft(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as prepared;
+
+  if (
+    select pg_catalog.count(*)
+    from public.studio_revision_media as relation
+    where relation.revision_id = draft_revision_id
+  ) + (
+    select pg_catalog.count(*)
+    from public.studio_media as pending
+    where pending.prepared_revision_id = draft_revision_id
+      and pending.status = 'pending_upload'
+      and pending.upload_expires_at > prepared_time
+  ) >= 20 then
+    raise exception using errcode = '23514', message = 'studio_media_limit_reached';
+  end if;
+
+  extension := case p_declared_mime_type
+    when 'image/jpeg' then 'jpg'
+    when 'image/png' then 'png'
+    when 'image/webp' then 'webp'
+    when 'image/avif' then 'avif'
+  end;
+  storage_path := pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.%s',
+    p_user_id,
+    p_studio_id,
+    draft_revision_id,
+    media_id,
+    extension
+  );
+  preview_storage_path := pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    p_user_id,
+    p_studio_id,
+    draft_revision_id,
+    media_id
+  );
+
+  insert into public.studio_media (
+    id,
+    studio_id,
+    prepared_revision_id,
+    uploaded_by,
+    storage_bucket,
+    storage_path,
+    preview_storage_path,
+    declared_mime_type,
+    declared_size_bytes,
+    declared_checksum_sha256,
+    status,
+    prepared_at,
+    upload_expires_at,
+    cleanup_after,
+    updated_at
+  )
+  values (
+    media_id,
+    p_studio_id,
+    draft_revision_id,
+    p_user_id,
+    'studio-media',
+    storage_path,
+    preview_storage_path,
+    p_declared_mime_type,
+    p_declared_size_bytes,
+    p_declared_checksum_sha256,
+    'pending_upload',
+    prepared_time,
+    prepared_time + interval '2 hours',
+    prepared_time + interval '24 hours',
+    prepared_time
+  );
+
+  result := pg_catalog.jsonb_build_object(
+    'scope', p_user_id,
+    'studioId', p_studio_id,
+    'revisionId', draft_revision_id,
+    'revisionVersion', draft_revision_version,
+    'mediaId', media_id,
+    'bucket', 'studio-media',
+    'path', storage_path,
+    'expiresAt', prepared_time + interval '2 hours'
+  );
+
+  perform private.record_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.prepare',
+    payload_hash,
+    p_studio_id,
+    draft_revision_id,
+    draft_revision_version,
+    media_id,
+    result
+  );
+  perform private.audit_studio_media_command(
+    p_user_id,
+    p_request_id,
+    p_idempotency_key,
+    'studio.media_upload_prepared',
+    p_studio_id,
+    pg_catalog.jsonb_build_object(
+      'mediaId', media_id,
+      'revisionId', draft_revision_id,
+      'revisionVersion', draft_revision_version,
+      'declaredMimeType', p_declared_mime_type,
+      'declaredSizeBytes', p_declared_size_bytes
+    )
+  );
+
+  return result;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."prepare_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_declared_mime_type" "text", "p_declared_size_bytes" bigint, "p_declared_checksum_sha256" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."prepare_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_declared_mime_type" "text", "p_declared_size_bytes" bigint, "p_declared_checksum_sha256" "text") IS 'Reserva path canônico por duas horas e mantém o candidato pendente por 24 horas, sem enviar binário pela aplicação.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."prepare_studio_revision_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint) RETURNS TABLE("revision_id" "uuid", "revision_version" bigint, "cloned" boolean)
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -4373,6 +5272,238 @@ $$;
 ALTER FUNCTION "private"."protect_terms_version"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."queue_studio_media_before_studio_delete"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  requested_at timestamptz := pg_catalog.clock_timestamp();
+begin
+  update public.studio_media as media
+  set
+    status = 'delete_pending',
+    delete_requested_at = coalesce(media.delete_requested_at, requested_at),
+    cleanup_after = greatest(
+      coalesce(media.cleanup_after, requested_at),
+      media.upload_expires_at
+    ),
+    cleanup_next_attempt_at = case
+      when media.status = 'delete_pending' then media.cleanup_next_attempt_at
+      else null
+    end
+  where media.studio_id = old.id
+    and media.status <> 'deleted';
+
+  return old;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."queue_studio_media_before_studio_delete"() OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."queue_studio_media_before_studio_delete"() IS 'Enfileira toda mídia não terminal antes das ações FK e nunca antecipa cleanup ao vencimento do upload assinado.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."queue_unattached_studio_media_before_revision_delete"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  requested_at timestamptz := pg_catalog.clock_timestamp();
+begin
+  update public.studio_media as media
+  set
+    status = 'delete_pending',
+    delete_requested_at = coalesce(media.delete_requested_at, requested_at),
+    cleanup_after = greatest(
+      coalesce(media.cleanup_after, requested_at),
+      media.upload_expires_at
+    ),
+    cleanup_next_attempt_at = null
+  where media.prepared_revision_id = old.id
+    and media.status in ('pending_upload', 'rejected')
+    and not exists (
+      select 1
+      from public.studio_revision_media as relation
+      where relation.media_id = media.id
+        and relation.revision_id <> old.id
+    );
+
+  return old;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."queue_unattached_studio_media_before_revision_delete"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."queue_unreferenced_studio_media_after_delete"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  requested_at timestamptz := pg_catalog.clock_timestamp();
+begin
+  update public.studio_media as media
+  set
+    status = 'delete_pending',
+    delete_requested_at = coalesce(media.delete_requested_at, requested_at),
+    cleanup_after = greatest(
+      coalesce(media.cleanup_after, requested_at),
+      media.upload_expires_at
+    ),
+    cleanup_next_attempt_at = null
+  where media.id = old.media_id
+    and media.status = 'ready'
+    and not exists (
+      select 1
+      from public.studio_revision_media as remaining
+      where remaining.media_id = media.id
+    );
+
+  return old;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."queue_unreferenced_studio_media_after_delete"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_revision_id" "uuid", "p_revision_version" bigint, "p_media_id" "uuid", "p_result" "jsonb") RETURNS "void"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  insert into private.studio_command_requests (
+    owner_user_id,
+    idempotency_key,
+    action,
+    payload_hash,
+    result_hash,
+    studio_id,
+    resulting_revision_id,
+    resulting_revision_version,
+    resulting_media_id,
+    result_payload
+  )
+  values (
+    p_user_id,
+    p_idempotency_key,
+    p_action,
+    p_payload_hash,
+    private.studio_result_hash(p_result),
+    p_studio_id,
+    p_revision_id,
+    p_revision_version,
+    p_media_id,
+    p_result
+  );
+$$;
+
+
+ALTER FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_revision_id" "uuid", "p_revision_version" bigint, "p_media_id" "uuid", "p_result" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  media public.studio_media%rowtype;
+  rejected_time timestamptz := pg_catalog.clock_timestamp();
+  result jsonb;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_media_id is null
+    or p_request_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_reject';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('studio-media-reject:' || p_media_id::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+
+  select candidate.*
+  into media
+  from public.studio_media as candidate
+  where candidate.id = p_media_id
+    and candidate.studio_id = p_studio_id
+    and candidate.prepared_revision_id = draft_revision_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+  if media.status not in ('pending_upload', 'rejected') then
+    raise exception using errcode = '40001', message = 'studio_media_reject_conflict';
+  end if;
+
+  if media.status = 'pending_upload' then
+    update public.studio_media as candidate
+    set
+      status = 'rejected',
+      rejection_code = 'validation_failed',
+      rejected_at = rejected_time,
+      cleanup_after = greatest(rejected_time, media.upload_expires_at),
+      cleanup_next_attempt_at = null
+    where candidate.id = media.id;
+
+    perform private.audit_studio_media_command(
+      p_user_id,
+      p_request_id,
+      p_media_id,
+      'studio.media_upload_rejected',
+      p_studio_id,
+      pg_catalog.jsonb_build_object(
+        'mediaId', p_media_id,
+        'revisionId', draft_revision_id,
+        'revisionVersion', draft_revision_version,
+        'rejectionCode', 'validation_failed'
+      )
+    );
+  else
+    rejected_time := media.rejected_at;
+  end if;
+
+  result := pg_catalog.jsonb_build_object(
+    'scope', p_user_id,
+    'studioId', p_studio_id,
+    'revisionId', draft_revision_id,
+    'revisionVersion', draft_revision_version,
+    'mediaId', p_media_id,
+    'status', 'rejected',
+    'rejectionCode', 'validation_failed',
+    'rejectedAt', rejected_time
+  );
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") IS 'Rejeita de forma naturalmente idempotente um candidato cuja verificação de bytes falhou.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -4461,6 +5592,252 @@ ALTER FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_
 
 
 COMMENT ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") IS 'Libera somente grant vigente reservado pela tentativa informada após rejeição segura do provedor.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."reorder_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_ordered_media_ids" "uuid"[]) RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  changed boolean;
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  payload_hash text;
+  replay jsonb;
+  result jsonb;
+  resulting_revision_version bigint;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_ordered_media_ids is null
+    or pg_catalog.cardinality(p_ordered_media_ids) > 20
+    or pg_catalog.array_position(p_ordered_media_ids, null) is not null
+    or pg_catalog.cardinality(p_ordered_media_ids) <> (
+      select pg_catalog.count(distinct selected.media_id)
+      from pg_catalog.unnest(p_ordered_media_ids) as selected(media_id)
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_order';
+  end if;
+
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.reorder',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'orderedMediaIds', pg_catalog.to_jsonb(p_ordered_media_ids)
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.reorder',
+    payload_hash,
+    p_studio_id,
+    null
+  );
+  if replay is not null then
+    return replay;
+  end if;
+
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+  resulting_revision_version := draft_revision_version;
+
+  perform relation.media_id
+  from public.studio_revision_media as relation
+  where relation.revision_id = draft_revision_id
+  order by relation.media_id
+  for update;
+
+  if pg_catalog.cardinality(p_ordered_media_ids) <> (
+      select pg_catalog.count(*)
+      from public.studio_revision_media as relation
+      where relation.revision_id = draft_revision_id
+    )
+    or exists (
+      select 1
+      from public.studio_revision_media as relation
+      where relation.revision_id = draft_revision_id
+        and relation.media_id <> all (p_ordered_media_ids)
+    )
+  then
+    raise exception using errcode = '23514', message = 'studio_media_order_set_mismatch';
+  end if;
+
+  select exists (
+    select 1
+    from pg_catalog.unnest(p_ordered_media_ids) with ordinality as selected(media_id, position)
+    join public.studio_revision_media as relation
+      on relation.revision_id = draft_revision_id
+      and relation.media_id = selected.media_id
+    where relation.position <> selected.position
+  ) into changed;
+
+  if changed then
+    set constraints public.studio_revision_media_position_key deferred;
+
+    update public.studio_revision_media as relation
+    set position = selected.position::smallint
+    from pg_catalog.unnest(p_ordered_media_ids) with ordinality as selected(media_id, position)
+    where relation.revision_id = draft_revision_id
+      and relation.media_id = selected.media_id;
+
+    update public.studio_revisions as revision
+    set revision_version = revision.revision_version + 1
+    where revision.id = draft_revision_id
+      and revision.status = 'draft'
+      and revision.revision_version = draft_revision_version
+    returning revision.revision_version into resulting_revision_version;
+
+    if not found then
+      raise exception using errcode = '40001', message = 'studio_revision_conflict';
+    end if;
+  end if;
+
+  result := private.get_owner_studio_media(p_user_id, p_studio_id);
+  perform private.record_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.reorder',
+    payload_hash,
+    p_studio_id,
+    draft_revision_id,
+    resulting_revision_version,
+    null,
+    result
+  );
+  perform private.audit_studio_media_command(
+    p_user_id,
+    p_request_id,
+    p_idempotency_key,
+    'studio.media_reordered',
+    p_studio_id,
+    pg_catalog.jsonb_build_object(
+      'revisionId', draft_revision_id,
+      'revisionVersion', resulting_revision_version,
+      'mediaCount', pg_catalog.cardinality(p_ordered_media_ids),
+      'changed', changed
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."reorder_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_ordered_media_ids" "uuid"[]) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."reorder_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_ordered_media_ids" "uuid"[]) IS 'Substitui a ordem completa da galeria sob lock e constraint diferível.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."replay_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  existing_request private.studio_command_requests%rowtype;
+begin
+  select request.*
+  into existing_request
+  from private.studio_command_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if not found then
+    return null;
+  end if;
+
+  if existing_request.action <> p_action
+    or existing_request.payload_hash <> p_payload_hash
+    or existing_request.studio_id <> p_studio_id
+    or (
+      p_action = 'studio.media.prepare'
+      and existing_request.resulting_media_id is null
+    )
+    or (
+      p_action <> 'studio.media.prepare'
+      and existing_request.resulting_media_id is distinct from p_media_id
+    )
+    or existing_request.result_payload is null
+    or existing_request.result_hash <> private.studio_result_hash(existing_request.result_payload)
+  then
+    raise exception using errcode = '40001', message = 'studio_idempotency_conflict';
+  end if;
+
+  return existing_request.result_payload;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."replay_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_media_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  payload_hash text;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize';
+  end if;
+
+  perform private.assert_studio_owner_mutable(p_user_id);
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.finalize',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id
+    )
+  );
+  return private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.finalize',
+    payload_hash,
+    p_studio_id,
+    p_media_id
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") IS 'Relê um finalize já confirmado pelo envelope original antes de repetir download ou escrita física.';
 
 
 
@@ -5118,6 +6495,142 @@ COMMENT ON FUNCTION "private"."set_profile_updated_at"() IS 'Atualiza timestamp 
 
 
 
+CREATE OR REPLACE FUNCTION "private"."set_studio_media_cover"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  already_cover boolean;
+  draft_revision_id uuid;
+  draft_revision_version bigint;
+  payload_hash text;
+  replay jsonb;
+  result jsonb;
+  resulting_revision_version bigint;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_cover';
+  end if;
+
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.cover.set',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id
+    )
+  );
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.cover.set',
+    payload_hash,
+    p_studio_id,
+    p_media_id
+  );
+  if replay is not null then
+    return replay;
+  end if;
+
+  select locked.locked_revision_id, locked.locked_revision_version
+  into draft_revision_id, draft_revision_version
+  from private.lock_studio_media_revision(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version
+  ) as locked;
+  resulting_revision_version := draft_revision_version;
+
+  select relation.is_cover
+  into already_cover
+  from public.studio_revision_media as relation
+  join public.studio_media as media on media.id = relation.media_id
+  where relation.revision_id = draft_revision_id
+    and relation.media_id = p_media_id
+    and media.status = 'ready'
+  for update of relation;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+
+  if not already_cover then
+    update public.studio_revision_media as relation
+    set is_cover = false
+    where relation.revision_id = draft_revision_id
+      and relation.is_cover;
+
+    update public.studio_revision_media as relation
+    set is_cover = true
+    where relation.revision_id = draft_revision_id
+      and relation.media_id = p_media_id;
+
+    update public.studio_revisions as revision
+    set revision_version = revision.revision_version + 1
+    where revision.id = draft_revision_id
+      and revision.status = 'draft'
+      and revision.revision_version = draft_revision_version
+    returning revision.revision_version into resulting_revision_version;
+
+    if not found then
+      raise exception using errcode = '40001', message = 'studio_revision_conflict';
+    end if;
+  end if;
+
+  result := private.get_owner_studio_media(p_user_id, p_studio_id);
+  perform private.record_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.cover.set',
+    payload_hash,
+    p_studio_id,
+    draft_revision_id,
+    resulting_revision_version,
+    p_media_id,
+    result
+  );
+  perform private.audit_studio_media_command(
+    p_user_id,
+    p_request_id,
+    p_idempotency_key,
+    'studio.media_cover_set',
+    p_studio_id,
+    pg_catalog.jsonb_build_object(
+      'mediaId', p_media_id,
+      'revisionId', draft_revision_id,
+      'revisionVersion', resulting_revision_version,
+      'changed', not already_cover
+    )
+  );
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."set_studio_media_cover"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."set_studio_media_cover"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") IS 'Define no máximo uma capa da draft de forma atômica; replay e no-op preservam a versão.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."set_studio_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
@@ -5268,6 +6781,56 @@ $$;
 
 
 ALTER FUNCTION "private"."studio_editor_json"("p_user_id" "uuid", "p_studio_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select
+    not exists (
+      select 1
+      from maintenance.studio_media_cleanup_runs as run
+      where run.status = 'running'
+        and run.started_at <= pg_catalog.now() - interval '30 minutes'
+    )
+    and not exists (
+      select 1
+      from maintenance.studio_media_cleanup_runs as failed_run
+      where failed_run.status = 'failed'
+        and failed_run.completed_at > coalesce(
+          (
+            select pg_catalog.max(succeeded_run.completed_at)
+            from maintenance.studio_media_cleanup_runs as succeeded_run
+            where succeeded_run.status = 'succeeded'
+          ),
+          '-infinity'::timestamptz
+        )
+    );
+$$;
+
+
+ALTER FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "private"."studio_media_payload_hash"("p_action" "text", "p_payload" "jsonb") RETURNS "text"
+    LANGUAGE "sql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+  select pg_catalog.encode(
+    extensions.digest(
+      pg_catalog.convert_to(
+        pg_catalog.jsonb_build_object('action', p_action, 'payload', p_payload)::text,
+        'UTF8'
+      ),
+      'sha256'
+    ),
+    'hex'
+  );
+$$;
+
+
+ALTER FUNCTION "private"."studio_media_payload_hash"("p_action" "text", "p_payload" "jsonb") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "private"."studio_result_hash"("p_result" "jsonb") RETURNS "text"
@@ -6686,6 +8249,78 @@ $$;
 ALTER FUNCTION "private"."validate_terms_acceptance_snapshot"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."begin_studio_media_cleanup_run"("p_run_id" "uuid", "p_function_slug" "text") RETURNS "jsonb"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select maintenance.begin_studio_media_cleanup_run(p_run_id, p_function_slug);
+$$;
+
+
+ALTER FUNCTION "public"."begin_studio_media_cleanup_run"("p_run_id" "uuid", "p_function_slug" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."begin_studio_media_cleanup_run"("p_run_id" "uuid", "p_function_slug" "text") IS 'Fachada service_role-only para criar ou reler atomicamente uma execução cercada pelo slug da Edge Function.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."claim_studio_media_cleanup"("p_claim_token" "uuid", "p_limit" integer) RETURNS "jsonb"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select maintenance.claim_studio_media_cleanup(p_claim_token, p_limit);
+$$;
+
+
+ALTER FUNCTION "public"."claim_studio_media_cleanup"("p_claim_token" "uuid", "p_limit" integer) OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."claim_studio_media_cleanup"("p_claim_token" "uuid", "p_limit" integer) IS 'Fachada RPC sem lógica própria, executável somente por service_role, para o claim em maintenance.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."complete_studio_media_cleanup"("p_claim_token" "uuid", "p_media_id" "uuid", "p_succeeded" boolean, "p_error_code" "text") RETURNS "jsonb"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select maintenance.complete_studio_media_cleanup(
+    p_claim_token,
+    p_media_id,
+    p_succeeded,
+    p_error_code
+  );
+$$;
+
+
+ALTER FUNCTION "public"."complete_studio_media_cleanup"("p_claim_token" "uuid", "p_media_id" "uuid", "p_succeeded" boolean, "p_error_code" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."complete_studio_media_cleanup"("p_claim_token" "uuid", "p_media_id" "uuid", "p_succeeded" boolean, "p_error_code" "text") IS 'Fachada RPC sem lógica própria, executável somente por service_role, para o complete em maintenance.';
+
+
+
+CREATE OR REPLACE FUNCTION "public"."complete_studio_media_cleanup_run"("p_run_id" "uuid", "p_status" "text", "p_claimed" integer, "p_deleted" integer, "p_failed" integer, "p_error_code" "text") RETURNS "jsonb"
+    LANGUAGE "sql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select maintenance.complete_studio_media_cleanup_run(
+    p_run_id,
+    p_status,
+    p_claimed,
+    p_deleted,
+    p_failed,
+    p_error_code
+  );
+$$;
+
+
+ALTER FUNCTION "public"."complete_studio_media_cleanup_run"("p_run_id" "uuid", "p_status" "text", "p_claimed" integer, "p_deleted" integer, "p_failed" integer, "p_error_code" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."complete_studio_media_cleanup_run"("p_run_id" "uuid", "p_status" "text", "p_claimed" integer, "p_deleted" integer, "p_failed" integer, "p_error_code" "text") IS 'Fachada service_role-only para concluir o ledger com contagens e código seguro.';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."get_current_legal_terms"() RETURNS TABLE("id" "uuid", "kind" "text", "version" "text", "title" "text", "body_markdown" "text", "content_hash" "text", "source" "text", "effective_at" timestamp with time zone)
     LANGUAGE "sql" STABLE
     SET "search_path" TO ''
@@ -7209,7 +8844,7 @@ CREATE TABLE IF NOT EXISTS "audit"."events" (
     "ip_hash" "text",
     "metadata" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
     "idempotency_key" "uuid" NOT NULL,
-    CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text", 'studio.created'::"text", 'studio.revision_updated'::"text", 'studio.revision_taxonomy_updated'::"text", 'studio.revision_content_updated'::"text", 'studio.draft_discarded'::"text", 'backoffice.admin_bootstrapped'::"text", 'backoffice.user_suspended'::"text", 'backoffice.user_restored'::"text", 'backoffice.user_pii_revealed'::"text", 'backoffice.role_granted'::"text", 'backoffice.role_revoked'::"text", 'backoffice.taxonomy_created'::"text", 'backoffice.taxonomy_updated'::"text", 'backoffice.taxonomy_archived'::"text", 'backoffice.taxonomy_reactivated'::"text"]))),
+    CONSTRAINT "events_action_check" CHECK (("action" = ANY (ARRAY['owner.activated'::"text", 'owner.contract_renewed'::"text", 'recipient.status_transitioned'::"text", 'studio.created'::"text", 'studio.revision_updated'::"text", 'studio.revision_taxonomy_updated'::"text", 'studio.revision_content_updated'::"text", 'studio.draft_discarded'::"text", 'studio.media_upload_prepared'::"text", 'studio.media_upload_rejected'::"text", 'studio.media_upload_finalized'::"text", 'studio.media_reordered'::"text", 'studio.media_cover_set'::"text", 'studio.media_deleted'::"text", 'backoffice.admin_bootstrapped'::"text", 'backoffice.user_suspended'::"text", 'backoffice.user_restored'::"text", 'backoffice.user_pii_revealed'::"text", 'backoffice.role_granted'::"text", 'backoffice.role_revoked'::"text", 'backoffice.taxonomy_created'::"text", 'backoffice.taxonomy_updated'::"text", 'backoffice.taxonomy_archived'::"text", 'backoffice.taxonomy_reactivated'::"text"]))),
     CONSTRAINT "events_actor_role_check" CHECK (("actor_role" = ANY (ARRAY['authenticated'::"text", 'support'::"text", 'admin'::"text", 'system'::"text"]))),
     CONSTRAINT "events_ip_hash_check" CHECK ((("ip_hash" IS NULL) OR ("ip_hash" ~ '^[0-9a-f]{64}$'::"text"))),
     CONSTRAINT "events_metadata_check" CHECK (("jsonb_typeof"("metadata") = 'object'::"text")),
@@ -7434,7 +9069,11 @@ CREATE TABLE IF NOT EXISTS "private"."studio_command_requests" (
     "resulting_revision_version" bigint,
     "studio_deleted" boolean DEFAULT false NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "studio_command_requests_action_check" CHECK (("action" = ANY (ARRAY['studio.create'::"text", 'studio.revision.updateCore'::"text", 'studio.revision.updateTaxonomy'::"text", 'studio.revision.updateContent'::"text", 'studio.draft.discard'::"text"]))),
+    "resulting_media_id" "uuid",
+    "result_payload" "jsonb",
+    CONSTRAINT "studio_command_requests_action_check" CHECK (("action" = ANY (ARRAY['studio.create'::"text", 'studio.revision.updateCore'::"text", 'studio.revision.updateTaxonomy'::"text", 'studio.revision.updateContent'::"text", 'studio.draft.discard'::"text", 'studio.media.prepare'::"text", 'studio.media.finalize'::"text", 'studio.media.reorder'::"text", 'studio.media.cover.set'::"text", 'studio.media.delete'::"text"]))),
+    CONSTRAINT "studio_command_requests_media_result_check" CHECK (((("action" ~~ 'studio.media.%'::"text") AND ("jsonb_typeof"("result_payload") = 'object'::"text") AND ("result_hash" = "private"."studio_result_hash"("result_payload"))) OR (("action" !~~ 'studio.media.%'::"text") AND ("result_payload" IS NULL)))),
+    CONSTRAINT "studio_command_requests_media_target_check" CHECK (((("action" = ANY (ARRAY['studio.media.prepare'::"text", 'studio.media.finalize'::"text", 'studio.media.cover.set'::"text", 'studio.media.delete'::"text"])) AND ("resulting_media_id" IS NOT NULL)) OR (("action" <> ALL (ARRAY['studio.media.prepare'::"text", 'studio.media.finalize'::"text", 'studio.media.cover.set'::"text", 'studio.media.delete'::"text"])) AND ("resulting_media_id" IS NULL)))),
     CONSTRAINT "studio_command_requests_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
     CONSTRAINT "studio_command_requests_result_check" CHECK (((("action" = 'studio.draft.discard'::"text") AND (("studio_deleted" AND ("resulting_revision_id" IS NULL) AND ("resulting_revision_version" IS NULL)) OR ((NOT "studio_deleted") AND ("resulting_revision_id" IS NOT NULL) AND ("resulting_revision_version" IS NOT NULL)))) OR (("action" <> 'studio.draft.discard'::"text") AND (NOT "studio_deleted") AND ("resulting_revision_id" IS NOT NULL) AND ("resulting_revision_version" IS NOT NULL)))),
     CONSTRAINT "studio_command_requests_result_hash_check" CHECK (("result_hash" ~ '^[0-9a-f]{64}$'::"text")),
@@ -7646,6 +9285,75 @@ COMMENT ON TABLE "public"."studio_faqs" IS 'FAQ plain text, ordenada e pertencen
 
 
 
+CREATE TABLE IF NOT EXISTS "public"."studio_media" (
+    "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
+    "studio_id" "uuid",
+    "prepared_revision_id" "uuid",
+    "uploaded_by" "uuid" NOT NULL,
+    "storage_bucket" "text" DEFAULT 'studio-media'::"text" NOT NULL,
+    "storage_path" "text" NOT NULL,
+    "preview_storage_path" "text" NOT NULL,
+    "declared_mime_type" "text" NOT NULL,
+    "declared_size_bytes" bigint NOT NULL,
+    "declared_checksum_sha256" "text",
+    "actual_mime_type" "text",
+    "actual_size_bytes" bigint,
+    "width" integer,
+    "height" integer,
+    "checksum_sha256" "text",
+    "status" "text" DEFAULT 'pending_upload'::"text" NOT NULL,
+    "rejection_code" "text",
+    "prepared_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "upload_expires_at" timestamp with time zone NOT NULL,
+    "cleanup_after" timestamp with time zone,
+    "finalized_at" timestamp with time zone,
+    "rejected_at" timestamp with time zone,
+    "delete_requested_at" timestamp with time zone,
+    "deleted_at" timestamp with time zone,
+    "cleanup_attempts" integer DEFAULT 0 NOT NULL,
+    "cleanup_claim_token" "uuid",
+    "cleanup_claimed_at" timestamp with time zone,
+    "cleanup_next_attempt_at" timestamp with time zone,
+    "cleanup_last_completed_token" "uuid",
+    "cleanup_last_succeeded" boolean,
+    "cleanup_last_error_code" "text",
+    "updated_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    CONSTRAINT "studio_media_actual_mime_check" CHECK ((("actual_mime_type" IS NULL) OR ("actual_mime_type" = ANY (ARRAY['image/jpeg'::"text", 'image/png'::"text", 'image/webp'::"text", 'image/avif'::"text"])))),
+    CONSTRAINT "studio_media_actual_size_check" CHECK ((("actual_size_bytes" IS NULL) OR (("actual_size_bytes" >= 1) AND ("actual_size_bytes" <= 15728640)))),
+    CONSTRAINT "studio_media_bucket_check" CHECK (("storage_bucket" = 'studio-media'::"text")),
+    CONSTRAINT "studio_media_checksum_check" CHECK ((("checksum_sha256" IS NULL) OR ("checksum_sha256" ~ '^[0-9a-f]{64}$'::"text"))),
+    CONSTRAINT "studio_media_cleanup_attempts_check" CHECK (("cleanup_attempts" >= 0)),
+    CONSTRAINT "studio_media_cleanup_claim_check" CHECK (((("cleanup_claim_token" IS NULL) AND ("cleanup_claimed_at" IS NULL)) OR (("status" = 'delete_pending'::"text") AND ("cleanup_claim_token" IS NOT NULL) AND ("cleanup_claimed_at" IS NOT NULL)))),
+    CONSTRAINT "studio_media_cleanup_next_attempt_check" CHECK ((("cleanup_next_attempt_at" IS NULL) OR ("status" = 'delete_pending'::"text"))),
+    CONSTRAINT "studio_media_cleanup_result_check" CHECK (((("cleanup_last_completed_token" IS NULL) AND ("cleanup_last_succeeded" IS NULL) AND ("cleanup_last_error_code" IS NULL)) OR (("cleanup_last_completed_token" IS NOT NULL) AND ("cleanup_last_succeeded" IS TRUE) AND ("cleanup_last_error_code" IS NULL) AND ("status" = 'deleted'::"text")) OR (("cleanup_last_completed_token" IS NOT NULL) AND ("cleanup_last_succeeded" IS FALSE) AND ("cleanup_last_error_code" ~ '^[a-z0-9_]{2,80}$'::"text") AND ("status" = 'delete_pending'::"text")))),
+    CONSTRAINT "studio_media_declared_checksum_check" CHECK ((("declared_checksum_sha256" IS NULL) OR ("declared_checksum_sha256" ~ '^[0-9a-f]{64}$'::"text"))),
+    CONSTRAINT "studio_media_declared_mime_check" CHECK (("declared_mime_type" = ANY (ARRAY['image/jpeg'::"text", 'image/png'::"text", 'image/webp'::"text", 'image/avif'::"text"]))),
+    CONSTRAINT "studio_media_declared_size_check" CHECK ((("declared_size_bytes" >= 1) AND ("declared_size_bytes" <= 15728640))),
+    CONSTRAINT "studio_media_dimensions_check" CHECK (((("width" IS NULL) AND ("height" IS NULL)) OR ((("width" >= 1) AND ("width" <= 8192)) AND (("height" >= 1) AND ("height" <= 8192)) AND ((("width")::bigint * ("height")::bigint) <= 36000000)))),
+    CONSTRAINT "studio_media_path_identity_check" CHECK ((("storage_path" = "btrim"("storage_path")) AND ("split_part"("storage_path", '/'::"text", 1) = 'owners'::"text") AND ("split_part"("storage_path", '/'::"text", 2) = ("uploaded_by")::"text") AND ("split_part"("storage_path", '/'::"text", 3) = 'studios'::"text") AND (("split_part"("storage_path", '/'::"text", 4) = ("studio_id")::"text") OR (("studio_id" IS NULL) AND ("status" = ANY (ARRAY['delete_pending'::"text", 'deleted'::"text"])) AND ("split_part"("storage_path", '/'::"text", 4) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::"text"))) AND ("split_part"("storage_path", '/'::"text", 5) = 'revisions'::"text") AND (("split_part"("storage_path", '/'::"text", 6) = ("prepared_revision_id")::"text") OR (("prepared_revision_id" IS NULL) AND ("status" = ANY (ARRAY['delete_pending'::"text", 'deleted'::"text"])) AND ("split_part"("storage_path", '/'::"text", 6) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::"text"))) AND ("split_part"("storage_path", '/'::"text", 7) = "format"('%s.%s'::"text", "id",
+CASE "declared_mime_type"
+    WHEN 'image/jpeg'::"text" THEN 'jpg'::"text"
+    WHEN 'image/png'::"text" THEN 'png'::"text"
+    WHEN 'image/webp'::"text" THEN 'webp'::"text"
+    WHEN 'image/avif'::"text" THEN 'avif'::"text"
+    ELSE NULL::"text"
+END)) AND ("split_part"("storage_path", '/'::"text", 8) = ''::"text"))),
+    CONSTRAINT "studio_media_preview_path_identity_check" CHECK ((("preview_storage_path" = "regexp_replace"("storage_path", '\.(avif|jpg|png|webp)$'::"text", '.preview.webp'::"text")) AND ("split_part"("preview_storage_path", '/'::"text", 7) = "format"('%s.preview.webp'::"text", "id")))),
+    CONSTRAINT "studio_media_rejection_code_check" CHECK ((("rejection_code" IS NULL) OR ("rejection_code" = ANY (ARRAY['validation_failed'::"text", 'object_missing'::"text", 'mime_mismatch'::"text", 'size_mismatch'::"text", 'checksum_mismatch'::"text", 'decode_failed'::"text", 'dimension_invalid'::"text"])))),
+    CONSTRAINT "studio_media_state_coherence_check" CHECK (((("status" = 'pending_upload'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" >= ("prepared_at" + '24:00:00'::interval))) OR (("status" = 'ready'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NOT NULL) AND ("actual_size_bytes" IS NOT NULL) AND ("width" IS NOT NULL) AND ("height" IS NOT NULL) AND ("checksum_sha256" IS NOT NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NOT NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NULL)) OR (("status" = 'rejected'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NOT NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NOT NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'delete_pending'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'deleted'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NOT NULL) AND ("cleanup_after" IS NULL)))),
+    CONSTRAINT "studio_media_status_check" CHECK (("status" = ANY (ARRAY['pending_upload'::"text", 'ready'::"text", 'rejected'::"text", 'delete_pending'::"text", 'deleted'::"text"]))),
+    CONSTRAINT "studio_media_timestamps_check" CHECK ((("updated_at" >= "prepared_at") AND (("finalized_at" IS NULL) OR ("finalized_at" >= "prepared_at")) AND (("rejected_at" IS NULL) OR ("rejected_at" >= "prepared_at")) AND (("delete_requested_at" IS NULL) OR ("delete_requested_at" >= "prepared_at")) AND (("deleted_at" IS NULL) OR ("deleted_at" >= "delete_requested_at")))),
+    CONSTRAINT "studio_media_upload_window_check" CHECK (("upload_expires_at" = ("prepared_at" + '02:00:00'::interval)))
+);
+
+
+ALTER TABLE "public"."studio_media" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."studio_media" IS 'Objeto original e prévia WebP imutáveis no bucket privado; estado físico é independente das associações versionadas.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."studio_revision_amenities" (
     "revision_id" "uuid" NOT NULL,
     "amenity_id" "uuid" NOT NULL
@@ -7656,6 +9364,23 @@ ALTER TABLE "public"."studio_revision_amenities" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."studio_revision_amenities" IS 'Seleção versionada de comodidades da revisão; sem escrita direta de runtime.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."studio_revision_media" (
+    "revision_id" "uuid" NOT NULL,
+    "media_id" "uuid" NOT NULL,
+    "position" smallint NOT NULL,
+    "is_cover" boolean DEFAULT false NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    CONSTRAINT "studio_revision_media_position_check" CHECK ((("position" >= 1) AND ("position" <= 20)))
+);
+
+
+ALTER TABLE "public"."studio_revision_media" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."studio_revision_media" IS 'Associação ordenada e versionada entre uma revisão e objetos prontos; publicada nunca é mutada.';
 
 
 
@@ -8005,8 +9730,33 @@ ALTER TABLE ONLY "public"."studio_faqs"
 
 
 
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_preview_storage_path_key" UNIQUE ("preview_storage_path");
+
+
+
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_storage_path_key" UNIQUE ("storage_path");
+
+
+
 ALTER TABLE ONLY "public"."studio_revision_amenities"
     ADD CONSTRAINT "studio_revision_amenities_pkey" PRIMARY KEY ("revision_id", "amenity_id");
+
+
+
+ALTER TABLE ONLY "public"."studio_revision_media"
+    ADD CONSTRAINT "studio_revision_media_pkey" PRIMARY KEY ("revision_id", "media_id");
+
+
+
+ALTER TABLE ONLY "public"."studio_revision_media"
+    ADD CONSTRAINT "studio_revision_media_position_key" UNIQUE ("revision_id", "position") DEFERRABLE;
 
 
 
@@ -8100,6 +9850,10 @@ CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_in
 
 
 
+CREATE INDEX "studio_command_requests_resulting_media_id_idx" ON "private"."studio_command_requests" USING "btree" ("resulting_media_id") WHERE ("resulting_media_id" IS NOT NULL);
+
+
+
 CREATE INDEX "platform_roles_granted_by_idx" ON "public"."platform_roles" USING "btree" ("granted_by") WHERE ("granted_by" IS NOT NULL);
 
 
@@ -8112,7 +9866,35 @@ CREATE INDEX "profiles_backoffice_created_at_id_idx" ON "public"."profiles" USIN
 
 
 
+CREATE INDEX "studio_media_cleanup_claim_token_idx" ON "public"."studio_media" USING "btree" ("cleanup_claim_token", "cleanup_claimed_at") WHERE (("status" = 'delete_pending'::"text") AND ("cleanup_claim_token" IS NOT NULL));
+
+
+
+CREATE INDEX "studio_media_cleanup_dequeue_idx" ON "public"."studio_media" USING "btree" (COALESCE("cleanup_next_attempt_at", "cleanup_after"), "id") WHERE ("status" = ANY (ARRAY['pending_upload'::"text", 'rejected'::"text", 'delete_pending'::"text"]));
+
+
+
+CREATE INDEX "studio_media_prepared_revision_id_idx" ON "public"."studio_media" USING "btree" ("prepared_revision_id") WHERE ("prepared_revision_id" IS NOT NULL);
+
+
+
+CREATE INDEX "studio_media_studio_id_idx" ON "public"."studio_media" USING "btree" ("studio_id") WHERE ("studio_id" IS NOT NULL);
+
+
+
+CREATE INDEX "studio_media_uploaded_by_idx" ON "public"."studio_media" USING "btree" ("uploaded_by");
+
+
+
 CREATE INDEX "studio_revision_amenities_amenity_id_idx" ON "public"."studio_revision_amenities" USING "btree" ("amenity_id");
+
+
+
+CREATE INDEX "studio_revision_media_media_id_idx" ON "public"."studio_revision_media" USING "btree" ("media_id");
+
+
+
+CREATE UNIQUE INDEX "studio_revision_media_one_cover_idx" ON "public"."studio_revision_media" USING "btree" ("revision_id") WHERE "is_cover";
 
 
 
@@ -8188,7 +9970,19 @@ CREATE OR REPLACE TRIGGER "studio_faqs_set_updated_at" BEFORE UPDATE ON "public"
 
 
 
+CREATE OR REPLACE TRIGGER "studio_media_enforce_lifecycle" BEFORE UPDATE ON "public"."studio_media" FOR EACH ROW EXECUTE FUNCTION "private"."enforce_studio_media_lifecycle"();
+
+
+
 CREATE OR REPLACE TRIGGER "studio_revision_amenities_require_draft" BEFORE INSERT OR DELETE OR UPDATE ON "public"."studio_revision_amenities" FOR EACH ROW EXECUTE FUNCTION "private"."assert_editable_studio_revision_relation"();
+
+
+
+CREATE OR REPLACE TRIGGER "studio_revision_media_queue_unreferenced" AFTER DELETE ON "public"."studio_revision_media" FOR EACH ROW EXECUTE FUNCTION "private"."queue_unreferenced_studio_media_after_delete"();
+
+
+
+CREATE OR REPLACE TRIGGER "studio_revision_media_require_draft" BEFORE INSERT OR DELETE OR UPDATE ON "public"."studio_revision_media" FOR EACH ROW EXECUTE FUNCTION "private"."assert_editable_studio_media_relation"();
 
 
 
@@ -8200,6 +9994,10 @@ CREATE OR REPLACE TRIGGER "studio_revisions_clone_content" BEFORE INSERT ON "pub
 
 
 
+CREATE OR REPLACE TRIGGER "studio_revisions_clone_media" AFTER INSERT ON "public"."studio_revisions" FOR EACH ROW EXECUTE FUNCTION "private"."clone_studio_revision_media_after_insert"();
+
+
+
 CREATE OR REPLACE TRIGGER "studio_revisions_clone_relations" AFTER INSERT ON "public"."studio_revisions" FOR EACH ROW EXECUTE FUNCTION "private"."clone_studio_revision_relations_after_insert"();
 
 
@@ -8208,11 +10006,19 @@ CREATE OR REPLACE TRIGGER "studio_revisions_enforce_immutability" BEFORE DELETE 
 
 
 
+CREATE OR REPLACE TRIGGER "studio_revisions_queue_unattached_media" BEFORE DELETE ON "public"."studio_revisions" FOR EACH ROW EXECUTE FUNCTION "private"."queue_unattached_studio_media_before_revision_delete"();
+
+
+
 CREATE OR REPLACE TRIGGER "studio_types_set_updated_at" BEFORE UPDATE ON "public"."studio_types" FOR EACH ROW EXECUTE FUNCTION "private"."set_studio_updated_at"();
 
 
 
 CREATE CONSTRAINT TRIGGER "studios_enforce_revision_pointers" AFTER INSERT OR UPDATE OF "draft_revision_id", "published_revision_id" ON "public"."studios" NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION "private"."enforce_studio_revision_pointers"();
+
+
+
+CREATE OR REPLACE TRIGGER "studios_queue_media_before_delete" BEFORE DELETE ON "public"."studios" FOR EACH ROW EXECUTE FUNCTION "private"."queue_studio_media_before_studio_delete"();
 
 
 
@@ -8345,6 +10151,11 @@ ALTER TABLE ONLY "private"."studio_command_requests"
 
 
 
+ALTER TABLE ONLY "private"."studio_command_requests"
+    ADD CONSTRAINT "studio_command_requests_resulting_media_id_fkey" FOREIGN KEY ("resulting_media_id") REFERENCES "public"."studio_media"("id") ON DELETE RESTRICT;
+
+
+
 ALTER TABLE ONLY "public"."owner_payment_recipients"
     ADD CONSTRAINT "owner_payment_recipients_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
 
@@ -8380,6 +10191,21 @@ ALTER TABLE ONLY "public"."studio_faqs"
 
 
 
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_prepared_revision_id_fkey" FOREIGN KEY ("prepared_revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."studio_media"
+    ADD CONSTRAINT "studio_media_uploaded_by_fkey" FOREIGN KEY ("uploaded_by") REFERENCES "public"."profiles"("id") ON DELETE RESTRICT;
+
+
+
 ALTER TABLE ONLY "public"."studio_revision_amenities"
     ADD CONSTRAINT "studio_revision_amenities_amenity_id_fkey" FOREIGN KEY ("amenity_id") REFERENCES "public"."amenities"("id") ON DELETE RESTRICT;
 
@@ -8387,6 +10213,16 @@ ALTER TABLE ONLY "public"."studio_revision_amenities"
 
 ALTER TABLE ONLY "public"."studio_revision_amenities"
     ADD CONSTRAINT "studio_revision_amenities_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."studio_revision_media"
+    ADD CONSTRAINT "studio_revision_media_media_id_fkey" FOREIGN KEY ("media_id") REFERENCES "public"."studio_media"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."studio_revision_media"
+    ADD CONSTRAINT "studio_revision_media_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE CASCADE;
 
 
 
@@ -8515,6 +10351,9 @@ CREATE POLICY "studio_faqs_select_own" ON "public"."studio_faqs" FOR SELECT TO "
 
 
 
+ALTER TABLE "public"."studio_media" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."studio_revision_amenities" ENABLE ROW LEVEL SECURITY;
 
 
@@ -8523,6 +10362,9 @@ CREATE POLICY "studio_revision_amenities_select_own" ON "public"."studio_revisio
      JOIN "public"."studios" "studio" ON (("studio"."id" = "revision"."studio_id")))
   WHERE (("revision"."id" = "studio_revision_amenities"."revision_id") AND ("studio"."owner_user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
+
+
+ALTER TABLE "public"."studio_revision_media" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."studio_revision_tags" ENABLE ROW LEVEL SECURITY;
@@ -8636,11 +10478,19 @@ GRANT ALL ON FUNCTION "private"."apply_owner_recipient_operation"("p_user_id" "u
 
 
 
+REVOKE ALL ON FUNCTION "private"."assert_editable_studio_media_relation"() FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."assert_editable_studio_revision_relation"() FROM PUBLIC;
 
 
 
 REVOKE ALL ON FUNCTION "private"."assert_studio_owner_mutable"("p_user_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."audit_studio_media_command"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_studio_id" "uuid", "p_metadata" "jsonb") FROM PUBLIC;
 
 
 
@@ -8707,6 +10557,10 @@ REVOKE ALL ON FUNCTION "private"."clone_studio_revision_content_before_insert"()
 
 
 
+REVOKE ALL ON FUNCTION "private"."clone_studio_revision_media_after_insert"() FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."clone_studio_revision_relations_after_insert"() FROM PUBLIC;
 
 
@@ -8745,6 +10599,11 @@ GRANT ALL ON FUNCTION "private"."create_studio"("p_user_id" "uuid", "p_idempoten
 
 
 
+REVOKE ALL ON FUNCTION "private"."delete_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."delete_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."discard_studio_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid") TO "app_dal";
 
@@ -8762,11 +10621,20 @@ REVOKE ALL ON FUNCTION "private"."enforce_profile_lifecycle"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."enforce_studio_media_lifecycle"() FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."enforce_studio_revision_immutability"() FROM PUBLIC;
 
 
 
 REVOKE ALL ON FUNCTION "private"."enforce_studio_revision_pointers"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") TO "app_dal";
 
 
 
@@ -8782,6 +10650,16 @@ GRANT ALL ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "
 
 REVOKE ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."get_owner_recipient_status_for_user"("p_user_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") TO "app_dal";
 
 
 
@@ -8821,6 +10699,10 @@ GRANT ALL ON FUNCTION "private"."list_backoffice_users"("p_actor_user_id" "uuid"
 
 
 
+REVOKE ALL ON FUNCTION "private"."lock_studio_media_revision"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint) FROM PUBLIC;
+
+
+
 REVOKE ALL ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() FROM PUBLIC;
 
 
@@ -8855,6 +10737,11 @@ GRANT ALL ON FUNCTION "private"."prepare_owner_recipient_operation"("p_user_id" 
 
 
 
+REVOKE ALL ON FUNCTION "private"."prepare_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_declared_mime_type" "text", "p_declared_size_bytes" bigint, "p_declared_checksum_sha256" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."prepare_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_declared_mime_type" "text", "p_declared_size_bytes" bigint, "p_declared_checksum_sha256" "text") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."prepare_studio_revision_draft"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint) FROM PUBLIC;
 
 
@@ -8879,12 +10766,47 @@ REVOKE ALL ON FUNCTION "private"."protect_terms_version"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."queue_studio_media_before_studio_delete"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."queue_unattached_studio_media_before_revision_delete"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."queue_unreferenced_studio_media_after_delete"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_revision_id" "uuid", "p_revision_version" bigint, "p_media_id" "uuid", "p_result" "jsonb") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
 
 
 REVOKE ALL ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."reorder_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_ordered_media_ids" "uuid"[]) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reorder_studio_media"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_ordered_media_ids" "uuid"[]) TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."replay_studio_media_command"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_action" "text", "p_payload_hash" "text", "p_studio_id" "uuid", "p_media_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") TO "app_dal";
 
 
 
@@ -8907,6 +10829,11 @@ REVOKE ALL ON FUNCTION "private"."set_profile_updated_at"() FROM PUBLIC;
 
 
 
+REVOKE ALL ON FUNCTION "private"."set_studio_media_cover"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."set_studio_media_cover"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."set_studio_updated_at"() FROM PUBLIC;
 
 
@@ -8920,6 +10847,14 @@ REVOKE ALL ON FUNCTION "private"."studio_core_payload_hash"("p_name" "text", "p_
 
 
 REVOKE ALL ON FUNCTION "private"."studio_editor_json"("p_user_id" "uuid", "p_studio_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."studio_media_cleanup_runs_are_healthy"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."studio_media_payload_hash"("p_action" "text", "p_payload" "jsonb") FROM PUBLIC;
 
 
 
@@ -8967,6 +10902,26 @@ GRANT ALL ON FUNCTION "private"."upsert_backoffice_taxonomy"("p_actor_user_id" "
 
 
 REVOKE ALL ON FUNCTION "private"."validate_terms_acceptance_snapshot"() FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "public"."begin_studio_media_cleanup_run"("p_run_id" "uuid", "p_function_slug" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."begin_studio_media_cleanup_run"("p_run_id" "uuid", "p_function_slug" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."claim_studio_media_cleanup"("p_claim_token" "uuid", "p_limit" integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."claim_studio_media_cleanup"("p_claim_token" "uuid", "p_limit" integer) TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."complete_studio_media_cleanup"("p_claim_token" "uuid", "p_media_id" "uuid", "p_succeeded" boolean, "p_error_code" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."complete_studio_media_cleanup"("p_claim_token" "uuid", "p_media_id" "uuid", "p_succeeded" boolean, "p_error_code" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."complete_studio_media_cleanup_run"("p_run_id" "uuid", "p_status" "text", "p_claimed" integer, "p_deleted" integer, "p_failed" integer, "p_error_code" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."complete_studio_media_cleanup_run"("p_run_id" "uuid", "p_status" "text", "p_claimed" integer, "p_deleted" integer, "p_failed" integer, "p_error_code" "text") TO "service_role";
 
 
 

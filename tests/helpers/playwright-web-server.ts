@@ -60,6 +60,7 @@ export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
   NEXT_PUBLIC_APP_URL: string;
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
   NEXT_PUBLIC_SUPABASE_URL: string;
+  SUPABASE_SECRET_KEY?: string;
 }>;
 
 function sanitizedOperationalValue(name: string, value: string | undefined) {

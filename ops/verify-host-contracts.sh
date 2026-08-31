@@ -662,6 +662,8 @@ sudo install -o root -g root -m 0644 \
 for systemd_unit in \
   set-livre-web.service \
   set-livre-backoffice.service \
+  set-livre-media-cleanup.service \
+  set-livre-media-cleanup.timer \
   set-livre-application-start.service \
   set-livre-release-recovery.service \
   set-livre-release-recovery.path; do
@@ -671,6 +673,7 @@ done
 sudo systemctl daemon-reload
 sudo systemctl enable \
   set-livre-application-start.service \
+  set-livre-media-cleanup.timer \
   set-livre-release-recovery.path
 
 printf 'deploy-lock-target\n' > "$temporary_directory/deploy-lock-target"
@@ -696,6 +699,8 @@ sudo rm -f -- /run/lock/set-livre-deploy.lock
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.timer" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
@@ -720,6 +725,7 @@ write_fixture_environment() {
   local destination="$1"
   local app_url="$2"
   local runtime_unlock_key="${3:-}"
+  local supabase_secret_key="${4:-}"
   {
     printf 'APP_ENV=production\n'
     if [[ -n ${runtime_unlock_key} ]]; then
@@ -729,6 +735,9 @@ write_fixture_environment() {
     printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
     printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ci_contract_key\n'
     printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
+    if [[ -n ${supabase_secret_key} ]]; then
+      printf 'SUPABASE_SECRET_KEY=%s\n' "$supabase_secret_key"
+    fi
   } > "$destination"
 }
 
@@ -743,7 +752,8 @@ fixture_runtime_environment_digest() {
     printf '\0'
   } | sha256sum | cut --delimiter=' ' --fields=1
 }
-write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL"
+write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL" "" \
+  "sb_secret_ci_server_contract_key"
 fixture_runtime_unlock_key="$(printf 'A%.0s' {1..43})"
 write_fixture_environment "$temporary_directory/backoffice.env" \
   "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
@@ -900,6 +910,11 @@ state="${SET_LIVRE_TEST_STATE:?}"
 printf '%s\n' "$*" >> "$state/systemctl.log"
 if [[ ${1:-} == "restart" && ${phase} == "services" && ! -e "$state/services-once" ]]; then
   touch "$state/services-once"
+  exit 1
+fi
+if [[ ${1:-} == "start" && ${2:-} == "set-livre-media-cleanup.service" \
+  && ${phase} == "media-cleanup" && ! -e "$state/media-cleanup-once" ]]; then
+  touch "$state/media-cleanup-once"
   exit 1
 fi
 if [[ ${1:-} == "restart" && ${phase} == "signal" && ! -e "$state/signal-once" ]]; then
@@ -1132,7 +1147,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v10 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v11 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 sudo cp /etc/nginx/sites-available/set-livre "$temporary_directory/effective-nginx-site"
@@ -1216,11 +1231,23 @@ grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacio
   || fail "preflight SSH recusou enablement systemd por motivo inesperado."
 sudo systemctl enable set-livre-application-start.service
 
+sudo systemctl disable set-livre-media-cleanup.timer
+if preflight_media_cleanup_enablement_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou timer de cleanup desabilitado."
+fi
+grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacionais instalados' \
+  <<< "$preflight_media_cleanup_enablement_output" >/dev/null \
+  || fail "preflight SSH recusou enablement do cleanup por motivo inesperado."
+sudo systemctl enable set-livre-media-cleanup.timer
+
 preflight_recovered_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_recovered_output} == set-livre-deploy-ready-v10 ]] \
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v11 ]] \
   || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {
@@ -1231,9 +1258,11 @@ package_candidate() {
   candidate_backoffice_environment="$temporary_directory/backoffice-${candidate_sha}.env"
   rm -rf -- "$candidate_directory"
   mkdir -p \
-    "$candidate_directory/web" \
+    "$candidate_directory/web/runtime" \
     "$candidate_directory/backoffice/apps/backoffice"
   install -m 0644 /dev/null "$candidate_directory/web/server.js"
+  install -m 0644 "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
+    "$candidate_directory/web/runtime/invoke-media-cleanup.mjs"
   install -m 0644 /dev/null "$candidate_directory/backoffice/apps/backoffice/server.js"
   # Prova que o produtor materializa inodes compartilhados sem relaxar o extrator.
   ln -- "$candidate_directory/web/server.js" \
@@ -1436,6 +1465,9 @@ recover_services_successfully() {
     SET_LIVRE_TEST_STATE="$test_state" \
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
   assert_current_release "$expected"
+  grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
+    "$test_state/systemctl.log" >/dev/null \
+    || fail "recuperação terminal não reativou o timer de cleanup."
   ! privileged_path_exists /etc/set-livre/bootstrap-in-progress.sha256 \
     || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }
@@ -1505,6 +1537,19 @@ grep --fixed-strings 'contrato atual dos ambientes divergiu da release staged' \
   || fail "reuso com contrato de runtime divergente falhou por motivo inesperado."
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
+cmp --silent -- "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
+  /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs \
+  || fail "release ativa não contém o invocador de cleanup revisado."
+grep --fixed-strings --line-regexp \
+  'stop set-livre-media-cleanup.timer set-livre-media-cleanup.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "ativação não bloqueou o agendamento de cleanup."
+grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "ativação não executou o cleanup inicial."
+grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "ativação não reativou o timer de cleanup."
 ! privileged_path_exists "$stale_staging_directory" \
   || fail "staging residual validado não foi removido antes da ativação."
 [[ $(sudo stat --format '%i' /opt/set-livre/current/web/server.js) \
@@ -1526,7 +1571,9 @@ package_candidate "$staged_tamper_sha"
 upload_candidate "$staged_tamper_sha"
 invoke_candidate_through_forced_command "$staged_tamper_sha" "$candidate_checksum"
 printf 'adulteração entre stage e activate\n' \
-  | sudo tee "/opt/set-livre/releases/${staged_tamper_sha}/web/server.js" >/dev/null
+  | sudo tee \
+    "/opt/set-livre/releases/${staged_tamper_sha}/web/runtime/invoke-media-cleanup.mjs" \
+    >/dev/null
 if staged_tamper_output="$(
   invoke_candidate_through_forced_command \
     "$staged_tamper_sha" "$candidate_checksum" success activate 2>&1
@@ -1602,6 +1649,7 @@ run_expected_failure "$(printf '2%.0s' {1..40})" symlink "$release_sha"
 run_expected_failure "$(printf '3%.0s' {1..40})" services "$release_sha"
 run_expected_failure "$(printf '4%.0s' {1..40})" internal-health "$release_sha"
 run_expected_failure "$(printf '5%.0s' {1..40})" public-health "$release_sha"
+run_expected_failure "$(printf 'f%.0s' {1..40})" media-cleanup "$release_sha"
 rollback_public_sha="$(printf 'e%.0s' {1..40})"
 run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha" retained
 [[ -e "$test_state/rollback-public-health-observed" ]] \

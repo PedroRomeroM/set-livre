@@ -67,20 +67,24 @@
             <tr>
               <td>Produto</td>
               <td>
-                FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. O
-                PR incremental contém núcleo/revisões e conteúdo de estúdio, além do backoffice
-                separado para usuários, comandos explícitos de suspensão/restauração, PII temporária
-                auditada, papéis <code>support/admin</code> e administração versionada de taxonomias
-                por ações explícitas de arquivar/reativar, sem status escolhido pelo cliente. O
-                diretório não entrega nome bruto nem papéis ao browser; a autorização permanece no
-                servidor e o cliente observa somente uma versão opaca. Polling passivo não renova a
-                inatividade, PII concluída em aba oculta é descartada e toda mutação exige um
-                desbloqueio local HttpOnly de cinco minutos. Resposta perdida de status, acesso ou
-                taxonomia conserva a tentativa idempotente até replay ou releitura autoritativa, sem
-                permitir cancelamento ou troca de ação, inclusive enquanto a requisição ainda está
-                em voo. Rotas administrativas autenticam a sessão e sua binding antes de consumir o
-                bucket compartilhado ou ler o body, e headers de sessão acumulados sobrevivem também
-                a rejeições posteriores; a busca comum nunca usa nome bruto como oráculo. Login
+                FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. A
+                FEAT-008 está em validação no PR incremental: galeria privada versionada, upload
+                direto ao Storage com verificação autoritativa, originais preservados, prévias WebP
+                limitadas e assinadas e cleanup de ambos os objetos pela Storage API em Function
+                imutável por SHA. O mesmo PR contém núcleo/revisões e conteúdo de estúdio, além do
+                backoffice separado para usuários, comandos explícitos de suspensão/restauração, PII
+                temporária auditada, papéis
+                <code>support/admin</code> e administração versionada de taxonomias por ações
+                explícitas de arquivar/reativar, sem status escolhido pelo cliente. O diretório não
+                entrega nome bruto nem papéis ao browser; a autorização permanece no servidor e o
+                cliente observa somente uma versão opaca. Polling passivo não renova a inatividade,
+                PII concluída em aba oculta é descartada e toda mutação exige um desbloqueio local
+                HttpOnly de cinco minutos. Resposta perdida de status, acesso ou taxonomia conserva
+                a tentativa idempotente até replay ou releitura autoritativa, sem permitir
+                cancelamento ou troca de ação, inclusive enquanto a requisição ainda está em voo.
+                Rotas administrativas autenticam a sessão e sua binding antes de consumir o bucket
+                compartilhado ou ler o body, e headers de sessão acumulados sobrevivem também a
+                rejeições posteriores; a busca comum nunca usa nome bruto como oráculo. Login
                 normaliza a rota de edição e preserva somente destinos canônicos de estúdio. Um
                 conflito ao descartar rascunho bloqueia todos os painéis até o editor inteiro ser
                 reconciliado, sem avanço isolado de token. Grants, RLS e o read model também retiram
@@ -188,14 +192,19 @@
           de segurança da entrega e do host. Testes não usam retry ou relaxamento de asserção para
           mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
           servidores E2E usam um perfil explícito que suporta a matriz multibrowser sem alterar os
-          limites de produção, e o preflight rejeita qualquer identidade QA residual. O runner
-          mantém um pool PostgreSQL administrativo e um DAL por processo, com cliente exclusivo por
-          operação, evitando churn de conexões e esgotamento de portas efêmeras no Windows; páginas
-          são encerradas antes da limpeza destrutiva para não competir com refetches ainda ativos. A
-          configuração destrutiva é lida somente ao iniciar Playwright ou uma operação real de
-          banco; importar helpers puros em Vitest não exige credenciais E2E e também não cria
-          fallback. Os resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas
-          fontes canônicas de
+          limites de produção, e o preflight rejeita qualquer identidade QA residual. O CI valida
+          diretamente com <code>deno check</code> a fonte TypeScript estrita da Edge Function de
+          cleanup e implanta o mesmo grafo sem renomear extensões. O ledger terminaliza
+          automaticamente runs abandonados depois de 30 minutos e exige sucesso posterior para
+          restaurar readiness. O canário é serializado, recupera probes abandonados e só registra
+          ausência física após <code>404/NoSuchKey</code>; a secret key moderna trafega apenas em
+          <code>apikey</code>, sem edição manual do banco. O runner mantém um pool PostgreSQL
+          administrativo e um DAL por processo, com cliente exclusivo por operação, evitando churn
+          de conexões e esgotamento de portas efêmeras no Windows; páginas são encerradas antes da
+          limpeza destrutiva para não competir com refetches ainda ativos. A configuração destrutiva
+          é lida somente ao iniciar Playwright ou uma operação real de banco; importar helpers puros
+          em Vitest não exige credenciais E2E e também não cria fallback. Os resultados permanecem
+          no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.

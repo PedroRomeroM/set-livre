@@ -109,6 +109,7 @@ export function clearIdentityAndAccountQueryCache(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: identityQueryKeys.sessions });
   queryClient.removeQueries({ queryKey: ownerQueryKeys.privateResults });
   queryClient.removeQueries({ queryKey: studioQueryKeys.privateEditors });
+  queryClient.removeQueries({ queryKey: studioQueryKeys.privateMedia });
   queryClient.removeQueries({ queryKey: studioQueryKeys.privateTaxonomies });
 }
 

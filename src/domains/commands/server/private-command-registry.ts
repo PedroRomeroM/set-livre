@@ -52,6 +52,11 @@ export function createPrivateCommandRegistry(dependencies: PrivateCommandDepende
       case "studio.revision.updateTaxonomy":
       case "studio.revision.updateContent":
       case "studio.draft.discard":
+      case "studio.media.upload.prepare":
+      case "studio.media.upload.finalize":
+      case "studio.media.reorder":
+      case "studio.media.cover.set":
+      case "studio.media.delete":
         return dependencies.executeStudioCommand(command, context);
     }
   };

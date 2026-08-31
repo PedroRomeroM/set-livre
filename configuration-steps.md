@@ -7,6 +7,11 @@ autorizadas. O restante da infraestrutura é executado e validado pelo agente.
 
 Nenhuma ação humana permanece pendente para esta entrega.
 
+O cleanup de mídia reutiliza o `SUPABASE_ACCESS_TOKEN` já guardado no environment de produção. O
+workflow comprova automaticamente que ele pode ler a secret key moderna do projeto, mascara-a,
+entrega-a somente ao runtime web e testa a Edge Function com objetos reais; não é preciso criar nem
+copiar um novo secret. A VM agenda a invocação com as units `systemd` versionadas na release.
+
 Não cole senhas ou tokens neste arquivo. Secrets de GitHub, Supabase e SSH serão publicados por canais
 próprios e validados sem exibir seus valores.
 

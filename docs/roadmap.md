@@ -13,7 +13,7 @@ nos testes e nos documentos permanentes de domínio; a evidência da entrega per
 |     4 | FEAT-006 | Núcleo e revisões de estúdio        | Em andamento | FEAT-003, FEAT-004                               | [plano](features/FEAT-006-studio-core-revision.md)            |
 |     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Em andamento | FEAT-006                                         | [plano](features/FEAT-007-studio-taxonomy-content.md)         |
 |     6 | FEAT-031 | Backoffice de usuários e taxonomias | Em andamento | FEAT-003, FEAT-007                               | [plano](features/FEAT-031-backoffice-users-taxonomy.md)       |
-|     7 | FEAT-008 | Mídia de estúdio                    | Planejada    | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
+|     7 | FEAT-008 | Mídia de estúdio                    | Em andamento | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
 |     8 | FEAT-009 | Publicação e revisão de estúdio     | Planejada    | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |
 |     9 | FEAT-030 | Backoffice de revisão de estúdio    | Planejada    | FEAT-008, FEAT-009                               | [plano](features/FEAT-030-backoffice-studio-review.md)        |
 |    10 | FEAT-012 | Disponibilidade semanal             | Planejada    | FEAT-006                                         | [plano](features/FEAT-012-weekly-availability.md)             |

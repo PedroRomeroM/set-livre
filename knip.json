@@ -9,7 +9,9 @@
     ]
   },
   "workspaces": {
-    ".": {},
+    ".": {
+      "entry": ["supabase/functions/**/*.ts"]
+    },
     "apps/backoffice": {},
     "packages/contracts": {},
     "packages/ui": {

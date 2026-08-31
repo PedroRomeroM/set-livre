@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest";
 import { clearIdentityAndAccountQueryCache } from "../../src/domains/identity/components/account-query-keys";
 import {
   publishStudioEditor,
+  publishStudioMediaGallery,
+  preserveNewestStudioMediaGallery,
   studioEditorCanRender,
+  studioMediaOrderMatchesIntent,
   StudioScopeChangedError,
+  StudioMediaScopeChangedError,
   studioQueryKeys,
 } from "../../src/domains/studios/components/studio-query-keys";
 import { studioCorePanelInternals } from "../../src/domains/studios/components/studio-core-panel";
@@ -24,6 +28,101 @@ function editorFor(scope: string, studioId: string, revisionId: string): StudioE
 }
 
 describe("studio private query cache", () => {
+  it("impede replay de mídia antigo de regredir a revisão já publicada no cache", () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
+    const current = {
+      items: [],
+      previewExpiresAt: "2026-08-31T12:05:00.000Z",
+      revisionId: studioTestIds.revisionId,
+      revisionNumber: 2,
+      revisionVersion: 5,
+      scope: studioTestIds.userId,
+      studioId: studioTestIds.studioId,
+    };
+    queryClient.setQueryData(queryKey, current);
+
+    expect(
+      publishStudioMediaGallery(
+        queryClient,
+        { ...current, revisionVersion: 4 },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(current);
+    expect(queryClient.getQueryData(queryKey)).toEqual(current);
+    expect(
+      preserveNewestStudioMediaGallery(
+        current,
+        { ...current, revisionVersion: 6 },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ).revisionVersion,
+    ).toBe(6);
+    expect(() =>
+      preserveNewestStudioMediaGallery(
+        current,
+        { ...current, scope: studioTestIds.otherUserId },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toThrow(StudioMediaScopeChangedError);
+    expect(
+      preserveNewestStudioMediaGallery(
+        current,
+        { ...current, previewExpiresAt: "2026-08-31T12:04:00.000Z" },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(current);
+    expect(
+      preserveNewestStudioMediaGallery(
+        current,
+        { ...current, previewExpiresAt: "2026-08-31T09:06:00.000-03:00" },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ).previewExpiresAt,
+    ).toBe("2026-08-31T09:06:00.000-03:00");
+
+    const newerRevision = {
+      ...current,
+      revisionId: "77777777-7777-4777-8777-777777777777",
+      revisionNumber: 3,
+      revisionVersion: 1,
+    };
+    expect(
+      preserveNewestStudioMediaGallery(
+        newerRevision,
+        current,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(newerRevision);
+    expect(
+      preserveNewestStudioMediaGallery(
+        current,
+        newerRevision,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(newerRevision);
+    expect(() =>
+      preserveNewestStudioMediaGallery(
+        current,
+        { ...current, revisionId: newerRevision.revisionId },
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toThrow(StudioMediaScopeChangedError);
+  });
+
+  it("confirma uma ordem somente quando cardinalidade e sequência são exatas", () => {
+    const items = [{ id: "a" }, { id: "b" }];
+    expect(studioMediaOrderMatchesIntent(items, ["a", "b"])).toBe(true);
+    expect(studioMediaOrderMatchesIntent(items.slice(0, 1), ["a", "b"])).toBe(false);
+    expect(studioMediaOrderMatchesIntent(items, ["b", "a"])).toBe(false);
+  });
+
   it("publishes only over an existing boundary and preserves another studio from the same owner", () => {
     const queryClient = new QueryClient();
     const otherRevisionId = "88888888-8888-4888-8888-888888888888";
@@ -74,6 +173,11 @@ describe("studio private query cache", () => {
     const currentTaxonomies = studioQueryKeys.taxonomies(studioTestIds.userId);
     const foreignTaxonomies = studioQueryKeys.taxonomies(studioTestIds.otherUserId);
     const currentTypes = studioQueryKeys.types(studioTestIds.userId);
+    const currentMedia = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
+    const foreignMedia = studioQueryKeys.media(
+      studioTestIds.otherUserId,
+      studioTestIds.otherStudioId,
+    );
     expect(currentTaxonomies).not.toEqual(foreignTaxonomies);
     expect(() =>
       publishStudioEditor(
@@ -91,6 +195,8 @@ describe("studio private query cache", () => {
     queryClient.setQueryData(currentTaxonomies, { tags: ["current"] });
     queryClient.setQueryData(foreignTaxonomies, { tags: ["foreign"] });
     queryClient.setQueryData(currentTypes, [{ id: "private-type" }]);
+    queryClient.setQueryData(currentMedia, { items: [{ previewUrl: "current-private" }] });
+    queryClient.setQueryData(foreignMedia, { items: [{ previewUrl: "foreign-private" }] });
     clearIdentityAndAccountQueryCache(queryClient);
     expect(
       queryClient.getQueryData(
@@ -100,6 +206,8 @@ describe("studio private query cache", () => {
     expect(queryClient.getQueryData(currentTaxonomies)).toBeUndefined();
     expect(queryClient.getQueryData(foreignTaxonomies)).toBeUndefined();
     expect(queryClient.getQueryData(currentTypes)).toBeUndefined();
+    expect(queryClient.getQueryData(currentMedia)).toBeUndefined();
+    expect(queryClient.getQueryData(foreignMedia)).toBeUndefined();
   });
 
   it("keeps SSR private values hidden until an authoritative scoped read succeeds", () => {

@@ -42,6 +42,10 @@ const backofficeLocalRuntimeEnvironmentNames = Object.freeze([
   ...commonLocalRuntimeEnvironmentNames,
   "BACKOFFICE_RUNTIME_UNLOCK_KEY",
 ]);
+const webLocalRuntimeEnvironmentNames = Object.freeze([
+  ...commonLocalRuntimeEnvironmentNames,
+  "SUPABASE_SECRET_KEY",
+]);
 export const applicationDatabaseSchemas = Object.freeze(["public", "private", "audit"]);
 const inheritedOperationalEnvironmentNames = Object.freeze([
   "CI",
@@ -116,6 +120,22 @@ function assertPublicSupabaseKey(value) {
   }
 }
 
+function assertServerSupabaseKey(value) {
+  if (typeof value !== "string" || value === "" || value.length > 8_192) {
+    throw new Error("SUPABASE_SECRET_KEY local possui formato inválido.");
+  }
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("SUPABASE_SECRET_KEY local não é uma chave server-only válida.");
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+    if (payload?.role !== "service_role") throw new Error("role inesperada");
+  } catch {
+    throw new Error("SUPABASE_SECRET_KEY local precisa usar a role service_role.");
+  }
+}
+
 function assertLocalApplicationEnvironment(localEnvironment, expectedApplicationUrl) {
   if (localEnvironment === null || typeof localEnvironment !== "object") {
     throw new Error("O ambiente local da aplicação é inválido.");
@@ -123,7 +143,7 @@ function assertLocalApplicationEnvironment(localEnvironment, expectedApplication
   const expectedNames =
     expectedApplicationUrl === localApplicationContracts.backoffice.expectedApplicationUrl
       ? backofficeLocalRuntimeEnvironmentNames
-      : commonLocalRuntimeEnvironmentNames;
+      : webLocalRuntimeEnvironmentNames;
   const expectedNameSet = new Set(expectedNames);
   const unexpectedNames = Object.keys(localEnvironment).filter(
     (name) => !expectedNameSet.has(name),
@@ -153,6 +173,9 @@ function assertLocalApplicationEnvironment(localEnvironment, expectedApplication
     throw new Error("BACKOFFICE_RUNTIME_UNLOCK_KEY local possui formato inválido.");
   }
   assertPublicSupabaseKey(localEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  if (expectedNames === webLocalRuntimeEnvironmentNames) {
+    assertServerSupabaseKey(localEnvironment.SUPABASE_SECRET_KEY);
+  }
 
   let dalDatabaseUrl;
   try {
@@ -918,11 +941,13 @@ function assertLocalEndpoint(value, label, protocol, port) {
 
 export function parseSupabaseStatus(rawStatus) {
   const values = JSON.parse(rawStatus);
-  for (const name of ["ANON_KEY", "API_URL", "DB_URL"]) {
+  for (const name of ["ANON_KEY", "API_URL", "DB_URL", "SERVICE_ROLE_KEY"]) {
     if (typeof values[name] !== "string" || values[name] === "") {
       throw new Error(`Supabase local não retornou ${name}.`);
     }
   }
+  assertPublicSupabaseKey(values.ANON_KEY);
+  assertServerSupabaseKey(values.SERVICE_ROLE_KEY);
 
   const apiUrl = assertLocalEndpoint(values.API_URL, "API_URL", "http:", "54321");
   if (
@@ -1247,6 +1272,9 @@ function applicationEnvironment(values, dalDatabaseUrl, appUrl, backofficeRuntim
     `NEXT_PUBLIC_APP_URL=${appUrl}`,
     `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
     `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
+    ...(appUrl === localApplicationContracts.web.expectedApplicationUrl
+      ? [`SUPABASE_SECRET_KEY=${values.SERVICE_ROLE_KEY}`]
+      : []),
     `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
     "",
   ].join("\n");
@@ -1257,6 +1285,7 @@ async function resetLocalEnvironment() {
   startLocalSupabase();
   process.stdout.write("Reaplicando migrations e seed...\n");
   runSupabase(["db", "reset", "--local"], { capture: true, network: true });
+  reconcileSupabaseNetworkAfterReset();
   const values = localStatus();
   process.stdout.write("Provisionando a role DAL local...\n");
   const { dalDatabaseUrl, databaseMarker } = await provisionLocalRuntime(values);
@@ -1286,6 +1315,7 @@ async function resetLocalEnvironment() {
         `E2E_DATABASE_MARKER=${databaseMarker}`,
         `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
         `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
+        `SUPABASE_SECRET_KEY=${values.SERVICE_ROLE_KEY}`,
         `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
         `E2E_DATABASE_URL=${values.DB_URL}`,
         "",
@@ -1319,6 +1349,22 @@ function startLocalSupabase() {
   } catch (error) {
     if (supabaseProjectContainersAreRunning(environment)) stopScopedSupabaseStack(environment);
     throw error;
+  }
+}
+
+export function reconcileSupabaseNetworkAfterReset({
+  assertBindings = assertSupabaseLoopbackBindings,
+  environment = assertLocalDockerDaemon(),
+  startStack = startLocalSupabase,
+  stopStack = stopScopedSupabaseStack,
+} = {}) {
+  try {
+    assertBindings(environment);
+    return false;
+  } catch {
+    stopStack(environment);
+    startStack();
+    return true;
   }
 }
 

@@ -244,6 +244,133 @@ export type Database = {
           },
         ];
       };
+      studio_media: {
+        Row: {
+          actual_mime_type: string | null;
+          actual_size_bytes: number | null;
+          checksum_sha256: string | null;
+          cleanup_after: string | null;
+          cleanup_attempts: number;
+          cleanup_claim_token: string | null;
+          cleanup_claimed_at: string | null;
+          cleanup_last_completed_token: string | null;
+          cleanup_last_error_code: string | null;
+          cleanup_last_succeeded: boolean | null;
+          cleanup_next_attempt_at: string | null;
+          declared_checksum_sha256: string | null;
+          declared_mime_type: string;
+          declared_size_bytes: number;
+          delete_requested_at: string | null;
+          deleted_at: string | null;
+          finalized_at: string | null;
+          height: number | null;
+          id: string;
+          prepared_at: string;
+          prepared_revision_id: string | null;
+          preview_storage_path: string;
+          rejected_at: string | null;
+          rejection_code: string | null;
+          status: string;
+          storage_bucket: string;
+          storage_path: string;
+          studio_id: string | null;
+          updated_at: string;
+          upload_expires_at: string;
+          uploaded_by: string;
+          width: number | null;
+        };
+        Insert: {
+          actual_mime_type?: string | null;
+          actual_size_bytes?: number | null;
+          checksum_sha256?: string | null;
+          cleanup_after?: string | null;
+          cleanup_attempts?: number;
+          cleanup_claim_token?: string | null;
+          cleanup_claimed_at?: string | null;
+          cleanup_last_completed_token?: string | null;
+          cleanup_last_error_code?: string | null;
+          cleanup_last_succeeded?: boolean | null;
+          cleanup_next_attempt_at?: string | null;
+          declared_checksum_sha256?: string | null;
+          declared_mime_type: string;
+          declared_size_bytes: number;
+          delete_requested_at?: string | null;
+          deleted_at?: string | null;
+          finalized_at?: string | null;
+          height?: number | null;
+          id?: string;
+          prepared_at?: string;
+          prepared_revision_id?: string | null;
+          preview_storage_path: string;
+          rejected_at?: string | null;
+          rejection_code?: string | null;
+          status?: string;
+          storage_bucket?: string;
+          storage_path: string;
+          studio_id?: string | null;
+          updated_at?: string;
+          upload_expires_at: string;
+          uploaded_by: string;
+          width?: number | null;
+        };
+        Update: {
+          actual_mime_type?: string | null;
+          actual_size_bytes?: number | null;
+          checksum_sha256?: string | null;
+          cleanup_after?: string | null;
+          cleanup_attempts?: number;
+          cleanup_claim_token?: string | null;
+          cleanup_claimed_at?: string | null;
+          cleanup_last_completed_token?: string | null;
+          cleanup_last_error_code?: string | null;
+          cleanup_last_succeeded?: boolean | null;
+          cleanup_next_attempt_at?: string | null;
+          declared_checksum_sha256?: string | null;
+          declared_mime_type?: string;
+          declared_size_bytes?: number;
+          delete_requested_at?: string | null;
+          deleted_at?: string | null;
+          finalized_at?: string | null;
+          height?: number | null;
+          id?: string;
+          prepared_at?: string;
+          prepared_revision_id?: string | null;
+          preview_storage_path?: string;
+          rejected_at?: string | null;
+          rejection_code?: string | null;
+          status?: string;
+          storage_bucket?: string;
+          storage_path?: string;
+          studio_id?: string | null;
+          updated_at?: string;
+          upload_expires_at?: string;
+          uploaded_by?: string;
+          width?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_media_prepared_revision_id_fkey";
+            columns: ["prepared_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_media_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_media_uploaded_by_fkey";
+            columns: ["uploaded_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       studio_revision_amenities: {
         Row: {
           amenity_id: string;
@@ -267,6 +394,45 @@ export type Database = {
           },
           {
             foreignKeyName: "studio_revision_amenities_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_media: {
+        Row: {
+          created_at: string;
+          is_cover: boolean;
+          media_id: string;
+          position: number;
+          revision_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          is_cover?: boolean;
+          media_id: string;
+          position: number;
+          revision_id: string;
+        };
+        Update: {
+          created_at?: string;
+          is_cover?: boolean;
+          media_id?: string;
+          position?: number;
+          revision_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_media_media_id_fkey";
+            columns: ["media_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_media";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_media_revision_id_fkey";
             columns: ["revision_id"];
             isOneToOne: false;
             referencedRelation: "studio_revisions";
@@ -627,6 +793,34 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      begin_studio_media_cleanup_run: {
+        Args: { p_function_slug: string; p_run_id: string };
+        Returns: Json;
+      };
+      claim_studio_media_cleanup: {
+        Args: { p_claim_token: string; p_limit: number };
+        Returns: Json;
+      };
+      complete_studio_media_cleanup: {
+        Args: {
+          p_claim_token: string;
+          p_error_code: string;
+          p_media_id: string;
+          p_succeeded: boolean;
+        };
+        Returns: Json;
+      };
+      complete_studio_media_cleanup_run: {
+        Args: {
+          p_claimed: number;
+          p_deleted: number;
+          p_error_code: string;
+          p_failed: number;
+          p_run_id: string;
+          p_status: string;
+        };
+        Returns: Json;
+      };
       get_current_legal_terms: {
         Args: never;
         Returns: {

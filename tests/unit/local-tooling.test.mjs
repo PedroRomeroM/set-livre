@@ -22,6 +22,7 @@ import {
   ensureWindowsDockerEngine,
   parseSupabaseCliError,
   parseSupabaseStatus,
+  reconcileSupabaseNetworkAfterReset,
   runNextBuildWithCacheCleanup,
   runSupabase,
   runWindowsDatabaseTests,
@@ -34,14 +35,21 @@ import {
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
 describe("local tooling contracts", () => {
+  const localAnonKey = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(
+    '{"role":"anon"}',
+  ).toString("base64url")}.signature`;
+  const localServiceRoleKey = `${Buffer.from('{"alg":"HS256"}').toString(
+    "base64url",
+  )}.${Buffer.from('{"role":"service_role"}').toString("base64url")}.signature`;
   const localApplicationEnvironment = {
     APP_ENV: "local",
     APP_RELEASE_SHA: "local",
     DATABASE_URL_APP_DAL:
       "postgresql://app_runtime_local:local-secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
     NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_local-contract",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: localAnonKey,
     NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+    SUPABASE_SECRET_KEY: localServiceRoleKey,
   };
 
   it("launches local apps only with the generated runtime contract", () => {
@@ -77,9 +85,13 @@ describe("local tooling contracts", () => {
 
   it("requires the runtime unlock key only in the local backoffice contract", () => {
     const backofficeEnvironment = {
-      ...localApplicationEnvironment,
+      APP_ENV: localApplicationEnvironment.APP_ENV,
+      APP_RELEASE_SHA: localApplicationEnvironment.APP_RELEASE_SHA,
       BACKOFFICE_RUNTIME_UNLOCK_KEY: "A".repeat(43),
+      DATABASE_URL_APP_DAL: localApplicationEnvironment.DATABASE_URL_APP_DAL,
       NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3001",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      NEXT_PUBLIC_SUPABASE_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
     };
 
     expect(
@@ -350,10 +362,83 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery.service");
-    expect(bootstrap).toContain(
-      "systemctl disable set-livre-web.service set-livre-backoffice.service",
-    );
+    expect(bootstrap).toContain("systemctl disable \\");
+    expect(bootstrap).toContain("set-livre-media-cleanup.service");
+    expect(bootstrap).toContain("set-livre-media-cleanup.timer");
     expect(bootstrap).toContain("set-livre-application-start.service");
+  });
+
+  it("runs immutable media cleanup as a hardened scheduled web identity", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const release = readFileSync(new URL("../../scripts/release.mjs", import.meta.url), "utf8");
+    const service = readFileSync(
+      new URL("../../ops/systemd/set-livre-media-cleanup.service", import.meta.url),
+      "utf8",
+    );
+    const timer = readFileSync(
+      new URL("../../ops/systemd/set-livre-media-cleanup.timer", import.meta.url),
+      "utf8",
+    );
+
+    expect(service).toContain("User=setlivre-web");
+    expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
+    expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/release.env");
+    expect(service).toContain(
+      "ExecStart=/opt/node/bin/node /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
+    expect(service).toContain(
+      "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(service).toContain("ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
+    expect(service).toContain(
+      "ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
+    );
+    expect(service).not.toContain("Authorization");
+    expect(timer).toContain("Requires=set-livre-application-start.service");
+    expect(timer).toContain("After=set-livre-application-start.service");
+    expect(timer).toContain("OnBootSec=5min");
+    expect(timer).toContain("OnUnitActiveSec=10min");
+    expect(timer).toContain("WantedBy=timers.target");
+    expect(timer).toContain(
+      "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+
+    for (const contract of [bootstrap, deploy, hostVerification, release]) {
+      expect(contract).toContain("set-livre-media-cleanup.service");
+      expect(contract).toContain("set-livre-media-cleanup.timer");
+    }
+    expect(bootstrap).toContain("systemd-analyze verify \\");
+    expect(bootstrap).toContain("systemctl start set-livre-media-cleanup.timer");
+    expect(hostVerification).toContain("preflight SSH aceitou timer de cleanup desabilitado");
+    expect(hostVerification).toContain("ativação não executou o cleanup inicial");
+    expect(hostVerification).toContain("recuperação terminal não reativou o timer de cleanup");
+    expect(release).toContain('const mediaCleanupEntrypoint = "runtime/invoke-media-cleanup.mjs"');
+    expect(deploy).not.toContain("MEDIA_CLEANUP_MARKER");
+    expect(deploy).not.toContain("media-cleanup-enabled");
+
+    const rollbackMarker = deploy.indexOf('write_rollback_marker "$previous_release"');
+    const stopSchedule = deploy.indexOf("stop_media_cleanup_schedule", rollbackMarker);
+    const activateLink = deploy.indexOf('activate_link "$release_directory"', stopSchedule);
+    const publicHealth = deploy.indexOf('wait_for_public_health "$release_sha"', activateLink);
+    const initialCleanup = deploy.indexOf(
+      "systemctl start set-livre-media-cleanup.service",
+      publicHealth,
+    );
+    const startSchedule = deploy.indexOf("start_media_cleanup_schedule", initialCleanup);
+    const terminalMarkerRemoval = deploy.indexOf('rm -f -- "$ROLLBACK_MARKER"', startSchedule);
+    expect(rollbackMarker).toBeGreaterThan(-1);
+    expect(stopSchedule).toBeGreaterThan(rollbackMarker);
+    expect(activateLink).toBeGreaterThan(stopSchedule);
+    expect(publicHealth).toBeGreaterThan(activateLink);
+    expect(initialCleanup).toBeGreaterThan(publicHealth);
+    expect(startSchedule).toBeGreaterThan(initialCleanup);
+    expect(terminalMarkerRemoval).toBeGreaterThan(startSchedule);
   });
 
   it("authenticates and consumes a paired bootstrap recovery state", () => {
@@ -1154,7 +1239,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v10"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v11"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1210,7 +1295,7 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum} ${runtime_digest}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v10");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v11");
     expect(hostVerification).toContain("preflight SSH aceitou drift no binário Node efetivo");
     expect(hostVerification).toContain("preflight SSH aceitou unit systemd efetiva divergente");
     expect(hostVerification).toContain(
@@ -1236,7 +1321,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v10" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
@@ -1373,17 +1458,9 @@ describe("local tooling contracts", () => {
       'wait_for_active_public_health "$active_release_sha"',
       bootstrapRestart,
     );
-    const terminalGateCommitted = bootstrap.indexOf(
-      "bootstrap_gate_published=false",
-      bootstrapReadiness,
-    );
-    const terminalBootstrap = bootstrap.indexOf(
-      "host_configuration_published=false",
-      terminalGateCommitted,
-    );
     const recoveryPhaseDisarmed = bootstrap.indexOf(
       'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
-      terminalBootstrap,
+      bootstrapReadiness,
     );
     const recoveryDisarmed = bootstrap.indexOf(
       'rm -f -- "$ROLLBACK_MARKER"',
@@ -1393,6 +1470,14 @@ describe("local tooling contracts", () => {
       'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
       recoveryDisarmed,
     );
+    const terminalGateCommitted = bootstrap.indexOf(
+      "bootstrap_gate_published=false",
+      emptyHostGateReleased,
+    );
+    const terminalBootstrap = bootstrap.indexOf(
+      "host_configuration_published=false",
+      terminalGateCommitted,
+    );
     for (const position of [
       bootstrapDigestPublished,
       recoveryArmed,
@@ -1401,11 +1486,11 @@ describe("local tooling contracts", () => {
       bootstrapGateReleased,
       bootstrapRestart,
       bootstrapReadiness,
-      terminalGateCommitted,
-      terminalBootstrap,
       recoveryPhaseDisarmed,
       recoveryDisarmed,
       emptyHostGateReleased,
+      terminalGateCommitted,
+      terminalBootstrap,
     ]) {
       expect(position).toBeGreaterThan(-1);
     }
@@ -1416,11 +1501,11 @@ describe("local tooling contracts", () => {
     expect(previousDigestRemoved).toBeLessThan(bootstrapGateReleased);
     expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
     expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
-    expect(bootstrapReadiness).toBeLessThan(terminalGateCommitted);
-    expect(terminalGateCommitted).toBeLessThan(terminalBootstrap);
-    expect(terminalBootstrap).toBeLessThan(recoveryPhaseDisarmed);
+    expect(bootstrapReadiness).toBeLessThan(recoveryPhaseDisarmed);
     expect(recoveryPhaseDisarmed).toBeLessThan(recoveryDisarmed);
     expect(recoveryDisarmed).toBeLessThan(emptyHostGateReleased);
+    expect(emptyHostGateReleased).toBeLessThan(terminalGateCommitted);
+    expect(terminalGateCommitted).toBeLessThan(terminalBootstrap);
     expect(bootstrapCleanup).toContain(
       "if [[ ${bootstrap_gate_published} == true ]]; then\n    stop_application_services",
     );
@@ -1647,9 +1732,10 @@ describe("local tooling contracts", () => {
     expect(
       parseSupabaseStatus(
         JSON.stringify({
-          ANON_KEY: "local-anon",
+          ANON_KEY: localAnonKey,
           API_URL: "http://127.0.0.1:54321",
           DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+          SERVICE_ROLE_KEY: localServiceRoleKey,
         }),
       ),
     ).toMatchObject({ API_URL: "http://127.0.0.1:54321" });
@@ -1692,6 +1778,27 @@ describe("local tooling contracts", () => {
         "fora da fronteira local",
       );
     }
+  });
+
+  it("restarts through the CLI when db reset recreates Postgres outside the canonical network", () => {
+    const actions = [];
+    const environment = { DOCKER_HOST: "tcp://127.0.0.1:2375" };
+
+    expect(
+      reconcileSupabaseNetworkAfterReset({
+        assertBindings: () => {
+          actions.push("inspect");
+          throw new Error("database network drift");
+        },
+        environment,
+        startStack: () => actions.push("start"),
+        stopStack: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("stop");
+        },
+      }),
+    ).toBe(true);
+    expect(actions).toEqual(["inspect", "stop", "start"]);
   });
 
   it("waits for a restored Supabase stack to become healthy without a fixed startup delay", () => {
@@ -1880,9 +1987,10 @@ describe("local tooling contracts", () => {
     expect(() =>
       parseSupabaseStatus(
         JSON.stringify({
-          ANON_KEY: "cloud-anon",
+          ANON_KEY: localAnonKey,
           API_URL: "https://project.supabase.co",
           DB_URL: "postgresql://postgres:secret@db.example.com:5432/postgres",
+          SERVICE_ROLE_KEY: localServiceRoleKey,
         }),
       ),
     ).toThrow("endpoint local");

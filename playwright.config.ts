@@ -20,10 +20,10 @@ const applicationEnvironment = (appUrl: string) => ({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: safeEnvironment.supabaseAnonKey,
   NEXT_PUBLIC_SUPABASE_URL: safeEnvironment.supabaseUrl,
 });
-const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
-  process.env,
-  applicationEnvironment(publicBaseUrl),
-);
+const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env, {
+  ...applicationEnvironment(publicBaseUrl),
+  SUPABASE_SECRET_KEY: safeEnvironment.supabaseSecretKey,
+});
 const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env, {
   ...applicationEnvironment(backofficeBaseUrl),
   BACKOFFICE_RUNTIME_UNLOCK_KEY: safeEnvironment.backofficeRuntimeUnlockKey,

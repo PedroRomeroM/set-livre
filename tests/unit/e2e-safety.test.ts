@@ -20,6 +20,7 @@ const safeInput = {
   explicitLocalPermission: "1" as const,
   publicBaseUrl: "http://127.0.0.1:3000",
   supabaseAnonKey: jwtForRole("anon"),
+  supabaseSecretKey: jwtForRole("service_role"),
   supabaseUrl: "http://127.0.0.1:54321",
 };
 const nonLiteralLocalHosts = [
@@ -51,6 +52,18 @@ describe("E2E safety guard", () => {
     expect(() =>
       assertSafeE2EEnvironment({ ...safeInput, supabaseAnonKey: jwtForRole("service_role") }),
     ).toThrow("role pública anon");
+  });
+
+  it("requires the local server boundary to use the service_role identity", () => {
+    expect(() =>
+      assertSafeE2EEnvironment({ ...safeInput, supabaseSecretKey: jwtForRole("anon") }),
+    ).toThrow("role service_role");
+    expect(() =>
+      assertSafeE2EEnvironment({
+        ...safeInput,
+        supabaseSecretKey: "sb_secret_cloud_keys_are_not_accepted_in_local_e2e",
+      }),
+    ).toThrow("server-only local válida");
   });
 
   it.each([

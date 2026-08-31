@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -47,6 +48,60 @@ describe("identity session security", () => {
     expect(() => readSupabaseEnvironment()).toThrow("origens HTTP IPv4 literais");
     vi.unstubAllEnvs();
   });
+
+  it("accepts a dedicated server secret and rejects a publishable key at the trusted boundary", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://supabase.setlivre.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_server_only_contract_key");
+    const { readTrustedSupabaseEnvironment } = await import("../../src/lib/supabase/config");
+
+    expect(readTrustedSupabaseEnvironment()).toEqual({
+      secretKey: "sb_secret_server_only_contract_key",
+      supabaseOrigin: "https://supabase.setlivre.example",
+    });
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_publishable_public_contract_key");
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("server-only");
+    const anonJwt = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url"),
+      "synthetic-signature",
+    ].join(".");
+    vi.stubEnv("SUPABASE_SECRET_KEY", anonJwt);
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("server-only");
+    const legacyServiceRoleJwt = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url"),
+      "synthetic-signature",
+    ].join(".");
+    vi.stubEnv("SUPABASE_SECRET_KEY", legacyServiceRoleJwt);
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("moderna");
+    vi.unstubAllEnvs();
+  });
+
+  it.each(["local", "test"] as const)(
+    "accepts the Supabase CLI service_role key only in the exact %s runtime",
+    async (appEnvironment) => {
+      const legacyServiceRoleJwt = [
+        Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+        Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url"),
+        "synthetic-signature",
+      ].join(".");
+      vi.stubEnv("APP_ENV", appEnvironment);
+      vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "local-anon-key");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+      vi.stubEnv("SUPABASE_SECRET_KEY", legacyServiceRoleJwt);
+      const { readTrustedSupabaseEnvironment } = await import("../../src/lib/supabase/config");
+
+      expect(readTrustedSupabaseEnvironment()).toEqual({
+        secretKey: legacyServiceRoleJwt,
+        supabaseOrigin: "http://127.0.0.1:54321",
+      });
+      vi.unstubAllEnvs();
+    },
+  );
 
   it.each(["development", "production"] as const)(
     "rejects plaintext Auth origins in %s",

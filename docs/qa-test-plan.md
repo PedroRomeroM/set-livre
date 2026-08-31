@@ -98,13 +98,16 @@ Antes de qualquer mutação, os helpers exigem:
 - backoffice em `http://127.0.0.1:3001`;
 - Supabase em `http://127.0.0.1:54321`;
 - chave pública Supabase `sb_publishable_...` ou JWT com role `anon`;
+- chave server-only emitida pelo Supabase CLI local, com JWT de role `service_role`, somente no
+  processo web e nos helpers que limpam fixtures;
 - PostgreSQL em `127.0.0.1:54322`;
 - login DAL `app_runtime_local` com `options=-c role=app_dal`;
 - marcador aleatório gravado no comentário do banco pelo último reset.
 
-Qualquer URL cloud, representação alternativa ou chave de `service_role` falha antes do teste. Os
-servidores web recebem explicitamente esse mesmo contrato validado, sem herdar valores de aplicação
-potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é interpretado depois de
+Qualquer URL cloud, representação alternativa, chave pública com role `service_role` ou chave
+server-only fora do campo dedicado falha antes do teste. O backoffice nunca recebe a chave
+server-only. Os servidores web recebem explicitamente esse contrato validado, sem herdar valores de
+aplicação potencialmente divergentes do shell. O arquivo opcional `.env.e2e.local` só é interpretado depois de
 provar arquivo regular, inode exclusivo e metadados estáveis; em POSIX, abertura no-follow, owner
 efetivo e modo `0600` também são obrigatórios.
 
@@ -213,9 +216,26 @@ asserções para grants/RLS, binding curto, polling passivo sem renovação, cor
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo possui nove arquivos e 386 testes. A regressão transversal de tempo força timestamps
+runner completo, após a FEAT-008, possui dez arquivos e 437 testes. A regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
+
+## Matriz da FEAT-008
+
+Os doze cenários `SL-F008-E2E-001..012` expandem para 43 execuções:
+
+- P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
+  antes/depois da persistência e isolamento entre donos nos três engines;
+- regressões em desktop, 390 px, 320 px e altura compacta provam controles acessíveis, dimensões
+  reservadas/CLS, hidratação fail-closed, conflito autoritativo de galeria e upload com reserva nova,
+  além da ausência de controles privados sem JavaScript;
+- axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
+- reflow a 200% executa em Chromium, Firefox e WebKit.
+
+O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
+prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 51 asserções para
+schema, grants/RLS e Storage A/B, limite, clone, idempotência, concorrência com `dblink`, claims
+cercados e backoff do cleanup.
 
 ## Contrato por feature
 

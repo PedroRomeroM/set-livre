@@ -25,6 +25,7 @@ export const productionCoordinates = Object.freeze({
 });
 const projectRefPattern = /^[a-z]{20}$/u;
 const publishableKeyPattern = /^sb_publishable_[A-Za-z0-9_-]{12,}$/u;
+const secretKeyPattern = /^sb_secret_[A-Za-z0-9_-]{12,}$/u;
 
 function requiredValue(environment, name) {
   const value = environment[name];
@@ -65,6 +66,18 @@ export function assertSupabasePublishableKey(value) {
   }
   if (!publishableKeyPattern.test(value)) {
     throw new Error("PRD_SUPABASE_PUBLISHABLE_KEY possui formato inválido.");
+  }
+}
+
+export function assertSupabaseSecretKey(value) {
+  if (typeof value !== "string" || value.includes("\n") || value.includes("\r")) {
+    throw new Error("PRD_SUPABASE_SECRET_KEY possui formato inválido.");
+  }
+  if (value.startsWith("sb_publishable_") || value.split(".").length === 3) {
+    throw new Error("PRD_SUPABASE_SECRET_KEY precisa ser uma chave secret dedicada.");
+  }
+  if (value.length > 4096 || !secretKeyPattern.test(value)) {
+    throw new Error("PRD_SUPABASE_SECRET_KEY possui formato inválido.");
   }
 }
 
@@ -137,6 +150,7 @@ export function assertProductionDeploymentContract(environment = process.env) {
 
   const publishableKey = requiredValue(environment, "PRD_SUPABASE_PUBLISHABLE_KEY");
   assertSupabasePublishableKey(publishableKey);
+  assertSupabaseSecretKey(requiredValue(environment, "PRD_SUPABASE_SECRET_KEY"));
   return connections;
 }
 
@@ -767,6 +781,7 @@ function redactedError(error, environment) {
     environment.SUPABASE_DB_PASSWORD,
     environment.PRD_DATABASE_URL_APP_DAL,
     environment.PRD_SUPABASE_PUBLISHABLE_KEY,
+    environment.PRD_SUPABASE_SECRET_KEY,
   ]) {
     if (typeof value === "string" && value !== "")
       message = message.replaceAll(value, "[REDACTED]");

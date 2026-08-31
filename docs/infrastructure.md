@@ -505,14 +505,16 @@ go-live, o runtime usa `NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001` e o acesso hu
 próprio Next normaliza precisam corresponder exatamente a `127.0.0.1:3001` e `http`; qualquer valor
 divergente é recusado.
 
-O EnvironmentFile privado do backoffice recebe também `BACKOFFICE_RUNTIME_UNLOCK_KEY`, uma chave
-base64url de 43 caracteres mantida no environment protegido `production`. O workflow valida formato e
-quebras de linha, transporta o arquivo efêmero separado do artifact e o instalador publica-o como
-`root:setlivre-backoffice 0640`. O processo converte a chave em cookies HttpOnly assinados de cinco
-minutos; o valor original não entra no bundle, release, log ou browser storage. O instalador exige o
-conjunto comum de variáveis nos dois arquivos, exige a chave somente no arquivo do backoffice e a recusa
-no arquivo público. O preflight `set-livre-deploy-ready-v10` distingue hosts que já validam esse contrato
-dos instaladores anteriores antes de qualquer upload ou migration.
+Cada aplicação recebe somente seu segredo necessário. O EnvironmentFile do backoffice contém
+`BACKOFFICE_RUNTIME_UNLOCK_KEY`, uma chave base64url de 43 caracteres mantida no environment protegido
+`production`. O web contém `SUPABASE_SECRET_KEY`, recuperada e mascarada de forma efêmera pela
+Management API durante o job confiável, para assinar paths já autorizados e operar o Storage sem dar
+grants ao browser. O workflow valida formato/quebras de linha, transporta os arquivos separados do
+artifact e o instalador publica cada um como `root:<grupo-da-aplicação> 0640`; segredo de uma aplicação
+é recusado no arquivo da outra. A chave do backoffice vira cookie HttpOnly assinado de cinco minutos;
+nenhum dos valores entra em bundle, release, log ou browser storage. O preflight
+`set-livre-deploy-ready-v11` distingue hosts que já validam esse contrato dos instaladores anteriores
+antes de qualquer upload ou migration.
 
 ## HTTPS por IP e DNS adiado
 
@@ -565,6 +567,37 @@ Secrets do environment `production`:
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
 
+Depois do `db push`, o workflow executa o seed declarativo de buckets e exige `studio-media` privado,
+limite exato de 15 MiB e apenas JPEG/PNG/WebP/AVIF. Em seguida publica uma Edge Function imutável
+`media-cleanup-<SHA>`; ausência ou drift do bucket interrompe a entrega antes de habilitar a aplicação.
+A fonte canônica dessa Function é TypeScript estrito (`index.ts` e `cleanup-core.ts`): o CI executa
+`deno check` diretamente nesse grafo e copia o diretório sem renomear ou trocar extensões antes do deploy.
+
+O cleanup de mídia não adiciona segredo ao GitHub. No começo do job, o workflow usa o
+`SUPABASE_ACCESS_TOKEN` já protegido para ler pela Management API exatamente a secret key moderna
+`default`, mascara-a e grava-a em arquivo efêmero `0600`; ela alimenta o preflight, o EnvironmentFile
+web e o canário, e é truncada/removida em `always()`. Depois das migrations e da publicação da Function
+candidata, `npm run production:media-cleanup` cria objetos canário reais, invoca a candidata diretamente
+por HTTPS com `apikey` — sem duplicar a secret key moderna em `Authorization` —, exige remoção de ambos
+pela Storage API e comprova cada ausência somente por `404/NoSuchKey`, além de conferir a execução terminal vinculada
+ao slug no ledger durável. A retenção preserva a candidata e a Function correspondente à release ainda
+ativa, identificada pelo health público de liveness, antes de reduzir o conjunto a quatro versões
+imutáveis. Resposta negada, contrato ambíguo, chave legada, ACL excedente, timeout, contagem que não
+fecha ou cleanup com falha interrompe o deploy sem imprimir credenciais. Uma única Function mutável
+legada `media-cleanup` é aposentada somente depois desse canário; cardinalidade ou estado ambíguo
+bloqueia a entrega.
+
+Um advisory lock de sessão impede dois configuradores de manipular o canário simultaneamente. Antes do
+novo probe, checkpoints `prepared` ou `queued` abandonados há 30 minutos são removidos pela Storage API,
+com ausência estrita comprovada para os dois paths, e só depois terminalizados como `probe_abandoned`.
+Queda entre remoção e atualização do banco deixa o mesmo checkpoint repetível; erro `400`, `404` com
+outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
+
+O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
+depois de 30 minutos, a primeira execução com outra identidade o fecha como
+`cleanup_run_abandoned`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
+única forma de restaurar readiness; não existe edição manual do banco como procedimento operacional.
+
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a
 URL ou abrir qualquer conexão; esses caracteres precisam estar percent-encoded. O instalador repete o
@@ -580,10 +613,11 @@ Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `a
 indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige o HTTPS
 público operacional, e build, scan, archive determinístico, ambientes e staging validado na VM precisam
 terminar antes do primeiro `db push`. O instalador da VM também
-aceita exclusivamente o formato moderno
-`sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
-alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
-artifacts ou documentação.
+aceita exclusivamente o formato moderno `sb_publishable_` no campo público; `sb_secret_`, JWT legado
+`service_role` e qualquer JWT genérico são recusados nessa posição antes de alcançar bundle ou
+artifact. A fronteira server-only do web aceita `sb_secret_` em produção e o JWT `service_role`
+somente no runtime local/teste gerado pelo CLI. Senhas, access token, URL DAL e chave SSH privada
+nunca entram em logs, artifacts ou documentação.
 
 ## Operação e capacidade
 

@@ -39,6 +39,60 @@ describe("Content Security Policy nonce contract", () => {
     expect(policy.get("connect-src")).toEqual(["'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*"]);
   });
 
+  it("admits only the exact Supabase image origin required by signed private previews", () => {
+    const production = directives(
+      createContentSecurityPolicy(nonce, false, {
+        imageOrigins: ["https://project.supabase.co", "https://project.supabase.co"],
+      }),
+    );
+    const local = directives(
+      createContentSecurityPolicy(nonce, true, {
+        imageOrigins: ["http://127.0.0.1:54321"],
+      }),
+    );
+
+    expect(production.get("img-src")).toEqual([
+      "'self'",
+      "data:",
+      "blob:",
+      "https://project.supabase.co",
+    ]);
+    expect(local.get("img-src")).toEqual(["'self'", "data:", "blob:", "http://127.0.0.1:54321"]);
+  });
+
+  it.each([
+    "http://project.supabase.co",
+    "https://project.supabase.co/path",
+    "https://project.supabase.co/",
+    "https://user:secret@project.supabase.co",
+    "https://project.supabase.co; script-src *",
+    "http://192.168.0.2:54321",
+  ])("rejects a broad, injected or non-canonical image origin", (candidate) => {
+    expect(() => createContentSecurityPolicy(nonce, false, { imageOrigins: [candidate] })).toThrow(
+      "origem de imagem da Content Security Policy é inválida",
+    );
+  });
+
+  it("rejects loopback HTTP outside development", () => {
+    expect(() =>
+      createContentSecurityPolicy(nonce, false, {
+        imageOrigins: ["http://127.0.0.1:54321"],
+      }),
+    ).toThrow("origem de imagem da Content Security Policy é inválida");
+  });
+
+  it("allows test-mode loopback without enabling development script evaluation", () => {
+    const policy = directives(
+      createContentSecurityPolicy(nonce, false, {
+        allowLoopbackHttpImageOrigins: true,
+        imageOrigins: ["http://127.0.0.1:54321"],
+      }),
+    );
+
+    expect(policy.get("img-src")).toContain("http://127.0.0.1:54321");
+    expect(policy.get("script-src")).not.toContain("'unsafe-eval'");
+  });
+
   it.each([
     "",
     "too-short",

@@ -22,14 +22,15 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260829224738_feat_031_backoffice_users_taxonomy`, seguida pelas correções
 `20260830164500_backoffice_session_monotonic_clock` e
 `20260830173000_business_timestamp_monotonicity` e
-`20260830204500_backoffice_taxonomy_explicit_transitions` e
-`20260831021612_harden_studio_reads_and_backoffice_search`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260830204500_backoffice_taxonomy_explicit_transitions`,
+`20260831021612_harden_studio_reads_and_backoffice_search` e
+`20260831082000_feat_008_studio_media`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. O runner executa um setup idempotente e oito suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 386 asserções para baseline/isolamento, identidade/legal, perfil,
-dono/recebedor, estúdios e backoffice.
+dump de schema. O runner executa um setup idempotente e nove suítes pgTAP; com o próprio teste de
+setup, o recorte atual totaliza 473 asserções para baseline/isolamento, identidade/legal, perfil,
+dono/recebedor, estúdios, mídia e backoffice.
 
 A baseline implementada inclui:
 
@@ -295,27 +296,44 @@ vídeo, nunca regras ou FAQ.
 
 ### 4.10 `studio_media`
 
-- `id`;
-- `studio_id`;
-- `revision_id`;
-- `storage_bucket`;
-- `storage_path`;
-- `mime_type`;
-- `byte_size`;
-- `width`, `height`;
-- `checksum_sha256`;
-- `position`;
-- `is_cover`;
-- `status`: `uploaded/ready/rejected/deleted`;
-- `uploaded_by`;
-- timestamps.
+- identidade: `id`, `studio_id`, `prepared_revision_id`, `uploaded_by`;
+- objeto: bucket privado fixo, `storage_path` original e `preview_storage_path` WebP;
+- declaração: MIME, bytes e SHA-256 opcional recebidos antes do upload;
+- verificação: MIME, bytes, dimensões e SHA-256 autoritativos;
+- ciclo: `pending_upload/ready/rejected/delete_pending/deleted`, código de rejeição e timestamps;
+- cleanup: instante elegível, tentativas, claim/lease cercado por token, backoff e resultado terminal.
+
+`studio_revision_media(revision_id, media_id, position, is_cover)` mantém a associação versionada. A
+mesma mídia pode permanecer na revisão publicada e no novo draft; posição é contínua de 1 a 20 e o
+índice único parcial admite no máximo uma capa por revisão.
 
 Constraints:
 
-- uma capa ativa por revisão (índice único parcial estrutural);
-- posição única;
-- 1–20 por revisão via comando;
-- path namespaced pelo owner/studio/revision.
+- original e prévia possuem paths únicos e derivados do namespace owner/studio/revision/media;
+- declaração e fatos verificados permanecem imutáveis depois de preenchidos;
+- transições de estado seguem somente o ciclo permitido;
+- relação só pode ser alterada em revisão draft e referencia mídia `ready` do mesmo estúdio;
+- no máximo 20 associações ou candidatos pendentes por revisão, sob lock;
+- candidato `pending_upload` expirado não consome cota e não pode ser finalizado; renovação cria nova
+  identidade, enquanto o objeto anterior segue para cleanup;
+- remover a última associação agenda o par de objetos para cleanup em vez de apagar linha do Storage.
+
+As tabelas e `storage.objects` não concedem ao browser os paths, leitura do objeto nem assinatura
+arbitrária. O dono elegível lê o JSON estrito apenas pela rotina privada do DAL; toda escrita direta
+permanece revogada. O DAL recebe somente `execute` nas rotinas privadas de
+leitura/prepare/replay/finalize/ordem/capa/exclusão. A manutenção expõe ao `service_role` apenas as
+fachadas RPC estreitas do cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da
+aplicação alcança `net`. Cron, `pg_net` e Vault não fazem parte desse fluxo.
+
+`maintenance.studio_media_cleanup_runs` registra `run_id`, slug imutável, estado e contagens terminais,
+sem paths ou secrets. A criação entra diretamente em `running`; a conclusão é somente
+`succeeded`/`failed`, com replay idêntico e fechamento obrigatório `claimed = deleted + failed`.
+Readiness reprova execução travada por 30 minutos ou falha sem sucesso posterior. Ao abrir um novo
+run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu
+`running` além desse limite; leases vencidos continuam elegíveis ao claim seguinte e um sucesso
+posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma
+execução terminal saudável libera a ativação da release; a VM deriva o slug periódico do próprio SHA
+ativo.
 
 ### 4.11 `owner_payment_recipients`
 
@@ -854,10 +872,12 @@ Upload permitido somente por URL assinada. Leitura pública de mídia passa por 
 
 ## 9. Índices estruturais iniciais
 
-Implementados até a FEAT-007: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
-de revisão não nulos, a FK de tipo, as FKs reversas de tag/comodidade e os uniques
-`(studio_id, revision_number)`, de um único draft ativo e de posição da FAQ por revisão. Todos
-sustentam FK ou invariantes; nenhum índice de busca pública foi antecipado.
+Implementados até a FEAT-008: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
+de revisão não nulos, a FK de tipo, as FKs reversas de tag/comodidade/mídia e os uniques
+`(studio_id, revision_number)`, de um único draft ativo, posição da FAQ, path de objeto, posição e capa
+por revisão. A fila de cleanup possui índice parcial por elegibilidade; `studio_media` também indexa as
+FKs nullable, `uploaded_by` e a referência privada do ledger idempotente. Todos sustentam FK,
+invariante ou claim ordenado; nenhum índice de busca pública foi antecipado.
 
 Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor definido:
 
