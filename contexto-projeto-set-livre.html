@@ -214,9 +214,11 @@
           credenciais E2E e também não cria fallback. Durante suítes longas, o setup global executa
           o cleanup local real a cada dez minutos e reprova qualquer resultado não terminal,
           reproduzindo o timer da VM sem deixar o readiness expirar artificialmente. No boot frio, a
-          oneshot de cleanup também termina antes de os aplicativos serem considerados iniciados. Os
-          resultados permanecem no PR e nos checks. Os contratos técnicos ficam nas fontes canônicas
-          de <a href="docs/development.md">desenvolvimento</a>,
+          oneshot de cleanup também termina antes de os aplicativos serem considerados iniciados;
+          suas pré-condições são assertions fail-closed, portanto artefato, ambientes ou blockers
+          inválidos falham o boot da aplicação em vez de pular o gate. Os resultados permanecem no
+          PR e nos checks. Os contratos técnicos ficam nas fontes canônicas de
+          <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a> e
           <a href="docs/security-privacy.md">segurança</a>.
         </p>

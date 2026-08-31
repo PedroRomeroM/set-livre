@@ -2,12 +2,12 @@
 Description=Set Livre production media cleanup
 After=network-online.target set-livre-release-recovery.service
 Wants=network-online.target
-ConditionPathIsSymbolicLink=/opt/set-livre/current
-ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs
-ConditionPathExists=/opt/set-livre/current/.runtime/web.env
-ConditionPathExists=/opt/set-livre/current/.runtime/release.env
-ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
-ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256
+AssertPathIsSymbolicLink=/opt/set-livre/current
+AssertPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs
+AssertPathExists=/opt/set-livre/current/.runtime/web.env
+AssertPathExists=/opt/set-livre/current/.runtime/release.env
+AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
+AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256
 
 [Service]
 Type=oneshot

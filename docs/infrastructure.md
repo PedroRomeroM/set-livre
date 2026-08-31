@@ -155,8 +155,10 @@ esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units 
 direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
 `set-livre-release-recovery.service` e a oneshot `set-livre-media-cleanup.service` terminem com sucesso
 antes de iniciá-las. O cleanup é explicitamente ordenado depois da recovery, de modo que lê apenas o
-symlink e o runtime já recuperados. Isso restaura o ledger antes de concluir um boot frio, enquanto o
-timer periódico só é iniciado depois desse gate. A mesma recovery unit é
+symlink e o runtime já recuperados. Suas pré-condições de release, ambientes e ausência de blockers
+usam assertions do systemd: qualquer ausência ou corrupção falha a unit e impede o gate de iniciar os
+aplicativos, em vez de pular silenciosamente o cleanup. Isso restaura o ledger antes de concluir um
+boot frio, enquanto o timer periódico só é iniciado depois desse gate. A mesma recovery unit é
 disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
 links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
 depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela

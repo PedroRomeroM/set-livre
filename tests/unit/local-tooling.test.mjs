@@ -460,12 +460,16 @@ describe("local tooling contracts", () => {
     );
     expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
     expect(service).toContain(
-      "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+      "AssertPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
     );
-    expect(service).toContain("ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
+    expect(service).toContain("AssertPathIsSymbolicLink=/opt/set-livre/current");
+    expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/web.env");
+    expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/release.env");
+    expect(service).toContain("AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
     expect(service).toContain(
-      "ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
+      "AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
     );
+    expect(service).not.toContain("ConditionPath");
     expect(service).toContain("After=network-online.target set-livre-release-recovery.service");
     expect(service).not.toContain("Authorization");
     expect(timer).toContain("Requires=set-livre-application-start.service");
