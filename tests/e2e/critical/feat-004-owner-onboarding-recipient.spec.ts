@@ -17,6 +17,7 @@ import {
   startFeat004Recipient,
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 import { switchFeat003SessionWithoutNavigation } from "../../helpers/feat-003-profile-account";
+import { expectSessionStorageValue } from "../../helpers/expected-page";
 
 function deferredSignal() {
   let resolve: () => void = () => {
@@ -324,13 +325,12 @@ test("SL-F004-E2E-005 @p0 fecha A antes de publicar B e preserva o estado de B",
       window.dispatchEvent(new Event("visibilitychange"));
     });
     await getCaptured.promise;
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseGet.resolve();
     await expect(
       page.getByText("Validando o estado privado da área do dono…", { exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toHaveCount(0);
-    await reload;
+    await expectSessionStorageValue(page, "sl-qa-f004-owner-scope-transition", "clear");
     await expect(
       page.getByRole("heading", { level: 1, name: "Cadastro de recebimentos" }),
     ).toBeVisible();

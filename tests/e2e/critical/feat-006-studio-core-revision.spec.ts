@@ -266,9 +266,7 @@ test("SL-F006-E2E-008 @p0 troca de sessão oculta editor privado antes da releit
     );
     await expect(page.getByText(feat006DefaultCore.street, { exact: true })).toHaveCount(0);
 
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseEditorRead.resolve();
-    await reload;
     await expect(
       page.getByRole("heading", { level: 1, name: "Estúdio não encontrado" }),
     ).toBeVisible();
@@ -362,9 +360,7 @@ test("SL-F006-E2E-016 @p0 troca de sessão oculta e apaga criação ainda não s
     await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
     await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
 
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseSessionRead.resolve();
-    await reload;
 
     await expect(page.getByRole("heading", { level: 1, name: "Novo estúdio" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
@@ -419,9 +415,7 @@ test("SL-F006-E2E-017 @p0 revogação do dono oculta e apaga criação ainda nã
     await expect(page.getByText(privateName, { exact: true })).toHaveCount(0);
     await expect(page.getByText(privateStreet, { exact: true })).toHaveCount(0);
 
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseOwnerRead.resolve();
-    await reload;
 
     await expect(page.getByText("Ative seu cadastro de dono", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);

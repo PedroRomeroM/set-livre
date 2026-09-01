@@ -145,6 +145,11 @@ Antes de apagar identidades ou linhas de domínio, o teardown fecha as páginas 
 navegação já iniciada alcançar `domcontentloaded`; nenhuma limpeza pode concorrer com um refetch ou
 `router.refresh()` ainda ativo sobre a mesma sessão.
 
+Recomposições de segurança aguardam a superfície autoritativa final e suas evidências de escopo, não
+uma navegação intermediária. Reload seguido de redirect ou nova composição SSR pode cancelar um
+documento transitório legitimamente; o teste continua exigindo a tela final, a ausência dos dados
+privados anteriores e, quando aplicável, a evidência explícita de que o reload ocorreu.
+
 ## Matriz da FEAT-006
 
 Os cenários estáveis `SL-F006-E2E-*` cobrem:

@@ -289,9 +289,7 @@ test("SL-F007-E2E-009 @p0 troca de sessão oculta conteúdo comercial antes da r
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
     await expect(page.getByText(privateUsageRules, { exact: true })).toHaveCount(0);
 
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseEditorRead.resolve();
-    await reload;
     await expect(
       page.getByRole("heading", { level: 1, name: "Estúdio não encontrado" }),
     ).toBeVisible();

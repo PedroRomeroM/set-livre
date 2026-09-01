@@ -402,9 +402,7 @@ test("SL-F009-E2E-012 @p1 projeção divergente no mesmo fence recompõe a rota 
       });
     });
 
-    const reloaded = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-    await reloaded;
     await expect(
       page.getByRole("heading", { level: 1, name: "Publicação do estúdio" }),
     ).toBeVisible();
@@ -412,7 +410,7 @@ test("SL-F009-E2E-012 @p1 projeção divergente no mesmo fence recompõe a rota 
       page.getByRole("heading", { level: 2, name: "Checklist do anúncio" }),
     ).toBeVisible();
     expect(divergentReads).toBe(1);
-    expect(reloads).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => reloads).toBeGreaterThanOrEqual(1);
     expect(commandPosts).toBe(0);
     expect(await readFeat009PublicationEvidence(editor.studioId)).toMatchObject({
       audit_actions: [],
@@ -456,15 +454,12 @@ test("SL-F009-E2E-013 @p1 taxonomia arquivada após a leitura falha fechada e re
     });
 
     await archiveFeat009Tag(isolatedTagId);
-    const reloaded = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     const submission = await submitFeat009RevisionThroughUi(page);
     expect(submission.response.status()).toBe(422);
     expect(submission.payload).toMatchObject({
       error: { code: "STUDIO_SUBMISSION_INCOMPLETE" },
     });
     expect(commandPosts).toBe(1);
-    await reloaded;
-
     await expect(
       page.getByRole("heading", { level: 1, name: "Publicação do estúdio" }),
     ).toBeVisible();
@@ -473,7 +468,7 @@ test("SL-F009-E2E-013 @p1 taxonomia arquivada após a leitura falha fechada e re
       0,
     );
     await expect(submitButton).toHaveCount(0);
-    expect(reloads).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => reloads).toBeGreaterThanOrEqual(1);
     expect(commandPosts).toBe(1);
     expect(await readFeat009PublicationEvidence(editor.studioId)).toEqual(beforeArchive);
   } finally {
