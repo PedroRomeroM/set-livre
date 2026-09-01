@@ -69,21 +69,34 @@ export function assertStudioMediaBoundary(
   return gallery;
 }
 
-export function preserveNewestStudioMediaGallery(
+type StudioMediaGalleryEvidence =
+  | Readonly<{ gallery: StudioMediaGallery; kind: "authoritative-read" }>
+  | Readonly<{ gallery: StudioMediaGallery; kind: "command-result" }>;
+
+function selectStudioMediaGallery(
   current: StudioMediaGallery | undefined,
-  candidate: StudioMediaGallery,
+  evidence: StudioMediaGalleryEvidence,
   expectedUserId: string,
   expectedStudioId: string,
 ) {
-  const scopedCandidate = assertStudioMediaBoundary(candidate, expectedUserId, expectedStudioId);
+  const scopedCandidate = assertStudioMediaBoundary(
+    evidence.gallery,
+    expectedUserId,
+    expectedStudioId,
+  );
   if (current === undefined) return scopedCandidate;
   const scopedCurrent = assertStudioMediaBoundary(current, expectedUserId, expectedStudioId);
-  if (scopedCurrent.revisionNumber > scopedCandidate.revisionNumber) return scopedCurrent;
   if (
     scopedCurrent.revisionNumber === scopedCandidate.revisionNumber &&
     scopedCurrent.revisionId !== scopedCandidate.revisionId
   ) {
     throw new StudioMediaScopeChangedError();
+  }
+  if (
+    evidence.kind === "command-result" &&
+    scopedCurrent.revisionNumber > scopedCandidate.revisionNumber
+  ) {
+    return scopedCurrent;
   }
   if (
     scopedCurrent.revisionNumber === scopedCandidate.revisionNumber &&
@@ -101,23 +114,64 @@ export function preserveNewestStudioMediaGallery(
   return scopedCandidate;
 }
 
-export function publishStudioMediaGallery(
+/**
+ * Reconciles only the latest non-cancelled media GET. A different revision can therefore be an
+ * authoritative replacement, while version and preview freshness remain monotonic inside it.
+ */
+export function preserveNewestStudioMediaGallery(
+  current: StudioMediaGallery | undefined,
+  candidate: StudioMediaGallery,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return selectStudioMediaGallery(
+    current,
+    { gallery: candidate, kind: "authoritative-read" },
+    expectedUserId,
+    expectedStudioId,
+  );
+}
+
+function publishSelectedStudioMediaGallery(
   queryClient: QueryClient,
-  gallery: StudioMediaGallery,
+  evidence: StudioMediaGalleryEvidence,
   expectedUserId: string,
   expectedStudioId: string,
 ) {
   const queryKey = studioQueryKeys.media(expectedUserId, expectedStudioId);
   const current = queryClient.getQueryData<StudioMediaGallery>(queryKey);
   if (current === undefined) throw new StudioMediaScopeChangedError();
-  const selected = preserveNewestStudioMediaGallery(
-    current,
-    gallery,
+  const selected = selectStudioMediaGallery(current, evidence, expectedUserId, expectedStudioId);
+  queryClient.setQueryData(queryKey, selected);
+  return selected;
+}
+
+export function publishStudioMediaGallery(
+  queryClient: QueryClient,
+  gallery: StudioMediaGallery,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return publishSelectedStudioMediaGallery(
+    queryClient,
+    { gallery, kind: "command-result" },
     expectedUserId,
     expectedStudioId,
   );
-  queryClient.setQueryData(queryKey, selected);
-  return selected;
+}
+
+export function publishAuthoritativeStudioMediaGallery(
+  queryClient: QueryClient,
+  gallery: StudioMediaGallery,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return publishSelectedStudioMediaGallery(
+    queryClient,
+    { gallery, kind: "authoritative-read" },
+    expectedUserId,
+    expectedStudioId,
+  );
 }
 
 export async function removeStudioMediaGallery(

@@ -935,6 +935,248 @@ $$;
 ALTER FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uuid") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  candidate jsonb;
+  candidate_error text;
+  claim private.studio_media_finalize_claims%rowtype;
+  claim_time timestamptz;
+  conflicting_claim private.studio_media_finalize_claims%rowtype;
+  new_lease_token uuid;
+  payload_hash text;
+  replay jsonb;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_idempotency_key is null
+    or p_request_id is null
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize_claim';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_user_id::text || ':' || p_idempotency_key::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+  payload_hash := private.studio_media_payload_hash(
+    'studio.media.finalize',
+    pg_catalog.jsonb_build_object(
+      'studioId', p_studio_id,
+      'expectedRevisionId', p_expected_revision_id,
+      'expectedRevisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id
+    )
+  );
+  replay := private.replay_studio_media_command(
+    p_user_id,
+    p_idempotency_key,
+    'studio.media.finalize',
+    payload_hash,
+    p_studio_id,
+    p_media_id
+  );
+  if replay is not null then
+    return pg_catalog.jsonb_build_object('state', 'replay', 'result', replay);
+  end if;
+
+  loop
+    select existing.*
+    into claim
+    from private.studio_media_finalize_claims as existing
+    where existing.owner_user_id = p_user_id
+      and existing.idempotency_key = p_idempotency_key
+    for update;
+
+    if found then
+      if claim.payload_hash <> payload_hash
+        or claim.studio_id <> p_studio_id
+        or claim.expected_revision_id <> p_expected_revision_id
+        or claim.expected_revision_version <> p_expected_revision_version
+        or claim.media_id <> p_media_id
+      then
+        raise exception using errcode = '40001', message = 'studio_idempotency_conflict';
+      end if;
+
+      update private.studio_media_finalize_claims as existing
+      set latest_request_id = p_request_id
+      where existing.owner_user_id = p_user_id
+        and existing.idempotency_key = p_idempotency_key
+      returning existing.* into claim;
+
+      if claim.terminal_state = 'finalized' then
+        replay := private.replay_studio_media_command(
+          p_user_id,
+          p_idempotency_key,
+          'studio.media.finalize',
+          payload_hash,
+          p_studio_id,
+          p_media_id
+        );
+        if replay is null then
+          raise exception using
+            errcode = '40001',
+            message = 'studio_media_finalize_claim_inconsistent';
+        end if;
+        return pg_catalog.jsonb_build_object('state', 'replay', 'result', replay);
+      end if;
+      if claim.terminal_state = 'rejected' then
+        return pg_catalog.jsonb_build_object(
+          'state', 'rejected',
+          'rejectionCode', claim.terminal_rejection_code
+        );
+      end if;
+      exit;
+    end if;
+
+    select existing.*
+    into conflicting_claim
+    from private.studio_media_finalize_claims as existing
+    where existing.media_id = p_media_id
+    for update;
+
+    if found then
+      claim_time := pg_catalog.clock_timestamp();
+      if conflicting_claim.terminal_state is null
+        and conflicting_claim.lease_token is not null
+        and conflicting_claim.lease_expires_at > claim_time
+      then
+        return pg_catalog.jsonb_build_object(
+          'state', 'waiting',
+          'retryAfterMs', least(
+            250,
+            greatest(
+              1,
+              pg_catalog.ceil(
+                extract(epoch from (conflicting_claim.lease_expires_at - claim_time)) * 1000
+              )::integer
+            )
+          )
+        );
+      end if;
+      raise exception using
+        errcode = '40001',
+        message = 'studio_media_finalize_key_conflict';
+    end if;
+
+    begin
+      insert into private.studio_media_finalize_claims (
+        owner_user_id,
+        idempotency_key,
+        payload_hash,
+        studio_id,
+        expected_revision_id,
+        expected_revision_version,
+        media_id,
+        latest_request_id
+      ) values (
+        p_user_id,
+        p_idempotency_key,
+        payload_hash,
+        p_studio_id,
+        p_expected_revision_id,
+        p_expected_revision_version,
+        p_media_id,
+        p_request_id
+      )
+      returning * into claim;
+      exit;
+    exception
+      when unique_violation then
+        null;
+    end;
+  end loop;
+
+  claim_time := pg_catalog.clock_timestamp();
+  if claim.lease_token is not null and claim.lease_expires_at > claim_time then
+    return pg_catalog.jsonb_build_object(
+      'state', 'waiting',
+      'retryAfterMs', least(
+        250,
+        greatest(
+          1,
+          pg_catalog.ceil(extract(epoch from (claim.lease_expires_at - claim_time)) * 1000)::integer
+        )
+      )
+    );
+  end if;
+
+  perform 1
+  from public.studios as studio
+  join public.studio_media as media on media.studio_id = studio.id
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+    and media.id = p_media_id
+    and media.prepared_revision_id = p_expected_revision_id
+    and media.uploaded_by = p_user_id
+    and media.status = 'pending_upload';
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+
+  new_lease_token := extensions.gen_random_uuid();
+  update private.studio_media_finalize_claims as existing
+  set
+    lease_token = new_lease_token,
+    lease_claimed_at = claim_time,
+    lease_expires_at = claim_time + interval '30 seconds'
+  where existing.owner_user_id = p_user_id
+    and existing.idempotency_key = p_idempotency_key
+    and existing.terminal_state is null
+    and (
+      existing.lease_token is null
+      or existing.lease_expires_at <= claim_time
+    )
+  returning existing.* into claim;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  begin
+    candidate := private.get_studio_media_upload_candidate(
+      claim.owner_user_id,
+      claim.studio_id,
+      claim.expected_revision_id,
+      claim.expected_revision_version,
+      claim.media_id
+    );
+  exception
+    when sqlstate '40001' then
+      get stacked diagnostics candidate_error = message_text;
+      if candidate_error = 'studio_revision_conflict' then
+        return pg_catalog.jsonb_build_object(
+          'state', 'superseded',
+          'claimToken', claim.lease_token,
+          'leaseExpiresAt', claim.lease_expires_at
+        );
+      end if;
+      raise;
+  end;
+
+  return pg_catalog.jsonb_build_object(
+    'state', 'acquired',
+    'claimToken', claim.lease_token,
+    'leaseExpiresAt', claim.lease_expires_at,
+    'candidate', candidate
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") IS 'Persiste a identidade antes de trabalho externo, serializa uma chave por mídia, adquire lease de 30 s e devolve o candidato somente junto do token cercado.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -3362,6 +3604,90 @@ COMMENT ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid",
 
 
 
+CREATE OR REPLACE FUNCTION "private"."finalize_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  claim private.studio_media_finalize_claims%rowtype;
+  claim_idempotency_key uuid;
+  claim_owner_user_id uuid;
+  result jsonb;
+begin
+  if p_claim_token is null or p_request_id is null then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize_claim';
+  end if;
+
+  select existing.owner_user_id, existing.idempotency_key
+  into claim_owner_user_id, claim_idempotency_key
+  from private.studio_media_finalize_claims as existing
+  where existing.lease_token = p_claim_token
+    and existing.terminal_state is null;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      claim_owner_user_id::text || ':' || claim_idempotency_key::text,
+      0
+    )
+  );
+  perform private.assert_studio_owner_mutable(claim_owner_user_id);
+
+  select existing.*
+  into claim
+  from private.studio_media_finalize_claims as existing
+  where existing.lease_token = p_claim_token
+  for update;
+
+  if not found
+    or claim.terminal_state is not null
+    or claim.lease_expires_at <= pg_catalog.clock_timestamp()
+  then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  result := private.finalize_studio_media_upload(
+    claim.owner_user_id,
+    claim.studio_id,
+    claim.expected_revision_id,
+    claim.expected_revision_version,
+    claim.idempotency_key,
+    p_request_id,
+    claim.media_id,
+    p_actual_mime_type,
+    p_actual_size_bytes,
+    p_width,
+    p_height,
+    p_checksum_sha256
+  );
+
+  update private.studio_media_finalize_claims as existing
+  set
+    terminal_state = 'finalized',
+    terminal_at = pg_catalog.clock_timestamp()
+  where existing.owner_user_id = claim.owner_user_id
+    and existing.idempotency_key = claim.idempotency_key
+    and existing.lease_token = p_claim_token
+    and existing.terminal_state is null;
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."finalize_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."finalize_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") IS 'Deriva toda identidade mutável do claim cercado e grava galeria, ledger e tombstone terminal na mesma transação.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone) RETURNS TABLE("scope" "uuid", "authorization_version" bigint, "roles" "text"[], "expires_at" timestamp with time zone, "strong_authentication_expires_at" timestamp with time zone)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -5520,6 +5846,92 @@ COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "
 
 
 
+CREATE OR REPLACE FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  claim private.studio_media_finalize_claims%rowtype;
+  claim_idempotency_key uuid;
+  claim_owner_user_id uuid;
+  result jsonb;
+begin
+  if p_claim_token is null
+    or p_request_id is null
+    or p_rejection_code is null
+    or p_rejection_code <> all (
+      array['object_missing'::text, 'superseded'::text, 'validation_failed'::text]
+    )
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize_rejection';
+  end if;
+
+  select existing.owner_user_id, existing.idempotency_key
+  into claim_owner_user_id, claim_idempotency_key
+  from private.studio_media_finalize_claims as existing
+  where existing.lease_token = p_claim_token
+    and existing.terminal_state is null;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      claim_owner_user_id::text || ':' || claim_idempotency_key::text,
+      0
+    )
+  );
+  perform private.assert_studio_owner_mutable(claim_owner_user_id);
+
+  select existing.*
+  into claim
+  from private.studio_media_finalize_claims as existing
+  where existing.lease_token = p_claim_token
+  for update;
+
+  if not found
+    or claim.terminal_state is not null
+    or claim.lease_expires_at <= pg_catalog.clock_timestamp()
+  then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  result := private.reject_studio_media_upload(
+    claim.owner_user_id,
+    claim.studio_id,
+    claim.expected_revision_id,
+    claim.expected_revision_version,
+    claim.media_id,
+    p_request_id,
+    p_rejection_code
+  );
+
+  update private.studio_media_finalize_claims as existing
+  set
+    terminal_state = 'rejected',
+    terminal_rejection_code = p_rejection_code,
+    terminal_at = pg_catalog.clock_timestamp()
+  where existing.owner_user_id = claim.owner_user_id
+    and existing.idempotency_key = claim.idempotency_key
+    and existing.lease_token = p_claim_token
+    and existing.terminal_state is null;
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  return result;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Deriva toda identidade mutável do claim cercado e terminaliza a reserva e o tombstone na mesma transação.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."release_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -5608,6 +6020,72 @@ ALTER FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_
 
 
 COMMENT ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") IS 'Libera somente grant vigente reservado pela tentativa informada após rejeição segura do provedor.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."release_studio_media_finalize_claim"("p_claim_token" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+begin
+  if p_claim_token is null then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize_claim_release';
+  end if;
+
+  update private.studio_media_finalize_claims as existing
+  set
+    lease_token = null,
+    lease_claimed_at = null,
+    lease_expires_at = null
+  where existing.lease_token = p_claim_token;
+
+  return found;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."release_studio_media_finalize_claim"("p_claim_token" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."release_studio_media_finalize_claim"("p_claim_token" "uuid") IS 'Limpa somente a lease do token atual; tokens antigos não conseguem liberar uma tomada posterior.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."renew_studio_media_finalize_claim"("p_claim_token" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  claim_time timestamptz;
+  renewed_lease_expires_at timestamptz;
+begin
+  if p_claim_token is null then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_finalize_claim';
+  end if;
+
+  claim_time := pg_catalog.clock_timestamp();
+  update private.studio_media_finalize_claims as existing
+  set
+    lease_claimed_at = claim_time,
+    lease_expires_at = claim_time + interval '30 seconds'
+  where existing.lease_token = p_claim_token
+    and existing.terminal_state is null
+    and existing.lease_expires_at > claim_time
+  returning existing.lease_expires_at into renewed_lease_expires_at;
+
+  if not found then
+    raise exception using errcode = '40001', message = 'studio_media_finalize_claim_lost';
+  end if;
+
+  return pg_catalog.jsonb_build_object('leaseExpiresAt', renewed_lease_expires_at);
+end;
+$$;
+
+
+ALTER FUNCTION "private"."renew_studio_media_finalize_claim"("p_claim_token" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."renew_studio_media_finalize_claim"("p_claim_token" "uuid") IS 'Renova atomicamente por 30 s a lease ainda vigente antes do upload terminal; token expirado ou substituído não pode ressuscitar.';
 
 
 
@@ -9116,6 +9594,36 @@ COMMENT ON TABLE "private"."studio_command_requests" IS 'Ledger mínimo de idemp
 
 
 
+CREATE TABLE IF NOT EXISTS "private"."studio_media_finalize_claims" (
+    "owner_user_id" "uuid" NOT NULL,
+    "idempotency_key" "uuid" NOT NULL,
+    "payload_hash" "text" NOT NULL,
+    "studio_id" "uuid" NOT NULL,
+    "expected_revision_id" "uuid" NOT NULL,
+    "expected_revision_version" bigint NOT NULL,
+    "media_id" "uuid" NOT NULL,
+    "latest_request_id" "uuid" NOT NULL,
+    "lease_token" "uuid",
+    "lease_claimed_at" timestamp with time zone,
+    "lease_expires_at" timestamp with time zone,
+    "terminal_state" "text",
+    "terminal_rejection_code" "text",
+    "terminal_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    CONSTRAINT "studio_media_finalize_claims_lease_check" CHECK (((("lease_token" IS NULL) AND ("lease_claimed_at" IS NULL) AND ("lease_expires_at" IS NULL)) OR (("lease_token" IS NOT NULL) AND ("lease_claimed_at" IS NOT NULL) AND ("lease_expires_at" IS NOT NULL) AND ("lease_expires_at" > "lease_claimed_at")))),
+    CONSTRAINT "studio_media_finalize_claims_payload_hash_check" CHECK (("payload_hash" ~ '^[0-9a-f]{64}$'::"text")),
+    CONSTRAINT "studio_media_finalize_claims_revision_version_check" CHECK (("expected_revision_version" >= 1)),
+    CONSTRAINT "studio_media_finalize_claims_terminal_check" CHECK (((("terminal_state" IS NULL) AND ("terminal_rejection_code" IS NULL) AND ("terminal_at" IS NULL)) OR (("terminal_state" = 'finalized'::"text") AND ("terminal_rejection_code" IS NULL) AND ("terminal_at" IS NOT NULL)) OR (("terminal_state" = 'rejected'::"text") AND ("terminal_rejection_code" = ANY (ARRAY['object_missing'::"text", 'superseded'::"text", 'validation_failed'::"text"])) AND ("terminal_at" IS NOT NULL))))
+);
+
+
+ALTER TABLE "private"."studio_media_finalize_claims" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "private"."studio_media_finalize_claims" IS 'Identidade e tombstone persistentes da finalização de mídia, com lease curta embutida e cercada por token; não referencia studio/media mutáveis para sobreviver ao cleanup.';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."amenities" (
     "id" "uuid" DEFAULT "extensions"."gen_random_uuid"() NOT NULL,
     "slug" "text" NOT NULL,
@@ -9718,6 +10226,21 @@ ALTER TABLE ONLY "private"."studio_command_requests"
 
 
 
+ALTER TABLE ONLY "private"."studio_media_finalize_claims"
+    ADD CONSTRAINT "studio_media_finalize_claims_lease_token_key" UNIQUE ("lease_token");
+
+
+
+ALTER TABLE ONLY "private"."studio_media_finalize_claims"
+    ADD CONSTRAINT "studio_media_finalize_claims_media_key" UNIQUE ("media_id");
+
+
+
+ALTER TABLE ONLY "private"."studio_media_finalize_claims"
+    ADD CONSTRAINT "studio_media_finalize_claims_pkey" PRIMARY KEY ("owner_user_id", "idempotency_key");
+
+
+
 ALTER TABLE ONLY "public"."amenities"
     ADD CONSTRAINT "amenities_pkey" PRIMARY KEY ("id");
 
@@ -9879,6 +10402,10 @@ CREATE INDEX "signup_legal_intents_expires_at_idx" ON "private"."signup_legal_in
 
 
 CREATE INDEX "studio_command_requests_resulting_media_id_idx" ON "private"."studio_command_requests" USING "btree" ("resulting_media_id") WHERE ("resulting_media_id" IS NOT NULL);
+
+
+
+CREATE INDEX "studio_media_finalize_claims_studio_idx" ON "private"."studio_media_finalize_claims" USING "btree" ("studio_id");
 
 
 
@@ -10184,6 +10711,11 @@ ALTER TABLE ONLY "private"."studio_command_requests"
 
 
 
+ALTER TABLE ONLY "private"."studio_media_finalize_claims"
+    ADD CONSTRAINT "studio_media_finalize_claims_owner_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."owner_payment_recipients"
     ADD CONSTRAINT "owner_payment_recipients_owner_user_id_fkey" FOREIGN KEY ("owner_user_id") REFERENCES "public"."owner_profiles"("user_id") ON DELETE CASCADE;
 
@@ -10332,6 +10864,9 @@ ALTER TABLE "private"."signup_legal_intents" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "private"."studio_command_requests" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "private"."studio_media_finalize_claims" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."amenities" ENABLE ROW LEVEL SECURITY;
@@ -10546,6 +11081,11 @@ REVOKE ALL ON FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uui
 
 
 
+REVOKE ALL ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") FROM PUBLIC;
 
 
@@ -10662,7 +11202,11 @@ REVOKE ALL ON FUNCTION "private"."enforce_studio_revision_pointers"() FROM PUBLI
 
 
 REVOKE ALL ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."finalize_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."finalize_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."finalize_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_actual_mime_type" "text", "p_actual_size_bytes" bigint, "p_width" integer, "p_height" integer, "p_checksum_sha256" "text") TO "app_dal";
 
 
 
@@ -10687,7 +11231,6 @@ GRANT ALL ON FUNCTION "private"."get_owner_studio_media"("p_user_id" "uuid", "p_
 
 
 REVOKE ALL ON FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."get_studio_media_upload_candidate"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") TO "app_dal";
 
 
 
@@ -10811,7 +11354,11 @@ REVOKE ALL ON FUNCTION "private"."record_studio_media_command"("p_user_id" "uuid
 
 
 REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") TO "app_dal";
 
 
 
@@ -10821,6 +11368,16 @@ GRANT ALL ON FUNCTION "private"."release_identity_recovery_context"("p_token" "u
 
 
 REVOKE ALL ON FUNCTION "private"."release_identity_recovery_grant"("p_token" "uuid", "p_user_id" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."release_studio_media_finalize_claim"("p_claim_token" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."release_studio_media_finalize_claim"("p_claim_token" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."renew_studio_media_finalize_claim"("p_claim_token" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."renew_studio_media_finalize_claim"("p_claim_token" "uuid") TO "app_dal";
 
 
 
@@ -10834,7 +11391,6 @@ REVOKE ALL ON FUNCTION "private"."replay_studio_media_command"("p_user_id" "uuid
 
 
 REVOKE ALL ON FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."replay_studio_media_finalize"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_media_id" "uuid") TO "app_dal";
 
 
 

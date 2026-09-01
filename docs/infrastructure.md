@@ -160,10 +160,13 @@ sincronamente e essa aresta criaria espera circular. Assim ela sempre lê o syml
 control plane que a chamou. Suas pré-condições de release, ambientes e ausência do blocker principal
 usam assertions do systemd; o próprio gate de aplicação também exige ausência das duas fases do
 bootstrap. Qualquer ausência, corrupção ou fase residual falha a inicialização dos aplicativos, em vez
-de pular silenciosamente o cleanup. A fase durável de recovery não bloqueia a oneshot controlada, mas
-bloqueia o timer periódico. O timer não exige nem ordena o gate de aplicação, eliminando o ciclo
-automático `timer -> oneshot -> gate -> timer`, e só é reativado após readiness. Isso restaura o ledger
-antes de concluir um boot frio. A mesma recovery unit é
+de pular silenciosamente o cleanup. A fase durável de recovery bloqueia o timer periódico, mas não a
+oneshot controlada. Fora das transições, o timer ativa `set-livre-application-start.service` a cada dez
+minutos; o gate sem `RemainAfterExit` executa `cleanup → apps` e volta a inativo. Assim uma falha
+transitória do cleanup no boot mantém os apps parados e a próxima ativação do timer repete o gate por
+inteiro, sem `OnSuccess`, chamada assíncrona ou aresta circular. Deploy e bootstrap interrompem, nessa
+ordem, timer, gate e cleanup antes de trocar estado. Isso restaura o ledger antes de concluir um boot
+frio. A mesma recovery unit é
 disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
 links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
 depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
@@ -607,7 +610,9 @@ outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
 
 O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
 depois de 30 minutos, a primeira execução com outra identidade o fecha como
-`cleanup_run_abandoned`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
+`cleanup_run_abandoned`. O fechamento deriva cada item dos claims e completion tokens persistidos em
+mídia e probes: sucesso conta como deleted, falha ou claim ainda em voo conta como failed, sempre com
+`claimed = deleted + failed`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
 única forma de restaurar readiness. A ausência de qualquer sucesso terminal nos últimos 30 minutos
 também degrada readiness, cobrindo falhas que acontecem antes de o worker conseguir abrir o ledger. A
 ativação normal, a recuperação de uma ativação interrompida, o rollback e o bootstrap com release

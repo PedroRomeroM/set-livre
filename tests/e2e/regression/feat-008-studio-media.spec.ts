@@ -201,6 +201,52 @@ test("SL-F008-E2E-007 @p1 hidratação oculta dados e resposta perdida é verifi
   }
 });
 
+test("SL-F008-CACHE-001 @p1 releitura adota descarte remoto sem restaurar resposta obsoleta", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(190_000);
+  const identity = createFeat008QaIdentity(testInfo, "cache_remote_discard");
+  try {
+    const { editor } = await createFeat008StudioFixture(page, identity, "815");
+    const draftRevisionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const draftEditor = {
+      ...editor,
+      draftRevisionId,
+      hasDraft: true,
+      publishedRevisionId: editor.revision.id,
+      revision: {
+        ...editor.revision,
+        id: draftRevisionId,
+        number: editor.revision.number + 1,
+        version: 1,
+      },
+    };
+    const harness = await installFeat008MediaHarness(page, draftEditor);
+    const navigation = await page.goto(`/dono/estudios/${editor.studioId}/midia`);
+    expect(navigation?.status()).toBe(200);
+    await expect(page.getByText("0 de 20 fotos", { exact: true })).toBeVisible();
+    await uploadFeat008Photos(page, ["rascunho-descartado.png"]);
+    await expect(page.getByText("1 de 20 fotos", { exact: true })).toBeVisible();
+
+    harness.replaceGalleryBoundary(editor);
+    const rollbackRead = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "GET" &&
+        url.pathname === `/api/owner/studios/${editor.studioId}/media`
+      );
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await rollbackRead;
+
+    await expect(page.getByText("0 de 20 fotos", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Visualizar foto/iu })).toHaveCount(0);
+  } finally {
+    await closeFeat008PageBeforeCleanup(page);
+    await cleanupFeat008QaIdentity(identity);
+  }
+});
+
 test("SL-F008-E2E-008 @p1 conflito bloqueia a galeria e exige nova ação após aceitar a versão salva", async ({
   page,
 }, testInfo) => {

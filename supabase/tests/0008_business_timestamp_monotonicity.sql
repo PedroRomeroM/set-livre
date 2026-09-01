@@ -99,7 +99,7 @@ select ok(
   'catálogo continua atualizável quando o timestamp persistido está adiante do relógio observado'
 );
 
-rollback to savepoint future_catalog_timestamp;
+release savepoint future_catalog_timestamp;
 
 select * from finish();
 rollback;

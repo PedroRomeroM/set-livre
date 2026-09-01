@@ -43,21 +43,34 @@ consomem.
 3. O browser envia o original diretamente ao Storage, com deadline de 60 segundos; o upload não
    atravessa a VM. Essa etapa usa o cliente oficial dedicado de Storage com a chave pública e o token
    assinado, sem criar outro cliente Auth nem persistir sessão no navegador.
-4. `studio.media.upload.finalize` tenta primeiro o replay exato; somente uma tentativa ainda pendente
-   obtém do Storage uma cópia limitada para verificação autoritativa.
+4. `studio.media.upload.finalize` persiste um claim único por dono + chave antes do slot de imagem. A
+   mesma linha reserva também o `media_id` e mantém uma lease cercada de 30 segundos. Retry da mesma
+   chave aguarda com conexões do pool liberadas entre consultas, retoma somente após expiração ou relê o
+   terminal; outra chave aguarda a tentativa ativa e depois recebe conflito definitivo. O candidato
+   validado sai do banco apenas junto do token atual.
 5. O servidor compara tamanho declarado, assinatura de bytes, MIME decodificado, página única,
    dimensões, orçamento total de pixels e checksum opcional; um decode mínimo prova que o conteúdo não
    é apenas um header. Download, decode e geração da prévia compartilham um único slot global, fila
    limitada e um deadline absoluto server-side de 15 segundos. O mesmo `AbortSignal` interrompe o
    download, o upload da prévia e o download comparativo de replay; o tempo restante limita o Sharp,
-   preservando a VM de 1 GiB sem liberar o slot antes do trabalho subjacente terminar.
-6. Arquivo válido produz a prévia WebP privada; retry aceita uma derivada preexistente somente quando
-   os bytes são exatamente iguais.
+   preservando a VM de 1 GiB sem liberar o slot antes do trabalho subjacente terminar. Uma tentativa só
+   entra nessa fila com ao menos 22 segundos restantes da lease, cobrindo quatro segundos de espera,
+   quinze de processamento e margem para o commit.
+6. Imediatamente antes do upload da prévia, o banco renova atomicamente por 30 segundos a lease ainda
+   vigente; token expirado ou substituído não pode ressuscitar. O deadline absoluto de 15 segundos
+   garante que upload e commit terminal terminem dentro dessa reserva. Arquivo válido produz o path WebP
+   determinístico; retry aceita a derivada preexistente somente quando os bytes são exatamente iguais.
 7. O objeto vira `ready` e é associado à revisão na mesma transação. Arquivo inválido vira `rejected`
    com `validation_failed`; ausência comprovada no Storage vira `object_missing`. A terminalização é
-   cercada pela identidade persistida da reserva, não pela versão mutável da galeria, e ambos liberam
-   a cota imediatamente sem expor detalhe interno do decoder.
-8. O retorno autoritativo substitui a galeria privada e invalida o editor relacionado.
+   cercada pelo token; owner, estúdio, revisão, chave e mídia são derivados do claim sob lock, não
+   repetidos pelo processo. Ambos liberam a cota imediatamente sem expor detalhe interno do decoder.
+8. O DAL libera a lease em `finally` e somente então assina a galeria autoritativa por no máximo dois
+   segundos. Nenhuma conexão PostgreSQL permanece ocupada durante fila, Storage, Sharp ou signing; o
+   retorno substitui a galeria privada e invalida o editor relacionado.
+
+Begin, finalize e reject seguem uma ordem única de locks — advisory da idempotência, dono, claim e então
+revisão/mídia — comprovada por concorrência real entre sessões. Assim, retry sobreposto espera ou relê o
+terminal sem formar ciclo de locks.
 
 O download de verificação é bounded e não transforma a VM em proxy de upload. Erro de rede ou resposta
 ambígua exige releitura antes de retry; a UI reutiliza a mesma idempotência quando repete a mesma etapa
@@ -69,9 +82,10 @@ reviver uma autorização vencida. Se a galeria avançar logo depois do preparo,
 terminaliza a reserva como `superseded`; uma resposta perdida conserva a chave dessa finalização até o
 replay confirmar o conflito terminal, sem consumir outra vaga ou iniciar o upload.
 
-Toda conclusão de mutação relê a galeria canônica. O DTO inclui o número imutável da revisão e sua
-versão; uma resposta atrasada de revisão ou versão anterior é descartada e identidades contraditórias
-para o mesmo número falham fechado.
+Toda conclusão de mutação relê a galeria canônica. Resultado de comando permanece monotônico por número
+e versão, mas uma releitura autoritativa não cancelada pode substituir o rascunho `N+1` pela publicação
+`N` depois de um descarte em outra aba. Leituras canceladas não alcançam o cache e identidades
+contraditórias para o mesmo número falham fechado.
 
 ## Capa, ordem e exclusão
 
@@ -108,8 +122,9 @@ executa somente as fachadas RPC estreitas. Readiness reprova execução travada 
 posterior. Também reprova quando nenhum sucesso terminal foi registrado nos últimos 30 minutos, mesmo
 que a falha aconteça antes de o worker abrir uma linha nova no ledger. Deploy, recovery, rollback e
 bootstrap de um host com release compatível executam uma oneshot antes dos health checks e só então
-reativam o timer. O timer não depende do gate de boot em sentido inverso: ele permanece suspenso por
-blockers durante transições controladas, evitando ciclo de ordenação com a oneshot inicial. Recovery
+reativam o timer. O timer ativa o gate completo `cleanup → apps`; como o gate fica inativo após sucesso,
+uma falha transitória de cleanup no boot é repetida automaticamente sem `OnSuccess`, callback circular
+ou intervenção humana. Blockers mantêm timer e gate suspensos durante transições controladas. Recovery
 remove a fase de bootstrap antes de iniciar o timer e só depois consome o rollback; falha da oneshot
 durante bootstrap preserva release, blocker e marcadores para retry. No boot, o gate espera a recovery,
 chama a mesma oneshot sincronamente e só então inicia os apps; a oneshot não espera pela recovery de
@@ -124,13 +139,16 @@ não terminal para uma tentativa posterior; assim uma queda entre banco, upload 
 transforma objeto órfão em sucesso documental.
 
 Uma interrupção depois de abrir o ledger não exige reparo manual: a primeira execução posterior fecha
-um run diferente envelhecido como `cleanup_run_abandoned`, reaproveita leases vencidos pelo claim
-normal e só devolve readiness depois de registrar um sucesso mais recente. O UUID original continua
-idempotente se o mesmo invocador conseguir repeti-lo antes dessa recuperação.
+um run diferente envelhecido como `cleanup_run_abandoned`, derivando dos tokens persistidos quantos
+itens terminaram, falharam ou ainda estavam claimed e mantendo `claimed = deleted + failed`. Depois
+reaproveita leases vencidos pelo claim normal e só devolve readiness após um sucesso mais recente. O
+UUID original continua idempotente se o mesmo invocador conseguir repeti-lo antes dessa recuperação.
 
 ## Entrega e qualidade visual
 
-- previews privadas são assinadas em lote por cinco minutos, usam cache privado de 60 segundos e a
+- previews privadas são assinadas em lote por cinco minutos; leitura e respostas de finalize, ordem,
+  capa e exclusão abortam o cliente Storage privilegiado após dois segundos. Elas usam cache privado de
+  60 segundos e a
   origem Supabase HTTPS exata — ou o loopback local canônico — é a única origem remota admitida pela CSP
   tanto em `img-src` quanto em `connect-src`,
   `next/image`, `sizes` por composição e dimensões persistidas; o DTO carrega a expiração e o cache

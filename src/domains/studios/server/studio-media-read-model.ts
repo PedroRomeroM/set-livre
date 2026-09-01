@@ -4,9 +4,10 @@ import { studioMediaGalleryRecordSchema } from "@set-livre/contracts";
 import { z } from "zod";
 
 import { readOwnerStudioMediaRecord } from "./studio-media-dal";
-import { createTrustedStudioMediaStorage } from "./studio-media-storage";
-
-const studioMediaReadDeadlineMs = 2_000;
+import {
+  createTrustedStudioMediaStorage,
+  studioMediaPreviewSigningDeadlineMs,
+} from "./studio-media-storage";
 
 export class StudioMediaNotFoundError extends Error {
   constructor() {
@@ -45,7 +46,7 @@ export async function readOwnerStudioMedia(
   try {
     if (externalSignal?.aborted === true) controller.abort();
     else externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
-    deadline = setTimeout(() => controller.abort(), studioMediaReadDeadlineMs);
+    deadline = setTimeout(() => controller.abort(), studioMediaPreviewSigningDeadlineMs);
     const galleryOutcome = readOwnerStudioMediaRecord({
       studioId: parsedStudioId,
       userId: parsedUserId,

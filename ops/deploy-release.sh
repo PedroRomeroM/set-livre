@@ -185,7 +185,9 @@ loaded_systemd_units_are_current() {
 }
 
 stop_media_cleanup_schedule() {
-  systemctl stop set-livre-media-cleanup.timer set-livre-media-cleanup.service
+  systemctl stop set-livre-media-cleanup.timer
+  systemctl stop set-livre-application-start.service
+  systemctl stop set-livre-media-cleanup.service
 }
 
 start_media_cleanup_schedule() {

@@ -11,7 +11,7 @@ OnBootSec=5min
 OnUnitActiveSec=10min
 AccuracySec=30s
 Persistent=false
-Unit=set-livre-media-cleanup.service
+Unit=set-livre-application-start.service
 
 [Install]
 WantedBy=timers.target

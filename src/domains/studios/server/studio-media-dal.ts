@@ -8,7 +8,6 @@ import {
   studioMediaVerificationSchema,
   type StudioMediaGalleryRecord,
   type StudioMediaMimeType,
-  type StudioMediaUploadCandidate,
   type StudioMediaUploadPreparationRecord,
   type StudioMediaVerification,
 } from "@set-livre/contracts";
@@ -27,6 +26,44 @@ const revisionIdentitySchema = z.strictObject({
   expectedRevisionVersion: z.number().int().positive(),
   studioId: z.uuid(),
 });
+
+const studioMediaFinalizeClaimWaitMs = 8_000;
+const studioMediaFinalizeClaimSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    candidate: studioMediaUploadCandidateSchema,
+    claimToken: z.uuid(),
+    leaseExpiresAt: z.iso.datetime({ offset: true }),
+    state: z.literal("acquired"),
+  }),
+  z.strictObject({
+    claimToken: z.uuid(),
+    leaseExpiresAt: z.iso.datetime({ offset: true }),
+    state: z.literal("superseded"),
+  }),
+  z.strictObject({ result: studioMediaGalleryRecordSchema, state: z.literal("replay") }),
+  z.strictObject({
+    rejectionCode: z.enum(["object_missing", "superseded", "validation_failed"]),
+    state: z.literal("rejected"),
+  }),
+  z.strictObject({
+    retryAfterMs: z.number().int().min(1).max(250),
+    state: z.literal("waiting"),
+  }),
+]);
+const studioMediaFinalizeLeaseSchema = z.strictObject({
+  leaseExpiresAt: z.iso.datetime({ offset: true }),
+});
+type StudioMediaFinalizeWorkClaim = Exclude<
+  z.infer<typeof studioMediaFinalizeClaimSchema>,
+  { state: "waiting" }
+>;
+
+export class StudioMediaFinalizeClaimBusyError extends Error {
+  constructor() {
+    super("Outra solicitação idêntica ainda está finalizando esta foto.");
+    this.name = "StudioMediaFinalizeClaimBusyError";
+  }
+}
 
 function exactlyOneResult<T>(rows: readonly unknown[], schema: z.ZodType<T>): T {
   if (rows.length !== 1) {
@@ -105,135 +142,116 @@ export async function prepareStudioMediaUpload(input: {
   return exactlyOneResult(result.rows, studioMediaUploadPreparationRecordSchema);
 }
 
-export async function readStudioMediaUploadCandidate(input: {
-  expectedRevisionId: string;
-  expectedRevisionVersion: number;
-  mediaId: string;
-  studioId: string;
-  userId: string;
-}): Promise<StudioMediaUploadCandidate> {
+export async function withStudioMediaFinalizeClaim<T>(
+  input: {
+    expectedRevisionId: string;
+    expectedRevisionVersion: number;
+    idempotencyKey: string;
+    mediaId: string;
+    requestId: string;
+    studioId: string;
+    userId: string;
+  },
+  work: (claim: StudioMediaFinalizeWorkClaim) => Promise<T>,
+): Promise<T> {
+  const command = parseCommandIdentity(input);
   const revision = parseRevisionIdentity(input);
-  const parsed = z.strictObject({ mediaId: z.uuid(), userId: z.uuid() }).parse({
-    mediaId: input.mediaId,
-    userId: input.userId,
-  });
-  const result = await commandDalPool().query(
-    `select private.get_studio_media_upload_candidate(
-       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid
-     ) as result`,
-    [
-      parsed.userId,
-      revision.studioId,
-      revision.expectedRevisionId,
-      revision.expectedRevisionVersion,
-      parsed.mediaId,
-    ],
-  );
-  return exactlyOneResult(result.rows, studioMediaUploadCandidateSchema);
+  const mediaId = z.uuid().parse(input.mediaId);
+  const pool = commandDalPool();
+  const deadlineAt = Date.now() + studioMediaFinalizeClaimWaitMs;
+
+  while (true) {
+    const result = await pool.query(
+      `select private.begin_studio_media_finalize_claim(
+         $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid, $7::uuid
+       ) as result`,
+      [
+        command.userId,
+        revision.studioId,
+        revision.expectedRevisionId,
+        revision.expectedRevisionVersion,
+        command.idempotencyKey,
+        command.requestId,
+        mediaId,
+      ],
+    );
+    const claim = exactlyOneResult(result.rows, studioMediaFinalizeClaimSchema);
+    if (claim.state === "waiting") {
+      if (Date.now() >= deadlineAt) throw new StudioMediaFinalizeClaimBusyError();
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, Math.min(claim.retryAfterMs, Math.max(1, deadlineAt - Date.now()))),
+      );
+      continue;
+    }
+    if (claim.state === "replay" || claim.state === "rejected") return work(claim);
+
+    let workFailed = false;
+    try {
+      return await work(claim);
+    } catch (error) {
+      workFailed = true;
+      throw error;
+    } finally {
+      try {
+        const released = await pool.query(
+          `select private.release_studio_media_finalize_claim($1::uuid) as result`,
+          [claim.claimToken],
+        );
+        if (!exactlyOneResult(released.rows, z.boolean()) && !workFailed) {
+          throw new StudioMediaFinalizeClaimBusyError();
+        }
+      } catch (error) {
+        if (!workFailed) throw error;
+      }
+    }
+  }
 }
 
-export async function replayStudioMediaFinalize(input: {
-  expectedRevisionId: string;
-  expectedRevisionVersion: number;
-  idempotencyKey: string;
-  mediaId: string;
-  studioId: string;
-  userId: string;
-}): Promise<StudioMediaGalleryRecord | null> {
-  const revision = parseRevisionIdentity(input);
-  const parsed = z
-    .strictObject({
-      idempotencyKey: z.uuid(),
-      mediaId: z.uuid(),
-      userId: z.uuid(),
-    })
-    .parse({
-      idempotencyKey: input.idempotencyKey,
-      mediaId: input.mediaId,
-      userId: input.userId,
-    });
+export async function renewStudioMediaFinalizeClaim(input: { claimToken: string }) {
+  const parsed = z.strictObject({ claimToken: z.uuid() }).parse(input);
   const result = await commandDalPool().query(
-    `select private.replay_studio_media_finalize(
-       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid
-     ) as result`,
-    [
-      parsed.userId,
-      revision.studioId,
-      revision.expectedRevisionId,
-      revision.expectedRevisionVersion,
-      parsed.idempotencyKey,
-      parsed.mediaId,
-    ],
+    `select private.renew_studio_media_finalize_claim($1::uuid) as result`,
+    [parsed.claimToken],
   );
-  return exactlyOneResult(result.rows, studioMediaGalleryRecordSchema.nullable());
+  return exactlyOneResult(result.rows, studioMediaFinalizeLeaseSchema);
 }
 
 export async function rejectStudioMediaUpload(input: {
-  expectedRevisionId: string;
-  expectedRevisionVersion: number;
-  mediaId: string;
+  claimToken: string;
   requestId: string;
   rejectionCode: "object_missing" | "superseded" | "validation_failed";
-  studioId: string;
-  userId: string;
 }) {
-  const revision = parseRevisionIdentity(input);
   const parsed = z
     .strictObject({
-      mediaId: z.uuid(),
+      claimToken: z.uuid(),
       rejectionCode: z.enum(["object_missing", "superseded", "validation_failed"]),
       requestId: z.uuid(),
-      userId: z.uuid(),
     })
-    .parse({
-      mediaId: input.mediaId,
-      rejectionCode: input.rejectionCode,
-      requestId: input.requestId,
-      userId: input.userId,
-    });
+    .parse(input);
   await commandDalPool().query(
-    `select private.reject_studio_media_upload(
-       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid, $7::text
+    `select private.reject_studio_media_upload_claimed(
+       $1::uuid, $2::uuid, $3::text
      )`,
-    [
-      parsed.userId,
-      revision.studioId,
-      revision.expectedRevisionId,
-      revision.expectedRevisionVersion,
-      parsed.mediaId,
-      parsed.requestId,
-      parsed.rejectionCode,
-    ],
+    [parsed.claimToken, parsed.requestId, parsed.rejectionCode],
   );
 }
 
 export async function finalizeStudioMediaUpload(input: {
-  expectedRevisionId: string;
-  expectedRevisionVersion: number;
-  idempotencyKey: string;
-  mediaId: string;
+  claimToken: string;
   requestId: string;
-  studioId: string;
-  userId: string;
   verification: StudioMediaVerification;
 }): Promise<StudioMediaGalleryRecord> {
-  const command = parseCommandIdentity(input);
-  const revision = parseRevisionIdentity(input);
-  const parsedMediaId = z.uuid().parse(input.mediaId);
+  const claimToken = z.uuid().parse(input.claimToken);
+  const requestId = z.uuid().parse(input.requestId);
   const verification = studioMediaVerificationSchema.parse(input.verification);
   const result = await commandDalPool().query(
-    `select private.finalize_studio_media_upload(
-       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
-       $7::uuid, $8::text, $9::bigint, $10::integer, $11::integer, $12::text
+    `select private.finalize_studio_media_upload_claimed(
+       $1::uuid, $2::uuid, $3::text, $4::bigint, $5::integer, $6::integer,
+       $7::text
      ) as result`,
     [
-      command.userId,
-      revision.studioId,
-      revision.expectedRevisionId,
-      revision.expectedRevisionVersion,
-      command.idempotencyKey,
-      command.requestId,
-      parsedMediaId,
+      claimToken,
+      requestId,
       verification.mimeType,
       verification.byteSize,
       verification.width,

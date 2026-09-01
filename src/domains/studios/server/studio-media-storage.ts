@@ -15,6 +15,8 @@ import { StorageApiError, StorageClient } from "@supabase/storage-js";
 
 import { readTrustedSupabaseEnvironment } from "@/lib/supabase/config";
 
+export const studioMediaPreviewSigningDeadlineMs = 2_000;
+
 export class StudioMediaStorageError extends Error {
   readonly operation: "download" | "preview" | "preview-upload" | "upload-token";
   readonly reason: "not-found" | "unavailable";

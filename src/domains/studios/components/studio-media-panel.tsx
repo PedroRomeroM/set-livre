@@ -41,6 +41,7 @@ import {
 import {
   assertStudioMediaBoundary,
   preserveNewestStudioMediaGallery,
+  publishAuthoritativeStudioMediaGallery,
   publishStudioMediaGallery,
   recomposeStudioClientBoundary,
   studioMediaOrderMatchesIntent,
@@ -401,10 +402,14 @@ function HydratedStudioMediaPanel({
     gallery: StudioMediaGallery,
     focusMediaId?: string,
     focusFilePicker = false,
+    source: "authoritative-read" | "command-result" = "command-result",
   ) {
     const scoped = assertStudioMediaBoundary(gallery, userId, studioId);
     await queryClient.cancelQueries({ exact: true, queryKey: mediaQueryKey });
-    const selected = publishStudioMediaGallery(queryClient, scoped, userId, studioId);
+    const selected =
+      source === "authoritative-read"
+        ? publishAuthoritativeStudioMediaGallery(queryClient, scoped, userId, studioId)
+        : publishStudioMediaGallery(queryClient, scoped, userId, studioId);
     galleryReference.current = selected;
     expiredPreviewIdsReference.current.clear();
     setExpiredPreviewIds(new Set());
@@ -426,6 +431,7 @@ function HydratedStudioMediaPanel({
       assertStudioMediaBoundary(await readStudioMedia(studioId), userId, studioId),
       focusMediaId,
       focusFilePicker,
+      "authoritative-read",
     );
   }
 

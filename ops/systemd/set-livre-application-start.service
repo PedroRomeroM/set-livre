@@ -9,7 +9,6 @@ AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256
 Type=oneshot
 ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service
 ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service
-RemainAfterExit=yes
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

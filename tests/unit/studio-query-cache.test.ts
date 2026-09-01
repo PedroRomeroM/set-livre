@@ -1,9 +1,14 @@
-import type { StudioEditor } from "@set-livre/contracts";
+import {
+  studioMediaGallerySchema,
+  type StudioEditor,
+  type StudioMediaGallery,
+} from "@set-livre/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import { clearIdentityAndAccountQueryCache } from "../../src/domains/identity/components/account-query-keys";
 import {
+  publishAuthoritativeStudioMediaGallery,
   publishStudioEditor,
   publishStudioMediaGallery,
   preserveNewestStudioMediaGallery,
@@ -29,7 +34,7 @@ function editorFor(scope: string, studioId: string, revisionId: string): StudioE
 }
 
 describe("studio private query cache", () => {
-  it("impede replay de mídia antigo de regredir a revisão já publicada no cache", () => {
+  it("aceita rollback de revisão em uma releitura autoritativa sem aceitar resultado tardio de comando", async () => {
     const queryClient = new QueryClient();
     const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
     const current = {
@@ -40,18 +45,53 @@ describe("studio private query cache", () => {
       revisionVersion: 5,
       scope: studioTestIds.userId,
       studioId: studioTestIds.studioId,
-    };
+    } satisfies StudioMediaGallery;
+    const published = {
+      ...current,
+      previewExpiresAt: "2026-08-31T12:10:00.000Z",
+      revisionId: "66666666-6666-4666-8666-666666666666",
+      revisionNumber: 1,
+      revisionVersion: 8,
+    } satisfies StudioMediaGallery;
     queryClient.setQueryData(queryKey, current);
 
+    await expect(
+      queryClient.fetchQuery<StudioMediaGallery>({
+        queryFn: async () => published,
+        queryKey,
+        staleTime: 0,
+        structuralSharing: (cached, candidate) =>
+          preserveNewestStudioMediaGallery(
+            cached === undefined ? undefined : studioMediaGallerySchema.parse(cached),
+            studioMediaGallerySchema.parse(candidate),
+            studioTestIds.userId,
+            studioTestIds.studioId,
+          ),
+      }),
+    ).resolves.toEqual(published);
+    expect(queryClient.getQueryData(queryKey)).toEqual(published);
+
+    queryClient.setQueryData(queryKey, current);
     expect(
       publishStudioMediaGallery(
         queryClient,
-        { ...current, revisionVersion: 4 },
+        published,
         studioTestIds.userId,
         studioTestIds.studioId,
       ),
     ).toEqual(current);
     expect(queryClient.getQueryData(queryKey)).toEqual(current);
+    expect(
+      publishAuthoritativeStudioMediaGallery(
+        queryClient,
+        published,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(published);
+    expect(queryClient.getQueryData(queryKey)).toEqual(published);
+    queryClient.setQueryData(queryKey, current);
+
     expect(
       preserveNewestStudioMediaGallery(
         current,
@@ -93,12 +133,20 @@ describe("studio private query cache", () => {
     };
     expect(
       preserveNewestStudioMediaGallery(
-        newerRevision,
         current,
+        published,
         studioTestIds.userId,
         studioTestIds.studioId,
       ),
-    ).toEqual(newerRevision);
+    ).toEqual(published);
+    expect(
+      publishStudioMediaGallery(
+        queryClient,
+        published,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(current);
     expect(
       preserveNewestStudioMediaGallery(
         current,
@@ -115,6 +163,60 @@ describe("studio private query cache", () => {
         studioTestIds.studioId,
       ),
     ).toThrow(StudioMediaScopeChangedError);
+  });
+
+  it("ignora uma releitura cancelada que termina depois de um avanço confirmado", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
+    const current = {
+      items: [],
+      previewExpiresAt: "2026-08-31T12:05:00.000Z",
+      revisionId: studioTestIds.revisionId,
+      revisionNumber: 2,
+      revisionVersion: 5,
+      scope: studioTestIds.userId,
+      studioId: studioTestIds.studioId,
+    } satisfies StudioMediaGallery;
+    const stale = {
+      ...current,
+      previewExpiresAt: "2026-08-31T12:04:00.000Z",
+      revisionId: "66666666-6666-4666-8666-666666666666",
+      revisionNumber: 1,
+      revisionVersion: 8,
+    } satisfies StudioMediaGallery;
+    const advanced = { ...current, revisionVersion: 6 } satisfies StudioMediaGallery;
+    let readSignal: AbortSignal | undefined;
+    let resolveRead: ((gallery: StudioMediaGallery) => void) | undefined;
+    const delayedRead = new Promise<StudioMediaGallery>((resolve) => {
+      resolveRead = resolve;
+    });
+    queryClient.setQueryData(queryKey, current);
+
+    const pendingRead = queryClient.fetchQuery<StudioMediaGallery>({
+      queryFn: ({ signal }) => {
+        readSignal = signal;
+        return delayedRead;
+      },
+      queryKey,
+      staleTime: 0,
+      structuralSharing: (cached, candidate) =>
+        preserveNewestStudioMediaGallery(
+          cached === undefined ? undefined : studioMediaGallerySchema.parse(cached),
+          studioMediaGallerySchema.parse(candidate),
+          studioTestIds.userId,
+          studioTestIds.studioId,
+        ),
+    });
+    const settledRead = pendingRead.catch(() => undefined);
+
+    expect(readSignal?.aborted).toBe(false);
+    await queryClient.cancelQueries({ exact: true, queryKey });
+    expect(readSignal?.aborted).toBe(true);
+    queryClient.setQueryData(queryKey, advanced);
+    resolveRead?.(stale);
+    await settledRead;
+
+    expect(queryClient.getQueryData(queryKey)).toEqual(advanced);
   });
 
   it("remove somente a galeria do estúdio quando um descarte volta à revisão publicada", async () => {

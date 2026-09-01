@@ -696,6 +696,184 @@ for protected_entrypoint in \
     || fail "alvo externo do symlink de lock foi alterado."
 done
 sudo rm -f -- /run/lock/set-livre-deploy.lock
+
+verify_periodic_cleanup_retries_application_gate() (
+  local probe_state="/run/set-livre-host-contract-retry"
+  local recovery_unit="set-livre-host-contract-recovery.service"
+  local cleanup_unit="set-livre-host-contract-media-cleanup.service"
+  local application_unit="set-livre-host-contract-application-start.service"
+  local timer_unit="set-livre-host-contract-media-cleanup.timer"
+  local recovery_unit_path="/run/systemd/system/${recovery_unit}"
+  local cleanup_unit_path="/run/systemd/system/${cleanup_unit}"
+  local application_unit_path="/run/systemd/system/${application_unit}"
+  local timer_unit_path="/run/systemd/system/${timer_unit}"
+  local cleanup_source="$temporary_directory/host-contract-cleanup.sh"
+  local recovery_source="$temporary_directory/${recovery_unit}"
+  local cleanup_unit_source="$temporary_directory/${cleanup_unit}"
+  local application_unit_source="$temporary_directory/${application_unit}"
+  local timer_unit_source="$temporary_directory/${timer_unit}"
+  local blocker attempts recovered
+
+  # Invocada indiretamente pelo trap local do probe.
+  # shellcheck disable=SC2317,SC2329
+  cleanup_systemd_retry_probe() {
+    sudo systemctl stop \
+      "$timer_unit" "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo systemctl reset-failed \
+      "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo rm -f -- \
+      "$timer_unit_path" "$application_unit_path" "$cleanup_unit_path" "$recovery_unit_path"
+    sudo systemctl daemon-reload >/dev/null 2>&1 || true
+    sudo rm -rf --one-file-system -- "$probe_state"
+  }
+
+  for path in \
+    "$probe_state" \
+    "$recovery_unit_path" \
+    "$cleanup_unit_path" \
+    "$application_unit_path" \
+    "$timer_unit_path"; do
+    ! privileged_path_exists "$path" \
+      || fail "estado residual impede o probe de retry periódico: ${path}."
+  done
+  trap cleanup_systemd_retry_probe EXIT
+
+  cat > "$cleanup_source" <<'CLEANUP_PROBE'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+readonly state=/run/set-livre-host-contract-retry
+readonly attempts_file="${state}/cleanup-attempts"
+attempts=0
+if [[ -f ${attempts_file} && ! -L ${attempts_file} ]]; then
+  read -r attempts < "$attempts_file"
+  [[ ${attempts} =~ ^[0-9]+$ ]] || exit 70
+fi
+attempts=$((attempts + 1))
+printf '%s\n' "$attempts" > "${attempts_file}.next"
+mv --force -- "${attempts_file}.next" "$attempts_file"
+(( attempts > 1 ))
+CLEANUP_PROBE
+  cat > "$recovery_source" <<'RECOVERY_PROBE'
+[Unit]
+Description=Set Livre host-contract recovery probe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+RECOVERY_PROBE
+  cat > "$cleanup_unit_source" <<'CLEANUP_UNIT_PROBE'
+[Unit]
+Description=Set Livre host-contract media cleanup probe
+
+[Service]
+Type=oneshot
+ExecStart=/run/set-livre-host-contract-retry/cleanup.sh
+CLEANUP_UNIT_PROBE
+
+  sed \
+    -e "s/set-livre-release-recovery.service/${recovery_unit}/g" \
+    -e "s/set-livre-media-cleanup.service/${cleanup_unit}/g" \
+    -e "s#/etc/set-livre/bootstrap-in-progress.sha256#${probe_state}/bootstrap-in-progress.sha256#g" \
+    -e "s#/etc/set-livre/bootstrap-recovery-in-progress.sha256#${probe_state}/bootstrap-recovery-in-progress.sha256#g" \
+    -e "s#ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service#ExecStart=/usr/bin/touch ${probe_state}/applications-started#" \
+    "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
+    > "$application_unit_source"
+  sed \
+    -e "s#/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs#${probe_state}/cleanup.sh#g" \
+    -e "s#/etc/set-livre/bootstrap-in-progress.sha256#${probe_state}/bootstrap-in-progress.sha256#g" \
+    -e "s#/etc/set-livre/bootstrap-recovery-in-progress.sha256#${probe_state}/bootstrap-recovery-in-progress.sha256#g" \
+    -e 's/^OnBootSec=5min$/OnActiveSec=100ms/' \
+    -e 's/^OnUnitActiveSec=10min$/OnUnitActiveSec=200ms/' \
+    -e 's/^AccuracySec=30s$/AccuracySec=1ms/' \
+    -e "s/^Unit=set-livre-application-start.service$/Unit=${application_unit}/" \
+    "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.timer" \
+    > "$timer_unit_source"
+
+  grep --fixed-strings --line-regexp "Unit=${application_unit}" "$timer_unit_source" >/dev/null \
+    || fail "timer do probe não preservou o gate de aplicação como alvo."
+  if grep --fixed-strings --line-regexp 'RemainAfterExit=yes' "$application_unit_source" \
+    >/dev/null; then
+    fail "gate do probe permaneceu ativo e não pode receber retries periódicos."
+  fi
+
+  sudo install -d -o root -g root -m 0700 "$probe_state"
+  sudo install -o root -g root -m 0755 "$cleanup_source" "${probe_state}/cleanup.sh"
+  sudo install -o root -g root -m 0644 "$recovery_source" "$recovery_unit_path"
+  sudo install -o root -g root -m 0644 "$cleanup_unit_source" "$cleanup_unit_path"
+  sudo install -o root -g root -m 0644 "$application_unit_source" "$application_unit_path"
+  sudo install -o root -g root -m 0644 "$timer_unit_source" "$timer_unit_path"
+  sudo systemd-analyze verify \
+    "$recovery_unit_path" \
+    "$cleanup_unit_path" \
+    "$application_unit_path" \
+    "$timer_unit_path"
+  sudo systemctl daemon-reload
+
+  for blocker in bootstrap-in-progress.sha256 bootstrap-recovery-in-progress.sha256; do
+    sudo rm -f -- \
+      "${probe_state}/cleanup-attempts" \
+      "${probe_state}/applications-started"
+    sudo systemctl stop "$timer_unit" >/dev/null 2>&1 || true
+    sudo systemctl reset-failed \
+      "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo install -o root -g root -m 0600 /dev/null "${probe_state}/${blocker}"
+    sudo systemctl start "$timer_unit"
+    /usr/bin/sleep 0.25
+    [[ $(sudo systemctl show --property=ActiveState --value "$timer_unit") == inactive ]] \
+      || fail "timer do probe ignorou o blocker ${blocker}."
+    if sudo systemctl start "$application_unit" >/dev/null 2>&1; then
+      fail "gate de aplicação iniciou durante o blocker ${blocker}."
+    fi
+    ! privileged_path_exists "${probe_state}/cleanup-attempts" \
+      || fail "cleanup iniciou durante o blocker ${blocker}."
+    ! privileged_path_exists "${probe_state}/applications-started" \
+      || fail "apps iniciaram durante o blocker ${blocker}."
+    sudo rm -f -- "${probe_state}/${blocker}"
+  done
+
+  sudo rm -f -- \
+    "${probe_state}/cleanup-attempts" \
+    "${probe_state}/applications-started"
+  sudo systemctl reset-failed \
+    "$application_unit" "$cleanup_unit" "$recovery_unit" \
+    >/dev/null 2>&1 || true
+  if sudo systemctl start "$application_unit" >/dev/null 2>&1; then
+    fail "falha transitória inicial do cleanup foi aceita como gate bem-sucedido."
+  fi
+  attempts="$(sudo cat -- "${probe_state}/cleanup-attempts")"
+  [[ ${attempts} == 1 ]] \
+    || fail "gate inicial não executou exatamente uma tentativa falha de cleanup."
+  ! privileged_path_exists "${probe_state}/applications-started" \
+    || fail "apps iniciaram depois da tentativa inicial falha de cleanup."
+  [[ $(sudo systemctl show --property=ActiveState --value "$application_unit") == failed ]] \
+    || fail "gate inicial não permaneceu failed após a falha de cleanup."
+
+  sudo systemctl start "$timer_unit"
+  recovered=false
+  for _ in {1..100}; do
+    if privileged_regular_file_exists "${probe_state}/applications-started"; then
+      attempts="$(sudo cat -- "${probe_state}/cleanup-attempts")"
+      if [[ ${attempts} =~ ^[0-9]+$ ]] && (( attempts >= 2 )); then
+        recovered=true
+        break
+      fi
+    fi
+    /usr/bin/sleep 0.05
+  done
+  [[ ${recovered} == true ]] \
+    || fail "timer não repetiu o gate depois que o cleanup transitório se recuperou."
+  [[ $(sudo systemctl show --property=Result --value "$application_unit") == success \
+    && $(sudo systemctl show --property=ActiveState --value "$application_unit") == inactive ]] \
+    || fail "gate repetido não terminou com sucesso em estado reativável."
+  sudo systemctl is-active --quiet "$timer_unit" \
+    || fail "timer periódico não permaneceu ativo após recuperar os apps."
+
+  printf 'Retry periódico do gate após cleanup transitório verificado pelo systemd.\n'
+)
+
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
@@ -704,6 +882,7 @@ sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
+verify_periodic_cleanup_retries_application_gate
 
 archive="$temporary_directory/host-contract-release.tar.gz"
 LC_ALL=C tar --hard-dereference --sort=name --mtime='@0' \
@@ -1559,10 +1738,14 @@ assert_current_release "$release_sha"
 cmp --silent -- "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
   /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs \
   || fail "release ativa não contém o invocador de cleanup revisado."
-grep --fixed-strings --line-regexp \
-  'stop set-livre-media-cleanup.timer set-livre-media-cleanup.service' \
-  "$test_state/systemctl.log" >/dev/null \
-  || fail "ativação não bloqueou o agendamento de cleanup."
+for expected_stop in \
+  'stop set-livre-media-cleanup.timer' \
+  'stop set-livre-application-start.service' \
+  'stop set-livre-media-cleanup.service'; do
+  grep --fixed-strings --line-regexp "$expected_stop" \
+    "$test_state/systemctl.log" >/dev/null \
+    || fail "ativação não bloqueou toda a cadeia periódica: ${expected_stop}."
+done
 grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.service' \
   "$test_state/systemctl.log" >/dev/null \
   || fail "ativação não executou o cleanup inicial."

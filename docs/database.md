@@ -27,12 +27,14 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260831082000_feat_008_studio_media` e os hardenings append-only
 `20260831170000_harden_studio_media_review_findings`,
 `20260831192100_harden_studio_media_terminal_rejection` e
-`20260831193500_harden_studio_media_superseded_reservations`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260831193500_harden_studio_media_superseded_reservations`,
+`20260831234000_harden_studio_media_cleanup_run_counts` e
+`20260831235000_harden_studio_media_finalize_claims`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e nove suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 475 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 483 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios, mídia e backoffice.
 
 A baseline implementada inclui:
@@ -42,8 +44,9 @@ A baseline implementada inclui:
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
 - núcleo de estúdio/revisão, taxonomias ativas, conteúdo comercial, concorrência otimista, ownership e
   descarte seguro;
-- mídia privada cuja reserva persistida é terminalizada como `superseded` antes de um conflito de
-  revisão autorizar nova preparação, liberando a quota sem depender da versão corrente;
+- mídia privada cuja finalização é serializada antes do processamento externo e cuja reserva persistida
+  é terminalizada como `superseded` antes de um conflito de revisão autorizar nova preparação,
+  liberando a quota sem depender da versão corrente;
 - usuários administrativos, binding curto de sessão, papéis `support/admin`, PII temporária,
   taxonomias versionadas, idempotência e auditoria redigida;
 - relógio lógico monotônico no binding administrativo e nos dez pares `created_at/updated_at` do
@@ -328,10 +331,35 @@ Constraints:
 
 As tabelas e `storage.objects` não concedem ao browser os paths, leitura do objeto nem assinatura
 arbitrária. O dono elegível lê o JSON estrito apenas pela rotina privada do DAL; toda escrita direta
-permanece revogada. O DAL recebe somente `execute` nas rotinas privadas de
-leitura/prepare/replay/rejeição/finalize/ordem/capa/exclusão. A manutenção expõe ao `service_role` apenas as
-fachadas RPC estreitas do cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da
-aplicação alcança `net`. Cron, `pg_net` e Vault não fazem parte desse fluxo.
+permanece revogada. O `app_dal` recebe `execute` somente no read model, prepare, begin/renew/release do
+claim, fachadas terminalizadoras cercadas e ordem/capa/exclusão. Candidato, replay e mutações internas
+não são invocáveis diretamente. A manutenção expõe ao `service_role` apenas as fachadas RPC estreitas do
+cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da aplicação alcança `net`.
+Cron, `pg_net` e Vault não fazem parte desse fluxo.
+
+`private.studio_media_finalize_claims(owner_user_id, idempotency_key)` é uma única tabela privada que
+registra hash e identidade imutável do comando, revisão esperada, `media_id` único, request mais recente,
+lease de 30 segundos e resultado terminal. Ela não referencia `studios` nem `studio_media`: o tombstone
+sobrevive ao cleanup da identidade mutável e recusa para sempre outra chave sobre a mesma mídia; somente
+a remoção canônica do usuário encerra esse escopo. RLS fica habilitada sem policy e nenhuma role de API
+recebe grant de tabela.
+
+`begin_studio_media_finalize_claim` persiste a chave antes de Storage/Sharp e só devolve o candidato
+validado junto do token cercado. A mesma chave ativa aguarda, com a conexão já devolvida ao pool; lease
+expirada permite takeover com token novo. Outra chave aguarda somente enquanto a primeira está ativa e,
+depois, recebe conflito determinístico. Replay terminal devolve o ledger ou a rejeição persistida sem
+reabrir trabalho externo. O orçamento de 30 segundos cobre até quatro segundos de fila, quinze de
+processamento e margem transacional; o serviço exige ao menos 22 segundos antes de entrar na fila.
+
+Antes do upload da prévia, `renew_studio_media_finalize_claim` estende atomicamente por 30 segundos uma
+lease ainda vigente; token expirado ou substituído não pode ressuscitar. Como o download, Sharp e upload
+compartilham deadline absoluto de 15 segundos, essa janela impede takeover entre a renovação e o commit
+terminal. Begin e fachadas claimed obedecem à ordem global advisory da idempotência → dono → claim →
+revisão/mídia. As fachadas recebem apenas token, request e fatos verificados: owner, estúdio, revisão,
+chave e mídia são derivados da linha sob lock. Finalização grava mídia, associação, ledger e terminal na
+mesma transação; rejeição faz o mesmo com o tombstone correspondente. O DAL libera somente o token atual
+em `finally`; token anterior não afeta takeover. A assinatura das URLs acontece depois dessa liberação,
+sem manter conexão PostgreSQL durante fila, download, Sharp, Storage ou signing.
 
 `maintenance.studio_media_cleanup_runs` registra `run_id`, slug imutável, estado e contagens terminais,
 sem paths ou secrets. A criação entra diretamente em `running`; a conclusão é somente
@@ -339,8 +367,9 @@ sem paths ou secrets. A criação entra diretamente em `running`; a conclusão �
 Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
 ou falha sem sucesso posterior. Ao abrir um novo
 run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu
-`running` além desse limite; leases vencidos continuam elegíveis ao claim seguinte e um sucesso
-posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma
+`running` além desse limite. As contagens são derivadas uma vez dos completion tokens e claims ainda em
+voo persistidos em mídia e probes, preservando `claimed = deleted + failed`; leases vencidos continuam
+elegíveis ao claim seguinte e um sucesso posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma
 execução terminal saudável libera a ativação da release; a VM deriva o slug periódico do próprio SHA
 ativo.
 

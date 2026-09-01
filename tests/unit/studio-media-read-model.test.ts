@@ -14,6 +14,7 @@ vi.mock("../../src/domains/studios/server/studio-media-dal", () => ({
 
 vi.mock("../../src/domains/studios/server/studio-media-storage", () => ({
   createTrustedStudioMediaStorage: mocks.createTrustedStudioMediaStorage,
+  studioMediaPreviewSigningDeadlineMs: 2_000,
 }));
 
 import {

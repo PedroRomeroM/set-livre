@@ -464,6 +464,7 @@ stop_application_services() {
   local load_state service
   for service in \
     set-livre-media-cleanup.timer \
+    set-livre-application-start.service \
     set-livre-media-cleanup.service \
     set-livre-web.service \
     set-livre-backoffice.service; do

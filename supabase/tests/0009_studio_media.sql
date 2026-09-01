@@ -72,6 +72,8 @@ $block$;
 
 do $block$
 declare
+  claimed_finalize_studio jsonb;
+  claimed_reject_studio jsonb;
   finalize_studio jsonb;
   limit_studio jsonb;
   prepared jsonb;
@@ -108,6 +110,38 @@ begin
     4,
     '60000000-0000-4000-8000-000000000001'
   );
+  claimed_finalize_studio := private.create_studio(
+    '8f000000-0000-4000-8000-000000000008',
+    '82300000-0000-4000-8000-000000000103',
+    '82300000-0000-4000-8000-000000000113',
+    'Estúdio ordem de locks finalize',
+    'Fixture committed para sobrepor begin e a fachada claimed de finalização.',
+    'Rua da Concorrência',
+    '22',
+    null,
+    'Centro',
+    'Curitiba',
+    'PR',
+    '80010000',
+    4,
+    '60000000-0000-4000-8000-000000000001'
+  );
+  claimed_reject_studio := private.create_studio(
+    '8f000000-0000-4000-8000-000000000008',
+    '82300000-0000-4000-8000-000000000104',
+    '82300000-0000-4000-8000-000000000114',
+    'Estúdio ordem de locks reject',
+    'Fixture committed para sobrepor begin e a fachada claimed de rejeição.',
+    'Rua da Concorrência',
+    '23',
+    null,
+    'Centro',
+    'Curitiba',
+    'PR',
+    '80010000',
+    4,
+    '60000000-0000-4000-8000-000000000001'
+  );
   insert into private.feat008_concurrency_fixtures (label, studio_id, revision_id)
   values
     (
@@ -119,6 +153,16 @@ begin
       'finalize',
       (finalize_studio ->> 'studioId')::uuid,
       (finalize_studio #>> '{revision,id}')::uuid
+    ),
+    (
+      'claimed_finalize',
+      (claimed_finalize_studio ->> 'studioId')::uuid,
+      (claimed_finalize_studio #>> '{revision,id}')::uuid
+    ),
+    (
+      'claimed_reject',
+      (claimed_reject_studio ->> 'studioId')::uuid,
+      (claimed_reject_studio #>> '{revision,id}')::uuid
     );
   prepared := private.prepare_studio_media_upload(
     '8f000000-0000-4000-8000-000000000008',
@@ -134,6 +178,34 @@ begin
   update private.feat008_concurrency_fixtures
   set media_id = (prepared ->> 'mediaId')::uuid
   where label = 'finalize';
+  prepared := private.prepare_studio_media_upload(
+    '8f000000-0000-4000-8000-000000000008',
+    (claimed_finalize_studio ->> 'studioId')::uuid,
+    (claimed_finalize_studio #>> '{revision,id}')::uuid,
+    1,
+    '82300000-0000-4000-8000-000000000122',
+    '82300000-0000-4000-8000-000000000132',
+    'image/png',
+    100,
+    null
+  );
+  update private.feat008_concurrency_fixtures
+  set media_id = (prepared ->> 'mediaId')::uuid
+  where label = 'claimed_finalize';
+  prepared := private.prepare_studio_media_upload(
+    '8f000000-0000-4000-8000-000000000008',
+    (claimed_reject_studio ->> 'studioId')::uuid,
+    (claimed_reject_studio #>> '{revision,id}')::uuid,
+    1,
+    '82300000-0000-4000-8000-000000000123',
+    '82300000-0000-4000-8000-000000000133',
+    'image/png',
+    100,
+    null
+  );
+  update private.feat008_concurrency_fixtures
+  set media_id = (prepared ->> 'mediaId')::uuid
+  where label = 'claimed_reject';
 end;
 $block$;
 
@@ -348,7 +420,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(89);
+select plan(97);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -413,8 +485,20 @@ select ok(
       where index_object.schemaname = 'private'
         and index_object.indexname = 'studio_command_requests_resulting_media_id_idx'
         and index_object.indexdef like '%WHERE (resulting_media_id IS NOT NULL)%'
+    )
+    and exists (
+      select 1
+      from pg_catalog.pg_indexes as index_object
+      where index_object.schemaname = 'private'
+        and index_object.indexname = 'studio_media_finalize_claims_studio_idx'
+    )
+    and exists (
+      select 1
+      from pg_catalog.pg_indexes as index_object
+      where index_object.schemaname = 'private'
+        and index_object.indexname = 'studio_media_finalize_claims_media_key'
     ),
-  'posição, capa, ownership e FK reversa possuem índices estruturais exatos'
+  'posição, capa, ownership e FKs reversas possuem índices estruturais exatos'
 );
 select policies_are(
   'public',
@@ -441,23 +525,84 @@ select is(
 );
 select ok(
   (
-    select pg_catalog.count(*) = 9
+    select pg_catalog.count(*) = 10
     from (
       values
         ('private.get_owner_studio_media(uuid,uuid)'),
         ('private.prepare_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text,bigint,text)'),
-        ('private.replay_studio_media_finalize(uuid,uuid,uuid,bigint,uuid,uuid)'),
-        ('private.get_studio_media_upload_candidate(uuid,uuid,uuid,bigint,uuid)'),
-        ('private.reject_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text)'),
-        ('private.finalize_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,bigint,integer,integer,text)'),
+        ('private.begin_studio_media_finalize_claim(uuid,uuid,uuid,bigint,uuid,uuid,uuid)'),
+        ('private.renew_studio_media_finalize_claim(uuid)'),
+        ('private.release_studio_media_finalize_claim(uuid)'),
+        ('private.reject_studio_media_upload_claimed(uuid,uuid,text)'),
+        ('private.finalize_studio_media_upload_claimed(uuid,uuid,text,bigint,integer,integer,text)'),
         ('private.reorder_studio_media(uuid,uuid,uuid,bigint,uuid,uuid,uuid[])'),
         ('private.set_studio_media_cover(uuid,uuid,uuid,bigint,uuid,uuid,uuid)'),
         ('private.delete_studio_media(uuid,uuid,uuid,bigint,uuid,uuid,uuid)')
     ) as expected(signature)
     where pg_catalog.has_function_privilege('app_dal', expected.signature, 'EXECUTE')
   )
-    and not pg_catalog.has_table_privilege('app_dal', 'public.studio_media', 'SELECT'),
-  'app_dal executa o read model e as oito fachadas sem leitura direta das tabelas'
+    and not pg_catalog.has_function_privilege(
+      'app_dal',
+      'private.replay_studio_media_finalize(uuid,uuid,uuid,bigint,uuid,uuid)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'app_dal',
+      'private.get_studio_media_upload_candidate(uuid,uuid,uuid,bigint,uuid)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'app_dal',
+      'private.reject_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'app_dal',
+      'private.finalize_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,bigint,integer,integer,text)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_table_privilege('app_dal', 'public.studio_media', 'SELECT')
+    and not pg_catalog.has_table_privilege(
+      'app_dal',
+      'private.studio_media_finalize_claims',
+      'SELECT'
+    ),
+  'app_dal executa apenas o read model e as fachadas cercadas sem leitura direta das tabelas'
+);
+select ok(
+  pg_catalog.to_regclass('private.studio_media_finalize_claims') is not null
+    and (
+      select class.relrowsecurity
+      from pg_catalog.pg_class as class
+      where class.oid = 'private.studio_media_finalize_claims'::pg_catalog.regclass
+    )
+    and not pg_catalog.has_table_privilege(
+      'anon',
+      'private.studio_media_finalize_claims',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege(
+      'authenticated',
+      'private.studio_media_finalize_claims',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege(
+      'service_role',
+      'private.studio_media_finalize_claims',
+      'SELECT'
+    )
+    and not exists (
+      select 1
+      from pg_catalog.pg_constraint as constraint_object
+      where constraint_object.conrelid =
+          'private.studio_media_finalize_claims'::pg_catalog.regclass
+        and constraint_object.contype = 'f'
+        and constraint_object.confrelid in (
+          'public.studios'::pg_catalog.regclass,
+          'public.studio_media'::pg_catalog.regclass
+        )
+    ),
+  'claim privado mantém RLS e tombstone sem FK para studio ou mídia mutáveis'
 );
 select ok(
   pg_catalog.has_function_privilege(
@@ -669,15 +814,29 @@ select pg_catalog.set_config(
   true
 );
 select pg_catalog.set_config(
-  'set_livre.test.f008_candidate_1',
-  private.get_studio_media_upload_candidate(
+  'set_livre.test.f008_claim_1',
+  private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
     pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
     1,
+    '85000000-0000-4000-8000-000000000002',
+    '86000000-0000-4000-8000-000000000003',
     pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid
   )::text,
   true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_candidate_1',
+  (
+    pg_catalog.current_setting('set_livre.test.f008_claim_1')::jsonb -> 'candidate'
+  )::text,
+  true
+);
+select private.release_studio_media_finalize_claim(
+  (
+    pg_catalog.current_setting('set_livre.test.f008_claim_1')::jsonb ->> 'claimToken'
+  )::uuid
 );
 
 reset role;
@@ -789,15 +948,29 @@ from timing;
 
 set local role app_dal;
 select pg_catalog.set_config(
-  'set_livre.test.f008_expiring_candidate',
-  private.get_studio_media_upload_candidate(
+  'set_livre.test.f008_expiring_claim',
+  private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
     pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
     1,
+    '85000000-0000-4000-8000-000000000096',
+    '86000000-0000-4000-8000-000000000096',
     '87000000-0000-4000-8000-000000007010'
   )::text,
   true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_expiring_candidate',
+  (
+    pg_catalog.current_setting('set_livre.test.f008_expiring_claim')::jsonb -> 'candidate'
+  )::text,
+  true
+);
+select private.release_studio_media_finalize_claim(
+  (
+    pg_catalog.current_setting('set_livre.test.f008_expiring_claim')::jsonb ->> 'claimToken'
+  )::uuid
 );
 reset role;
 
@@ -1014,16 +1187,22 @@ select is(
 );
 
 set local role app_dal;
-select pg_catalog.set_config(
-  'set_livre.test.f008_finalize_1',
-  private.finalize_studio_media_upload(
+with claim as (
+  select private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
     pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
     1,
     '85000000-0000-4000-8000-000000000002',
     '86000000-0000-4000-8000-000000000003',
-    pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid
+  ) as result
+)
+select pg_catalog.set_config(
+  'set_livre.test.f008_finalize_1',
+  private.finalize_studio_media_upload_claimed(
+    (claim.result ->> 'claimToken')::uuid,
+    '86000000-0000-4000-8000-000000000003',
     'image/jpeg',
     100,
     1200,
@@ -1031,23 +1210,21 @@ select pg_catalog.set_config(
     pg_catalog.repeat('a', 64)
   )::text,
   true
-);
+)
+from claim;
 select pg_catalog.set_config(
   'set_livre.test.f008_finalize_replay_equal',
   (
-    private.finalize_studio_media_upload(
-      '81000000-0000-4000-8000-000000000001',
-      pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
-      pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
-      1,
-      '85000000-0000-4000-8000-000000000002',
-      '86000000-0000-4000-8000-000000000004',
-      pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid,
-      'image/jpeg',
-      100,
-      1200,
-      800,
-      pg_catalog.repeat('a', 64)
+    (
+      private.begin_studio_media_finalize_claim(
+        '81000000-0000-4000-8000-000000000001',
+        pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+        pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+        1,
+        '85000000-0000-4000-8000-000000000002',
+        '86000000-0000-4000-8000-000000000004',
+        pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid
+      ) -> 'result'
     )::text = pg_catalog.current_setting('set_livre.test.f008_finalize_1')
   )::text,
   true
@@ -1072,16 +1249,22 @@ select pg_catalog.set_config(
   pg_catalog.current_setting('set_livre.test.f008_prepare_2')::jsonb ->> 'mediaId',
   true
 );
-select pg_catalog.set_config(
-  'set_livre.test.f008_finalize_2',
-  private.finalize_studio_media_upload(
+with claim as (
+  select private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
     pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
     2,
     '85000000-0000-4000-8000-000000000004',
     '86000000-0000-4000-8000-000000000006',
-    pg_catalog.current_setting('set_livre.test.f008_media_2')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_media_2')::uuid
+  ) as result
+)
+select pg_catalog.set_config(
+  'set_livre.test.f008_finalize_2',
+  private.finalize_studio_media_upload_claimed(
+    (claim.result ->> 'claimToken')::uuid,
+    '86000000-0000-4000-8000-000000000006',
     'image/png',
     200,
     900,
@@ -1089,7 +1272,8 @@ select pg_catalog.set_config(
     pg_catalog.repeat('b', 64)
   )::text,
   true
-);
+)
+from claim;
 reset role;
 
 select ok(
@@ -1108,8 +1292,18 @@ select ok(
         and relation.media_id = pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid
         and relation.position = 1
         and relation.is_cover
+    )
+    and exists (
+      select 1
+      from private.studio_media_finalize_claims as claim
+      where claim.owner_user_id = '81000000-0000-4000-8000-000000000001'
+        and claim.idempotency_key = '85000000-0000-4000-8000-000000000002'
+        and claim.media_id = pg_catalog.current_setting('set_livre.test.f008_media_1')::uuid
+        and claim.terminal_state = 'finalized'
+        and claim.terminal_rejection_code is null
+        and claim.terminal_at is not null
     ),
-  'primeiro finalize cria associação, versão 2 e capa determinística'
+  'primeiro finalize cria associação, versão 2, capa e tombstone terminal atômicos'
 );
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_finalize_replay_equal')::boolean,
@@ -1513,18 +1707,41 @@ select ok(
 );
 
 set local role app_dal;
-select pg_catalog.set_config(
-  'set_livre.test.f008_reject_1',
-  private.reject_studio_media_upload(
+with claim as (
+  select private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
     pg_catalog.current_setting('set_livre.test.f008_draft_revision')::uuid,
     1,
-    pg_catalog.current_setting('set_livre.test.f008_media_3')::uuid,
-    '86000000-0000-4000-8000-000000000012'
+    '85000000-0000-4000-8000-000000000010',
+    '86000000-0000-4000-8000-000000000012',
+    pg_catalog.current_setting('set_livre.test.f008_media_3')::uuid
+  ) as result
+)
+select pg_catalog.set_config(
+  'set_livre.test.f008_reject_1',
+  private.reject_studio_media_upload_claimed(
+    (claim.result ->> 'claimToken')::uuid,
+    '86000000-0000-4000-8000-000000000012',
+    'validation_failed'
+  )::text,
+  true
+)
+from claim;
+select pg_catalog.set_config(
+  'set_livre.test.f008_reject_claim_terminal',
+  private.begin_studio_media_finalize_claim(
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_draft_revision')::uuid,
+    1,
+    '85000000-0000-4000-8000-000000000010',
+    '86000000-0000-4000-8000-000000000014',
+    pg_catalog.current_setting('set_livre.test.f008_media_3')::uuid
   )::text,
   true
 );
+reset role;
 select pg_catalog.set_config(
   'set_livre.test.f008_reject_replay_equal',
   (
@@ -1539,10 +1756,11 @@ select pg_catalog.set_config(
   )::text,
   true
 );
-reset role;
 
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_reject_replay_equal')::boolean
+    and pg_catalog.current_setting('set_livre.test.f008_reject_claim_terminal')::jsonb
+      @> '{"state":"rejected","rejectionCode":"validation_failed"}'::jsonb
     and (
       select pg_catalog.count(*) = 1
       from audit.events as event
@@ -1550,7 +1768,7 @@ select ok(
         and event.target_id = pg_catalog.current_setting('set_livre.test.f008_studio')::uuid
         and event.idempotency_key = pg_catalog.current_setting('set_livre.test.f008_media_3')::uuid
     ),
-  'reject é naturalmente idempotente pelo media_id e audita somente a transição'
+  'reject persiste terminal replayável, é idempotente pelo media_id e audita somente a transição'
 );
 
 set local role app_dal;
@@ -1733,20 +1951,27 @@ select pg_catalog.set_config(
     ->> 'mediaId',
   true
 );
-select private.finalize_studio_media_upload(
-  '81000000-0000-4000-8000-000000000002',
-  pg_catalog.current_setting('set_livre.test.f008_discard_studio')::uuid,
-  pg_catalog.current_setting('set_livre.test.f008_discard_revision')::uuid,
-  1,
-  '85000000-0000-4000-8000-000000000021',
+with claim as (
+  select private.begin_studio_media_finalize_claim(
+    '81000000-0000-4000-8000-000000000002',
+    pg_catalog.current_setting('set_livre.test.f008_discard_studio')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_discard_revision')::uuid,
+    1,
+    '85000000-0000-4000-8000-000000000021',
+    '86000000-0000-4000-8000-000000000021',
+    pg_catalog.current_setting('set_livre.test.f008_discard_ready_media')::uuid
+  ) as result
+)
+select private.finalize_studio_media_upload_claimed(
+  (claim.result ->> 'claimToken')::uuid,
   '86000000-0000-4000-8000-000000000021',
-  pg_catalog.current_setting('set_livre.test.f008_discard_ready_media')::uuid,
   'image/webp',
   46,
   1,
   1,
   pg_catalog.repeat('e', 64)
-);
+)
+from claim;
 select pg_catalog.set_config(
   'set_livre.test.f008_discard_pending_prepare',
   private.prepare_studio_media_upload(
@@ -1789,14 +2014,23 @@ select pg_catalog.set_config(
     ->> 'mediaId',
   true
 );
-select private.reject_studio_media_upload(
-  '81000000-0000-4000-8000-000000000002',
-  pg_catalog.current_setting('set_livre.test.f008_discard_studio')::uuid,
-  pg_catalog.current_setting('set_livre.test.f008_discard_revision')::uuid,
-  2,
-  pg_catalog.current_setting('set_livre.test.f008_discard_rejected_media')::uuid,
-  '86000000-0000-4000-8000-000000000024'
-);
+with claim as (
+  select private.begin_studio_media_finalize_claim(
+    '81000000-0000-4000-8000-000000000002',
+    pg_catalog.current_setting('set_livre.test.f008_discard_studio')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_discard_revision')::uuid,
+    2,
+    '85000000-0000-4000-8000-000000000026',
+    '86000000-0000-4000-8000-000000000024',
+    pg_catalog.current_setting('set_livre.test.f008_discard_rejected_media')::uuid
+  ) as result
+)
+select private.reject_studio_media_upload_claimed(
+  (claim.result ->> 'claimToken')::uuid,
+  '86000000-0000-4000-8000-000000000024',
+  'validation_failed'
+)
+from claim;
 select pg_catalog.set_config(
   'set_livre.test.f008_discard_result',
   private.discard_studio_draft(
@@ -1953,9 +2187,8 @@ where revision.id = (
   and revision.revision_version = 1;
 
 set local role app_dal;
-select pg_catalog.set_config(
-  'set_livre.test.f008_limit_reject',
-  private.reject_studio_media_upload(
+with claim as (
+  select private.begin_studio_media_finalize_claim(
     '81000000-0000-4000-8000-000000000001',
     (
       pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
@@ -1966,12 +2199,21 @@ select pg_catalog.set_config(
         #>> '{revision,id}'
     )::uuid,
     1,
-    '88000000-0000-4000-8000-000000000001',
+    '8a000000-0000-4000-8000-000000000004',
+    '8a000000-0000-4000-8000-000000000001',
+    '88000000-0000-4000-8000-000000000001'
+  ) as result
+)
+select pg_catalog.set_config(
+  'set_livre.test.f008_limit_reject',
+  private.reject_studio_media_upload_claimed(
+    (claim.result ->> 'claimToken')::uuid,
     '8a000000-0000-4000-8000-000000000001',
     'superseded'
   )::text,
   true
-);
+)
+from claim;
 select pg_catalog.set_config(
   'set_livre.test.f008_limit_replacement',
   private.prepare_studio_media_upload(
@@ -3337,6 +3579,123 @@ select
   coalesce(fixture.completed_at, fixture.prepared_at + interval '1 second')
 from fixture;
 
+with timing as (
+  select pg_catalog.clock_timestamp() - interval '4 hours' as prepared_at
+), fixture (media_id, status, cleanup_succeeded, cleanup_error_code) as (
+  values
+    (
+      '8d000000-0000-4000-8000-000000000401'::uuid,
+      'deleted'::text,
+      true,
+      null::text
+    ),
+    (
+      '8d000000-0000-4000-8000-000000000402'::uuid,
+      'delete_pending'::text,
+      false,
+      'storage_timeout'::text
+    )
+)
+insert into public.studio_media (
+  id,
+  studio_id,
+  prepared_revision_id,
+  uploaded_by,
+  storage_bucket,
+  storage_path,
+  preview_storage_path,
+  declared_mime_type,
+  declared_size_bytes,
+  status,
+  prepared_at,
+  upload_expires_at,
+  cleanup_after,
+  delete_requested_at,
+  deleted_at,
+  cleanup_attempts,
+  cleanup_last_completed_token,
+  cleanup_last_succeeded,
+  cleanup_last_error_code,
+  updated_at
+)
+select
+  fixture.media_id,
+  pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+  pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+  '81000000-0000-4000-8000-000000000001',
+  'studio-media',
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.png',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'),
+    fixture.media_id
+  ),
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'),
+    fixture.media_id
+  ),
+  'image/png',
+  10,
+  fixture.status,
+  timing.prepared_at,
+  timing.prepared_at + interval '2 hours',
+  case
+    when fixture.status = 'delete_pending' then timing.prepared_at + interval '2 hours'
+  end,
+  timing.prepared_at + interval '2 hours',
+  case when fixture.status = 'deleted' then timing.prepared_at + interval '2 hours 1 second' end,
+  1,
+  '8d000000-0000-4000-8000-000000000104',
+  fixture.cleanup_succeeded,
+  fixture.cleanup_error_code,
+  timing.prepared_at + interval '2 hours 1 second'
+from timing
+cross join fixture;
+
+with timing as (
+  select pg_catalog.clock_timestamp() - interval '31 minutes' as prepared_at
+)
+insert into maintenance.studio_media_cleanup_probes (
+  run_id,
+  media_id,
+  storage_bucket,
+  storage_path,
+  preview_storage_path,
+  status,
+  cleanup_claim_token,
+  cleanup_claimed_at,
+  prepared_at,
+  updated_at
+)
+select
+  '8d000000-0000-4000-8000-000000000104',
+  '8d000000-0000-4000-8000-000000000403',
+  'studio-media',
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.webp',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000403'
+  ),
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000104',
+    '8d000000-0000-4000-8000-000000000403'
+  ),
+  'queued',
+  '8d000000-0000-4000-8000-000000000104',
+  timing.prepared_at + interval '1 second',
+  timing.prepared_at,
+  timing.prepared_at + interval '1 second'
+from timing;
+
 set local role service_role;
 select public.begin_studio_media_cleanup_run(
   '8d000000-0000-4000-8000-000000000999',
@@ -3366,9 +3725,9 @@ select ok(
       from maintenance.studio_media_cleanup_runs as run
       where run.run_id = '8d000000-0000-4000-8000-000000000104'
         and run.status = 'failed'
-        and run.claimed_count = 0
-        and run.deleted_count = 0
-        and run.failed_count = 0
+        and run.claimed_count = 3
+        and run.deleted_count = 1
+        and run.failed_count = 2
         and run.error_code = 'cleanup_run_abandoned'
         and run.completed_at is not null
     )
@@ -3390,6 +3749,43 @@ select ok(
       )
     ),
   'begin retém 30 dias, terminaliza run abandonado e não purga probe não terminal'
+);
+select ok(
+  exists (
+      select 1
+      from public.studio_media as media
+      where media.id = '8d000000-0000-4000-8000-000000000401'
+        and media.cleanup_last_completed_token
+          = '8d000000-0000-4000-8000-000000000104'
+        and media.cleanup_last_succeeded is true
+    )
+    and exists (
+      select 1
+      from public.studio_media as media
+      where media.id = '8d000000-0000-4000-8000-000000000402'
+        and media.cleanup_last_completed_token
+          = '8d000000-0000-4000-8000-000000000104'
+        and media.cleanup_last_succeeded is false
+    )
+    and exists (
+      select 1
+      from maintenance.studio_media_cleanup_probes as probe
+      where probe.run_id = '8d000000-0000-4000-8000-000000000104'
+        and probe.status = 'queued'
+        and probe.cleanup_claim_token = probe.run_id
+        and probe.cleanup_last_completed_token is null
+    )
+    and exists (
+      select 1
+      from maintenance.studio_media_cleanup_runs as run
+      where run.run_id = '8d000000-0000-4000-8000-000000000104'
+        and run.status = 'failed'
+        and run.claimed_count = 3
+        and run.deleted_count = 1
+        and run.failed_count = 2
+        and run.claimed_count = run.deleted_count + run.failed_count
+    ),
+  'abandono deriva uma exclusão, uma falha e um claim ainda em voo dos tokens persistidos'
 );
 
 set local role service_role;
@@ -3515,6 +3911,13 @@ begin
     'feat008_limit_b',
     'feat008_finalize_a',
     'feat008_finalize_b',
+    'feat008_claim_a',
+    'feat008_claim_b',
+    'feat008_claim_c',
+    'feat008_claim_finalize_owner',
+    'feat008_claim_finalize_terminal',
+    'feat008_claim_reject_owner',
+    'feat008_claim_reject_terminal',
     'feat008_cleanup_a',
     'feat008_cleanup_b'
   ]
@@ -3522,6 +3925,362 @@ begin
     perform extensions.dblink_connect(connection_name, connection_string);
   end loop;
 
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_finalize_acquired', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_finalize_terminal',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000223',
+        '82300000-0000-4000-8000-000000000236',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_exec('feat008_claim_finalize_owner', 'begin');
+  perform extensions.dblink_exec(
+    'feat008_claim_finalize_owner',
+    $remote$
+      do $owner_lock$
+      begin
+        perform pg_catalog.pg_advisory_xact_lock(
+          pg_catalog.hashtextextended(
+            '8f000000-0000-4000-8000-000000000008:82300000-0000-4000-8000-000000000223',
+            0
+          )
+        );
+        perform private.assert_studio_owner_mutable(
+          '8f000000-0000-4000-8000-000000000008'
+        );
+      end;
+      $owner_lock$;
+    $remote$
+  );
+  perform extensions.dblink_send_query(
+    'feat008_claim_finalize_terminal',
+    $remote$
+      select private.finalize_studio_media_upload_claimed(
+        claim.lease_token,
+        '82300000-0000-4000-8000-000000000237',
+        'image/png',
+        100,
+        1,
+        1,
+        pg_catalog.repeat('d', 64)
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'claimed_finalize'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000223'
+    $remote$
+  );
+  perform pg_catalog.pg_sleep(0.2);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_finalize_waiting', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_finalize_owner',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000223',
+        '82300000-0000-4000-8000-000000000238',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_exec('feat008_claim_finalize_owner', 'commit');
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_finalize_terminal', remote_result.result
+  from extensions.dblink_get_result(
+    'feat008_claim_finalize_terminal'
+  ) as remote_result(result jsonb);
+  perform remote_result.result
+  from extensions.dblink_get_result(
+    'feat008_claim_finalize_terminal'
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_finalize_replay', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_finalize_owner',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000223',
+        '82300000-0000-4000-8000-000000000239',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_finalize_released', pg_catalog.to_jsonb(remote_result.result)
+  from extensions.dblink(
+    'feat008_claim_finalize_terminal',
+    $remote$
+      select private.release_studio_media_finalize_claim(claim.lease_token)
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'claimed_finalize'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000223'
+    $remote$
+  ) as remote_result(result boolean);
+
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_reject_acquired', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_reject_terminal',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000224',
+        '82300000-0000-4000-8000-000000000240',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_reject'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_exec('feat008_claim_reject_owner', 'begin');
+  perform extensions.dblink_exec(
+    'feat008_claim_reject_owner',
+    $remote$
+      do $owner_lock$
+      begin
+        perform pg_catalog.pg_advisory_xact_lock(
+          pg_catalog.hashtextextended(
+            '8f000000-0000-4000-8000-000000000008:82300000-0000-4000-8000-000000000224',
+            0
+          )
+        );
+        perform private.assert_studio_owner_mutable(
+          '8f000000-0000-4000-8000-000000000008'
+        );
+      end;
+      $owner_lock$;
+    $remote$
+  );
+  perform extensions.dblink_send_query(
+    'feat008_claim_reject_terminal',
+    $remote$
+      select private.reject_studio_media_upload_claimed(
+        claim.lease_token,
+        '82300000-0000-4000-8000-000000000241',
+        'validation_failed'
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'claimed_reject'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000224'
+    $remote$
+  );
+  perform pg_catalog.pg_sleep(0.2);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_reject_waiting', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_reject_owner',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000224',
+        '82300000-0000-4000-8000-000000000242',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_reject'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_exec('feat008_claim_reject_owner', 'commit');
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_reject_terminal', remote_result.result
+  from extensions.dblink_get_result(
+    'feat008_claim_reject_terminal'
+  ) as remote_result(result jsonb);
+  perform remote_result.result
+  from extensions.dblink_get_result(
+    'feat008_claim_reject_terminal'
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_reject_replay', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_reject_owner',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000224',
+        '82300000-0000-4000-8000-000000000243',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'claimed_reject'
+    $remote$
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claimed_reject_released', pg_catalog.to_jsonb(remote_result.result)
+  from extensions.dblink(
+    'feat008_claim_reject_terminal',
+    $remote$
+      select private.release_studio_media_finalize_claim(claim.lease_token)
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'claimed_reject'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000224'
+    $remote$
+  ) as remote_result(result boolean);
+
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_acquired_a', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_a',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000221',
+        '82300000-0000-4000-8000-000000000231',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_disconnect('feat008_claim_a');
+  perform extensions.dblink_exec(
+    'feat008_claim_b',
+    $remote$
+      update private.studio_media_finalize_claims as claim
+      set
+        lease_claimed_at = pg_catalog.clock_timestamp(),
+        lease_expires_at = pg_catalog.clock_timestamp() + interval '1 second'
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+        and claim.media_id = fixture.media_id
+    $remote$
+  );
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_renewed_a', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_b',
+    $remote$
+      select private.renew_studio_media_finalize_claim(claim.lease_token)
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'finalize'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000221'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform pg_catalog.pg_sleep(1.1);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_waiting_b', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_b',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000221',
+        '82300000-0000-4000-8000-000000000232',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_waiting_c', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_c',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000222',
+        '82300000-0000-4000-8000-000000000234',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  perform extensions.dblink_exec(
+    'feat008_claim_b',
+    $remote$
+      update private.studio_media_finalize_claims as claim
+      set lease_expires_at = pg_catalog.clock_timestamp() - interval '1 microsecond'
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+        and claim.media_id = fixture.media_id
+    $remote$
+  );
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_acquired_b', remote_result.result
+  from extensions.dblink(
+    'feat008_claim_b',
+    $remote$
+      select private.begin_studio_media_finalize_claim(
+        '8f000000-0000-4000-8000-000000000008',
+        fixture.studio_id,
+        fixture.revision_id,
+        1,
+        '82300000-0000-4000-8000-000000000221',
+        '82300000-0000-4000-8000-000000000232',
+        fixture.media_id
+      )
+      from private.feat008_concurrency_fixtures as fixture
+      where fixture.label = 'finalize'
+    $remote$
+  ) as remote_result(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select
+    'feat008_claim_stale_release_a',
+    pg_catalog.to_jsonb(
+      private.release_studio_media_finalize_claim(
+        (acquired.result ->> 'claimToken')::uuid
+      )
+    )
+  from feat008_concurrency_results as acquired
+  where acquired.label = 'feat008_claim_acquired_a';
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_claim_released_b', pg_catalog.to_jsonb(remote_result.result)
+  from extensions.dblink(
+    'feat008_claim_b',
+    $remote$
+      select private.release_studio_media_finalize_claim(claim.lease_token)
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      where fixture.label = 'finalize'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000221'
+    $remote$
+  ) as remote_result(result boolean);
   perform extensions.dblink_exec(
     'feat008_cleanup_a',
     $remote$
@@ -3633,6 +4392,161 @@ begin
 end;
 $block$;
 
+select ok(
+  (select result ->> 'state' from feat008_concurrency_results
+    where label = 'feat008_claimed_finalize_acquired') = 'acquired'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claimed_finalize_waiting') = 'waiting'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claimed_finalize_replay') = 'replay'
+    and (select result -> 'result' from feat008_concurrency_results
+      where label = 'feat008_claimed_finalize_replay') = (
+        select result
+        from feat008_concurrency_results
+        where label = 'feat008_claimed_finalize_terminal'
+      )
+    and (select result from feat008_concurrency_results
+      where label = 'feat008_claimed_finalize_released') = 'true'::jsonb
+    and exists (
+      select 1
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      join public.studio_media as media on media.id = fixture.media_id
+      where fixture.label = 'claimed_finalize'
+        and claim.terminal_state = 'finalized'
+        and claim.lease_token is null
+        and media.status = 'ready'
+    ),
+  'begin sobreposto à fachada claimed de finalize respeita advisory-owner-claim sem deadlock e relê o terminal'
+);
+select ok(
+  (select result ->> 'state' from feat008_concurrency_results
+    where label = 'feat008_claimed_reject_acquired') = 'acquired'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claimed_reject_waiting') = 'waiting'
+    and (select result ->> 'status' from feat008_concurrency_results
+      where label = 'feat008_claimed_reject_terminal') = 'rejected'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claimed_reject_replay') = 'rejected'
+    and (select result ->> 'rejectionCode' from feat008_concurrency_results
+      where label = 'feat008_claimed_reject_replay') = 'validation_failed'
+    and (select result from feat008_concurrency_results
+      where label = 'feat008_claimed_reject_released') = 'true'::jsonb
+    and exists (
+      select 1
+      from private.feat008_concurrency_fixtures as fixture
+      join private.studio_media_finalize_claims as claim on claim.media_id = fixture.media_id
+      join public.studio_media as media on media.id = fixture.media_id
+      where fixture.label = 'claimed_reject'
+        and claim.terminal_state = 'rejected'
+        and claim.terminal_rejection_code = 'validation_failed'
+        and claim.lease_token is null
+        and media.status = 'rejected'
+    ),
+  'begin sobreposto à fachada claimed de reject respeita advisory-owner-claim sem deadlock e relê a rejeição'
+);
+
+insert into feat008_concurrency_results (label, error_message)
+select
+  'feat008_claim_conflict_c',
+  private.feat008_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.begin_studio_media_finalize_claim(
+          '8f000000-0000-4000-8000-000000000008',
+          %L::uuid,
+          %L::uuid,
+          1,
+          '82300000-0000-4000-8000-000000000222',
+          '82300000-0000-4000-8000-000000000235',
+          %L::uuid
+        )
+      $command$,
+      fixture.studio_id,
+      fixture.revision_id,
+      fixture.media_id
+    )
+  )
+from private.feat008_concurrency_fixtures as fixture
+where fixture.label = 'finalize';
+
+select ok(
+  (select result ->> 'state' from feat008_concurrency_results
+    where label = 'feat008_claim_acquired_a') = 'acquired'
+    and (select result ? 'leaseExpiresAt' from feat008_concurrency_results
+      where label = 'feat008_claim_renewed_a')
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claim_waiting_b') = 'waiting'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claim_waiting_c') = 'waiting'
+    and (select result ->> 'state' from feat008_concurrency_results
+      where label = 'feat008_claim_acquired_b') = 'acquired'
+    and (select result from feat008_concurrency_results
+      where label = 'feat008_claim_released_b') = 'true'::jsonb
+    and (select result from feat008_concurrency_results
+      where label = 'feat008_claim_stale_release_a') = 'false'::jsonb
+    and (select error_message from feat008_concurrency_results
+      where label = 'feat008_claim_conflict_c')
+        = '40001:studio_media_finalize_key_conflict'
+    and (select result ->> 'claimToken' from feat008_concurrency_results
+      where label = 'feat008_claim_acquired_a') <> (
+        select result ->> 'claimToken'
+        from feat008_concurrency_results
+        where label = 'feat008_claim_acquired_b'
+      )
+    and (
+      select pg_catalog.count(*) = 1
+      from private.studio_media_finalize_claims as claim
+      where claim.owner_user_id = '8f000000-0000-4000-8000-000000000008'
+        and claim.idempotency_key = '82300000-0000-4000-8000-000000000221'
+        and claim.latest_request_id = '82300000-0000-4000-8000-000000000232'
+        and claim.lease_token is null
+        and claim.terminal_state is null
+    ),
+  'claim único renova a janela terminal, impede takeover após a expiração anterior, troca token expirado e cerca o token antigo'
+);
+select matches(
+  (
+    select private.feat008_capture_error(
+      pg_catalog.format(
+        $command$
+          select private.renew_studio_media_finalize_claim(%L::uuid)
+        $command$,
+        acquired.result ->> 'claimToken'
+      )
+    )
+    from feat008_concurrency_results as acquired
+    where acquired.label = 'feat008_claim_acquired_a'
+  ),
+  '^40001:studio_media_finalize_claim_lost$',
+  'token anterior permanece cercado depois de expiração, troca de dono e liberação da lease'
+);
+select matches(
+  (
+    select private.feat008_capture_error(
+      pg_catalog.format(
+        $command$
+          select private.begin_studio_media_finalize_claim(
+            '8f000000-0000-4000-8000-000000000008',
+            %L::uuid,
+            %L::uuid,
+            1,
+            '82300000-0000-4000-8000-000000000221',
+            '82300000-0000-4000-8000-000000000239',
+            '89000000-0000-4000-8000-000000000001'
+          )
+        $command$,
+        fixture.studio_id,
+        fixture.revision_id
+      )
+    )
+    from private.feat008_concurrency_fixtures as fixture
+    where fixture.label = 'limit'
+  ),
+  '^40001:studio_idempotency_conflict$',
+  'claim persistido recusa reutilização da chave com outro payload antes do processamento'
+);
+
 do $block$
 declare
   connection_name text;
@@ -3642,6 +4556,10 @@ begin
     'feat008_limit_b',
     'feat008_finalize_a',
     'feat008_finalize_b',
+    'feat008_claim_finalize_owner',
+    'feat008_claim_finalize_terminal',
+    'feat008_claim_reject_owner',
+    'feat008_claim_reject_terminal',
     'feat008_cleanup_a',
     'feat008_cleanup_b'
   ]
@@ -3700,6 +4618,42 @@ select ok(
     ),
   'finalizações idênticas simultâneas convergem no mesmo retorno e um incremento'
 );
+insert into feat008_concurrency_results (label, result)
+select 'feat008_claim_replay_a', remote_result.result
+from extensions.dblink(
+  'feat008_claim_b',
+  $remote$
+    select private.begin_studio_media_finalize_claim(
+      '8f000000-0000-4000-8000-000000000008',
+      fixture.studio_id,
+      fixture.revision_id,
+      1,
+      '82300000-0000-4000-8000-000000000221',
+      '82300000-0000-4000-8000-000000000233',
+      fixture.media_id
+    )
+    from private.feat008_concurrency_fixtures as fixture
+    where fixture.label = 'finalize'
+  $remote$
+) as remote_result(result jsonb);
+select ok(
+  (select result ->> 'state' from feat008_concurrency_results
+    where label = 'feat008_claim_replay_a') = 'replay'
+    and (select result -> 'result' from feat008_concurrency_results
+      where label = 'feat008_claim_replay_a') = (
+        select result
+        from feat008_concurrency_results
+        where label = 'feat008_finalize_a'
+      )
+    and exists (
+      select 1
+      from private.studio_media_finalize_claims as claim
+      join private.feat008_concurrency_fixtures as fixture on fixture.media_id = claim.media_id
+      where fixture.label = 'finalize'
+        and claim.lease_token is null
+    ),
+  'retry sobreposto relê o resultado terminal no claim sem reabrir processamento externo'
+);
 select ok(
   (
     select pg_catalog.count(*) = 2
@@ -3757,6 +4711,8 @@ begin
     'feat008_limit_b',
     'feat008_finalize_a',
     'feat008_finalize_b',
+    'feat008_claim_b',
+    'feat008_claim_c',
     'feat008_cleanup_a',
     'feat008_cleanup_b'
   ]

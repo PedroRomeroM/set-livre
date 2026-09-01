@@ -401,6 +401,16 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("systemctl reset-failed set-livre-web.service || true");
     expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
     expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
+    const bootstrapStopStart = bootstrap.indexOf("stop_application_services() {");
+    const bootstrapStopEnd = bootstrap.indexOf("\n}", bootstrapStopStart);
+    const bootstrapStop = bootstrap.slice(bootstrapStopStart, bootstrapStopEnd);
+    expect(bootstrapStop.indexOf("set-livre-media-cleanup.timer")).toBeGreaterThan(-1);
+    expect(bootstrapStop.indexOf("set-livre-application-start.service")).toBeGreaterThan(
+      bootstrapStop.indexOf("set-livre-media-cleanup.timer"),
+    );
+    expect(bootstrapStop.indexOf("set-livre-media-cleanup.service")).toBeGreaterThan(
+      bootstrapStop.indexOf("set-livre-application-start.service"),
+    );
     for (const unit of [webUnit, backofficeUnit]) {
       expect(unit).not.toContain("[Install]");
       expect(unit).not.toContain("WantedBy=multi-user.target");
@@ -422,7 +432,7 @@ describe("local tooling contracts", () => {
     expect(applicationStartUnit).toContain(
       "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
     );
-    expect(applicationStartUnit).toContain("RemainAfterExit=yes");
+    expect(applicationStartUnit).not.toContain("RemainAfterExit=yes");
     expect(applicationStartUnit).toContain("WantedBy=multi-user.target");
     expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-services");
     expect(recoveryUnit).toContain("TimeoutStartSec=12min");
@@ -477,8 +487,10 @@ describe("local tooling contracts", () => {
     expect(service).not.toContain("ConditionPath");
     expect(service).toContain("After=network-online.target");
     expect(service).not.toContain("set-livre-release-recovery.service");
+    expect(service).not.toContain("OnSuccess=");
     expect(service).not.toContain("Authorization");
-    expect(timer).not.toContain("set-livre-application-start.service");
+    expect(timer).not.toContain("After=set-livre-application-start.service");
+    expect(timer).not.toContain("Requires=set-livre-application-start.service");
     expect(timer).toContain("After=network-online.target");
     expect(timer).toContain("Wants=network-online.target");
     expect(timer).toContain("OnBootSec=5min");
@@ -500,6 +512,10 @@ describe("local tooling contracts", () => {
       "AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
     );
     expect(timer).toContain("OnUnitActiveSec=10min");
+    expect(timer).toContain("Unit=set-livre-application-start.service");
+    expect(timer).not.toContain("Unit=set-livre-media-cleanup.service");
+    expect(applicationStart).not.toContain("RemainAfterExit=yes");
+    expect(applicationStart).not.toContain("OnSuccess=");
     expect(timer).toContain("WantedBy=timers.target");
     expect(timer).toContain(
       "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
@@ -519,6 +535,13 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("preflight SSH aceitou timer de cleanup desabilitado");
     expect(hostVerification).toContain("ativação não executou o cleanup inicial");
     expect(hostVerification).toContain("recuperação terminal não reativou o timer de cleanup");
+    expect(hostVerification).toContain("verify_periodic_cleanup_retries_application_gate");
+    expect(hostVerification).toContain(
+      "falha transitória inicial do cleanup foi aceita como gate bem-sucedido",
+    );
+    expect(hostVerification).toContain(
+      "timer não repetiu o gate depois que o cleanup transitório se recuperou",
+    );
     expect(release).toContain('const mediaCleanupEntrypoint = "runtime/invoke-media-cleanup.mjs"');
     expect(deploy).not.toContain("MEDIA_CLEANUP_MARKER");
     expect(deploy).not.toContain("media-cleanup-enabled");
@@ -539,6 +562,22 @@ describe("local tooling contracts", () => {
     expect(publicHealth).toBeGreaterThan(internalHealth);
     expect(startSchedule).toBeGreaterThan(initialCleanup);
     expect(terminalMarkerRemoval).toBeGreaterThan(startSchedule);
+    const stopScheduleDefinition = deploy.slice(
+      deploy.indexOf("stop_media_cleanup_schedule() {"),
+      deploy.indexOf("\n}", deploy.indexOf("stop_media_cleanup_schedule() {")),
+    );
+    const stopTimer = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-media-cleanup.timer",
+    );
+    const stopApplicationGate = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-application-start.service",
+    );
+    const stopCleanup = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-media-cleanup.service",
+    );
+    expect(stopTimer).toBeGreaterThan(-1);
+    expect(stopApplicationGate).toBeGreaterThan(stopTimer);
+    expect(stopCleanup).toBeGreaterThan(stopApplicationGate);
   });
 
   it("authenticates and consumes a paired bootstrap recovery state", () => {

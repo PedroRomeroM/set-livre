@@ -216,4 +216,37 @@ describe("trusted studio media storage", () => {
       { method: "GET", signal: controller.signal },
     ]);
   });
+
+  it("rejects a duplicate preview when the stored bytes differ", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    const fetchImplementation: typeof fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: "Duplicate",
+            message: "The resource already exists",
+            statusCode: "409",
+          }),
+          { headers: { "content-type": "application/json" }, status: 409 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(new Uint8Array([7, 8, 0]), { status: 200 }));
+
+    await expect(
+      createTrustedStudioMediaStorage(fetchImplementation).uploadPreview(
+        previewPath,
+        new Uint8Array([7, 8, 9]),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      name: "StudioMediaStorageError",
+      operation: "preview-upload",
+      reason: "unavailable",
+    });
+  });
 });

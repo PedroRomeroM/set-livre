@@ -216,13 +216,13 @@ asserções para grants/RLS, binding curto, polling passivo sem renovação, cor
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo, após a FEAT-008, possui dez arquivos e 437 testes. A regressão transversal de tempo força timestamps
+runner completo, após a FEAT-008, possui dez arquivos e 483 testes. A regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
 
 ## Matriz da FEAT-008
 
-Os catorze cenários `SL-F008-E2E-001..014` expandem para 50 execuções e cobrem:
+Os quinze cenários `SL-F008-E2E-001..014` e `SL-F008-CACHE-001` expandem para 51 execuções e cobrem:
 
 - P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
   antes/depois da persistência, recusa definitiva com liberação server-side da reserva e isolamento
@@ -231,15 +231,18 @@ Os catorze cenários `SL-F008-E2E-001..014` expandem para 50 execuções e cobre
   reservadas/CLS, hidratação fail-closed, conflito autoritativo de galeria, avanço concorrente logo
   após o preparo com terminalização server-side, resposta perdida, replay da mesma chave idempotente
   e upload com reserva nova, além da ausência de controles privados sem JavaScript. `SL-F007-E2E-008`
-  prova também que descartar
-  a draft expulsa do cache a galeria da revisão removida antes de restaurar a publicação;
+  prova o descarte na própria aba; `SL-F008-CACHE-001` prova que uma releitura não cancelada adota o
+  rollback autoritativo `N+1 → N` feito em outra aba sem restaurar uma resposta de comando obsoleta;
 - axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
-prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 89 asserções para
+prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 97 asserções para
 schema, grants/RLS e Storage A/B, limite e liberação de reservas rejeitadas, clone, idempotência,
-concorrência com `dblink`, claims cercados, backoff e heartbeat do cleanup.
+claim único pré-processamento/replay/rejeição, renovação terminal que impede takeover após a expiração
+anterior, token stale, conflito definitivo entre chaves, ausência de sessão presa e ordem global de locks
+com begin sobreposto às fachadas claimed de finalize e reject via `dblink`, além de contagens de
+abandono, backoff e heartbeat do cleanup.
 
 ## Contrato por feature
 
