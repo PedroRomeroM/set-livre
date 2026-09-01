@@ -696,6 +696,115 @@ export async function seedFeat009RejectedCorrection(
   });
 }
 
+export async function seedFeat009RejectedUnpublishedCorrection(
+  ownerUserId: string,
+  studioId: string,
+  rejectionReason: string,
+) {
+  const parsedOwnerUserId = z.uuid().parse(ownerUserId);
+  const parsedStudioId = z.uuid().parse(studioId);
+  const parsedReason = z.string().trim().min(1).max(2000).parse(rejectionReason);
+  return withFeat006AdminPool(async (client) => {
+    await client.query("begin");
+    try {
+      const result = await client.query(
+        `with pending as (
+           select revision.*
+           from public.studios as studio
+           join public.studio_revisions as revision on revision.id = studio.draft_revision_id
+           where studio.id = $1::uuid
+             and studio.owner_user_id = $2::uuid
+             and studio.status = 'pending_review'
+             and studio.published_revision_id is null
+             and revision.status = 'pending'
+           for update of studio, revision
+         ), correction as (
+           insert into public.studio_revisions (
+             studio_id, revision_number, revision_version, status, name, description,
+             street, street_number, address_complement, neighborhood, city, state,
+             postal_code, capacity, studio_type_id, usage_rules, youtube_video_id
+           )
+           select
+             pending.studio_id,
+             pending.revision_number + 1,
+             1,
+             'draft',
+             pending.name,
+             pending.description,
+             pending.street,
+             pending.street_number,
+             pending.address_complement,
+             pending.neighborhood,
+             pending.city,
+             pending.state,
+             pending.postal_code,
+             pending.capacity,
+             pending.studio_type_id,
+             pending.usage_rules,
+             pending.youtube_video_id
+           from pending
+           returning id, studio_id
+         )
+         select
+           pending.id as rejected_revision_id,
+           correction.id as correction_revision_id
+         from pending
+         join correction on correction.studio_id = pending.studio_id`,
+        [parsedStudioId, parsedOwnerUserId],
+      );
+      if (result.rows.length !== 1) {
+        throw new Error("A rejeição inicial FEAT-009 não criou a correção esperada.");
+      }
+      const seed = rejectedCorrectionSeedSchema.parse(result.rows[0]);
+
+      await client.query("set local session_replication_role = replica");
+      const rejectedRevisionUpdate = await client.query(
+        `update public.studio_revisions as revision
+            set status = 'rejected',
+                revision_version = revision.revision_version + 1,
+                updated_at = pg_catalog.clock_timestamp()
+          where revision.id = $1::uuid
+            and revision.studio_id = $2::uuid
+            and revision.status = 'pending'
+        returning revision.id`,
+        [seed.rejected_revision_id, parsedStudioId],
+      );
+      await client.query("set local session_replication_role = origin");
+      if (rejectedRevisionUpdate.rows.length !== 1) {
+        throw new Error("A rejeição inicial FEAT-009 não terminalizou a submissão.");
+      }
+
+      await client.query(
+        `insert into public.studio_review_events (
+           studio_id, revision_id, actor_user_id, event_type, rejection_reason
+         ) values ($1::uuid, $2::uuid, $3::uuid, 'rejected', $4::text)`,
+        [parsedStudioId, seed.rejected_revision_id, parsedOwnerUserId, parsedReason],
+      );
+      const studioUpdate = await client.query(
+        `update public.studios as studio
+            set status = 'rejected',
+                draft_revision_id = $2::uuid
+          where studio.id = $1::uuid
+            and studio.owner_user_id = $3::uuid
+            and studio.status = 'pending_review'
+            and studio.published_revision_id is null
+            and studio.draft_revision_id = $4::uuid
+        returning studio.id`,
+        [parsedStudioId, seed.correction_revision_id, parsedOwnerUserId, seed.rejected_revision_id],
+      );
+      if (studioUpdate.rows.length !== 1) {
+        throw new Error("A rejeição inicial FEAT-009 não apontou a correção editável.");
+      }
+
+      await client.query("commit");
+      return seed;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    }
+  });
+}
+
 async function removeFeat009PublicationRows(userId: string) {
   const parsedUserId = z.uuid().parse(userId);
   await withFeat006AdminPool(async (client) => {

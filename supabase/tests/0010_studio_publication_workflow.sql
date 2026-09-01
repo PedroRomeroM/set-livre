@@ -467,7 +467,7 @@ create trigger feat009_taxonomy_submit_barrier
 
 begin;
 
-select plan(78);
+select plan(80);
 
 select has_column(
   'public',
@@ -508,6 +508,36 @@ select has_table(
   'public',
   'email_outbox',
   'outbox minima de notificacao existe'
+);
+select ok(
+  (
+    select pg_catalog.count(*) = 4
+      and pg_catalog.bool_and(constraint_object.confdeltype = 'c')
+    from (
+      values
+        (
+          'public.studio_review_events'::pg_catalog.regclass,
+          'studio_review_events_studio_id_fkey'::name
+        ),
+        (
+          'public.studio_review_events'::pg_catalog.regclass,
+          'studio_review_events_revision_id_fkey'::name
+        ),
+        (
+          'public.email_outbox'::pg_catalog.regclass,
+          'email_outbox_studio_id_fkey'::name
+        ),
+        (
+          'public.email_outbox'::pg_catalog.regclass,
+          'email_outbox_revision_id_fkey'::name
+        )
+    ) as expected(relation_oid, constraint_name)
+    join pg_catalog.pg_constraint as constraint_object
+      on constraint_object.conrelid = expected.relation_oid
+      and constraint_object.conname = expected.constraint_name
+      and constraint_object.contype = 'f'
+  ),
+  'eventos e outbox acompanham a exclusao canonica do agregado nunca publicado'
 );
 select ok(
   (
@@ -1079,6 +1109,17 @@ select pg_catalog.set_config(
     'Estudio QA FEAT 009 ordem editorial',
     true,
     true
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f009_reviewed_unpublished',
+  private.feat009_create_studio_fixture(
+    '91000000-0000-4000-8000-000000000001',
+    14,
+    'Estudio QA FEAT 009 rejeitado antes da primeira publicacao',
+    true,
+    false
   )::text,
   true
 );
@@ -3258,6 +3299,257 @@ select ok(
         )
     ),
   'duas pausas simultaneas com chaves distintas geram um sucesso, um conflito e um unico fato'
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f009_reviewed_unpublished_submit',
+  private.submit_studio_revision(
+    '91000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'revisionId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'revisionVersion'
+    )::bigint,
+    '9a000000-0000-4000-8000-000000000014',
+    '9b000000-0000-4000-8000-000000000014'
+  )::text,
+  true
+);
+reset role;
+
+with correction as (
+  insert into public.studio_revisions (
+    studio_id,
+    revision_number,
+    revision_version,
+    status,
+    name,
+    description,
+    street,
+    street_number,
+    address_complement,
+    neighborhood,
+    city,
+    state,
+    postal_code,
+    capacity,
+    studio_type_id,
+    usage_rules,
+    youtube_video_id
+  )
+  select
+    rejected.studio_id,
+    rejected.revision_number + 1,
+    1,
+    'draft',
+    rejected.name,
+    rejected.description,
+    rejected.street,
+    rejected.street_number,
+    rejected.address_complement,
+    rejected.neighborhood,
+    rejected.city,
+    rejected.state,
+    rejected.postal_code,
+    rejected.capacity,
+    rejected.studio_type_id,
+    rejected.usage_rules,
+    rejected.youtube_video_id
+  from public.studio_revisions as rejected
+  where rejected.id = (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'revisionId'
+    )::uuid
+    and rejected.studio_id = (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'studioId'
+    )::uuid
+    and rejected.status = 'pending'
+  returning id
+)
+select pg_catalog.set_config(
+    'set_livre.test.f009_reviewed_unpublished_correction',
+    correction.id::text,
+    true
+  )
+from correction;
+
+set local session_replication_role = replica;
+update public.studio_revisions as rejected
+set
+  status = 'rejected',
+  revision_version = rejected.revision_version + 1,
+  updated_at = pg_catalog.clock_timestamp()
+where rejected.id = (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'revisionId'
+  )::uuid
+  and rejected.studio_id = (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'studioId'
+  )::uuid
+  and rejected.status = 'pending';
+set local session_replication_role = origin;
+
+insert into public.studio_review_events (
+  studio_id,
+  revision_id,
+  actor_user_id,
+  event_type,
+  rejection_reason
+)
+values (
+  (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'studioId'
+  )::uuid,
+  (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'revisionId'
+  )::uuid,
+  '91000000-0000-4000-8000-000000000002',
+  'rejected',
+  'A primeira submissao precisa de correcao antes de qualquer publicacao.'
+);
+
+update public.studios as studio
+set
+  status = 'rejected',
+  draft_revision_id = pg_catalog.current_setting(
+    'set_livre.test.f009_reviewed_unpublished_correction'
+  )::uuid
+where studio.id = (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'studioId'
+  )::uuid
+  and studio.owner_user_id = '91000000-0000-4000-8000-000000000001'
+  and studio.status = 'pending_review'
+  and studio.published_revision_id is null
+  and studio.draft_revision_id = (
+    pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+      ->> 'revisionId'
+  )::uuid;
+
+select pg_catalog.set_config(
+  'set_livre.test.f009_reviewed_unpublished_dependencies',
+  pg_catalog.jsonb_build_object(
+    'events', (
+      select pg_catalog.count(*)
+      from public.studio_review_events as review
+      where review.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    ),
+    'outbox', (
+      select pg_catalog.count(*)
+      from public.email_outbox as outbox
+      where outbox.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    ),
+    'revisions', (
+      select pg_catalog.count(*)
+      from public.studio_revisions as revision
+      where revision.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    )
+  )::text,
+  true
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f009_reviewed_unpublished_discard',
+  private.discard_studio_draft(
+    '91000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    pg_catalog.current_setting(
+      'set_livre.test.f009_reviewed_unpublished_correction'
+    )::uuid,
+    1,
+    '9c000000-0000-4000-8000-000000000014',
+    '9d000000-0000-4000-8000-000000000014'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f009_reviewed_unpublished_discard_replay',
+  private.discard_studio_draft(
+    '91000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    pg_catalog.current_setting(
+      'set_livre.test.f009_reviewed_unpublished_correction'
+    )::uuid,
+    1,
+    '9c000000-0000-4000-8000-000000000014',
+    '9e000000-0000-4000-8000-000000000014'
+  )::text,
+  true
+);
+reset role;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished_dependencies')::jsonb
+      = '{"events": 2, "outbox": 1, "revisions": 2}'::jsonb
+    and (
+      pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished_discard')::jsonb
+        ->> 'studioDeleted'
+    )::boolean
+    and pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished_discard')
+      = pg_catalog.current_setting(
+        'set_livre.test.f009_reviewed_unpublished_discard_replay'
+      )
+    and not exists (
+      select 1
+      from public.studios as studio
+      where studio.id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    )
+    and not exists (
+      select 1
+      from public.studio_revisions as revision
+      where revision.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    )
+    and not exists (
+      select 1
+      from public.studio_review_events as review
+      where review.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    )
+    and not exists (
+      select 1
+      from public.email_outbox as outbox
+      where outbox.studio_id = (
+        pg_catalog.current_setting('set_livre.test.f009_reviewed_unpublished')::jsonb
+          ->> 'studioId'
+      )::uuid
+    ),
+  'descartar correcao da primeira rejeicao remove agregado e dependencias sem quebrar replay'
 );
 
 do $block$

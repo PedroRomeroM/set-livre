@@ -1,6 +1,7 @@
 import {
   apiSuccessSchema,
   studioCommandSchema,
+  studioDraftDiscardResultSchema,
   studioPublicationSchema,
 } from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
@@ -17,6 +18,7 @@ import {
   readFeat009PublicationEvidence,
   seedFeat009PublishedStudio,
   seedFeat009RejectedCorrection,
+  seedFeat009RejectedUnpublishedCorrection,
   submitFeat009RevisionThroughUi,
 } from "../../helpers/feat-009-studio-publication-workflow";
 
@@ -127,6 +129,57 @@ test("SL-F009-E2E-006 @p1 motivo de rejeição orienta correção e preserva pub
         revision_id: seeded.correction_revision_id,
       },
     ]);
+  } finally {
+    await closeFeat009PageBeforeCleanup(page);
+    await cleanupFeat009QaIdentity(identity);
+  }
+});
+
+test("SL-F009-E2E-015 @p1 descarte após primeira rejeição remove o estúdio ainda inédito", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const identity = createFeat009QaIdentity(testInfo, "015_rejected_unpublished_discard");
+  try {
+    const { editor } = await provisionFeat009Studio(page, identity, "915", { complete: true });
+    if (identity.userId === undefined) {
+      throw new Error("A identidade FEAT-009 não publicou escopo.");
+    }
+
+    const submission = await submitFeat009RevisionThroughUi(page);
+    expect(submission.response.status()).toBe(200);
+    expect(submission.publication?.studioStatus).toBe("pending_review");
+    await seedFeat009RejectedUnpublishedCorrection(
+      identity.userId,
+      editor.studioId,
+      "A primeira submissão precisa de correções antes da publicação.",
+    );
+
+    const navigation = await page.goto(`/dono/estudios/${editor.studioId}/dados`);
+    expect(navigation?.status()).toBe(200);
+    await expect(page.getByRole("heading", { level: 1, name: "Dados do estúdio" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Descartar rascunho" })).toBeEnabled();
+
+    await page.getByRole("button", { name: "Descartar rascunho" }).click();
+    const confirmation = page.getByRole("group", { name: "Confirmar descarte" });
+    await expect(confirmation).toBeVisible();
+    const discardResponsePromise = page.waitForResponse((response) => {
+      const command = studioCommandSchema.safeParse(response.request().postDataJSON());
+      return command.success && command.data.action === "studio.draft.discard";
+    });
+    await confirmation.getByRole("button", { name: "Confirmar descarte" }).click();
+    const discardResponse = await discardResponsePromise;
+    expect(discardResponse.status()).toBe(200);
+    expect(
+      apiSuccessSchema(studioDraftDiscardResultSchema).parse(await discardResponse.json()).data,
+    ).toMatchObject({ studioDeleted: true, studioId: editor.studioId });
+
+    await expect(page.getByText("Rascunho descartado", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Abrir novo formulário" })).toBeVisible();
+    expect((await page.request.get(`/api/owner/studios/${editor.studioId}`)).status()).toBe(404);
+    expect(
+      (await page.request.get(`/api/owner/studios/${editor.studioId}/publication`)).status(),
+    ).toBe(404);
   } finally {
     await closeFeat009PageBeforeCleanup(page);
     await cleanupFeat009QaIdentity(identity);

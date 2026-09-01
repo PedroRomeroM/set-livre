@@ -69,6 +69,9 @@ Gerenciar o ciclo editorial do dono com checklist de completude, reaprovação e
 - `submitted` só existe para a candidata `pending` ainda apontada pelo estúdio e com ator igual ao
   dono. `approved | rejected` exigem ator, submissão anterior da mesma revisão e estado terminal
   correspondente; fixtures locais preservam essa ordem causal.
+- Na primeira rejeição, a nova candidata continua pertencendo a um estúdio nunca publicado. Se o dono
+  descartar essa correção, o agregado é removido integralmente; eventos editoriais e a intenção de
+  outbox dependentes são eliminados pela mesma transação, enquanto audit e replay terminal permanecem.
 - A FEAT-009 lê `disabled` de forma estritamente factual e bloqueia ações, mas não instala transições
   administrativas para entrar ou sair desse estado. Esse comando, sua fonte de restauração e sua
   auditoria pertencem à FEAT-030.
@@ -116,6 +119,8 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 - Pausa grava o estado canônico e preserva ponteiros; FEAT-010/011 ocultam esse estado do público.
 - Retomar restaura `published` ou `changes_pending` quando existe revisão aprovada e a autoridade do
   dono continua apta.
+- Descartar a correção de uma primeira rejeição remove o estúdio ainda inédito sem erro de integridade
+  e sem deixar evento ou e-mail pendente órfão.
 - Bloqueio de cotação/checkout e preservação de reservas são provas das respectivas features
   consumidoras, não afirmações artificiais desta fatia.
 
@@ -136,6 +141,7 @@ Além do fluxo nominal, a interface contempla somente os estados que possuem tra
 | SL-F009-E2E-012 | P1         | regression    | desktop/mobile | divergência no mesmo fence recompõe SSR sem aceitar projeção mista         | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts`    |
 | SL-F009-E2E-013 | P1         | regression    | desktop/mobile | taxonomia arquivada após leitura falha fechada, relê e não cria efeitos    | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts`    |
 | SL-F009-E2E-014 | P1         | regression    | desktop/mobile | releitura autoritativa encerra ambiguidade sem repetir o comando           | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts`    |
+| SL-F009-E2E-015 | P1         | regression    | desktop/mobile | primeira rejeição pode ser descartada e remove o agregado ainda inédito    | `tests/e2e/regression/feat-009-studio-publication-workflow.spec.ts`    |
 
 Regras:
 

@@ -18,9 +18,9 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260901080013_feat_009_studio_publication_workflow`, criada depois de
-`20260901035413_harden_studio_media_upload_token_settlement`; uma feature nova nunca é inserida antes
-de uma migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
+`20260901170636_allow_discard_reviewed_unpublished_studios`, criada depois de
+`20260901080013_feat_009_studio_publication_workflow`; uma feature nova nunca é inserida antes de uma
+migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
 preserva roles globais e ACLs de banco, que não fazem parte do dump de schema. O runner executa setup
@@ -412,6 +412,11 @@ transação e preserva a revisão publicada durante uma reapreciação. O checkl
 taxonomia arquivada e exige ao menos uma mídia `ready`, exatamente uma capa e nenhum upload pendente não
 expirado. Pausa e retomada usam `publication_version`; preservam os ponteiros e derivam `published` ou
 `changes_pending` conforme o candidato privado ainda exista.
+
+Os FKs de `studio_review_events` e `email_outbox` para estúdio e revisão usam cascade exclusivamente
+para acompanhar a exclusão do agregado nunca publicado. Assim, descartar a correção criada após uma
+primeira rejeição remove eventos e intenção pendente na mesma transação. O comando nunca exclui um
+estúdio com `published_revision_id`; nesse caso, preserva o histórico e volta ao ponteiro aprovado.
 
 ### 4.11 `owner_payment_recipients`
 

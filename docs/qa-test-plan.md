@@ -259,7 +259,8 @@ Os cenários `SL-F009-E2E-*` exercitam a matriz definida no plano da feature:
 - regressões em desktop, 390 px, 320 px e altura compacta cobrem rejeição orientada à correção,
   conflito com releitura e foco, JavaScript desabilitado fail-closed, recomposição SSR quando o mesmo
   fence retorna projeção derivada divergente, taxonomia arquivada entre leitura e submit sem efeito
-  parcial e releitura autoritativa após resposta ambígua sem um segundo POST;
+  parcial, releitura autoritativa após resposta ambígua sem um segundo POST e descarte integral da
+  correção criada após a primeira rejeição;
 - axe, teclado, foco, toque, 320 px e tema escuro executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
@@ -267,7 +268,7 @@ O helper cria dono, estúdio e mídia reais no ambiente local, usa o fluxo UI pa
 consulta somente evidência administrativa allowlisted. `0010_studio_publication_workflow.sql` prova
 schema, grants/RLS, ownership, checklist derivado, imutabilidade pendente, ponteiros, idempotência,
 ordem causal, corrida entre submit e arquivamento de taxonomia, pausa/retomada, suspensão de conta,
-outbox, auditoria e índices estruturais.
+outbox, auditoria, índices estruturais e cascade restrito ao agregado nunca publicado.
 
 ## Contrato por feature
 

@@ -156,6 +156,10 @@ imutáveis. A FEAT-030 decide essa candidata: aprovação move o ponteiro public
 rejeição registra motivo em evento editorial próprio e cria uma nova candidata `draft` a partir do
 conteúdo rejeitado, sem usar `audit.events` como read model de produto.
 
+Se essa primeira correção for descartada antes de qualquer aprovação, continua valendo a regra do
+agregado inédito: o estúdio, suas revisões, eventos editoriais e intenções de e-mail são removidos na
+mesma transação. A auditoria e o ledger terminal de idempotência permanecem como evidência operacional.
+
 Toda mutação revalida no banco perfil ativo/completo, dono ativo e aceite vigente de
 `owner_contract`, inclusive em replay idempotente. O navegador envia somente conteúdo e o fence
 `{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente. O
@@ -247,7 +251,8 @@ motivo. Aprovação marca revisão anterior como superseded.
 
 Eventos editoriais são append-only e referenciam estúdio, revisão, ator, tipo e instante. O motivo de
 rejeição vive nesse histórico próprio; auditoria continua registrando quem executou a ação, mas não é
-fonte da mensagem exibida ao dono.
+fonte da mensagem exibida ao dono. Append-only vale durante a vida do agregado; a exclusão canônica de
+um estúdio nunca publicado remove seus filhos por cascade, sem permitir deleção isolada de evento.
 
 ## 7. Estado de tentativa/hold
 

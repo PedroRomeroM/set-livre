@@ -12408,12 +12408,20 @@ ALTER TABLE ONLY "private"."studio_media_finalize_claims"
 
 
 ALTER TABLE ONLY "public"."email_outbox"
-    ADD CONSTRAINT "email_outbox_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE RESTRICT;
+    ADD CONSTRAINT "email_outbox_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE CASCADE;
+
+
+
+COMMENT ON CONSTRAINT "email_outbox_revision_id_fkey" ON "public"."email_outbox" IS 'Intencao pendente nao sobrevive a exclusao canonica da revisao e de seu agregado.';
 
 
 
 ALTER TABLE ONLY "public"."email_outbox"
-    ADD CONSTRAINT "email_outbox_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE RESTRICT;
+    ADD CONSTRAINT "email_outbox_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE CASCADE;
+
+
+
+COMMENT ON CONSTRAINT "email_outbox_studio_id_fkey" ON "public"."email_outbox" IS 'Intencao pendente nao sobrevive a exclusao canonica do estudio nunca publicado.';
 
 
 
@@ -12473,12 +12481,20 @@ ALTER TABLE ONLY "public"."studio_review_events"
 
 
 ALTER TABLE ONLY "public"."studio_review_events"
-    ADD CONSTRAINT "studio_review_events_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE RESTRICT;
+    ADD CONSTRAINT "studio_review_events_revision_id_fkey" FOREIGN KEY ("revision_id") REFERENCES "public"."studio_revisions"("id") ON DELETE CASCADE;
+
+
+
+COMMENT ON CONSTRAINT "studio_review_events_revision_id_fkey" ON "public"."studio_review_events" IS 'Evento acompanha a revisao quando o agregado nunca publicado e descartado integralmente.';
 
 
 
 ALTER TABLE ONLY "public"."studio_review_events"
-    ADD CONSTRAINT "studio_review_events_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE RESTRICT;
+    ADD CONSTRAINT "studio_review_events_studio_id_fkey" FOREIGN KEY ("studio_id") REFERENCES "public"."studios"("id") ON DELETE CASCADE;
+
+
+
+COMMENT ON CONSTRAINT "studio_review_events_studio_id_fkey" ON "public"."studio_review_events" IS 'Evento pertence ao agregado; exclusao canonica de estudio nunca publicado remove seu historico editorial.';
 
 
 

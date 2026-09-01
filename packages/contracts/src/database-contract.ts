@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260901080013" as const;
+export const databaseMigrationHead = "20260901170636" as const;
 const databaseProductionPoolerHost = "aws-0-sa-east-1.pooler.supabase.com" as const;
 const databaseProductionProjectRef = "oirvvnojgkzdppkdvhej" as const;
 
