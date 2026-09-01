@@ -9,10 +9,10 @@ import {
   ApiRouteError,
   apiErrorResponse,
   apiSuccessResponse,
+  canonicalRouteUuid,
   requestIdFrom,
   writeSafeOperationalEvent,
 } from "@/lib/server/api-route";
-import { z } from "zod";
 
 export async function GET(
   request: Request,
@@ -42,8 +42,8 @@ export async function GET(
     }
 
     const { studioId: rawStudioId } = await context.params;
-    const parsedStudioId = z.uuid().safeParse(rawStudioId);
-    if (!parsedStudioId.success) {
+    const studioId = canonicalRouteUuid(rawStudioId);
+    if (studioId === null) {
       throw new ApiRouteError(404, "NOT_FOUND", "Este estúdio não está disponível para sua conta.");
     }
     const owner = await readOwnerActivation(identity.session.userId, request.signal);
@@ -63,11 +63,7 @@ export async function GET(
     }
 
     try {
-      const gallery = await readOwnerStudioMedia(
-        identity.session.userId,
-        parsedStudioId.data,
-        request.signal,
-      );
+      const gallery = await readOwnerStudioMedia(identity.session.userId, studioId, request.signal);
       status = 200;
       outcome = "accepted";
       return apiSuccessResponse(gallery, requestId, status, identity.responseHeaders);

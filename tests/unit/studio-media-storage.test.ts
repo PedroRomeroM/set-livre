@@ -11,6 +11,28 @@ import { studioTestIds } from "./studio-test-fixture";
 const mediaId = "88888888-8888-4888-8888-888888888888";
 const mediaPath = `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.jpg`;
 const previewPath = mediaPath.replace(/\.jpg$/u, ".preview.webp");
+const galleryRecord = {
+  canEdit: true,
+  items: [
+    {
+      byteSize: 512,
+      checksumSha256: "8".repeat(64),
+      height: 720,
+      id: mediaId,
+      isCover: true,
+      mimeType: "image/jpeg" as const,
+      position: 1,
+      previewStoragePath: previewPath,
+      width: 1_280,
+    },
+  ],
+  revisionId: studioTestIds.revisionId,
+  revisionNumber: 1,
+  revisionStatus: "draft" as const,
+  revisionVersion: 3,
+  scope: studioTestIds.userId,
+  studioId: studioTestIds.studioId,
+};
 
 describe("trusted studio media storage", () => {
   afterEach(() => {
@@ -168,50 +190,75 @@ describe("trusted studio media storage", () => {
     expect(observedCache).toBe("no-store");
   });
 
-  it("aborts the underlying signed preview request with the read deadline", async () => {
+  it("binds the signed-preview request to the supplied Storage deadline", async () => {
     vi.stubEnv("APP_ENV", "production");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
     let observedSignal: AbortSignal | null | undefined;
+    const fetchImplementation: typeof fetch = vi.fn(async (_input, init) => {
+      observedSignal = init?.signal;
+      return new Response(
+        JSON.stringify([
+          {
+            error: null,
+            path: previewPath,
+            signedURL: `/object/sign/studio-media/${previewPath}?token=signed-preview-token`,
+          },
+        ]),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      );
+    });
+    const controller = new AbortController();
+
+    const gallery = await createTrustedStudioMediaStorage(fetchImplementation).signGalleryPreviews(
+      galleryRecord,
+      controller.signal,
+    );
+
+    expect(observedSignal).toBe(controller.signal);
+    expect(gallery.items[0]?.previewUrl).toContain("signed-preview-token");
+  });
+
+  it("propagates cancellation only after the signed-preview fetch has settled", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    let observedSignal: AbortSignal | null | undefined;
+    let fetchSettled = false;
     const fetchImplementation: typeof fetch = vi.fn((_input, init) => {
       observedSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => {
-        observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), {
-          once: true,
-        });
+        if (observedSignal?.aborted) {
+          fetchSettled = true;
+          reject(observedSignal.reason);
+          return;
+        }
+        observedSignal?.addEventListener(
+          "abort",
+          () => {
+            queueMicrotask(() => {
+              fetchSettled = true;
+              reject(observedSignal?.reason);
+            });
+          },
+          { once: true },
+        );
       });
     });
     const controller = new AbortController();
     const operation = createTrustedStudioMediaStorage(fetchImplementation).signGalleryPreviews(
-      {
-        items: [
-          {
-            byteSize: 512,
-            checksumSha256: "8".repeat(64),
-            height: 720,
-            id: mediaId,
-            isCover: true,
-            mimeType: "image/jpeg",
-            position: 1,
-            previewStoragePath: previewPath,
-            width: 1280,
-          },
-        ],
-        revisionId: studioTestIds.revisionId,
-        revisionNumber: 1,
-        revisionVersion: 3,
-        scope: studioTestIds.userId,
-        studioId: studioTestIds.studioId,
-      },
+      galleryRecord,
       controller.signal,
     );
-    const failure = expect(operation).rejects.toMatchObject({ message: "deadline reached" });
 
     await vi.waitFor(() => expect(observedSignal).toBe(controller.signal));
-    controller.abort(new Error("deadline reached"));
-    await failure;
+    controller.abort(new DOMException("deadline", "TimeoutError"));
+    await expect(operation).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fetchSettled).toBe(true);
   });
 
   it("honors an already-aborted read deadline even for an empty gallery", async () => {
@@ -225,14 +272,7 @@ describe("trusted studio media storage", () => {
 
     await expect(
       createTrustedStudioMediaStorage(vi.fn()).signGalleryPreviews(
-        {
-          items: [],
-          revisionId: studioTestIds.revisionId,
-          revisionNumber: 1,
-          revisionVersion: 3,
-          scope: studioTestIds.userId,
-          studioId: studioTestIds.studioId,
-        },
+        { ...galleryRecord, items: [] },
         controller.signal,
       ),
     ).rejects.toThrow("deadline reached");

@@ -36,7 +36,12 @@ export async function POST(request: Request) {
       },
     );
     setAction(command.action);
-    const studioMediaStorage = command.action.startsWith("studio.media.")
+    const requiresStudioMediaStorage =
+      command.action.startsWith("studio.media.") ||
+      command.action === "studio.revision.submit" ||
+      command.action === "studio.pause" ||
+      command.action === "studio.resume";
+    const studioMediaStorage = requiresStudioMediaStorage
       ? createTrustedStudioMediaStorage()
       : undefined;
     return {

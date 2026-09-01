@@ -38,10 +38,12 @@ describe("studio private query cache", () => {
     const queryClient = new QueryClient();
     const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
     const current = {
+      canEdit: true,
       items: [],
       previewExpiresAt: "2026-08-31T12:05:00.000Z",
       revisionId: studioTestIds.revisionId,
       revisionNumber: 2,
+      revisionStatus: "draft",
       revisionVersion: 5,
       scope: studioTestIds.userId,
       studioId: studioTestIds.studioId,
@@ -51,6 +53,7 @@ describe("studio private query cache", () => {
       previewExpiresAt: "2026-08-31T12:10:00.000Z",
       revisionId: "66666666-6666-4666-8666-666666666666",
       revisionNumber: 1,
+      revisionStatus: "approved",
       revisionVersion: 8,
     } satisfies StudioMediaGallery;
     queryClient.setQueryData(queryKey, current);
@@ -169,10 +172,12 @@ describe("studio private query cache", () => {
     const queryClient = new QueryClient();
     const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
     const current = {
+      canEdit: true,
       items: [],
       previewExpiresAt: "2026-08-31T12:05:00.000Z",
       revisionId: studioTestIds.revisionId,
       revisionNumber: 2,
+      revisionStatus: "draft",
       revisionVersion: 5,
       scope: studioTestIds.userId,
       studioId: studioTestIds.studioId,
@@ -182,6 +187,7 @@ describe("studio private query cache", () => {
       previewExpiresAt: "2026-08-31T12:04:00.000Z",
       revisionId: "66666666-6666-4666-8666-666666666666",
       revisionNumber: 1,
+      revisionStatus: "approved",
       revisionVersion: 8,
     } satisfies StudioMediaGallery;
     const advanced = { ...current, revisionVersion: 6 } satisfies StudioMediaGallery;

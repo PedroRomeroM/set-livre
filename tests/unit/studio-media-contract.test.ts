@@ -139,10 +139,12 @@ describe("studio media contracts", () => {
       width: 4,
     };
     const gallery = {
+      canEdit: true,
       items: [item],
       previewExpiresAt: "2026-08-31T12:05:00.000Z",
       revisionId,
       revisionNumber: 1,
+      revisionStatus: "draft" as const,
       revisionVersion: 1,
       scope,
       studioId,
@@ -185,15 +187,23 @@ describe("studio media contracts", () => {
       width: 4,
     };
     const gallery = {
+      canEdit: true,
       items: [item],
       revisionId,
       revisionNumber: 2,
+      revisionStatus: "draft" as const,
       revisionVersion: 1,
       scope,
       studioId,
     };
 
     expect(studioMediaGalleryRecordSchema.parse(gallery)).toEqual(gallery);
+    expect(() =>
+      studioMediaGalleryRecordSchema.parse({
+        ...gallery,
+        canEdit: false,
+      }),
+    ).toThrow("estado factual");
     expect(() =>
       studioMediaGalleryRecordSchema.parse({
         ...gallery,

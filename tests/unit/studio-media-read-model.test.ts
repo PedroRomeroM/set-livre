@@ -26,6 +26,7 @@ import { studioTestIds } from "./studio-test-fixture";
 const mediaId = "88888888-8888-4888-8888-888888888888";
 const previewStoragePath = `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.preview.webp`;
 const galleryRecord = {
+  canEdit: true,
   items: [
     {
       byteSize: 512,
@@ -41,6 +42,7 @@ const galleryRecord = {
   ],
   revisionId: studioTestIds.revisionId,
   revisionNumber: 1,
+  revisionStatus: "draft" as const,
   revisionVersion: 3,
   scope: studioTestIds.userId,
   studioId: studioTestIds.studioId,

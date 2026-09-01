@@ -104,6 +104,10 @@ export async function provisionFeat006Owner(
   const navigation = await page.goto("/dono/estudios/novo");
   expect(navigation?.status()).toBe(200);
   await expect(page.getByRole("heading", { level: 1, name: "Novo estúdio" })).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Nome do estúdio" }),
+    "O editor precisa confirmar o catálogo ativo antes de preparar a fixture.",
+  ).toBeEnabled({ timeout: 10_000 });
 }
 
 export async function fillFeat006Core(page: Page, input: Readonly<Partial<Feat006CoreForm>> = {}) {
@@ -180,6 +184,23 @@ export async function withFeat006AdminPool<T>(
   return withE2EAdminClient(operation);
 }
 
+async function withFeat006HistoricalStateSeed<T>(
+  client: E2EDatabaseClient,
+  operation: () => Promise<T>,
+) {
+  await client.query("begin");
+  try {
+    await client.query("set local session_replication_role = replica");
+    const result = await operation();
+    await client.query("set local session_replication_role = origin");
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
 async function readFeat006StudioPrerequisites(userId: string) {
   const parsedUserId = z.uuid().parse(userId);
   return withFeat006AdminPool(async (pool) => {
@@ -215,26 +236,31 @@ async function readFeat006StudioPrerequisites(userId: string) {
 
 export async function publishFeat006Studio(editor: StudioEditor) {
   await withFeat006AdminPool(async (pool) => {
-    const result = await pool.query(
-      `with approved as (
-         update public.studio_revisions as revision
-            set status = 'approved',
-                revision_version = revision.revision_version + 1
-          where revision.id = $2::uuid
-            and revision.studio_id = $1::uuid
-            and revision.status = 'draft'
-            and revision.revision_version = $3::bigint
-          returning revision.id
-       )
-       update public.studios as studio
-          set status = 'published',
-              published_revision_id = approved.id,
-              draft_revision_id = null
-         from approved
-        where studio.id = $1::uuid
-          and studio.owner_user_id = $4::uuid
-        returning studio.id`,
-      [editor.studioId, editor.revision.id, editor.revision.version, editor.scope],
+    const result = await withFeat006HistoricalStateSeed(pool, () =>
+      pool.query(
+        `with approved as (
+           update public.studio_revisions as revision
+              set status = 'approved',
+                  revision_version = revision.revision_version + 1,
+                  updated_at = pg_catalog.clock_timestamp()
+            where revision.id = $2::uuid
+              and revision.studio_id = $1::uuid
+              and revision.status = 'draft'
+              and revision.revision_version = $3::bigint
+            returning revision.id
+         )
+         update public.studios as studio
+            set status = 'published',
+                published_revision_id = approved.id,
+                draft_revision_id = null,
+                publication_version = studio.publication_version + 1,
+                updated_at = pg_catalog.clock_timestamp()
+           from approved
+          where studio.id = $1::uuid
+            and studio.owner_user_id = $4::uuid
+          returning studio.id`,
+        [editor.studioId, editor.revision.id, editor.revision.version, editor.scope],
+      ),
     );
     if (result.rows.length !== 1) {
       throw new Error("A fixture FEAT-006 não publicou exatamente uma revisão draft.");
@@ -279,12 +305,19 @@ export async function setFeat006StudioStatus(
 ) {
   const parsedStudioId = z.uuid().parse(studioId);
   await withFeat006AdminPool(async (pool) => {
-    const result = await pool.query(
-      `update public.studios as studio
-          set status = $2
-        where studio.id = $1::uuid
-      returning studio.id`,
-      [parsedStudioId, status],
+    const result = await withFeat006HistoricalStateSeed(pool, () =>
+      pool.query(
+        `update public.studios as studio
+            set status = $2,
+                publication_version = case
+                  when studio.status is distinct from $2 then studio.publication_version + 1
+                  else studio.publication_version
+                end,
+                updated_at = pg_catalog.clock_timestamp()
+          where studio.id = $1::uuid
+        returning studio.id`,
+        [parsedStudioId, status],
+      ),
     );
     if (result.rows.length !== 1) {
       throw new Error("A fixture FEAT-006 não alterou exatamente um status de estúdio.");
@@ -373,13 +406,24 @@ export async function readFeat006StudioEvidence(studioId: string) {
   });
 }
 
-async function removeFeat006OwnedRows(userId: string) {
+export async function cleanupFeat006OwnedStudioRows(userId: string) {
   const parsedUserId = z.uuid().parse(userId);
   await withFeat006AdminPool(async (pool) => {
     await pool.query("begin");
     try {
       await pool.query(
-        "alter table public.studio_revisions disable trigger studio_revisions_enforce_immutability",
+        `delete from public.email_outbox as outbox
+          where outbox.studio_id in (
+            select studio.id from public.studios as studio where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
+      );
+      await pool.query(
+        `delete from public.studio_review_events as review
+          where review.studio_id in (
+            select studio.id from public.studios as studio where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
       );
       await pool.query(
         `delete from audit.events
@@ -393,10 +437,67 @@ async function removeFeat006OwnedRows(userId: string) {
         "delete from private.studio_command_requests where owner_user_id = $1::uuid",
         [parsedUserId],
       );
-      await pool.query("delete from public.studios where owner_user_id = $1::uuid", [parsedUserId]);
+      await pool.query("set local session_replication_role = replica");
       await pool.query(
-        "alter table public.studio_revisions enable trigger studio_revisions_enforce_immutability",
+        `delete from public.studio_revision_media as relation
+          where relation.revision_id in (
+            select revision.id
+              from public.studio_revisions as revision
+              join public.studios as studio on studio.id = revision.studio_id
+             where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
       );
+      await pool.query(
+        `delete from public.studio_revision_tags as relation
+          where relation.revision_id in (
+            select revision.id
+              from public.studio_revisions as revision
+              join public.studios as studio on studio.id = revision.studio_id
+             where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
+      );
+      await pool.query(
+        `delete from public.studio_revision_amenities as relation
+          where relation.revision_id in (
+            select revision.id
+              from public.studio_revisions as revision
+              join public.studios as studio on studio.id = revision.studio_id
+             where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
+      );
+      await pool.query(
+        `delete from public.studio_faqs as faq
+          where faq.revision_id in (
+            select revision.id
+              from public.studio_revisions as revision
+              join public.studios as studio on studio.id = revision.studio_id
+             where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
+      );
+      await pool.query(
+        `update public.studio_media as media
+            set prepared_revision_id = null
+          where media.prepared_revision_id in (
+            select revision.id
+              from public.studio_revisions as revision
+              join public.studios as studio on studio.id = revision.studio_id
+             where studio.owner_user_id = $1::uuid
+          )`,
+        [parsedUserId],
+      );
+      await pool.query(
+        `delete from public.studio_revisions as revision
+          using public.studios as studio
+          where studio.id = revision.studio_id
+            and studio.owner_user_id = $1::uuid`,
+        [parsedUserId],
+      );
+      await pool.query("set local session_replication_role = origin");
+      await pool.query("delete from public.studios where owner_user_id = $1::uuid", [parsedUserId]);
       await pool.query("commit");
     } catch (error) {
       await pool.query("rollback");
@@ -409,7 +510,7 @@ export async function cleanupFeat006QaIdentity(identity: Feat006QaIdentity) {
   const failures: Error[] = [];
   if (identity.userId !== undefined) {
     try {
-      await removeFeat006OwnedRows(identity.userId);
+      await cleanupFeat006OwnedStudioRows(identity.userId);
     } catch {
       failures.push(new Error("Não foi possível remover os fatos locais da FEAT-006."));
     }

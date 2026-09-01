@@ -35,7 +35,7 @@ type LogoutRequest = {
 
 Outras actions privadas acrescentam somente as asserções específicas que seu contrato exigir. No
 registry implementado, `expectedScope` pertence aos dois comandos de perfil, aos três comandos de
-dono/recebedor e aos cinco comandos de estúdio; os oito últimos também exigem `idempotencyKey`. A rota
+dono/recebedor e aos treze comandos de estúdio; os dezesseis últimos também exigem `idempotencyKey`. A rota
 Auth especializada de logout recebe `expectedScope` em seu schema próprio. A asserção é sempre UUID
 estrito, nunca ownership, e não vira campo genérico aceito silenciosamente por outros envelopes.
 
@@ -58,7 +58,7 @@ independentemente de `Content-Length`.
 
 ### 2.1 Superfície implementada na FEAT-002
 
-- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: valida a sessão autoritativa antes de consumir o bucket de fachada ou o body e aceita somente os dois comandos de perfil e os três comandos de dono/recebedor registrados; action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
+- `identity.register` entra exclusivamente por `POST /api/auth/register`; a rota pública aceita apenas esse envelope estrito e conserva origem, fachada, limite de stream, limiter específico e DAL. `POST /api/commands` é privado: depois da origem exata, valida a sessão autoritativa antes de consumir a fachada ou ler o body; aceita apenas os comandos registrados, e action desconhecida ou pertencente a feature futura é rejeitada pelo schema fechado;
 - todos os `POST` exigem `Origin` e `Host` exatos de `NEXT_PUBLIC_APP_URL`; em produção, `X-Forwarded-Host` e `X-Forwarded-Proto=https` também precisam ter sido sobrescritos pela borda confiável;
 - um bucket de fachada é consumido antes do parse/Zod; depois do parse, cadastro/login/recovery/callback usam somente hashes de e-mail, usuário ou token. Em produção, a fachada exige um único IP canônico em `X-Forwarded-For`, sobrescrito pelo Nginx da borda confiável descrito em `infrastructure.md`; header ausente, composto ou inválido falha fechado;
 - somente `application/json` e schemas Zod `strict` são aceitos;
@@ -79,7 +79,7 @@ independentemente de `Content-Length`.
 - `GET /api/auth/recovery/status` retorna `{ allowed, scope }`: `allowed=true` exige o UUID correspondente, enquanto uma autorização inválida é encerrada e responde `scope="anonymous"`. O cliente pode marcar o UUID atual como negado somente depois de uma atualização de senha confirmada. O scope precisa coincidir com o recorte SSR antes de entrar no cache; ele não contém token, e-mail, user ID nem prova de autorização;
 - nas superfícies autenticadas de `/entrar` e `/conta/seguranca`, logout usa uma closure one-shot sem `variables`, `networkMode: "always"` e `expectedScope` UUID como asserção do recorte SSR. O servidor executa `getClaims`, que pode renovar ou manter a sessão internamente, e termina a classificação antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw retorna `503 SERVICE_UNAVAILABLE`, `claimsResult.error` ou contexto assinado ausente retorna `401 UNAUTHENTICATED`, e somente um `userId` válido divergente retorna `409 SESSION_CHANGED`; os três ramos têm zero efeitos destrutivos explícitos de logout. Um erro posterior do provider só pode equivaler a logout concluído quando o cliente server-side comprova ausência da sessão local;
 - depois de `setSession`, a projeção de preferência chama `get_my_profile()` com o `AbortSignal` da operação e deadline server-side de um segundo. Timeout ou falha usa `system`; uma resolução tardia é ignorada e não pode publicar cookie nem iniciar `signOut` depois da resposta;
-- o destino autenticado possui allowlist canônica: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` e `/dono/estudios/<studioId>/dados`, sendo `studioId` um UUID minúsculo válido e o único segmento variável. A rota dinâmica normaliza uma representação UUID válida não canônica para o path minúsculo antes de produzir o retorno de login. A query usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, UUID inválido, valor codificado ou array falha fechado para o destino padrão.
+- o destino autenticado possui allowlist canônica: `/entrar?sessao=ativa`, `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` e `/dono/estudios/<studioId>/{dados|midia|publicacao}`, sendo `studioId` um UUID minúsculo válido e o único segmento variável. A rota dinâmica normaliza uma representação UUID válida não canônica para o path minúsculo antes de produzir o retorno de login. A query usa `retorno`; somente depois da validação o componente envia o campo interno `returnTo` no payload efêmero de login. Sucesso preserva exatamente o destino aprovado. Falha de rede, timeout, envelope inválido ou `AUTH_SESSION_RECHECK_REQUIRED` depois do início de `setSession` preserva o mesmo destino na URL de verificação SSR; URL absoluta, protocol-relative, query/fragmento extra, path traversal, barra invertida, UUID inválido, valor codificado ou array falha fechado para o destino padrão.
 
 ## 3. Códigos de erro
 
@@ -93,6 +93,7 @@ independentemente de `Content-Length`.
 | `VALIDATION_FAILED`             |  422 | campos; sem `fieldErrors`, exige releitura    |
 | `NOT_FOUND`                     |  404 | recurso não visível                           |
 | `CONFLICT`                      |  409 | estado concorrente ou contrato superado       |
+| `STUDIO_SUBMISSION_INCOMPLETE`  |  422 | checklist editorial incompleto                |
 | `STUDIO_TAXONOMY_UNAVAILABLE`   |  409 | tag/comodidade arquivada durante a gravação   |
 | `STUDIO_TYPE_UNAVAILABLE`       |  409 | tipo arquivado durante criação ou edição      |
 | `SLOT_UNAVAILABLE`              |  409 | calendário                                    |
@@ -172,7 +173,7 @@ Uma resposta `CONFLICT` ou `VALIDATION_FAILED` sem `fieldErrors` bloqueia novo s
 
 ### 5.3 Estúdio e revisão
 
-Implementados nas FEAT-006, FEAT-007 e FEAT-008:
+Implementados nas FEAT-006, FEAT-007, FEAT-008 e FEAT-009:
 
 | Action                           | Efeito                                             |
 | -------------------------------- | -------------------------------------------------- |
@@ -186,20 +187,38 @@ Implementados nas FEAT-006, FEAT-007 e FEAT-008:
 | `studio.media.reorder`           | substitui a ordem completa                         |
 | `studio.media.cover.set`         | define capa única                                  |
 | `studio.media.delete`            | remove associação e agenda órfão                   |
+| `studio.revision.submit`         | valida checklist e envia revisão imutável          |
+| `studio.pause`                   | pausa publicação preservando os ponteiros          |
+| `studio.resume`                  | retoma para published ou changes_pending           |
 
-Planejados para features posteriores:
-
-| Action                   | Efeito                    |
-| ------------------------ | ------------------------- |
-| `studio.revision.submit` | valida completude e envia |
-| `studio.pause`           | pausa novas reservas      |
-| `studio.resume`          | retoma se elegível        |
-
-Os dez envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
+Os treze envelopes implementados são estritos e carregam `expectedScope` e `idempotencyKey` UUID. O
 payload de criação contém somente os dados centrais. Updates, descarte e mídia recebem `studioId`,
 `expectedRevisionId` e `expectedRevisionVersion`; status e número de revisão nunca são aceitos do
 browser. Curitiba/PR, CEP, capacidade, tipo ativo e limites textuais são validados por Zod e pelo
 banco.
+
+`studio.revision.submit` recebe somente `studioId` e o token
+`{expectedRevisionId, expectedRevisionVersion}` da candidata visível. O banco deriva completude,
+status e versão de publicação; detalhes, conteúdo e mídia incompletos retornam
+`422 STUDIO_SUBMISSION_INCOMPLETE`. `studio.pause | studio.resume` recebem `studioId` e
+`expectedPublicationVersion`; o status desejado não vem do browser. Versão ou estado concorrente
+retorna `409 CONFLICT` e exige releitura autoritativa antes de uma nova intenção.
+
+Completude inclui tipo, tags e comodidades ainda ativos. O banco trava essas referências em ordem
+determinística durante o submit: item já arquivado retorna o mesmo
+`422 STUDIO_SUBMISSION_INCOMPLETE`, e arquivamento concorrente não atravessa a transação. A UI trata
+esse 422 factual como estado que envelheceu e inicia releitura autoritativa. Como a taxonomia altera o
+checklist sem avançar os fences editoriais, o comparador recusa a projeção derivada divergente e
+recompõe a rota SSR; a nova tela mostra a pendência sem repetir o POST. O `latestReview` segue a
+sequência causal do banco; timestamp e UUID não desempatam a timeline.
+
+Os três comandos retornam `StudioPublication`: escopo, status, `publicationVersion`, checklist,
+capacidades derivadas, último fato editorial e as revisões atual/publicada. Capas privadas são
+assinadas pelo servidor, deduplicadas por path e validadas novamente contra owner/estúdio/revisão;
+paths de Storage nunca entram no DTO. Submit grava revisão pendente, evento, intenção de e-mail,
+ledger idempotente e auditoria na mesma transação. Pausa/retomada preservam os ponteiros e não criam
+novo review. Falha ou timeout ao assinar a prévia depois da transação retorna `503` ambíguo: a UI
+mantém a mesma chave para retry exato ou relê o GET, nunca inventa sucesso nem dispara nova intenção.
 
 Taxonomia recebe listas únicas de no máximo 20 UUIDs por grupo e o banco aceita somente registros
 ativos. Conteúdo recebe plain text aparado, até 20 FAQs ordenadas e `youtubeVideoId` nulo ou com 11
@@ -242,8 +261,14 @@ Leituras implementadas:
   dono ativa e contrato vigente são revalidados em toda leitura; depois disso, UUID estrito e 0/1
   editor do próprio dono. UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem
   revelar existência. Revogação durante uma sessão aberta recompõe a rota SSR antes de nova edição.
+- `GET /api/owner/studios/[studioId]/publication`: aplica as mesmas guardas e retorna somente o
+  `StudioPublication` do dono. Estúdio inválido/alheio continua indistinguível em `404`; falha de
+  banco ou assinatura privada retorna `503` redigido e sem fallback factual.
 
-As três usam deadline server-side de 2 segundos, resposta sem cache e evento operacional redigido.
+As quatro respondem sem cache e registram evento operacional redigido. A fronteira de banco usa os
+timeouts canônicos do pool; a leitura de publicação acrescenta deadline absoluto e abortável de 2
+segundos para assinar todas as capas privadas. O retorno encerra no prazo mesmo se um adaptador não
+cooperar com o `AbortSignal`; resolução tardia não publica estado.
 
 ### 5.4 Calendário
 
@@ -535,7 +560,9 @@ de revisão ou versão regressivos. Conflito bloqueia novas ações até reconci
 /api/owner/studios/[studioId]/media` obtém paths pela função DAL privada, usa a secret key somente no
 servidor para assinar em lote as prévias por cinco minutos e omite os paths persistidos do payload do
 browser. O DTO inclui `previewExpiresAt`; em número/versão iguais, o cache conserva a assinatura com
-expiração posterior.
+expiração posterior. `revisionStatus` e `canEdit` são derivados no banco: uma candidata `pending`
+continua legível com suas fotos e URLs temporárias, mas retorna `canEdit=false`; a interface a mostra
+somente para conferência e os comandos revalidam a imutabilidade na fonte canônica.
 
 ## 9. Query invalidation map
 

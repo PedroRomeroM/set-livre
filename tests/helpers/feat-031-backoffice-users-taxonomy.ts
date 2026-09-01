@@ -21,6 +21,7 @@ import {
   getFeat002PasswordControl,
   stageFeat002PasswordForSubmission,
 } from "./feat-002-authentication";
+import { cleanupFeat006OwnedStudioRows } from "./feat-006-studio-core-revision";
 import { cleanupLocalAuthUser } from "./local-auth-cleanup";
 import { assertQaAuthEmail } from "./local-auth-mailpit";
 import { readSafeE2EEnvironment } from "./e2e-environment";
@@ -561,40 +562,15 @@ export async function cleanupFeat031Users(input: {
   const bulk = input.bulk ?? [];
   const operators = input.operators ?? [];
   const userIds = [
-    ...direct.map((identity) => identity.userId),
-    ...bulk.map((identity) => identity.id),
-    ...operators.flatMap((identity) => (identity.userId === undefined ? [] : [identity.userId])),
+    ...new Set([
+      ...direct.map((identity) => identity.userId),
+      ...bulk.map((identity) => identity.id),
+      ...operators.flatMap((identity) => (identity.userId === undefined ? [] : [identity.userId])),
+    ]),
   ];
   if (userIds.length > 0) {
+    for (const userId of userIds) await cleanupFeat006OwnedStudioRows(userId);
     await withFeat031AdminPool(async (pool) => {
-      await pool.query("begin");
-      try {
-        await pool.query(
-          "alter table public.studio_revisions disable trigger studio_revisions_enforce_immutability",
-        );
-        await pool.query(
-          `delete from audit.events
-           where target_id in (
-             select studio.id from public.studios as studio
-             where studio.owner_user_id = any($1::uuid[])
-           )`,
-          [userIds],
-        );
-        await pool.query(
-          `delete from private.studio_command_requests where owner_user_id = any($1::uuid[])`,
-          [userIds],
-        );
-        await pool.query(`delete from public.studios where owner_user_id = any($1::uuid[])`, [
-          userIds,
-        ]);
-        await pool.query(
-          "alter table public.studio_revisions enable trigger studio_revisions_enforce_immutability",
-        );
-        await pool.query("commit");
-      } catch (error) {
-        await pool.query("rollback");
-        throw error;
-      }
       await pool.query(
         `delete from audit.events
          where actor_user_id = any($1::uuid[]) or target_id = any($1::uuid[])`,

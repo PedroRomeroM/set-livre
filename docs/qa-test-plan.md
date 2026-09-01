@@ -121,6 +121,10 @@ O preflight global também exige zero identidades `qa_*@example.test`; resíduo 
 interrompida exige `npm run supabase:reset` e nunca é tratado como fixture válida. Durante cada
 processo worker, a primeira operação destrutiva revalida o mesmo marcador local; o resultado seguro é
 compartilhado apenas durante aquela execução e não exige ausência da própria identidade QA já em uso.
+Antes de cada ação que dispara Supabase Auth, o helper captura no Mailpit os IDs já existentes para o
+destinatário QA exato. O polling aceita somente um ID novo com callback do tipo esperado; `Created`
+ordena mensagens dentro do próprio Mailpit, mas nunca é comparado ao relógio do processo Windows.
+Assim, drift entre Windows e WSL2 não produz falso timeout nem relaxa destinatário, callback ou cleanup.
 Os servidores Playwright usam
 `APP_ENV=test`: somente os buckets de rede compartilhados do login e do desbloqueio local recebem
 capacidade para a matriz multibrowser de identidades únicas. Os buckets por identidade continuam
@@ -143,7 +147,7 @@ navegação já iniciada alcançar `domcontentloaded`; nenhuma limpeza pode conc
 
 ## Matriz da FEAT-006
 
-Os dezessete cenários estáveis `SL-F006-E2E-001..017` expandem para 61 execuções:
+Os cenários estáveis `SL-F006-E2E-*` cobrem:
 
 - P0 de criação, clone de publicado, isolamento entre donos, troca de sessão no editor e na criação
   ainda não salva e revogação da autoridade de dono durante a criação nos três engines;
@@ -163,12 +167,12 @@ fixture de conflito avança uma versão já observada, sem competir com o refetc
 herdam a retenção global de
 trace, screenshot e vídeo somente em falha; nenhuma desativa essa evidência localmente.
 
-No banco, `0005_studio_core_revision.sql` possui 47 asserções de domínio/segurança. O setup
+No banco, `0005_studio_core_revision.sql` prova os contratos de domínio e segurança. O setup
 `0000_test_setup.sql` habilita pgTAP idempotentemente antes das suítes.
 
 ## Matriz da FEAT-007
 
-Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
+Os cenários `SL-F007-E2E-*` cobrem:
 
 - P0 salva conteúdo/taxonomia, rejeita catálogo inativo/externo e prova plain text nos três engines;
 - FAQ mobile, YouTube permitido/bloqueado, handoff de revisão confirmada entre os painéis e reset
@@ -181,13 +185,12 @@ Os onze cenários `SL-F007-E2E-001..011` expandem para 39 execuções:
 - axe, teclado, toque e alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
-`0006_studio_taxonomy_content.sql` possui 43 asserções para schema, grants/RLS, isolamento entre
-donos, idempotência, concorrência, clone de publicado, taxonomia ativa, FAQ/vídeo e auditoria
-redigida.
+`0006_studio_taxonomy_content.sql` prova schema, grants/RLS, isolamento entre donos, idempotência,
+concorrência, clone de publicado, taxonomia ativa, FAQ/vídeo e auditoria redigida.
 
 ## Matriz da FEAT-031
 
-Os quinze cenários `SL-F031-E2E-001..015` expandem para 52 execuções:
+Os cenários `SL-F031-E2E-*` cobrem:
 
 - P0 de suspensão/restauração, bloqueio de comandos, papéis/último admin e taxonomia histórica nos
   três engines;
@@ -211,18 +214,18 @@ Os quinze cenários `SL-F031-E2E-001..015` expandem para 52 execuções:
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
 QueryCache nem em fixture persistida; o helper cria identidades reais no Supabase local, usa a role DAL
-restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` possui 58
-asserções para grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
+restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` prova
+grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo, após a FEAT-008, possui dez arquivos e 489 testes. A regressão transversal de tempo força timestamps
+regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
 
 ## Matriz da FEAT-008
 
-Os quinze cenários `SL-F008-E2E-001..014` e `SL-F008-CACHE-001` expandem para 51 execuções e cobrem:
+Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 
 - P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
   antes/depois da persistência, recusa definitiva com liberação server-side da reserva e isolamento
@@ -237,8 +240,8 @@ Os quinze cenários `SL-F008-E2E-001..014` e `SL-F008-CACHE-001` expandem para 5
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
-prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 103 asserções para
-schema, grants/RLS e Storage A/B, limite e liberação de reservas rejeitadas, clone, idempotência,
+prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` prova schema, grants/RLS
+e Storage A/B, limite e liberação de reservas rejeitadas, clone, idempotência,
 liquidação da emissão do token nas duas ordens possíveis da corrida, compensação idempotente e liberação
 imediata da vigésima vaga quando o Storage não entrega autorização,
 claim único pré-processamento/replay/rejeição, renovação terminal que impede takeover após a expiração
@@ -247,21 +250,37 @@ com begin sobreposto às fachadas claimed de finalize e reject via `dblink`, al�
 abandono, backoff e heartbeat do cleanup. A regressão do ledger prova que o run A conserva seu item e
 fecha `1/0/1` mesmo depois de o run B reassumir a lease e concluir o mesmo objeto com `1/1/0`.
 
+## Matriz da FEAT-009
+
+Os cenários `SL-F009-E2E-*` exercitam a matriz definida no plano da feature:
+
+- cinco P0 nos três engines cobrem submissão completa/incompleta, preservação da versão publicada,
+  replay idempotente e pausa/retomada com ponteiros estáveis;
+- regressões em desktop, 390 px, 320 px e altura compacta cobrem rejeição orientada à correção,
+  conflito com releitura e foco, JavaScript desabilitado fail-closed, recomposição SSR quando o mesmo
+  fence retorna projeção derivada divergente, taxonomia arquivada entre leitura e submit sem efeito
+  parcial e releitura autoritativa após resposta ambígua sem um segundo POST;
+- axe, teclado, foco, toque, 320 px e tema escuro executam em quatro composições;
+- reflow a 200% executa em Chromium, Firefox e WebKit.
+
+O helper cria dono, estúdio e mídia reais no ambiente local, usa o fluxo UI para as transições P0 e
+consulta somente evidência administrativa allowlisted. `0010_studio_publication_workflow.sql` prova
+schema, grants/RLS, ownership, checklist derivado, imutabilidade pendente, ponteiros, idempotência,
+ordem causal, corrida entre submit e arquivamento de taxonomia, pausa/retomada, suspensão de conta,
+outbox, auditoria e índices estruturais.
+
 ## Contrato por feature
 
-Enquanto planejada ou em andamento, cada feature possui um arquivo em `docs/features/` com seus
-cenários P0/P1. Para concluir:
+Enquanto planejada ou em andamento, cada feature possui cenários P0/P1 rastreáveis. A validação deve:
 
 1. implementar a fatia vertical e as regressões necessárias;
 2. manter IDs estáveis nos títulos/comentários das specs quando úteis à rastreabilidade;
 3. executar SQL, unitários e Playwright aplicáveis;
 4. executar a suíte Playwright completa antes de release;
-5. consolidar contratos permanentes no documento de domínio;
-6. apagar o plano transitório da feature;
-7. marcar a feature como concluída em `docs/roadmap.md`.
+5. consolidar contratos permanentes no documento de domínio.
 
-Os passos 6 e 7 ocorrem somente depois que review, merge e deploy da entrega estão verdes; até lá o
-plano e o status `Em andamento` permanecem como guardrail rastreável.
+Criação, remoção e consolidação dos planos seguem exclusivamente o
+[`ADR-015`](adr/ADR-015-living-documentation-and-qa.md).
 
 ## Evidência
 

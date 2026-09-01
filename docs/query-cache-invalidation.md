@@ -149,6 +149,21 @@ Medir; não usar Infinity em dado operacional.
   publica o `StudioEditor` autoritativo e propaga seu token aos painéis irmãos sem apagar inputs
   locais; refetch ordinário não participa desse handoff. Retry existe apenas para a mesma tentativa
   idempotente ambígua;
+- publicação usa a key privada
+  `owner/private/studio-editor/<userId>/<studioId>/publication`, com `initialData`, `staleTime: 0`,
+  refetch autoritativo e renderização somente em `idle` sem erro. A arbitragem escolhe primeiro o maior
+  `publicationVersion` e, dentro da mesma fronteira editorial, a maior versão da revisão atual; mesma
+  versão com identidade ou conteúdo canônico divergente falha fechado, limpa o cliente e recompõe a
+  rota SSR. Isso cobre também checklist ou capacidade derivados que mudem sem incrementar esses fences,
+  sem aceitar uma projeção mista. URL e expiração assinadas não definem conteúdo, e entre projeções
+  equivalentes vence a assinatura com expiração posterior;
+- sucesso de `studio.revision.submit`, `studio.pause` ou `studio.resume` só substitui a key exata já
+  existente, remove scopes de outro usuário e invalida exatamente editor e mídia do mesmo estúdio.
+  `CONFLICT` ou `STUDIO_SUBMISSION_INCOMPLETE` conclusivo descarta o POST e exige releitura do estado
+  autoritativo; isso cobre taxonomia arquivada depois da última leitura sem classificar o 422 como retry
+  do comando. Se o checklist mudar sob os mesmos fences, a arbitragem já descrita recompõe a rota SSR em
+  vez de oferecer aceite de projeção mista. Resposta ambígua conserva ação, payload e chave idempotente
+  para verificação ou repetição exata, sem liberar outra transição;
 - no backoffice, login/reautenticação mantêm e-mail/senha somente em refs efêmeras e chamam
   `mutate()` sem variables; qualquer desfecho limpa os inputs. Login ambíguo limpa o QueryClient e
   recompõe `/` para que a sessão server-side decida o estado;

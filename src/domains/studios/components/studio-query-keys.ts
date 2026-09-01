@@ -1,4 +1,4 @@
-import type { StudioEditor, StudioMediaGallery } from "@set-livre/contracts";
+import type { StudioEditor, StudioMediaGallery, StudioPublication } from "@set-livre/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
 const studioPrivateRoot = ["owner", "private", "studio-editor"] as const;
@@ -14,6 +14,8 @@ export const studioQueryKeys = {
   taxonomies: (userId: string) => [...studioPrivateTaxonomiesRoot, userId, "content"] as const,
   media: (userId: string, studioId: string) =>
     [...studioPrivateMediaRoot, userId, studioId] as const,
+  publication: (userId: string, studioId: string) =>
+    [...studioPrivateRoot, userId, studioId, "publication"] as const,
   types: (userId: string) => [...studioPrivateTaxonomiesRoot, userId, "types"] as const,
 };
 
@@ -56,6 +58,174 @@ export class StudioMediaScopeChangedError extends Error {
     super("A galeria retornada não corresponde ao usuário ou ao estúdio esperado.");
     this.name = "StudioMediaScopeChangedError";
   }
+}
+
+export class StudioPublicationScopeChangedError extends Error {
+  constructor() {
+    super("A publicação retornada não corresponde ao usuário ou ao estúdio esperado.");
+    this.name = "StudioPublicationScopeChangedError";
+  }
+}
+
+export class StudioPublicationProjectionConflictError extends Error {
+  constructor() {
+    super("A projeção editorial retornou conteúdo divergente para a mesma versão canônica.");
+    this.name = "StudioPublicationProjectionConflictError";
+  }
+}
+
+export function isStudioPublicationBoundaryChangedError(error: unknown): boolean {
+  return (
+    error instanceof StudioPublicationScopeChangedError ||
+    error instanceof StudioPublicationProjectionConflictError
+  );
+}
+
+function studioPublicationMatchesBoundary(
+  publication: StudioPublication | undefined,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return (
+    publication !== undefined &&
+    publication.scope === expectedUserId &&
+    publication.studioId === expectedStudioId
+  );
+}
+
+export function studioPublicationCanRender(
+  publication: StudioPublication | undefined,
+  expectedUserId: string,
+  expectedStudioId: string,
+  fetchStatus: "fetching" | "idle" | "paused",
+  hasError: boolean,
+) {
+  return (
+    fetchStatus === "idle" &&
+    !hasError &&
+    studioPublicationMatchesBoundary(publication, expectedUserId, expectedStudioId)
+  );
+}
+
+export function assertStudioPublicationBoundary(
+  publication: StudioPublication,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  if (!studioPublicationMatchesBoundary(publication, expectedUserId, expectedStudioId)) {
+    throw new StudioPublicationScopeChangedError();
+  }
+  return publication;
+}
+
+function publicationRevisionContentToken(revision: StudioPublication["currentRevision"] | null) {
+  if (revision === null) return null;
+  const { cover, ...revisionWithoutCover } = revision;
+  if (cover === null) return { ...revisionWithoutCover, cover: null };
+  const { previewUrl, ...coverWithoutPreviewUrl } = cover;
+  void previewUrl;
+  return { ...revisionWithoutCover, cover: coverWithoutPreviewUrl };
+}
+
+function publicationContentToken(publication: StudioPublication) {
+  const { currentRevision, previewExpiresAt, publishedRevision, ...publicationWithoutPreviews } =
+    publication;
+  void previewExpiresAt;
+  return JSON.stringify({
+    ...publicationWithoutPreviews,
+    currentRevision: publicationRevisionContentToken(currentRevision),
+    publishedRevision: publicationRevisionContentToken(publishedRevision),
+  });
+}
+
+export function preserveNewestStudioPublication(
+  current: StudioPublication | undefined,
+  candidate: StudioPublication,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  const scopedCandidate = assertStudioPublicationBoundary(
+    candidate,
+    expectedUserId,
+    expectedStudioId,
+  );
+  if (current === undefined) return scopedCandidate;
+  const scopedCurrent = assertStudioPublicationBoundary(current, expectedUserId, expectedStudioId);
+  if (scopedCurrent.publicationVersion > scopedCandidate.publicationVersion) return scopedCurrent;
+  if (scopedCurrent.publicationVersion < scopedCandidate.publicationVersion) return scopedCandidate;
+  if (
+    scopedCurrent.currentRevision.id !== scopedCandidate.currentRevision.id ||
+    scopedCurrent.currentRevision.number !== scopedCandidate.currentRevision.number
+  ) {
+    throw new StudioPublicationProjectionConflictError();
+  }
+  if (scopedCurrent.currentRevision.version > scopedCandidate.currentRevision.version) {
+    return scopedCurrent;
+  }
+  if (scopedCurrent.currentRevision.version < scopedCandidate.currentRevision.version) {
+    return scopedCandidate;
+  }
+  if (publicationContentToken(scopedCurrent) !== publicationContentToken(scopedCandidate)) {
+    throw new StudioPublicationProjectionConflictError();
+  }
+  if (
+    scopedCurrent.previewExpiresAt !== null &&
+    scopedCandidate.previewExpiresAt !== null &&
+    Date.parse(scopedCurrent.previewExpiresAt) > Date.parse(scopedCandidate.previewExpiresAt)
+  ) {
+    return scopedCurrent;
+  }
+  return scopedCandidate;
+}
+
+export function publishStudioPublication(
+  queryClient: QueryClient,
+  publication: StudioPublication,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  const queryKey = studioQueryKeys.publication(expectedUserId, expectedStudioId);
+  const current = queryClient.getQueryData<StudioPublication>(queryKey);
+  if (current === undefined) throw new StudioPublicationScopeChangedError();
+  const selected = preserveNewestStudioPublication(
+    current,
+    publication,
+    expectedUserId,
+    expectedStudioId,
+  );
+  queryClient.removeQueries({
+    predicate: (query) => {
+      const key = query.queryKey;
+      return (
+        key.length === 6 &&
+        key[0] === studioPrivateRoot[0] &&
+        key[1] === studioPrivateRoot[1] &&
+        key[2] === studioPrivateRoot[2] &&
+        key[5] === "publication" &&
+        key[3] !== expectedUserId
+      );
+    },
+    queryKey: studioPrivateRoot,
+  });
+  queryClient.setQueryData(queryKey, selected);
+  return selected;
+}
+
+export async function invalidateStudioPublicationDependents(
+  queryClient: QueryClient,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      exact: true,
+      queryKey: studioQueryKeys.editor(expectedUserId, expectedStudioId),
+    }),
+    queryClient.invalidateQueries({
+      exact: true,
+      queryKey: studioQueryKeys.media(expectedUserId, expectedStudioId),
+    }),
+  ]);
 }
 
 export function assertStudioMediaBoundary(

@@ -1,9 +1,9 @@
 # Roadmap de produto
 
-Esta é a fonte canônica de ordem e estado. Um arquivo em `docs/features/` é um plano transitório:
-existe enquanto a feature está planejada ou em entrega e só é removido depois que código, testes,
-documentação permanente, review, merge e deploy estão verdes. O comportamento concluído fica no código,
-nos testes e nos documentos permanentes de domínio; a evidência da entrega permanece no PR e nos checks.
+Esta é a fonte canônica de ordem e estado. `Planejada` ainda não entrou em implementação; `Em andamento`
+ainda não concluiu o candidato; `Concluída` satisfez a transição definida no
+[`ADR-015`](adr/ADR-015-living-documentation-and-qa.md). O histórico de entrega permanece no PR e nos
+checks.
 
 | Ordem | ID       | Feature                             | Estado       | Depende de                                       | Plano                                                         |
 | ----: | -------- | ----------------------------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
@@ -14,7 +14,7 @@ nos testes e nos documentos permanentes de domínio; a evidência da entrega per
 |     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Em andamento | FEAT-006                                         | [plano](features/FEAT-007-studio-taxonomy-content.md)         |
 |     6 | FEAT-031 | Backoffice de usuários e taxonomias | Em andamento | FEAT-003, FEAT-007                               | [plano](features/FEAT-031-backoffice-users-taxonomy.md)       |
 |     7 | FEAT-008 | Mídia de estúdio                    | Em andamento | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
-|     8 | FEAT-009 | Publicação e revisão de estúdio     | Planejada    | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |
+|     8 | FEAT-009 | Submissão e controle editorial      | Em andamento | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |
 |     9 | FEAT-030 | Backoffice de revisão de estúdio    | Planejada    | FEAT-008, FEAT-009                               | [plano](features/FEAT-030-backoffice-studio-review.md)        |
 |    10 | FEAT-012 | Disponibilidade semanal             | Planejada    | FEAT-006                                         | [plano](features/FEAT-012-weekly-availability.md)             |
 |    11 | FEAT-013 | Exceções e bloqueios de agenda      | Planejada    | FEAT-012                                         | [plano](features/FEAT-013-calendar-exceptions-blocks.md)      |
@@ -44,7 +44,6 @@ nos testes e nos documentos permanentes de domínio; a evidência da entrega per
 
 ## Regra de avanço
 
-Uma feature começa pela primeira linha `Planejada` cujas dependências estejam concluídas. Enquanto a
-fatia ainda está incompleta ou aguarda review, merge e deploy verdes, o estado é `Em andamento` e seu
-plano permanece no repositório. Só depois da entrega comprovada o plano é removido e a linha vira
-`Concluída`, preservando os fatos duráveis nos documentos canônicos.
+Uma feature começa pela primeira linha `Planejada` cujas dependências estejam concluídas. Toda mudança de
+estado e remoção de plano segue o `ADR-015`; dependências continuam obrigatórias mesmo quando várias
+fatias compartilham o mesmo PR de fundação.

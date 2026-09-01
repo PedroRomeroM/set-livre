@@ -32,17 +32,19 @@ import { studioTestIds } from "./studio-test-fixture";
 
 const identityClient = { boundary: "authenticated-client" };
 const gallery = {
+  canEdit: true,
   items: [],
   previewExpiresAt: "2026-08-31T12:05:00.000Z",
   revisionId: studioTestIds.revisionId,
   revisionNumber: 1,
+  revisionStatus: "draft" as const,
   revisionVersion: 3,
   scope: studioTestIds.userId,
   studioId: studioTestIds.studioId,
 };
 
-function request() {
-  return new Request(`http://127.0.0.1:3000/api/owner/studios/${studioTestIds.studioId}/media`, {
+function request(studioId: string = studioTestIds.studioId) {
+  return new Request(`http://127.0.0.1:3000/api/owner/studios/${studioId}/media`, {
     headers: { "x-request-id": studioTestIds.requestId },
   });
 }
@@ -96,6 +98,20 @@ describe("studio media read route", () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: "NOT_FOUND" } });
     expect(mocks.readOwnerActivation).not.toHaveBeenCalled();
     expect(mocks.readOwnerStudioMedia).not.toHaveBeenCalled();
+  });
+
+  it("normalizes an uppercase UUID before the private media read", async () => {
+    const { GET } = await import("../../src/app/api/owner/studios/[studioId]/media/route");
+    const response = await GET(request(studioTestIds.studioId.toUpperCase()), {
+      params: Promise.resolve({ studioId: studioTestIds.studioId.toUpperCase() }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.readOwnerStudioMedia).toHaveBeenCalledWith(
+      studioTestIds.userId,
+      studioTestIds.studioId,
+      expect.any(AbortSignal),
+    );
   });
 
   it("keeps inaccessible studios indistinguishable and maps Storage outages safely", async () => {

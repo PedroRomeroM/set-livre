@@ -123,7 +123,7 @@ test("SL-F006-E2E-002 @p0 editar publicado cria novo draft e preserva a revisão
     ).toBeVisible();
 
     const evidence = await readFeat006StudioEvidence(publishedEditor.studioId);
-    expect(evidence.status).toBe("published");
+    expect(evidence.status).toBe("changes_pending");
     expect(evidence.published_revision_id).toBe(publishedEditor.revision.id);
     expect(evidence.draft_revision_id).toBe(result.editor?.revision.id);
     expect(evidence.revisions).toEqual([

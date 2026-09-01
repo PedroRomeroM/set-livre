@@ -5,6 +5,7 @@ import { Stack } from "@set-livre/ui";
 import { useState } from "react";
 
 import { StudioCorePanel } from "./studio-core-panel";
+import { StudioEditorNavigation } from "./studio-editor-navigation";
 import { studioRevisionToken, type StudioRevisionToken } from "./studio-query-keys";
 import { StudioTaxonomyContentPanel } from "./studio-taxonomy-content-panel";
 
@@ -80,6 +81,7 @@ export function StudioEditorPanels({
 
   return (
     <Stack space={6}>
+      <StudioEditorNavigation current="dados" studioId={initialEditor.studioId} />
       <StudioCorePanel
         discardRevision={revisions.discard}
         externalCommandLocked={commandSurface === "commercial"}

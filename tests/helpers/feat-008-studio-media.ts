@@ -263,10 +263,12 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
   let loseSupersededFinalizeResponse = false;
   let uploadFailure: "after-persistence" | "before-persistence" | "definitive" | undefined;
   let gallery = studioMediaGallerySchema.parse({
+    canEdit: true,
     items: [],
     previewExpiresAt: "2026-09-01T00:00:00.000Z",
     revisionId: editor.revision.id,
     revisionNumber: editor.revision.number,
+    revisionStatus: editor.revision.status === "approved" ? "approved" : "draft",
     revisionVersion: editor.revision.version,
     scope: editor.scope,
     studioId: editor.studioId,
@@ -534,10 +536,12 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
         throw new Error("A troca remota da galeria recebeu outro escopo de estúdio.");
       }
       publish({
+        canEdit: true,
         items: [],
         previewExpiresAt: "2026-09-01T00:00:00.000Z",
         revisionId: nextEditor.revision.id,
         revisionNumber: nextEditor.revision.number,
+        revisionStatus: nextEditor.revision.status === "approved" ? "approved" : "draft",
         revisionVersion: nextEditor.revision.version,
         scope: nextEditor.scope,
         studioId: nextEditor.studioId,

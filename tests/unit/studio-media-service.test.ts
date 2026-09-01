@@ -110,6 +110,7 @@ const candidate = {
   previewPath,
 };
 const galleryRecord = {
+  canEdit: true,
   items: [
     {
       byteSize: 512,
@@ -125,6 +126,7 @@ const galleryRecord = {
   ],
   revisionId: studioTestIds.revisionId,
   revisionNumber: 1,
+  revisionStatus: "draft" as const,
   revisionVersion: 4,
   scope: studioTestIds.userId,
   studioId: studioTestIds.studioId,

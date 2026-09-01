@@ -25,8 +25,8 @@ vi.mock("../../src/domains/studios/server/studio-read-model", () => ({
 
 import { studioEditorFixture, studioTestIds } from "./studio-test-fixture";
 
-function request() {
-  return new Request(`http://127.0.0.1:3000/api/owner/studios/${studioTestIds.studioId}`, {
+function request(studioId: string = studioTestIds.studioId) {
+  return new Request(`http://127.0.0.1:3000/api/owner/studios/${studioId}`, {
     headers: { "x-request-id": studioTestIds.requestId },
   });
 }
@@ -60,6 +60,19 @@ describe("studio read route", () => {
     expect(response.status).toBe(404);
     expect(response.headers.get("x-studio-session")).toBe("refreshed");
     expect(mocks.readOwnerStudioEditor).not.toHaveBeenCalled();
+  });
+
+  it("normalizes an uppercase UUID before the private editor read", async () => {
+    const { GET } = await import("../../src/app/api/owner/studios/[studioId]/route");
+    const response = await GET(request(studioTestIds.studioId.toUpperCase()), {
+      params: Promise.resolve({ studioId: studioTestIds.studioId.toUpperCase() }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.readOwnerStudioEditor).toHaveBeenCalledWith(
+      studioTestIds.userId,
+      studioTestIds.studioId,
+    );
   });
 
   it("returns the same safe not-found result for an inaccessible studio", async () => {

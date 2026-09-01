@@ -52,6 +52,9 @@ export function createPrivateCommandRegistry(dependencies: PrivateCommandDepende
       case "studio.revision.updateTaxonomy":
       case "studio.revision.updateContent":
       case "studio.draft.discard":
+      case "studio.revision.submit":
+      case "studio.pause":
+      case "studio.resume":
       case "studio.media.upload.prepare":
       case "studio.media.upload.finalize":
       case "studio.media.reorder":

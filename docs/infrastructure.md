@@ -88,10 +88,9 @@ Workflows de pull request não recebem secrets de produção e o checkout remove
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
 Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
 e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
-O job Linux possui orçamento explícito de 75 minutos: a matriz completa de 323 execuções já consumiu
-aproximadamente 40 minutos em runner limpo, e build, pacote, contratos do host e smoke standalone ainda
-precisam terminar no mesmo gate. Um teste de contrato impede regressão ao antigo limite de 45 minutos,
-que cancelava o build depois de todos os testes terem passado.
+O job Linux possui orçamento explícito de 75 minutos para acomodar a matriz Playwright completa, build,
+pacote, contratos do host e smoke standalone no mesmo gate. Um teste de contrato impede regressão ao
+antigo limite de 45 minutos, que cancelava o build depois de todos os testes terem passado.
 Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
 `Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
 review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
@@ -208,7 +207,11 @@ aceita o head compilado de uma release enquanto ele existir no histórico aplica
 release anterior durante a ativação, mas o deploy exige que o maior head remoto corresponda exatamente
 ao candidato antes de publicar. O gate de PR também recusa `databaseMigrationHead` diferente da
 migration mais recente, impedindo que um schema forward-only seja aplicado antes de detectar o contrato
-compilado obsoleto. Alterações destrutivas exigem backup e recuperação comprovada.
+compilado obsoleto. O migration guard compara a árvore candidata com a base aplicada: cada migration de
+`main` precisa continuar presente e idêntica em bytes, e toda migration nova precisa ter timestamp
+posterior ao maior timestamp dessa base. A topologia intermediária dos commits não altera esse contrato;
+conflitos entre branches são resolvidos na árvore final antes do merge. Alterações destrutivas exigem
+backup e recuperação comprovada.
 
 ## Host Oracle
 
@@ -453,6 +456,10 @@ explícito e defesa para conexões diretas, mas isso não é autoridade na produ
 encaminhar opções arbitrárias do startup packet. A migration append-only configura `role=app_dal`
 exatamente para esse login no database `postgres`; uma sessão nova recebe a role pelo PostgreSQL e o
 readiness valida setting, `session_user`, role efetiva e membership antes da ativação.
+O parser compartilhado aceita somente a coordenada local
+`app_runtime_local@127.0.0.1:54322/postgres` sem TLS ou a coordenada de produção acima com usuário e
+project ref exatos, `sslmode=verify-full` e uma única opção `role=app_dal`; qualquer outra role, host,
+porta, banco ou combinação de parâmetros falha fechado.
 
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é

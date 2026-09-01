@@ -15,6 +15,8 @@ const studioEditorReturnTarget =
   "/dono/estudios/11111111-1111-4111-8111-111111111111/dados" as const;
 const studioMediaReturnTarget =
   "/dono/estudios/11111111-1111-4111-8111-111111111111/midia" as const;
+const studioPublicationReturnTarget =
+  "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao" as const;
 
 describe("ambiguous login session transition", () => {
   it.each([
@@ -181,6 +183,9 @@ describe("ambiguous login session transition", () => {
     expect(loginSessionVerificationPath(studioMediaReturnTarget)).toBe(
       "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fmidia",
     );
+    expect(loginSessionVerificationPath(studioPublicationReturnTarget)).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fpublicacao",
+    );
   });
 
   it.each([
@@ -191,6 +196,7 @@ describe("ambiguous login session transition", () => {
     "/dono/estudios/novo",
     studioEditorReturnTarget,
     studioMediaReturnTarget,
+    studioPublicationReturnTarget,
   ] as const)("accepts the exact login return target %s", (target) => {
     expect(resolveAccountLoginReturnTarget(target)).toBe(target);
   });
@@ -206,11 +212,17 @@ describe("ambiguous login session transition", () => {
     `${studioEditorReturnTarget}?next=https://attacker.example`,
     `${studioEditorReturnTarget}#private`,
     `${studioMediaReturnTarget}?next=https://attacker.example`,
+    `${studioPublicationReturnTarget}?next=https://attacker.example`,
+    `${studioPublicationReturnTarget}#private`,
+    `${studioPublicationReturnTarget}/../dados`,
     "/dono/estudios/11111111-1111-4111-8111-111111111111%2Fdados",
     "/dono/estudios/11111111-1111-4111-8111-111111111111/dados/../novo",
     "/dono/estudios/11111111-1111-4111-8111-111111111111\\dados",
     "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
     "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/midia",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/publicacao",
+    "/dono/estudios/not-a-uuid/publicacao",
+    "https://attacker.example/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao",
     ["/dono"],
     undefined,
   ])("rejects a non-allowlisted login return target: %s", (target) => {

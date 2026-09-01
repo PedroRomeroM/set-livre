@@ -98,8 +98,62 @@ select has_table('public', 'studio_revision_tags', 'relação de tags existe');
 select has_table('public', 'studio_revision_amenities', 'relação de comodidades existe');
 select has_table('public', 'studio_faqs', 'FAQ versionada existe');
 
-select is((select pg_catalog.count(*)::integer from public.tags where active), 8, 'oito tags ativas são seedadas');
-select is((select pg_catalog.count(*)::integer from public.amenities where active), 8, 'oito comodidades ativas são seedadas');
+select is(
+  (
+    select pg_catalog.array_agg(tag.slug order by tag.sort_order)
+    from public.tags as tag
+    where tag.active
+      and tag.id in (
+        '62000000-0000-4000-8000-000000000001',
+        '62000000-0000-4000-8000-000000000002',
+        '62000000-0000-4000-8000-000000000003',
+        '62000000-0000-4000-8000-000000000004',
+        '62000000-0000-4000-8000-000000000005',
+        '62000000-0000-4000-8000-000000000006',
+        '62000000-0000-4000-8000-000000000007',
+        '62000000-0000-4000-8000-000000000008'
+      )
+  ),
+  array[
+    'podcast',
+    'fotografia',
+    'video',
+    'live-streaming',
+    'entrevista',
+    'ensaio',
+    'produto',
+    'musica'
+  ]::text[],
+  'as oito tags canonicas permanecem ativas independentemente de fixtures isoladas'
+);
+select is(
+  (
+    select pg_catalog.array_agg(amenity.slug order by amenity.sort_order)
+    from public.amenities as amenity
+    where amenity.active
+      and amenity.id in (
+        '63000000-0000-4000-8000-000000000001',
+        '63000000-0000-4000-8000-000000000002',
+        '63000000-0000-4000-8000-000000000003',
+        '63000000-0000-4000-8000-000000000004',
+        '63000000-0000-4000-8000-000000000005',
+        '63000000-0000-4000-8000-000000000006',
+        '63000000-0000-4000-8000-000000000007',
+        '63000000-0000-4000-8000-000000000008'
+      )
+  ),
+  array[
+    'wi-fi',
+    'ar-condicionado',
+    'estacionamento',
+    'camarim',
+    'banheiro-privativo',
+    'acessibilidade',
+    'copa',
+    'isolamento-acustico'
+  ]::text[],
+  'as oito comodidades canonicas permanecem ativas independentemente de fixtures isoladas'
+);
 
 select policies_are(
   'public',
@@ -569,6 +623,10 @@ set
   status = 'approved',
   revision_version = revision.revision_version + 1
 where revision.id = pg_catalog.current_setting('set_livre.test.f007_revision')::uuid;
+
+update public.studios as studio
+set status = 'pending_review'
+where studio.id = pg_catalog.current_setting('set_livre.test.f007_studio')::uuid;
 
 update public.studios as studio
 set

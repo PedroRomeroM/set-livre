@@ -68,7 +68,7 @@ Não introduza ORM, Tailwind, shadcn/ui, CSS-in-JS, Redux, Zustand para estado r
 
 Toda escrita crítica segue:
 
-`POST /api/commands` → origem/sessão → limite de corpo/rate limit → Zod estrito → registry modular → DAL `server-only` → função SQL privada → transação/lock → retorno autoritativo → invalidação TanStack Query.
+`POST /api/commands` → origem → sessão → fachada de rate limit → limite de corpo → Zod estrito → rate limit específico → registry modular → DAL `server-only` → função SQL privada → transação/lock → retorno autoritativo → invalidação TanStack Query.
 
 Exceções permitidas:
 
@@ -173,9 +173,9 @@ Além disso:
   sem logs de execução ou repetição dos documentos técnicos;
 - correção interna sem mudança de contrato não exige alteração documental artificial.
 
-Planos em `docs/features/` existem somente para trabalho planejado ou em andamento. Depois de merge e
-deploy verdes, o comportamento durável é consolidado, o roadmap é atualizado e o plano é apagado.
-Histórico detalhado permanece no Git e no PR.
+O ciclo de vida obrigatório dos planos transitórios em `docs/features/` é definido exclusivamente no
+[`ADR-015`](docs/adr/ADR-015-living-documentation-and-qa.md). Outros documentos apenas referenciam
+essa decisão; histórico detalhado permanece no Git e no PR.
 
 ## 12. Proibições
 

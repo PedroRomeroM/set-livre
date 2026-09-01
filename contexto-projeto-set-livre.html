@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 31/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 01/09/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -67,64 +67,13 @@
             <tr>
               <td>Produto</td>
               <td>
-                FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. A
-                FEAT-008 está em validação no PR incremental: galeria privada versionada, upload
-                direto ao Storage com token assinado sob deadline server-side de dois segundos. A
-                emissão é confirmada no banco antes da resposta; falha de assinatura ou confirmação
-                rejeita e libera a reserva apenas quando nenhuma emissão concorrente venceu. O fluxo
-                mantém verificação autoritativa, originais preservados, prévias WebP limitadas e
-                assinadas, deadline server-side único de 15 segundos que aborta download, geração e
-                upload da prévia, e claim persistente único com lease cercada de 30 segundos antes
-                desse processamento. A mesma chave aguarda, retoma ou reproduz o terminal; outra
-                chave não toma a mesma mídia. O candidato só sai do banco com o token, cuja lease
-                vigente é renovada atomicamente por 30 segundos antes do upload; o deadline restante
-                é de no máximo 15 segundos. Begin e wrappers terminais usam a ordem
-                advisory–dono–claim–revisão/mídia, derivam do claim todas as identidades e a conexão
-                volta ao pool durante Storage/Sharp. A lease é liberada antes da assinatura
-                privilegiada da resposta, limitada a dois segundos. O cleanup registra em ledger
-                imutável o pertencimento de cada item antes de permitir reutilização da lease;
-                assim, um run abandonado mantém suas contagens mesmo após outro concluir o objeto.
-                Ele remove ambos os objetos pela Storage API em Function imutável por SHA. Recusa ou
-                supersessão concorrente libera a reserva pela identidade persistida mesmo se outra
-                aba avançar a galeria, e só então autoriza renovação; o deadline de leitura também
-                cancela a assinatura privilegiada de previews; clones conservam o path imutável da
-                revisão de origem e uma releitura autoritativa adota o descarte remoto de uma draft,
-                mesmo ao voltar de <code>N+1</code> para <code>N</code>, sem aceitar resposta tardia
-                de comando. O mesmo PR contém núcleo/revisões e conteúdo de estúdio, além do
-                backoffice separado para usuários, comandos explícitos de suspensão/restauração, PII
-                temporária auditada, papéis <code>support/admin</code> e administração versionada de
-                taxonomias por ações explícitas de arquivar/reativar, sem status escolhido pelo
-                cliente. O diretório não entrega nome bruto nem papéis ao browser; a autorização
-                permanece no servidor e o cliente observa somente uma versão opaca. Polling passivo
-                não renova a inatividade, PII concluída em aba oculta é descartada e toda mutação
-                exige um desbloqueio local HttpOnly de cinco minutos. Resposta perdida de status,
-                acesso ou taxonomia conserva a tentativa idempotente até replay ou releitura
-                autoritativa, sem permitir cancelamento ou troca de ação, inclusive enquanto a
-                requisição ainda está em voo. Rotas administrativas autenticam a sessão e sua
-                binding antes de consumir o bucket compartilhado ou ler o body, e headers de sessão
-                acumulados sobrevivem também a rejeições posteriores; a busca comum nunca usa nome
-                bruto como oráculo. Login normaliza a rota de edição e preserva somente destinos
-                canônicos de estúdio. Um conflito ao descartar rascunho bloqueia todos os painéis
-                até o editor inteiro ser reconciliado, sem avanço isolado de token. Grants, RLS e o
-                read model também retiram todo conteúdo privado quando conta, perfil, autoridade de
-                dono ou contrato deixam de ser elegíveis. Login, logout global, chave local, busca
-                de usuários e gestão de taxonomias ficam inertes e nativamente desabilitados até a
-                hidratação, impedindo ação sem handler, perda de entrada antecipada e fallback HTML
-                de segredos; sem JavaScript, orientam habilitação e recarga. Replay idempotente de
-                criação/edição mantém os campos congelados sem desabilitar a única ação segura.
-                Estado concorrente exige nova leitura/confirmação e o catálogo possui teto
-                transacional de 500 itens. A sessão administrativa e os timestamps de atualização do
-                domínio permanecem monotônicos mesmo se o relógio de parede do host for corrigido
-                para trás. A origem de produção do backoffice corresponde ao loopback acessado por
-                túnel SSH, sem domínio público fictício. Login ambíguo redige credenciais e caches e
-                solicita a releitura SSR antes de publicar a fronteira visual fail-closed. Sessão
-                curta, reautenticação, idempotência, concorrência, grants/RLS e regressões
-                multiengine foram comprovados localmente. Pools PostgreSQL são únicos por processo e
-                respeitam o orçamento conjunto de seis das dez conexões do runtime. A raiz pública
-                ainda informa o estado técnico, enquanto a raiz do backoffice encaminha visitantes
-                sem sessão para a autenticação real; a suíte transversal valida cada superfície pelo
-                seu próprio contrato. O candidato ainda depende de review limpo, merge e deploy.
-                Outras 28 features permanecem planejadas.
+                FEAT-002, FEAT-003 e FEAT-004 estão implementadas na baseline. O PR incremental
+                reúne a fundação do catálogo: cadastro e revisões de estúdio, conteúdo e taxonomias,
+                backoffice administrativo, galeria privada e fluxo editorial. A FEAT-009 já possui
+                candidato local completo, com checklist, submissão imutável, preservação da versão
+                publicada, pausa/retomada e recuperação segura de respostas ambíguas. O lote ainda
+                depende dos gates finais, review limpo no SHA exato, merge e deploy; as demais
+                features continuam no estado indicado pelo roadmap.
               </td>
             </tr>
             <tr>
@@ -153,15 +102,11 @@
             <tr>
               <td>Entrega</td>
               <td class="status">
-                Host, credenciais privadas, proteção de branch e HTTPS por IP configurados. O ciclo
-                protegido já concluiu migrations, ativação atômica do runtime restrito e health
-                público no mesmo SHA; a produção serve somente a fundação técnica, com identificação
-                neutra ao ambiente e sem simular features planejadas. Os contratos do rollout ficam
-                na <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. O
-                protocolo de host <code>v10</code> exige a chave efêmera exclusivamente no ambiente
-                privado do backoffice e falha antes do upload se o instalador ainda usar o contrato
-                anterior. O túnel aceita somente Host, Origin e headers normalizados que coincidam
-                com o loopback canônico. DNS foi adiado até o go-live.
+                Host, credenciais privadas, proteção de branch e HTTPS por IP estão configurados. A
+                produção serve apenas a fundação técnica já promovida; novas features só entram
+                depois do ciclo completo de review e deploy. Os detalhes operacionais ficam na
+                <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. DNS foi
+                adiado até o go-live.
               </td>
             </tr>
           </tbody>
@@ -196,66 +141,25 @@
       <section>
         <h2>Qualidade e entrega</h2>
         <p>
-          Cada feature usa branch própria. Antes do merge passam format, lint, tipos, Vitest, banco,
-          documentação, Playwright, build, audit e Knip conforme o risco. Todo PR recebe
-          <code>@codex review</code>, polling a cada 10 minutos até o status
-          <code>Completed</code> no SHA exato e novos ciclos depois de cada correção até uma
-          declaração explícita de review limpo. Antes do merge, uma execução adicional revisa
-          holisticamente todo o diff contra <code>main</code>. Sessenta minutos sem conclusão geram
-          alerta, nunca aprovação.
+          A regra normal é uma feature por branch. O PR de fundação atual é uma exceção única,
+          limitada e registrada no ADR-017; cada fatia mantém commit, testes e review próprios.
+          Antes do merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build,
+          audit e Knip conforme o risco.
         </p>
         <p>
-          O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
-          multiengine, acessibilidade, builds standalone, disciplina de dívida técnica e fronteiras
-          de segurança da entrega e do host. Testes não usam retry ou relaxamento de asserção para
-          mascarar falhas; trace, screenshot e vídeo são retidos somente quando Playwright falha. Os
-          servidores E2E usam um perfil explícito que suporta a matriz multibrowser sem alterar os
-          limites de produção, e o preflight rejeita qualquer identidade QA residual. O CI valida
-          pelo gate raiz de typecheck, usando Deno 2.9.5 fixado no lockfile, a fonte TypeScript
-          estrita da Edge Function de cleanup em Linux e Windows; nenhuma Action externa é
-          necessária, e o deploy implanta o mesmo grafo sem renomear extensões. O ledger terminaliza
-          automaticamente runs abandonados depois de 30 minutos, preserva cada pertencimento em
-          histórico imutável mesmo quando outra execução reutiliza a lease e exige sucesso posterior
-          para restaurar readiness; a ausência de qualquer sucesso terminal nesse intervalo também
-          fecha o health, e ativação, recovery e rollback executam a oneshot antes de testar
-          readiness. O canário é serializado, recupera probes abandonados e só registra ausência
-          física após
-          <code>404/NoSuchKey</code>; a secret key moderna trafega apenas em <code>apikey</code>,
-          sem edição manual do banco. O runner mantém um pool PostgreSQL administrativo e um DAL por
-          processo, com cliente exclusivo por operação, evitando churn de conexões e esgotamento de
-          portas efêmeras no Windows; páginas são encerradas antes da limpeza destrutiva para não
-          competir com refetches ainda ativos. A configuração destrutiva é lida somente ao iniciar
-          Playwright ou uma operação real de banco; importar helpers puros em Vitest não exige
-          credenciais E2E e também não cria fallback. Durante suítes longas, o setup global executa
-          o cleanup local real a cada dez minutos e reprova qualquer resultado não terminal,
-          reproduzindo o timer da VM sem deixar o readiness expirar artificialmente. No boot frio e
-          no bootstrap com release compatível, a oneshot de cleanup também termina antes dos health
-          checks; assertions no cleanup e no gate fecham artefato, ambientes, blocker principal ou
-          fase residual inválidos. O timer periódico é bloqueado durante transições e, fora delas,
-          repete o gate completo <code>cleanup → apps</code>; como o gate volta a inativo após
-          sucesso, uma falha transitória no boot é recuperada automaticamente sem callback ou ciclo
-          de ordenação no systemd. O recovery remove a fase durável antes de iniciar o timer e
-          preserva release e marcadores se a oneshot falhar, permitindo retry fail-closed sem exigir
-          novo deploy. O gate sequencia recovery, oneshot e apps sem fazer a oneshot aguardar pela
-          própria recovery. Os resultados permanecem no PR e nos checks. Os contratos técnicos ficam
+          Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status
+          <code>Completed</code>, corrige findings aplicáveis, resolve as conversas e repete o ciclo
+          até uma declaração explícita de review limpo. Antes do merge, uma revisão holística cobre
+          todo o diff contra <code>main</code>; timeout ou ausência de resposta nunca equivalem a
+          aprovação. O CI repete os gates em Windows e Linux limpos. Os contratos detalhados ficam
           nas fontes canônicas de <a href="docs/development.md">desenvolvimento</a>,
-          <a href="docs/infrastructure.md">infraestrutura</a> e
-          <a href="docs/security-privacy.md">segurança</a>.
+          <a href="docs/infrastructure.md">infraestrutura</a>,
+          <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
         </p>
         <p>
-          Ambiente local e banco recusam exposição de rede, configuração insegura ou divergente.
-          Procedimentos e contratos ficam nas fontes canônicas de
-          <a href="docs/development.md">desenvolvimento</a> e <a href="docs/database.md">banco</a>.
-        </p>
-        <p>
-          Merge em <code>main</code> só inicia escritas irreversíveis depois de concluir toda
-          evidência reversível da release, inclusive no ambiente de destino. O staging persiste e
-          relê o digest integral da árvore e vincula os ambientes à configuração corrente; retries
-          do mesmo SHA reutilizam esses bytes somente quando ambos continuam idênticos. O host
-          também comprova a árvore ativa, o comando SSH, o Nginx e o systemd efetivamente
-          carregados. Então aplica migrations forward-only e publica a release imutável na VM, com
-          health interno e público, rollback e recuperação após interrupção. Timeout ou serviço
-          indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
+          Depois do merge, o mesmo SHA aplica migrations forward-only, publica uma release imutável
+          na VM e precisa passar health interno e público. Falha de produção abre nova branch e
+          repete integralmente o processo.
         </p>
       </section>
 
@@ -269,8 +173,8 @@
             Playwright prova comportamento visível; unitários e SQL protegem lógica e invariantes.
           </li>
           <li>
-            Plano de feature é removido quando implementação, testes e documentação permanente
-            concluem o recorte; review, merge e deploy continuam obrigatórios no PR.
+            O ciclo de vida dos planos transitórios segue o
+            <a href="docs/adr/ADR-015-living-documentation-and-qa.md">ADR-015</a>.
           </li>
         </ul>
       </section>
@@ -311,9 +215,9 @@ npm run knip</code></pre>
       <section>
         <h2>Próximo marco</h2>
         <p>
-          Consolidar os gates no commit candidato, abrir o PR, executar reviews até ficar limpo,
-          fazer merge e comprovar o SHA no readiness público e nos dois readiness internos. Depois
-          disso, produzir a retrospectiva desta etapa e voltar à próxima feature.
+          Completar a base operacional do catálogo de estúdios, desde cadastro e mídia até decisão
+          editorial, disponibilidade e apresentação pública, antes de avançar para reservas e
+          liquidação financeira.
         </p>
       </section>
     </main>

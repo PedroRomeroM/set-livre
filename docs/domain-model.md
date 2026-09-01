@@ -149,6 +149,13 @@ draft incrementa `revision_version`; editar uma revisão aprovada sem draft cria
 `revision_number` e preserva a aprovada. Descartar o único draft remove o estúdio ainda inédito;
 descartar um draft sobre publicação volta ao ponteiro aprovado sem alterar histórico público.
 
+`draft_revision_id` é o ponteiro histórico para a candidata editorial atual, não uma autorização de
+escrita. Ele aponta para `draft` enquanto editável e permanece apontando para a mesma revisão quando a
+submissão a torna `pending`. Nesse estado, revisão, taxonomias, FAQ e associações de mídia são
+imutáveis. A FEAT-030 decide essa candidata: aprovação move o ponteiro publicado e limpa a candidata;
+rejeição registra motivo em evento editorial próprio e cria uma nova candidata `draft` a partir do
+conteúdo rejeitado, sem usar `audit.events` como read model de produto.
+
 Toda mutação revalida no banco perfil ativo/completo, dono ativo e aceite vigente de
 `owner_contract`, inclusive em replay idempotente. O navegador envia somente conteúdo e o fence
 `{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente. O
@@ -217,6 +224,13 @@ Regras:
 - primeira aprovação é obrigatória;
 - rejeitar alteração não remove revisão pública;
 - pausa não cancela reservas;
+- `paused` preserva os dois ponteiros. Retomar deriva `changes_pending` quando a candidata apontada
+  está `pending`; caso contrário deriva `published`, preserva a candidata privada e mantém uma
+  candidata `draft` completa disponível para submissão;
+- uma candidata só entra em `pending` com tipo, tags e comodidades ainda ativos sob lock transacional;
+  arquivamento anterior bloqueia o submit e arquivamento concorrente espera a decisão atômica;
+- a timeline editorial usa uma sequência causal monotônica do banco; `occurred_at` descreve o fato,
+  mas não decide qual review é o mais recente;
 - disabled bloqueia novas ações e exige auditoria.
 
 ## 6. Estado de revisão
@@ -230,6 +244,10 @@ Regras:
 Somente draft pode ser editada ou removida; o trigger exige incremento exato de
 `revision_version`. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com
 motivo. Aprovação marca revisão anterior como superseded.
+
+Eventos editoriais são append-only e referenciam estúdio, revisão, ator, tipo e instante. O motivo de
+rejeição vive nesse histórico próprio; auditoria continua registrando quem executou a ação, mas não é
+fonte da mensagem exibida ao dono.
 
 ## 7. Estado de tentativa/hold
 

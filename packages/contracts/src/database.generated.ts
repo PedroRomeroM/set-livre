@@ -36,6 +36,54 @@ export type Database = {
         };
         Relationships: [];
       };
+      email_outbox: {
+        Row: {
+          audience_key: string;
+          created_at: string;
+          deduplication_key: string;
+          id: string;
+          revision_id: string;
+          status: string;
+          studio_id: string;
+          template_key: string;
+        };
+        Insert: {
+          audience_key: string;
+          created_at?: string;
+          deduplication_key: string;
+          id?: string;
+          revision_id: string;
+          status?: string;
+          studio_id: string;
+          template_key: string;
+        };
+        Update: {
+          audience_key?: string;
+          created_at?: string;
+          deduplication_key?: string;
+          id?: string;
+          revision_id?: string;
+          status?: string;
+          studio_id?: string;
+          template_key?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "email_outbox_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_outbox_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       owner_payment_recipients: {
         Row: {
           created_at: string;
@@ -374,6 +422,61 @@ export type Database = {
           },
         ];
       };
+      studio_review_events: {
+        Row: {
+          actor_user_id: string | null;
+          event_sequence: number;
+          event_type: string;
+          id: string;
+          occurred_at: string;
+          rejection_reason: string | null;
+          revision_id: string;
+          studio_id: string;
+        };
+        Insert: {
+          actor_user_id?: string | null;
+          event_sequence?: never;
+          event_type: string;
+          id?: string;
+          occurred_at?: string;
+          rejection_reason?: string | null;
+          revision_id: string;
+          studio_id: string;
+        };
+        Update: {
+          actor_user_id?: string | null;
+          event_sequence?: never;
+          event_type?: string;
+          id?: string;
+          occurred_at?: string;
+          rejection_reason?: string | null;
+          revision_id?: string;
+          studio_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_review_events_actor_user_id_fkey";
+            columns: ["actor_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_review_events_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_review_events_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       studio_revision_amenities: {
         Row: {
           amenity_id: string;
@@ -596,6 +699,7 @@ export type Database = {
           draft_revision_id: string | null;
           id: string;
           owner_user_id: string;
+          publication_version: number;
           published_revision_id: string | null;
           status: string;
           updated_at: string;
@@ -605,6 +709,7 @@ export type Database = {
           draft_revision_id?: string | null;
           id?: string;
           owner_user_id: string;
+          publication_version?: number;
           published_revision_id?: string | null;
           status?: string;
           updated_at?: string;
@@ -614,6 +719,7 @@ export type Database = {
           draft_revision_id?: string | null;
           id?: string;
           owner_user_id?: string;
+          publication_version?: number;
           published_revision_id?: string | null;
           status?: string;
           updated_at?: string;

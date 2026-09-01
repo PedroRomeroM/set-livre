@@ -7,7 +7,12 @@ import {
   studioTaxonomyReferenceSchema,
   studioYoutubeVideoIdSchema,
 } from "./studio-taxonomy-content";
-import { studioMediaCommandActionSchema, studioMediaCommandSchema } from "./studio-media";
+import {
+  studioMediaCommandActionSchema,
+  studioMediaCommandSchema,
+  studioMediaItemSchema,
+  studioMediaRecordSchema,
+} from "./studio-media";
 
 export const studioStatusSchema = z.enum([
   "draft",
@@ -175,6 +180,267 @@ export const studioEditorSchema = z
     }
   });
 
+export const studioPublicationChecklistKeySchema = z.enum(["details", "content", "media"]);
+
+export const studioPublicationChecklistItemSchema = z
+  .strictObject({
+    complete: z.boolean(),
+    key: studioPublicationChecklistKeySchema,
+    messages: z.array(z.string().trim().min(1).max(240)).max(8),
+  })
+  .superRefine((value, context) => {
+    if (value.complete !== (value.messages.length === 0)) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Uma seção completa não pode publicar pendências, e uma incompleta precisa explicá-las.",
+        path: ["messages"],
+      });
+    }
+  });
+
+const studioPublicationChecklistSchema = z
+  .array(studioPublicationChecklistItemSchema)
+  .length(3)
+  .refine(
+    (items) =>
+      new Set(items.map((item) => item.key)).size === 3 &&
+      ["details", "content", "media"].every((key) => items.some((item) => item.key === key)),
+    { message: "O checklist de publicação precisa conter cada seção exatamente uma vez." },
+  );
+
+const studioPublicationRevisionPreviewBase = {
+  addressComplement: studioAddressComplementSchema,
+  amenities: studioTaxonomyReferencesSchema,
+  capacity: z.number().int().min(1).max(500),
+  city: z.literal("Curitiba"),
+  description: studioDescriptionSchema,
+  faqs: z.array(studioFaqSchema).max(20),
+  id: z.uuid(),
+  mediaCount: z.number().int().min(0).max(20),
+  name: studioNameSchema,
+  neighborhood: z.string().trim().min(2).max(120),
+  number: z.number().int().positive(),
+  postalCode: studioPostalCodeSchema,
+  state: z.literal("PR"),
+  status: studioRevisionStatusSchema,
+  street: studioStreetSchema,
+  streetNumber: studioStreetNumberSchema,
+  studioType: studioTypeSchema,
+  tags: studioTaxonomyReferencesSchema,
+  usageRules: z.string().max(5000),
+  version: z.number().int().positive(),
+  youtubeVideoId: studioYoutubeVideoIdSchema.nullable(),
+} as const;
+
+export const studioPublicationRevisionRecordSchema = z.strictObject({
+  ...studioPublicationRevisionPreviewBase,
+  cover: studioMediaRecordSchema.nullable(),
+});
+
+export const studioPublicationRevisionPreviewSchema = z.strictObject({
+  ...studioPublicationRevisionPreviewBase,
+  cover: studioMediaItemSchema.nullable(),
+});
+
+export const studioPublicationReviewEventTypeSchema = z.enum(["submitted", "approved", "rejected"]);
+
+export const studioPublicationLatestReviewSchema = z
+  .strictObject({
+    eventType: studioPublicationReviewEventTypeSchema,
+    occurredAt: z.iso.datetime({ offset: true }),
+    rejectionReason: z.string().trim().min(1).max(2000).nullable(),
+    revisionId: z.uuid(),
+  })
+  .superRefine((value, context) => {
+    if ((value.eventType === "rejected") !== (value.rejectionReason !== null)) {
+      context.addIssue({
+        code: "custom",
+        message: "Somente uma rejeição pode carregar motivo.",
+        path: ["rejectionReason"],
+      });
+    }
+  });
+
+const studioPublicationStateBase = {
+  canPause: z.boolean(),
+  canResume: z.boolean(),
+  canSubmit: z.boolean(),
+  checklist: studioPublicationChecklistSchema,
+  latestReview: studioPublicationLatestReviewSchema.nullable(),
+  publicationVersion: z.number().int().positive(),
+  scope: z.uuid(),
+  studioId: z.uuid(),
+  studioStatus: studioStatusSchema,
+} as const;
+
+function validateStudioPublicationState(
+  value: Readonly<{
+    canPause: boolean;
+    canResume: boolean;
+    canSubmit: boolean;
+    checklist: ReadonlyArray<{ complete: boolean }>;
+    currentRevision: { id: string; status: z.infer<typeof studioRevisionStatusSchema> };
+    publishedRevision: {
+      id: string;
+      status: z.infer<typeof studioRevisionStatusSchema>;
+    } | null;
+    studioStatus: z.infer<typeof studioStatusSchema>;
+  }>,
+  context: z.RefinementCtx,
+) {
+  const publishedRevisionIsApproved = value.publishedRevision?.status === "approved";
+  const currentRevisionMatchesPublished =
+    value.publishedRevision !== null && value.publishedRevision.id === value.currentRevision.id;
+  const currentRevisionIsPrivate =
+    value.currentRevision.status === "draft" ||
+    value.currentRevision.status === "pending" ||
+    value.currentRevision.status === "rejected";
+  const currentRevisionIsUnsubmittedPrivate =
+    value.currentRevision.status === "draft" || value.currentRevision.status === "rejected";
+  let stateMatchesRevisionGraph = false;
+
+  switch (value.studioStatus) {
+    case "draft":
+      stateMatchesRevisionGraph =
+        value.publishedRevision === null && value.currentRevision.status === "draft";
+      break;
+    case "pending_review":
+      stateMatchesRevisionGraph =
+        value.publishedRevision === null && value.currentRevision.status === "pending";
+      break;
+    case "rejected":
+      stateMatchesRevisionGraph =
+        value.publishedRevision === null &&
+        (value.currentRevision.status === "rejected" || value.currentRevision.status === "draft");
+      break;
+    case "published":
+      stateMatchesRevisionGraph =
+        publishedRevisionIsApproved &&
+        ((currentRevisionMatchesPublished && value.currentRevision.status === "approved") ||
+          (!currentRevisionMatchesPublished && currentRevisionIsUnsubmittedPrivate));
+      break;
+    case "changes_pending":
+      stateMatchesRevisionGraph =
+        publishedRevisionIsApproved && !currentRevisionMatchesPublished && currentRevisionIsPrivate;
+      break;
+    case "paused":
+      stateMatchesRevisionGraph =
+        publishedRevisionIsApproved &&
+        ((currentRevisionMatchesPublished && value.currentRevision.status === "approved") ||
+          (!currentRevisionMatchesPublished && currentRevisionIsPrivate));
+      break;
+    case "disabled":
+      stateMatchesRevisionGraph =
+        value.publishedRevision === null
+          ? currentRevisionIsPrivate
+          : publishedRevisionIsApproved &&
+            ((currentRevisionMatchesPublished && value.currentRevision.status === "approved") ||
+              (!currentRevisionMatchesPublished && currentRevisionIsPrivate));
+      break;
+  }
+
+  const expectedCanSubmit =
+    (value.studioStatus === "draft" ||
+      value.studioStatus === "rejected" ||
+      value.studioStatus === "published" ||
+      value.studioStatus === "changes_pending" ||
+      value.studioStatus === "paused") &&
+    value.currentRevision.status === "draft" &&
+    value.checklist.every((item) => item.complete);
+  const expectedCanPause =
+    (value.studioStatus === "published" || value.studioStatus === "changes_pending") &&
+    publishedRevisionIsApproved;
+  const expectedCanResume = value.studioStatus === "paused" && publishedRevisionIsApproved;
+
+  if (!stateMatchesRevisionGraph) {
+    context.addIssue({
+      code: "custom",
+      message: "O estado editorial não corresponde aos ponteiros e estados das revisões.",
+      path: ["studioStatus"],
+    });
+  }
+  if (value.canSubmit !== expectedCanSubmit) {
+    context.addIssue({
+      code: "custom",
+      message: "A disponibilidade de envio não corresponde ao checklist e à revisão atual.",
+      path: ["canSubmit"],
+    });
+  }
+  if (value.canPause !== expectedCanPause) {
+    context.addIssue({
+      code: "custom",
+      message: "A disponibilidade de pausa não corresponde ao estado editorial.",
+      path: ["canPause"],
+    });
+  }
+  if (value.canResume !== expectedCanResume) {
+    context.addIssue({
+      code: "custom",
+      message: "A disponibilidade de retomada não corresponde ao estado editorial.",
+      path: ["canResume"],
+    });
+  }
+  if (value.publishedRevision !== null && !publishedRevisionIsApproved) {
+    context.addIssue({
+      code: "custom",
+      message: "A versão publicada precisa permanecer aprovada.",
+      path: ["publishedRevision", "status"],
+    });
+  }
+  if (
+    (value.studioStatus === "published" ||
+      value.studioStatus === "changes_pending" ||
+      value.studioStatus === "paused") &&
+    value.publishedRevision === null
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Este estado editorial exige uma revisão publicada aprovada.",
+      path: ["publishedRevision"],
+    });
+  }
+  if (
+    value.studioStatus === "changes_pending" &&
+    value.publishedRevision?.id === value.currentRevision.id
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Alterações pendentes precisam apontar para uma candidata privada distinta.",
+      path: ["currentRevision", "id"],
+    });
+  }
+}
+
+export const studioPublicationRecordSchema = z
+  .strictObject({
+    ...studioPublicationStateBase,
+    currentRevision: studioPublicationRevisionRecordSchema,
+    publishedRevision: studioPublicationRevisionRecordSchema.nullable(),
+  })
+  .superRefine(validateStudioPublicationState);
+
+export const studioPublicationSchema = z
+  .strictObject({
+    ...studioPublicationStateBase,
+    currentRevision: studioPublicationRevisionPreviewSchema,
+    previewExpiresAt: z.iso.datetime({ offset: true }).nullable(),
+    publishedRevision: studioPublicationRevisionPreviewSchema.nullable(),
+  })
+  .superRefine((value, context) => {
+    validateStudioPublicationState(value, context);
+    const hasCover =
+      value.currentRevision.cover !== null ||
+      (value.publishedRevision !== null && value.publishedRevision.cover !== null);
+    if (hasCover !== (value.previewExpiresAt !== null)) {
+      context.addIssue({
+        code: "custom",
+        message: "A expiração das prévias precisa corresponder às capas assinadas.",
+        path: ["previewExpiresAt"],
+      });
+    }
+  });
+
 const privateStudioCommandEnvelope = {
   expectedScope: z.uuid(),
   idempotencyKey: z.uuid(),
@@ -206,6 +472,33 @@ export const studioDraftDiscardCommandSchema = z.strictObject({
   }),
 });
 
+const studioPublicationTransitionBoundarySchema = z.strictObject({
+  expectedPublicationVersion: z.number().int().positive(),
+  studioId: z.uuid(),
+});
+
+export const studioRevisionSubmitCommandSchema = z.strictObject({
+  action: z.literal("studio.revision.submit"),
+  ...privateStudioCommandEnvelope,
+  payload: z.strictObject({
+    expectedRevisionId: z.uuid(),
+    expectedRevisionVersion: z.number().int().positive(),
+    studioId: z.uuid(),
+  }),
+});
+
+export const studioPauseCommandSchema = z.strictObject({
+  action: z.literal("studio.pause"),
+  ...privateStudioCommandEnvelope,
+  payload: studioPublicationTransitionBoundarySchema,
+});
+
+export const studioResumeCommandSchema = z.strictObject({
+  action: z.literal("studio.resume"),
+  ...privateStudioCommandEnvelope,
+  payload: studioPublicationTransitionBoundarySchema,
+});
+
 const studioRevisionMutationBoundarySchema = z.strictObject({
   expectedRevisionId: z.uuid(),
   expectedRevisionVersion: z.number().int().positive(),
@@ -230,6 +523,9 @@ export const studioCommandActionSchema = z.enum([
   "studio.revision.updateTaxonomy",
   "studio.revision.updateContent",
   "studio.draft.discard",
+  "studio.revision.submit",
+  "studio.pause",
+  "studio.resume",
   ...studioMediaCommandActionSchema.options,
 ]);
 
@@ -239,6 +535,9 @@ export const studioCommandSchema = z.discriminatedUnion("action", [
   studioRevisionUpdateTaxonomyCommandSchema,
   studioRevisionUpdateContentCommandSchema,
   studioDraftDiscardCommandSchema,
+  studioRevisionSubmitCommandSchema,
+  studioPauseCommandSchema,
+  studioResumeCommandSchema,
   ...studioMediaCommandSchema.options,
 ]);
 
@@ -268,6 +567,13 @@ export type StudioCommandAction = z.infer<typeof studioCommandActionSchema>;
 export type StudioCorePayload = z.infer<typeof studioCorePayloadSchema>;
 export type StudioDraftDiscardResult = z.infer<typeof studioDraftDiscardResultSchema>;
 export type StudioEditor = z.infer<typeof studioEditorSchema>;
+export type StudioPublication = z.infer<typeof studioPublicationSchema>;
+export type StudioPublicationChecklistItem = z.infer<typeof studioPublicationChecklistItemSchema>;
+export type StudioPublicationRecord = z.infer<typeof studioPublicationRecordSchema>;
+export type StudioPublicationRevisionPreview = z.infer<
+  typeof studioPublicationRevisionPreviewSchema
+>;
+export type StudioPublicationRevisionRecord = z.infer<typeof studioPublicationRevisionRecordSchema>;
 export type StudioRevision = z.infer<typeof studioRevisionSchema>;
 export type StudioRevisionStatus = z.infer<typeof studioRevisionStatusSchema>;
 export type StudioStatus = z.infer<typeof studioStatusSchema>;

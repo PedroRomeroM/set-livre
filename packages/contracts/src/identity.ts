@@ -168,7 +168,7 @@ const accountLoginReturnTargets = [
   "/dono/recebimentos",
   "/dono/estudios/novo",
 ] as const;
-type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/${"dados" | "midia"}`;
+type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/${"dados" | "midia" | "publicacao"}`;
 
 export type AccountLoginReturnTarget =
   (typeof accountLoginReturnTargets)[number] | StudioEditorLoginReturnTarget;
@@ -182,7 +182,7 @@ function resolveStudioEditorLoginReturnTarget(
     segments[0] !== "" ||
     segments[1] !== "dono" ||
     segments[2] !== "estudios" ||
-    (segments[4] !== "dados" && segments[4] !== "midia")
+    (segments[4] !== "dados" && segments[4] !== "midia" && segments[4] !== "publicacao")
   ) {
     return undefined;
   }

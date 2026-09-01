@@ -180,8 +180,10 @@ export const studioMediaRecordSchema = studioMediaRecordBaseSchema.refine(
 );
 
 const studioMediaGalleryBoundaryShape = {
+  canEdit: z.boolean(),
   revisionId: z.uuid(),
   revisionNumber: z.number().int().positive(),
+  revisionStatus: z.enum(["approved", "draft", "pending", "rejected", "superseded"]),
   revisionVersion: z.number().int().positive(),
   scope: z.uuid(),
   studioId: z.uuid(),
@@ -189,18 +191,27 @@ const studioMediaGalleryBoundaryShape = {
 
 function validateStudioMediaOrderAndCover(
   gallery: Readonly<{
+    canEdit: boolean;
     items: ReadonlyArray<{
       id?: string;
       isCover: boolean;
       position: number;
       previewStoragePath?: string;
     }>;
+    revisionStatus: "approved" | "draft" | "pending" | "rejected" | "superseded";
     revisionId?: string;
     scope?: string;
     studioId?: string;
   }>,
   context: z.RefinementCtx,
 ) {
+  if (gallery.canEdit !== ["approved", "draft"].includes(gallery.revisionStatus)) {
+    context.addIssue({
+      code: "custom",
+      message: "A permissão de edição não corresponde ao estado factual da revisão.",
+      path: ["canEdit"],
+    });
+  }
   const mediaIds = gallery.items.flatMap((item) => (item.id === undefined ? [] : [item.id]));
   gallery.items.forEach((item, index) => {
     if (item.position !== index + 1) {

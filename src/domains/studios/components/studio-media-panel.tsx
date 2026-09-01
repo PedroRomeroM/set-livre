@@ -12,7 +12,6 @@ import {
 import { Alert, Button, Stack } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
-import Link from "next/link";
 import {
   useCallback,
   useEffect,
@@ -38,6 +37,7 @@ import {
   StudioApiError,
   uploadStudioMediaObject,
 } from "./studio-api";
+import { StudioEditorNavigation } from "./studio-editor-navigation";
 import {
   assertStudioMediaBoundary,
   preserveNewestStudioMediaGallery,
@@ -152,6 +152,7 @@ function MediaLightbox({
   onRequestClose,
   openerReference,
   previewExpired,
+  readOnly,
 }: Readonly<{
   item: MediaItem;
   items: readonly MediaItem[];
@@ -161,6 +162,7 @@ function MediaLightbox({
   onRequestClose: () => void;
   openerReference: RefObject<HTMLElement | null>;
   previewExpired: boolean;
+  readOnly: boolean;
 }>) {
   const dialogReference = useRef<HTMLDialogElement>(null);
   const index = items.findIndex((candidate) => candidate.id === item.id);
@@ -219,7 +221,13 @@ function MediaLightbox({
             Foto {index + 1} de {items.length}
           </h2>
           <p className={styles.lightboxMeta}>
-            {item.isCover ? "Capa do rascunho" : "Foto privada"}
+            {item.isCover
+              ? readOnly
+                ? "Capa enviada para análise"
+                : "Capa do rascunho"
+              : readOnly
+                ? "Foto enviada para análise"
+                : "Foto privada"}
           </p>
         </div>
         <Button onClick={onRequestClose} variant="secondary">
@@ -996,6 +1004,8 @@ function HydratedStudioMediaPanel({
     conflict !== undefined ||
     galleryOperation !== undefined ||
     mediaQuery.fetchStatus !== "idle";
+  const mutationLocked = !scopedGallery.canEdit || commandLocked;
+  const revisionPending = scopedGallery.revisionStatus === "pending";
   const selectedLightboxItem = scopedGallery.items.find((item) => item.id === lightboxId);
   const conflictChanged =
     conflict?.remote !== undefined &&
@@ -1007,28 +1017,30 @@ function HydratedStudioMediaPanel({
 
   return (
     <div className={styles.root}>
-      <nav aria-label="Edição do estúdio" className={styles.editorNavigation}>
-        <Link className={styles.editorNavigationLink} href={`/dono/estudios/${studioId}/dados`}>
-          Dados e conteúdo
-        </Link>
-        <Link
-          aria-current="page"
-          className={styles.editorNavigationLink}
-          href={`/dono/estudios/${studioId}/midia`}
-        >
-          Fotos
-        </Link>
-      </nav>
+      <StudioEditorNavigation current="midia" studioId={studioId} />
 
       <div className={styles.summary}>
         <div>
-          <p className={styles.eyebrow}>Rascunho privado</p>
+          <p className={styles.eyebrow}>
+            {revisionPending
+              ? "Revisão em análise"
+              : scopedGallery.revisionStatus === "approved"
+                ? "Publicação atual"
+                : "Rascunho privado"}
+          </p>
           <h2 className={styles.sectionTitle}>Galeria do estúdio</h2>
         </div>
         <p className={styles.counter}>
           <strong>{scopedGallery.items.length}</strong> de {studioMediaMaximumFiles} fotos
         </p>
       </div>
+
+      {revisionPending ? (
+        <Alert title="Revisão pendente e imutável">
+          As fotos enviadas continuam disponíveis para conferência, mas só poderão ser alteradas
+          depois de uma decisão editorial.
+        </Alert>
+      ) : null}
 
       {announcement === undefined ? null : (
         <p
@@ -1133,78 +1145,85 @@ function HydratedStudioMediaPanel({
       )}
 
       <div className={styles.workspace}>
-        <section aria-labelledby="studio-media-upload-title" className={styles.uploadSection}>
-          <div className={styles.sectionHeader}>
-            <h3 className={styles.subsectionTitle} id="studio-media-upload-title">
-              Adicionar fotos
-            </h3>
-            <p>
-              JPEG, PNG, WebP ou AVIF, até 15 MB por arquivo. Os envios são processados um por vez.
+        {scopedGallery.canEdit ? (
+          <section aria-labelledby="studio-media-upload-title" className={styles.uploadSection}>
+            <div className={styles.sectionHeader}>
+              <h3 className={styles.subsectionTitle} id="studio-media-upload-title">
+                Adicionar fotos
+              </h3>
+              <p>
+                JPEG, PNG, WebP ou AVIF, até 15 MB por arquivo. Os envios são processados um por
+                vez.
+              </p>
+            </div>
+            <label className={styles.filePicker}>
+              <span>Selecionar fotos</span>
+              <input
+                accept="image/avif,image/jpeg,image/png,image/webp"
+                aria-describedby="studio-media-upload-help"
+                disabled={mutationLocked || scopedGallery.items.length >= studioMediaMaximumFiles}
+                multiple
+                onChange={selectFiles}
+                ref={filePickerReference}
+                type="file"
+              />
+            </label>
+            <p className={styles.help} id="studio-media-upload-help">
+              Cada arquivo passa por preparo, envio direto e verificação autoritativa antes de
+              aparecer na galeria.
             </p>
-          </div>
-          <label className={styles.filePicker}>
-            <span>Selecionar fotos</span>
-            <input
-              accept="image/avif,image/jpeg,image/png,image/webp"
-              aria-describedby="studio-media-upload-help"
-              disabled={commandLocked || scopedGallery.items.length >= studioMediaMaximumFiles}
-              multiple
-              onChange={selectFiles}
-              ref={filePickerReference}
-              type="file"
-            />
-          </label>
-          <p className={styles.help} id="studio-media-upload-help">
-            Cada arquivo passa por preparo, envio direto e verificação autoritativa antes de
-            aparecer na galeria.
-          </p>
-          {scopedGallery.items.length >= studioMediaMaximumFiles ? (
-            <Alert title="Limite de fotos atingido">
-              Exclua uma foto do rascunho antes de adicionar outra.
-            </Alert>
-          ) : null}
+            {scopedGallery.items.length >= studioMediaMaximumFiles ? (
+              <Alert title="Limite de fotos atingido">
+                Exclua uma foto do rascunho antes de adicionar outra.
+              </Alert>
+            ) : null}
 
-          {attempts.length === 0 ? null : (
-            <ul aria-label="Fila de uploads" className={styles.uploadQueue}>
-              {attempts.map((attempt) => (
-                <li className={styles.uploadAttempt} key={attempt.id}>
-                  <div className={styles.uploadAttemptHeader}>
-                    <strong>{attempt.fileName}</strong>
-                    <span>{attempt.phase === "complete" ? "Concluído" : "Upload privado"}</span>
-                  </div>
-                  {["preparing", "uploading", "finalizing"].includes(attempt.phase) ? (
-                    <progress aria-label={`Progresso de ${attempt.fileName}`} />
-                  ) : null}
-                  <p>{attempt.message}</p>
-                  {attempt.retry === undefined ? null : (
-                    <Button
-                      disabled={commandLocked && attempt.phase !== "ambiguous"}
-                      onClick={() =>
-                        attempt.retry === "verify"
-                          ? void verifyUpload(attempt.id)
-                          : retryUpload(attempt.id, attempt.retry === "renew")
-                      }
-                      variant="secondary"
-                    >
-                      {attempt.retry === "verify"
-                        ? "Verificar estado atual"
-                        : attempt.retry === "renew"
-                          ? "Renovar envio"
-                          : "Repetir a mesma solicitação"}
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+            {attempts.length === 0 ? null : (
+              <ul aria-label="Fila de uploads" className={styles.uploadQueue}>
+                {attempts.map((attempt) => (
+                  <li className={styles.uploadAttempt} key={attempt.id}>
+                    <div className={styles.uploadAttemptHeader}>
+                      <strong>{attempt.fileName}</strong>
+                      <span>{attempt.phase === "complete" ? "Concluído" : "Upload privado"}</span>
+                    </div>
+                    {["preparing", "uploading", "finalizing"].includes(attempt.phase) ? (
+                      <progress aria-label={`Progresso de ${attempt.fileName}`} />
+                    ) : null}
+                    <p>{attempt.message}</p>
+                    {attempt.retry === undefined ? null : (
+                      <Button
+                        disabled={mutationLocked && attempt.phase !== "ambiguous"}
+                        onClick={() =>
+                          attempt.retry === "verify"
+                            ? void verifyUpload(attempt.id)
+                            : retryUpload(attempt.id, attempt.retry === "renew")
+                        }
+                        variant="secondary"
+                      >
+                        {attempt.retry === "verify"
+                          ? "Verificar estado atual"
+                          : attempt.retry === "renew"
+                            ? "Renovar envio"
+                            : "Repetir a mesma solicitação"}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ) : null}
 
         <section aria-labelledby="studio-media-gallery-title" className={styles.gallerySection}>
           <div className={styles.sectionHeader}>
             <h3 className={styles.subsectionTitle} id="studio-media-gallery-title">
-              Ordem do rascunho
+              {revisionPending ? "Fotos enviadas para análise" : "Ordem do rascunho"}
             </h3>
-            <p>A capa e a ordem só mudam depois de uma confirmação canônica.</p>
+            <p>
+              {revisionPending
+                ? "A capa e a ordem refletem exatamente a candidata enviada."
+                : "A capa e a ordem só mudam depois de uma confirmação canônica."}
+            </p>
           </div>
 
           {scopedGallery.items.length === 0 ? (
@@ -1222,7 +1241,11 @@ function HydratedStudioMediaPanel({
                   <li className={styles.mediaCard} key={item.id}>
                     <button
                       aria-label={`Visualizar foto ${item.position}${
-                        item.isCover ? ", capa do rascunho" : ""
+                        item.isCover
+                          ? revisionPending
+                            ? ", capa enviada para análise"
+                            : ", capa do rascunho"
+                          : ""
                       }`}
                       className={styles.thumbnailButton}
                       disabled={commandLocked}
@@ -1250,49 +1273,59 @@ function HydratedStudioMediaPanel({
                     </button>
                     <div className={styles.mediaMeta}>
                       <strong>Foto {item.position}</strong>
-                      <span>{item.isCover ? "Capa do rascunho" : "Foto privada"}</span>
+                      <span>
+                        {item.isCover
+                          ? revisionPending
+                            ? "Capa enviada para análise"
+                            : "Capa do rascunho"
+                          : revisionPending
+                            ? "Foto enviada para análise"
+                            : "Foto privada"}
+                      </span>
                     </div>
-                    <div className={styles.cardActions}>
-                      <Button
-                        aria-label={`Mover foto ${item.position} para cima`}
-                        disabled={commandLocked || index === 0}
-                        onClick={() => moveMedia(item, -1)}
-                        variant="secondary"
-                      >
-                        Mover para cima
-                      </Button>
-                      <Button
-                        aria-label={`Mover foto ${item.position} para baixo`}
-                        disabled={commandLocked || index === scopedGallery.items.length - 1}
-                        onClick={() => moveMedia(item, 1)}
-                        variant="secondary"
-                      >
-                        Mover para baixo
-                      </Button>
-                      {item.isCover ? null : (
+                    {scopedGallery.canEdit ? (
+                      <div className={styles.cardActions}>
                         <Button
-                          aria-label={`Definir foto ${item.position} como capa`}
-                          disabled={commandLocked}
-                          onClick={() => setCover(item)}
+                          aria-label={`Mover foto ${item.position} para cima`}
+                          disabled={mutationLocked || index === 0}
+                          onClick={() => moveMedia(item, -1)}
                           variant="secondary"
                         >
-                          Definir como capa
+                          Mover para cima
                         </Button>
-                      )}
-                      <Button
-                        aria-label={`Excluir foto ${item.position}`}
-                        disabled={commandLocked}
-                        onClick={() => setDeleteConfirmationId(item.id)}
-                        ref={(element) => {
-                          if (element === null) deleteButtonReferences.current.delete(item.id);
-                          else deleteButtonReferences.current.set(item.id, element);
-                        }}
-                        variant="ghost"
-                      >
-                        Excluir foto
-                      </Button>
-                    </div>
-                    {confirmingDelete ? (
+                        <Button
+                          aria-label={`Mover foto ${item.position} para baixo`}
+                          disabled={mutationLocked || index === scopedGallery.items.length - 1}
+                          onClick={() => moveMedia(item, 1)}
+                          variant="secondary"
+                        >
+                          Mover para baixo
+                        </Button>
+                        {item.isCover ? null : (
+                          <Button
+                            aria-label={`Definir foto ${item.position} como capa`}
+                            disabled={mutationLocked}
+                            onClick={() => setCover(item)}
+                            variant="secondary"
+                          >
+                            Definir como capa
+                          </Button>
+                        )}
+                        <Button
+                          aria-label={`Excluir foto ${item.position}`}
+                          disabled={mutationLocked}
+                          onClick={() => setDeleteConfirmationId(item.id)}
+                          ref={(element) => {
+                            if (element === null) deleteButtonReferences.current.delete(item.id);
+                            else deleteButtonReferences.current.set(item.id, element);
+                          }}
+                          variant="ghost"
+                        >
+                          Excluir foto
+                        </Button>
+                      </div>
+                    ) : null}
+                    {scopedGallery.canEdit && confirmingDelete ? (
                       <div
                         aria-label={`Confirmar exclusão da foto ${item.position}`}
                         className={styles.deleteConfirmation}
@@ -1306,7 +1339,7 @@ function HydratedStudioMediaPanel({
                         <div className={styles.confirmationActions}>
                           {deletingCoverWithAlternatives ? null : (
                             <Button
-                              disabled={commandLocked}
+                              disabled={mutationLocked}
                               onClick={() => confirmDelete(item)}
                               variant="secondary"
                             >
@@ -1314,7 +1347,7 @@ function HydratedStudioMediaPanel({
                             </Button>
                           )}
                           <Button
-                            disabled={commandLocked}
+                            disabled={mutationLocked}
                             onClick={() => cancelDelete(item.id)}
                             variant="ghost"
                           >
@@ -1341,6 +1374,7 @@ function HydratedStudioMediaPanel({
           onRequestClose={closeLightbox}
           openerReference={lightboxOpenerReference}
           previewExpired={expiredPreviewIds.has(selectedLightboxItem.id)}
+          readOnly={!scopedGallery.canEdit}
         />
       )}
     </div>

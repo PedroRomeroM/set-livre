@@ -10,6 +10,12 @@ const trustedEnvironmentSchema = z.object({
   APP_ENV: z.enum(["development", "local", "production", "test"]),
   NEXT_PUBLIC_APP_URL: z.url(),
 });
+const canonicalRouteUuidSchema = z.uuid().transform((value) => value.toLowerCase());
+
+export function canonicalRouteUuid(value: string) {
+  const parsed = canonicalRouteUuidSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
 
 export type ApiRouteErrorCode =
   | "AUTH_INVALID"
@@ -34,6 +40,7 @@ export type ApiRouteErrorCode =
   | "RECOVERY_RESTART_REQUIRED"
   | "SERVICE_UNAVAILABLE"
   | "SESSION_CHANGED"
+  | "STUDIO_SUBMISSION_INCOMPLETE"
   | "STUDIO_TAXONOMY_UNAVAILABLE"
   | "STUDIO_TYPE_UNAVAILABLE"
   | "UNAUTHENTICATED"
@@ -292,7 +299,11 @@ const observableActionSchema = z.enum([
   "studio.media.reorder",
   "studio.media.upload.finalize",
   "studio.media.upload.prepare",
+  "studio.pause",
+  "studio.publication.read",
   "studio.read",
+  "studio.resume",
+  "studio.revision.submit",
   "studio.revision.updateContent",
   "studio.revision.updateCore",
   "studio.revision.updateTaxonomy",

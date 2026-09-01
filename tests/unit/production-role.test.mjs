@@ -185,7 +185,7 @@ describe("production role provisioning", () => {
         SUPABASE_DB_PASSWORD: "admin-secret",
         SUPABASE_PROJECT_REF: projectRef,
       }),
-    ).toThrow("role e o projeto");
+    ).toThrow("identidade e as coordenadas canônicas");
 
     expect(() =>
       productionRoleConnections({
@@ -196,7 +196,7 @@ describe("production role provisioning", () => {
         SUPABASE_DB_PASSWORD: "admin-secret",
         SUPABASE_PROJECT_REF: projectRef,
       }),
-    ).toThrow("pooler session exato");
+    ).toThrow("identidade e as coordenadas canônicas");
   });
 
   it("fails closed when a public production coordinate drifts", () => {

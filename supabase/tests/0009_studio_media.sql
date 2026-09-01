@@ -1437,8 +1437,14 @@ select ok(
       pg_catalog.current_setting('set_livre.test.f008_owner_read')::jsonb
         -> 'revisionNumber'
     ) = 'number'
+    and pg_catalog.current_setting('set_livre.test.f008_owner_read')::jsonb
+      ->> 'revisionStatus' = 'draft'
     and (
-      select pg_catalog.count(*) = 6
+      pg_catalog.current_setting('set_livre.test.f008_owner_read')::jsonb
+        ->> 'canEdit'
+    )::boolean
+    and (
+      select pg_catalog.count(*) = 8
       from pg_catalog.jsonb_object_keys(
         pg_catalog.current_setting('set_livre.test.f008_owner_read')::jsonb
       ) as key_name
@@ -1448,7 +1454,9 @@ select ok(
       'studioId',
       'revisionId',
       'revisionNumber',
+      'revisionStatus',
       'revisionVersion',
+      'canEdit',
       'items'
     ]
     and pg_catalog.jsonb_array_length(
@@ -1676,6 +1684,9 @@ set
   status = 'approved',
   revision_version = revision.revision_version + 1
 where revision.id = pg_catalog.current_setting('set_livre.test.f008_revision')::uuid;
+update public.studios as studio
+set status = 'pending_review'
+where studio.id = pg_catalog.current_setting('set_livre.test.f008_studio')::uuid;
 update public.studios as studio
 set
   status = 'published',

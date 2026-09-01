@@ -473,6 +473,10 @@ set status = 'approved', revision_version = revision_version + 1
 where revision.id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid;
 
 update public.studios as studio
+set status = 'pending_review'
+where studio.id = pg_catalog.current_setting('set_livre.test.studio_a')::uuid;
+
+update public.studios as studio
 set
   status = 'published',
   published_revision_id = pg_catalog.current_setting('set_livre.test.revision_a')::uuid,

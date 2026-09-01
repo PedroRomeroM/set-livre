@@ -176,7 +176,7 @@ Ao clicar:
 
 - `/conta`: Server Component valida a sessão, lê o perfil próprio e entrega um boundary fechado; anônimo retorna a `/entrar?retorno=%2Fconta`;
 - `/conta/seguranca`: exibe o e-mail Auth somente leitura e oferece apenas os fluxos reais de recuperação de senha e logout; anônimo preserva o retorno allowlisted;
-- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` ou o path canônico `/dono/estudios/<studioId>/dados`, cujo único segmento variável é um UUID minúsculo válido; a rota de edição redireciona UUID válido não canônico para essa representação antes do login. Depois da validação, o destino vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, UUID inválido, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
+- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` ou um dos paths canônicos `/dono/estudios/<studioId>/dados | midia | publicacao`, cujo único segmento variável é um UUID minúsculo válido; cada rota do editor redireciona UUID válido não canônico para essa representação antes do login. Depois da validação, o destino vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, UUID inválido, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
 - perfil incompleto: PF/PJ, nome, telefone, CPF/CNPJ e documento adicional opcional em uma coluna no mobile e grade no desktop;
 - perfil completo: tipo PF/PJ somente leitura, documentos já salvos apenas mascarados e ações explícitas `manter | substituir | remover` quando aplicáveis;
 - preferência: seletor nativo `Dispositivo | Claro | Escuro`, persistência autoritativa e aplicação sem paleta customizável;
@@ -292,6 +292,22 @@ Editor de estúdio:
   nova confirmação; URL de vídeo inválida não envia POST;
 - mobile, 320 px e zoom 200% usam uma coluna, sem overflow; axe, teclado, toque e alvos de 44 px fazem
   parte da matriz da feature.
+
+Publicação do estúdio:
+
+- `/dono/estudios/[studioId]/publicacao` usa o mesmo gate privado e só revela a projeção depois da
+  hidratação e de uma leitura autoritativa do mesmo usuário/estúdio. Sem JavaScript, conteúdo, prévias
+  e ações permanecem ausentes e a página orienta habilitar scripts e recarregar;
+- o checklist é derivado no banco e leva à seção editável correspondente. Status, versão, revisão
+  candidata/publicada e motivo de rejeição são texto factual; a prévia publicada permanece estável
+  enquanto uma alteração aguarda nova decisão;
+- envio, pausa e retomada ficam nativamente desabilitados antes da hidratação e durante qualquer ação.
+  Pausa exige confirmação com impacto explícito e devolve foco ao controle de origem quando cancelada;
+- conflito nunca repete a transição: relê o estado, move foco para a recuperação segura e exige aceite
+  explícito. Resposta ambígua mantém somente a tentativa idempotente original para verificar ou repetir
+  exatamente o mesmo comando; anúncio de sucesso ou estado aceito recebe foco programático;
+- a composição usa uma coluna em mobile/320 px, alvos de 44 px, dimensões reservadas para capas,
+  contraste nos dois temas e reflow operável em zoom de 200%.
 
 Agenda:
 

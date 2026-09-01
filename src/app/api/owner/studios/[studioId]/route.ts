@@ -8,10 +8,10 @@ import {
   ApiRouteError,
   apiErrorResponse,
   apiSuccessResponse,
+  canonicalRouteUuid,
   requestIdFrom,
   writeSafeOperationalEvent,
 } from "@/lib/server/api-route";
-import { z } from "zod";
 
 export async function GET(
   request: Request,
@@ -39,8 +39,8 @@ export async function GET(
       throw new ApiRouteError(403, "FORBIDDEN", "Conclua seu perfil antes de gerenciar estúdios.");
     }
     const { studioId: rawStudioId } = await context.params;
-    const parsedStudioId = z.uuid().safeParse(rawStudioId);
-    if (!parsedStudioId.success) {
+    const studioId = canonicalRouteUuid(rawStudioId);
+    if (studioId === null) {
       throw new ApiRouteError(404, "NOT_FOUND", "Este estúdio não está disponível para sua conta.");
     }
     const owner = await readOwnerActivation(identity.session.userId);
@@ -59,7 +59,7 @@ export async function GET(
       );
     }
     try {
-      const editor = await readOwnerStudioEditor(identity.session.userId, parsedStudioId.data);
+      const editor = await readOwnerStudioEditor(identity.session.userId, studioId);
       status = 200;
       outcome = "accepted";
       return apiSuccessResponse(editor, requestId, status, identity.responseHeaders);

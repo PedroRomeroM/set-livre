@@ -35,7 +35,7 @@ const completeRow = {
 describe("profile DAL", () => {
   beforeAll(() => {
     process.env.DATABASE_URL_APP_DAL =
-      "postgresql://app_runtime:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
+      "postgresql://app_runtime_local:local-password@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal";
   });
 
   beforeEach(() => {

@@ -7,6 +7,7 @@ import {
   studioMediaPrivateCacheSeconds,
   studioMediaUploadDeadlineMs,
   studioMediaUploadPreparationSchema,
+  studioPublicationSchema,
   studioTaxonomiesSchema,
   studioTypeOptionsSchema,
   type StudioCommand,
@@ -15,6 +16,7 @@ import {
   type StudioMediaCommand,
   type StudioMediaGallery,
   type StudioMediaUploadPreparation,
+  type StudioPublication,
   type StudioTaxonomies,
   type StudioTypeOption,
 } from "@set-livre/contracts";
@@ -189,6 +191,29 @@ export function readStudioMedia(
   );
 }
 
+export function readStudioPublication(
+  studioId: string,
+  signal?: AbortSignal,
+): Promise<StudioPublication> {
+  return requestStudio(
+    `/api/owner/studios/${encodeURIComponent(studioId)}/publication`,
+    studioPublicationSchema,
+    signal === undefined ? undefined : { signal },
+  );
+}
+
+type StudioPublicationCommand = Extract<
+  StudioCommand,
+  { action: "studio.pause" | "studio.resume" | "studio.revision.submit" }
+>;
+
+export function changeStudioPublication(command: StudioPublicationCommand) {
+  return requestStudio("/api/commands", studioPublicationSchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
+}
+
 export function prepareStudioMediaUpload(
   command: Extract<StudioMediaCommand, { action: "studio.media.upload.prepare" }>,
 ): Promise<StudioMediaUploadPreparation> {
@@ -287,7 +312,7 @@ export async function uploadStudioMediaObject(
   }
 }
 
-export function isAmbiguousStudioError(error: unknown) {
+export function isAmbiguousStudioError(error: unknown): boolean {
   return (
     error instanceof StudioApiError &&
     ["NETWORK_UNAVAILABLE", "REQUEST_TIMEOUT", "RESPONSE_INVALID", "SERVICE_UNAVAILABLE"].includes(
@@ -296,7 +321,7 @@ export function isAmbiguousStudioError(error: unknown) {
   );
 }
 
-export function isStudioBoundaryChangedError(error: unknown) {
+export function isStudioBoundaryChangedError(error: unknown): boolean {
   return (
     error instanceof StudioApiError &&
     [
