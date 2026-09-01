@@ -95,9 +95,10 @@ O binding curto mantém `last_seen_at` e `closed_at` monotônicos em relação �
 banco normaliza correções regressivas do relógio de parede, e a validação usa o maior valor entre o
 horário observado e a última atividade; um ajuste de relógio não quebra a sessão nem amplia sua janela.
 
-Login, desbloqueio, busca de usuários e gestão de taxonomias permanecem `inert`, com controles nativos
-desabilitados, até o snapshot client-side de hidratação; assim, uma interação antecipada nunca executa
-sem handler ativo, a digitação não é apagada quando o React assume a tela e a ausência de JavaScript
+Login, logout global, desbloqueio, busca de usuários e gestão de taxonomias permanecem `inert`, com
+controles nativos desabilitados, até o snapshot client-side de hidratação; assim, uma interação
+antecipada nunca executa sem handler ativo, a digitação não é apagada quando o React assume a tela e
+a ausência de JavaScript
 não publica segredo por fallback HTML, mas explica que o recurso precisa ser habilitado antes de
 recarregar. O formulário global de
 desbloqueio envia a chave local somente ao endpoint de autenticação. O valor não
@@ -187,8 +188,8 @@ Audit é append-only para operadores. Export controlado.
 - `support` opera conta/PII, mas não enxerga nem chama acessos/taxonomias;
 - admin recente gerencia papéis e o último admin permanece protegido;
 - lista/sessão do browser não expõem papéis e o detalhe de acesso é composto no servidor;
-- login, desbloqueio, busca e taxonomias permanecem fechados antes da hidratação, sem perder entrada
-  antecipada nem aceitar ação sem handler;
+- login, logout global, desbloqueio, busca e taxonomias permanecem fechados antes da hidratação, sem
+  perder entrada antecipada nem aceitar ação sem handler;
 - runtime bloqueado não executa mutação; desbloqueio expira, não atravessa sessão e nunca persiste a chave;
 - arquivamento preserva referência e bloqueia nova seleção;
 - PII permanece mascarada, temporária e auditada;

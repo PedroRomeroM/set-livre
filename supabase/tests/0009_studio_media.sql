@@ -420,7 +420,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(97);
+select plan(100);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -453,6 +453,11 @@ select has_table(
   'maintenance',
   'studio_media_cleanup_runs',
   'ledger operacional durável de cleanup existe fora da Data API'
+);
+select has_table(
+  'maintenance',
+  'studio_media_cleanup_run_items',
+  'pertencimento histórico por run existe fora da Data API'
 );
 select has_table(
   'maintenance',
@@ -3049,6 +3054,12 @@ select policies_are(
 );
 select policies_are(
   'maintenance',
+  'studio_media_cleanup_run_items',
+  array[]::text[],
+  'histórico de pertencimento mantém RLS sem policy permissiva'
+);
+select policies_are(
+  'maintenance',
   'studio_media_cleanup_probes',
   array[]::text[],
   'probes com paths permanecem privados e sem policy permissiva'
@@ -3067,6 +3078,21 @@ select ok(
     and not pg_catalog.has_table_privilege(
       'service_role',
       'maintenance.studio_media_cleanup_runs',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege(
+      'anon',
+      'maintenance.studio_media_cleanup_run_items',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege(
+      'authenticated',
+      'maintenance.studio_media_cleanup_run_items',
+      'SELECT'
+    )
+    and not pg_catalog.has_table_privilege(
+      'service_role',
+      'maintenance.studio_media_cleanup_run_items',
       'SELECT'
     )
     and not exists (
@@ -3341,6 +3367,32 @@ select matches(
   '^22023:invalid_studio_media_cleanup_run_completion$',
   'complete rejeita claimed diferente de deleted mais failed'
 );
+
+insert into maintenance.studio_media_cleanup_run_items (
+  run_id,
+  item_kind,
+  media_id,
+  outcome,
+  claimed_at,
+  completed_at
+)
+values
+  (
+    '8c000000-0000-4000-8000-000000000001',
+    'media',
+    '8c000000-0000-4000-8000-000000000101',
+    'deleted',
+    pg_catalog.clock_timestamp() - interval '2 seconds',
+    pg_catalog.clock_timestamp() - interval '1 second'
+  ),
+  (
+    '8c000000-0000-4000-8000-000000000001',
+    'media',
+    '8c000000-0000-4000-8000-000000000102',
+    'deleted',
+    pg_catalog.clock_timestamp() - interval '2 seconds',
+    pg_catalog.clock_timestamp() - interval '1 second'
+  );
 
 set local role service_role;
 select pg_catalog.set_config(
@@ -3696,6 +3748,10 @@ select
   timing.prepared_at + interval '1 second'
 from timing;
 
+select maintenance.persist_studio_media_cleanup_run_items(
+  '8d000000-0000-4000-8000-000000000104'
+);
+
 set local role service_role;
 select public.begin_studio_media_cleanup_run(
   '8d000000-0000-4000-8000-000000000999',
@@ -3806,6 +3862,185 @@ select ok(
 rollback to savepoint cleanup_retention;
 release savepoint cleanup_retention;
 
+savepoint cleanup_run_membership_reuse;
+with timing as (
+  select pg_catalog.clock_timestamp() - interval '10 days' as prepared_at
+)
+insert into public.studio_media (
+  id,
+  studio_id,
+  prepared_revision_id,
+  uploaded_by,
+  storage_bucket,
+  storage_path,
+  preview_storage_path,
+  declared_mime_type,
+  declared_size_bytes,
+  status,
+  prepared_at,
+  upload_expires_at,
+  cleanup_after,
+  delete_requested_at,
+  cleanup_attempts,
+  updated_at
+)
+select
+  '8d000000-0000-4000-8000-000000000450',
+  pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+  pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+  '81000000-0000-4000-8000-000000000001',
+  'studio-media',
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.png',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'),
+    '8d000000-0000-4000-8000-000000000450'
+  ),
+  pg_catalog.format(
+    'owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'),
+    '8d000000-0000-4000-8000-000000000450'
+  ),
+  'image/png',
+  10,
+  'delete_pending',
+  timing.prepared_at,
+  timing.prepared_at + interval '2 hours',
+  timing.prepared_at + interval '2 hours',
+  timing.prepared_at + interval '2 hours',
+  0,
+  timing.prepared_at + interval '2 hours'
+from timing;
+
+insert into maintenance.studio_media_cleanup_runs (
+  run_id,
+  function_slug,
+  status,
+  started_at,
+  updated_at
+)
+values (
+  '8d000000-0000-4000-8000-000000000451',
+  'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  'running',
+  pg_catalog.clock_timestamp() - interval '31 minutes',
+  pg_catalog.clock_timestamp() - interval '31 minutes'
+);
+
+set local role service_role;
+select public.claim_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000451',
+  1
+);
+reset role;
+
+update public.studio_media as media
+set cleanup_claimed_at = pg_catalog.clock_timestamp() - interval '16 minutes'
+where media.id = '8d000000-0000-4000-8000-000000000450';
+
+insert into maintenance.studio_media_cleanup_runs (
+  run_id,
+  function_slug,
+  status,
+  started_at,
+  updated_at
+)
+values (
+  '8d000000-0000-4000-8000-000000000452',
+  'media-cleanup-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'running',
+  pg_catalog.clock_timestamp(),
+  pg_catalog.clock_timestamp()
+);
+
+set local role service_role;
+select public.claim_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000452',
+  1
+);
+select public.complete_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000452',
+  '8d000000-0000-4000-8000-000000000450',
+  true,
+  null
+);
+select public.complete_studio_media_cleanup_run(
+  '8d000000-0000-4000-8000-000000000452',
+  'succeeded',
+  1,
+  1,
+  0,
+  null
+);
+select public.begin_studio_media_cleanup_run(
+  '8d000000-0000-4000-8000-000000000453',
+  'media-cleanup-cccccccccccccccccccccccccccccccccccccccc'
+);
+reset role;
+
+select ok(
+  exists (
+      select 1
+      from maintenance.studio_media_cleanup_runs as run
+      where run.run_id = '8d000000-0000-4000-8000-000000000451'
+        and run.status = 'failed'
+        and run.claimed_count = 1
+        and run.deleted_count = 0
+        and run.failed_count = 1
+        and run.error_code = 'cleanup_run_abandoned'
+    )
+    and exists (
+      select 1
+      from maintenance.studio_media_cleanup_run_items as item
+      where item.run_id = '8d000000-0000-4000-8000-000000000451'
+        and item.item_kind = 'media'
+        and item.media_id = '8d000000-0000-4000-8000-000000000450'
+        and item.outcome = 'failed'
+        and item.completed_at is not null
+    )
+    and exists (
+      select 1
+      from maintenance.studio_media_cleanup_runs as run
+      where run.run_id = '8d000000-0000-4000-8000-000000000452'
+        and run.status = 'succeeded'
+        and run.claimed_count = 1
+        and run.deleted_count = 1
+        and run.failed_count = 0
+    )
+    and exists (
+      select 1
+      from maintenance.studio_media_cleanup_run_items as item
+      where item.run_id = '8d000000-0000-4000-8000-000000000452'
+        and item.item_kind = 'media'
+        and item.media_id = '8d000000-0000-4000-8000-000000000450'
+        and item.outcome = 'deleted'
+    )
+    and exists (
+      select 1
+      from public.studio_media as media
+      where media.id = '8d000000-0000-4000-8000-000000000450'
+        and media.status = 'deleted'
+        and media.cleanup_last_completed_token
+          = '8d000000-0000-4000-8000-000000000452'
+        and media.cleanup_last_succeeded is true
+    )
+    and private.feat008_capture_error(
+      $command$
+        update maintenance.studio_media_cleanup_run_items
+        set outcome = 'deleted'
+        where run_id = '8d000000-0000-4000-8000-000000000451'
+          and item_kind = 'media'
+          and media_id = '8d000000-0000-4000-8000-000000000450'
+      $command$
+    ) = '23514:studio_media_cleanup_run_item_immutable',
+  'reclaim e conclusão por run B não apagam o claim histórico usado para abandonar run A'
+);
+rollback to savepoint cleanup_run_membership_reuse;
+release savepoint cleanup_run_membership_reuse;
+
 savepoint cleanup_failed_health;
 set local role service_role;
 select public.begin_studio_media_cleanup_run(
@@ -3815,9 +4050,9 @@ select public.begin_studio_media_cleanup_run(
 select public.complete_studio_media_cleanup_run(
   '8c000000-0000-4000-8000-000000000002',
   'failed',
-  1,
   0,
-  1,
+  0,
+  0,
   'storage_timeout'
 );
 reset role;

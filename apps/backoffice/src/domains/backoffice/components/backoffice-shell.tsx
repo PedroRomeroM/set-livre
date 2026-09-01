@@ -142,6 +142,7 @@ export function BackofficeShell({
         <div className={styles.sessionSummary}>
           <span>{session.email}</span>
           <Button
+            disabled={!isHydrated}
             loading={logout.isPending}
             loadingLabel="Saindo"
             onClick={() => logout.mutate()}

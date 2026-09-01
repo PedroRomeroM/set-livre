@@ -19,7 +19,8 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
 - a revisão editável aceita de zero a vinte fotos; a exigência de ao menos uma foto e de uma capa é
   validada somente ao enviar a revisão;
 - JPEG, PNG, WebP e AVIF são aceitos até 15 MiB, 8.192 px por dimensão e 36 milhões de pixels;
-- `studio.media.upload.prepare` deriva o path e emite token assinado sem sobrescrita. Reserva
+- `studio.media.upload.prepare` deriva o path e emite token assinado sem sobrescrita, com deadline
+  server-side de dois segundos que aborta a request privilegiada ao Storage. Reserva
   expirada ou rejeitada pelo servidor deixa de consumir a cota imediatamente; renovar cria nova
   idempotência, mídia, path e token;
 - o browser envia o arquivo diretamente ao bucket privado `studio-media`;
@@ -86,10 +87,11 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
   estreitas de Storage, depois que sessão, ownership e paths foram validados pelo DAL;
 - Edge Function de cleanup autentica uma secret key exclusivamente no header `apikey`, executa lote
   limitado e remove o objeto somente pela Storage API;
-- ledger interrompido é recuperado sem edição manual: após 30 minutos, a próxima execução fecha o run
-  abandonado com contagens derivadas dos claims e completions persistidos, mantendo
-  `claimed = deleted + failed`, reassume leases vencidos e precisa concluir com sucesso para restaurar
-  readiness. A ausência de sucesso terminal por 30 minutos também fecha readiness;
+- ledger interrompido é recuperado sem edição manual: cada claim persiste pertencimento imutável ao
+  run antes que outra execução reutilize a lease. Após 30 minutos, a próxima execução fecha o run
+  abandonado com contagens derivadas desse histórico, mantendo `claimed = deleted + failed`, reassume
+  leases vencidos e precisa concluir com sucesso para restaurar readiness. A ausência de sucesso
+  terminal por 30 minutos também fecha readiness;
 - a VM invoca somente o slug imutável da release ativa por um gate oneshot e timer `systemd`. O timer
   repete o gate completo, portanto uma falha transitória no cleanup de boot mantém os apps parados e é
   recuperada automaticamente quando a execução seguinte passa; Cron, `pg_net` e Vault não pertencem ao
@@ -128,7 +130,8 @@ locators semânticos, sem `waitForTimeout`, `.skip`, `.only` ou retry que escond
 
 - unitários: envelopes estritos, formatos/decodificação e orquestração do cleanup;
 - pgTAP: constraints, grants, RLS A/B, limite 20, liberação de reserva rejeitada, clone de revisão,
-  idempotência, concorrência, claims e heartbeat do cleanup;
+  idempotência, concorrência, claims e heartbeat do cleanup, inclusive reclaim e conclusão do mesmo
+  item por outro run sem apagar o histórico do run abandonado;
 - Playwright: os quinze cenários acima, incluindo mobile, teclado, axe, reflow e descarte entre abas;
 - gates completos, review limpo no SHA, merge, migration, bucket e Function imutável em produção,
   canário HTTPS real da candidata, oneshot/timer de dez minutos na VM, ledger saudável e health público

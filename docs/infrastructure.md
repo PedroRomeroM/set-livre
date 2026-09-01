@@ -88,6 +88,10 @@ Workflows de pull request não recebem secrets de produção e o checkout remove
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
 Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
 e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
+O job Linux possui orçamento explícito de 75 minutos: a matriz completa de 323 execuções já consumiu
+aproximadamente 40 minutos em runner limpo, e build, pacote, contratos do host e smoke standalone ainda
+precisam terminar no mesmo gate. Um teste de contrato impede regressão ao antigo limite de 45 minutos,
+que cancelava o build depois de todos os testes terem passado.
 Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
 `Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
 review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
@@ -610,11 +614,13 @@ outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
 
 O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
 depois de 30 minutos, a primeira execução com outra identidade o fecha como
-`cleanup_run_abandoned`. O fechamento deriva cada item dos claims e completion tokens persistidos em
-mídia e probes: sucesso conta como deleted, falha ou claim ainda em voo conta como failed, sempre com
-`claimed = deleted + failed`. O claim seguinte pode reassumir leases vencidos e o sucesso posterior é a
-única forma de restaurar readiness. A ausência de qualquer sucesso terminal nos últimos 30 minutos
-também degrada readiness, cobrindo falhas que acontecem antes de o worker conseguir abrir o ledger. A
+`cleanup_run_abandoned`. Cada claim registra antes um item imutável no ledger do run; o fechamento
+deriva esse conjunto histórico, marca como failed qualquer item ainda pendente e mantém sempre
+`claimed = deleted + failed`. Claims e completion tokens em mídia e probes são apenas o estado
+operacional atual. O claim seguinte pode reassumir leases vencidos sem apagar o pertencimento anterior,
+e o sucesso posterior é a única forma de restaurar readiness. A ausência de qualquer sucesso terminal
+nos últimos 30 minutos também degrada readiness, cobrindo falhas que acontecem antes de o worker
+conseguir abrir o ledger. A
 ativação normal, a recuperação de uma ativação interrompida, o rollback e o bootstrap com release
 compatível executam a oneshot do slug da release ativa antes dos health checks internos e público; o
 timer de dez minutos só volta depois dessa prova. No recovery, a fase durável do bootstrap é removida

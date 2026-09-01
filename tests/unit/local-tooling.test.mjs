@@ -1746,6 +1746,21 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("budgets the complete Linux gate beyond the measured browser-suite duration", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const qualityStart = workflow.indexOf("  quality:");
+    const windowsStart = workflow.indexOf("  windows:", qualityStart);
+    const qualityJob = workflow.slice(qualityStart, windowsStart);
+
+    expect(qualityStart).toBeGreaterThan(-1);
+    expect(windowsStart).toBeGreaterThan(qualityStart);
+    expect(qualityJob).toContain("timeout-minutes: 75");
+    expect(qualityJob).not.toContain("timeout-minutes: 45");
+  });
+
   it("smokes the canonical SSH tunnel and rejects divergent forwarded origins", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),

@@ -93,9 +93,10 @@ Administrar contas, acessos e filtros públicos com least privilege e histórico
 - Filters/cursor.
 - Ações interativas renderizadas pelo servidor permanecem desabilitadas até a hidratação, sem aceitar
   cliques que ainda não possuem handler no cliente.
-- Login, chave local, busca de usuários e gestão de taxonomias permanecem inertes e nativamente
-  desabilitados até a hidratação. A fronteira não apaga valores digitados durante a transição SSR →
-  cliente, não oferece fallback HTML para segredos e não aceita uma ação sem handler ativo.
+- Login, logout global, chave local, busca de usuários e gestão de taxonomias permanecem inertes e
+  nativamente desabilitados até a hidratação. A fronteira não apaga valores digitados durante a
+  transição SSR → cliente, não oferece fallback HTML para segredos e não aceita uma ação sem handler
+  ativo.
 - Resposta ambígua de criação ou edição mantém campos/cancelamento bloqueados, mas conserva habilitado
   o replay da mesma `idempotencyKey` até obter o resultado autoritativo.
 
@@ -149,6 +150,9 @@ Regras:
 - sem `waitForTimeout`;
 - trace/screenshot em falha;
 - dados com namespace QA.
+
+O cenário de ações SSR sem hidratação inclui o logout global: sem JavaScript, o botão permanece
+nativamente desabilitado e não despacha navegação nem mutação.
 
 ## Testes unitários, integração e banco
 

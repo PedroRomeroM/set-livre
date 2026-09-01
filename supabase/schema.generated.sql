@@ -10529,6 +10529,10 @@ CREATE OR REPLACE TRIGGER "studio_media_enforce_lifecycle" BEFORE UPDATE ON "pub
 
 
 
+CREATE OR REPLACE TRIGGER "studio_media_track_cleanup_membership" AFTER INSERT OR UPDATE ON "public"."studio_media" FOR EACH ROW EXECUTE FUNCTION "maintenance"."track_studio_media_cleanup_membership"();
+
+
+
 CREATE OR REPLACE TRIGGER "studio_revision_amenities_require_draft" BEFORE INSERT OR DELETE OR UPDATE ON "public"."studio_revision_amenities" FOR EACH ROW EXECUTE FUNCTION "private"."assert_editable_studio_revision_relation"();
 
 

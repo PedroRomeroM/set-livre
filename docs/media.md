@@ -39,7 +39,8 @@ consomem.
 
 1. A UI faz somente feedback imediato de tipo, tamanho e limite.
 2. `studio.media.upload.prepare` valida sessão, dono, revisão/versionamento e idempotência, cria
-   `pending_upload` e emite token assinado sem sobrescrita.
+   `pending_upload` e emite token assinado sem sobrescrita. A assinatura privilegiada possui deadline
+   server-side de dois segundos, aborta a request ao Storage e falha como indisponibilidade recuperável.
 3. O browser envia o original diretamente ao Storage, com deadline de 60 segundos; o upload não
    atravessa a VM. Essa etapa usa o cliente oficial dedicado de Storage com a chave pública e o token
    assinado, sem criar outro cliente Auth nem persistir sessão no navegador.
@@ -138,9 +139,10 @@ código allowlisted. `400`, outro código de `404`, resposta ambígua ou interru
 não terminal para uma tentativa posterior; assim uma queda entre banco, upload e finalização não
 transforma objeto órfão em sucesso documental.
 
-Uma interrupção depois de abrir o ledger não exige reparo manual: a primeira execução posterior fecha
-um run diferente envelhecido como `cleanup_run_abandoned`, derivando dos tokens persistidos quantos
-itens terminaram, falharam ou ainda estavam claimed e mantendo `claimed = deleted + failed`. Depois
+Uma interrupção depois de abrir o ledger não exige reparo manual: cada claim registra pertencimento
+imutável ao run antes que a lease possa ser reutilizada. A primeira execução posterior fecha um run
+diferente envelhecido como `cleanup_run_abandoned`, derivando desse histórico quantos itens terminaram,
+falharam ou ainda estavam claimed e mantendo `claimed = deleted + failed`. Depois
 reaproveita leases vencidos pelo claim normal e só devolve readiness após um sucesso mais recente. O
 UUID original continua idempotente se o mesmo invocador conseguir repeti-lo antes dessa recuperação.
 

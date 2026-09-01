@@ -29,12 +29,13 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260831192100_harden_studio_media_terminal_rejection` e
 `20260831193500_harden_studio_media_superseded_reservations`,
 `20260831234000_harden_studio_media_cleanup_run_counts` e
-`20260831235000_harden_studio_media_finalize_claims`, que é o head atual. Antes do primeiro deploy, enquanto o
+`20260831235000_harden_studio_media_finalize_claims`, seguida por
+`20260901023051_preserve_studio_media_cleanup_run_membership`, que é o head atual. Antes do primeiro deploy, enquanto o
 projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e nove suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 483 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 486 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios, mídia e backoffice.
 
 A baseline implementada inclui:
@@ -362,13 +363,18 @@ em `finally`; token anterior não afeta takeover. A assinatura das URLs acontece
 sem manter conexão PostgreSQL durante fila, download, Sharp, Storage ou signing.
 
 `maintenance.studio_media_cleanup_runs` registra `run_id`, slug imutável, estado e contagens terminais,
-sem paths ou secrets. A criação entra diretamente em `running`; a conclusão é somente
+sem paths ou secrets. `maintenance.studio_media_cleanup_run_items` registra o pertencimento histórico
+imutável de cada mídia ou probe ao run que a reclamou, sem grant para roles da aplicação. O resultado
+só transita de pendente para `deleted` ou `failed`; reutilizar a lease em outro run nunca reatribui o
+item histórico. A criação entra diretamente em `running`; a conclusão é somente
 `succeeded`/`failed`, com replay idêntico e fechamento obrigatório `claimed = deleted + failed`.
 Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
 ou falha sem sucesso posterior. Ao abrir um novo
 run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu
-`running` além desse limite. As contagens são derivadas uma vez dos completion tokens e claims ainda em
-voo persistidos em mídia e probes, preservando `claimed = deleted + failed`; leases vencidos continuam
+`running` além desse limite. As contagens são derivadas exclusivamente do pertencimento histórico do
+run; itens ainda pendentes viram `failed` antes da agregação, preservando
+`claimed = deleted + failed`. Claims e completion tokens mutáveis continuam representando somente o
+estado operacional atual da mídia ou probe; leases vencidos continuam
 elegíveis ao claim seguinte e um sucesso posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma
 execução terminal saudável libera a ativação da release; a VM deriva o slug periódico do próprio SHA
 ativo.

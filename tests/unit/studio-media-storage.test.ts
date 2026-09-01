@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { createTrustedStudioMediaStorage } from "../../src/domains/studios/server/studio-media-storage";
+import {
+  createTrustedStudioMediaStorage,
+  studioMediaUploadTokenSigningDeadlineMs,
+} from "../../src/domains/studios/server/studio-media-storage";
 import { studioTestIds } from "./studio-test-fixture";
 
 const mediaId = "88888888-8888-4888-8888-888888888888";
@@ -11,6 +14,7 @@ const previewPath = mediaPath.replace(/\.jpg$/u, ".preview.webp");
 
 describe("trusted studio media storage", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
   });
 
@@ -48,6 +52,97 @@ describe("trusted studio media storage", () => {
     );
     expect(request?.headers.get("apikey")).toBe(secretKey);
     expect(request?.headers.has("authorization")).toBe(false);
+  });
+
+  it("aborts a stalled upload-token signing request at the server deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    let observedSignal: AbortSignal | null | undefined;
+    let announceRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      announceRequestStarted = resolve;
+    });
+    const fetchImplementation: typeof fetch = vi.fn((_input, init) => {
+      observedSignal = init?.signal;
+      announceRequestStarted?.();
+      return new Promise<Response>((_resolve, reject) => {
+        if (observedSignal?.aborted === true) {
+          reject(observedSignal.reason);
+          return;
+        }
+        observedSignal?.addEventListener("abort", () => reject(observedSignal?.reason), {
+          once: true,
+        });
+      });
+    });
+    const outcome = createTrustedStudioMediaStorage(fetchImplementation)
+      .createUploadToken(mediaPath)
+      .catch((error: unknown) => error);
+
+    await requestStarted;
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(studioMediaUploadTokenSigningDeadlineMs - 1);
+    expect(observedSignal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(outcome).resolves.toMatchObject({
+      name: "StudioMediaStorageError",
+      operation: "upload-token",
+      reason: "unavailable",
+    });
+    expect(observedSignal?.aborted).toBe(true);
+    expect(observedSignal?.reason).toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears the upload-token signing timer after Storage responds", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_storage_contract_key");
+    let observedSignal: AbortSignal | null | undefined;
+    let resolveRequest: ((response: Response) => void) | undefined;
+    let announceRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      announceRequestStarted = resolve;
+    });
+    const fetchImplementation: typeof fetch = vi.fn((_input, init) => {
+      observedSignal = init?.signal;
+      announceRequestStarted?.();
+      return new Promise<Response>((resolve) => {
+        resolveRequest = resolve;
+      });
+    });
+    const operation =
+      createTrustedStudioMediaStorage(fetchImplementation).createUploadToken(mediaPath);
+
+    await requestStarted;
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(1);
+
+    resolveRequest?.(
+      new Response(
+        JSON.stringify({
+          url: `/object/upload/sign/studio-media/${mediaPath}?token=signed-upload-token`,
+        }),
+        { headers: { "content-type": "application/json" }, status: 200 },
+      ),
+    );
+    await expect(operation).resolves.toBe("signed-upload-token");
+    expect(vi.getTimerCount()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(studioMediaUploadTokenSigningDeadlineMs);
+    expect(observedSignal?.aborted).toBe(false);
   });
 
   it("forwards the server deadline signal to the private object download", async () => {

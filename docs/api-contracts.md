@@ -499,6 +499,8 @@ Retorna:
 - bucket/path derivados, `mediaId` e token de upload assinado;
 - escopo, revisão/versão observadas e expiração de duas horas.
 
+O servidor limita a assinatura privilegiada do token a dois segundos, encaminha o `AbortSignal` ao
+cliente Storage e converte timeout ou falha em indisponibilidade recuperável sem deixar trabalho órfão.
 O browser usa o cliente oficial de Storage apenas para `uploadToSignedUrl`, com deadline local de 60
 segundos e sem sobrescrita. O token nunca entra no QueryCache ou em persistência. Se a reserva expirar
 ou o objeto não for confirmado, a recuperação cria outra idempotência e outra identidade; a reserva

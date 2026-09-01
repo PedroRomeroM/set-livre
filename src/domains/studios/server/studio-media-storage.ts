@@ -16,6 +16,7 @@ import { StorageApiError, StorageClient } from "@supabase/storage-js";
 import { readTrustedSupabaseEnvironment } from "@/lib/supabase/config";
 
 export const studioMediaPreviewSigningDeadlineMs = 2_000;
+export const studioMediaUploadTokenSigningDeadlineMs = 2_000;
 
 export class StudioMediaStorageError extends Error {
   readonly operation: "download" | "preview" | "preview-upload" | "upload-token";
@@ -86,6 +87,26 @@ function createDeadlineFetch(
   };
 }
 
+async function withUploadTokenSigningDeadline<T>(
+  execute: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abortError = new DOMException("A assinatura do token de upload expirou.", "AbortError");
+  const abortOutcome = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener("abort", () => reject(abortError), { once: true });
+  });
+  const deadline = setTimeout(
+    () => controller.abort(abortError),
+    studioMediaUploadTokenSigningDeadlineMs,
+  );
+
+  try {
+    return await Promise.race([execute(controller.signal), abortOutcome]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
 function throwStorageAbort(signal: AbortSignal | undefined) {
   if (signal?.aborted !== true) return;
   if (signal.reason instanceof Error) throw signal.reason;
@@ -98,7 +119,15 @@ function createStudioMediaStorage(createBucket: StudioMediaBucketFactory): Studi
   return {
     async createUploadToken(rawPath) {
       const path = studioMediaPathSchema.parse(rawPath);
-      const { data, error } = await bucket.createSignedUploadUrl(path, { upsert: false });
+      let signingResult: Awaited<ReturnType<StudioMediaBucket["createSignedUploadUrl"]>>;
+      try {
+        signingResult = await withUploadTokenSigningDeadline((signal) =>
+          createBucket(signal).createSignedUploadUrl(path, { upsert: false }),
+        );
+      } catch {
+        throw new StudioMediaStorageError("upload-token");
+      }
+      const { data, error } = signingResult;
       if (error !== null) throw new StudioMediaStorageError("upload-token");
       return data.token;
     },

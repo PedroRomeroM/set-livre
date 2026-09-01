@@ -108,6 +108,22 @@ async function expectBackofficeRuntimeClosedWithoutHydration(
       }),
     ).toBeAttached();
 
+    const logout = page.getByRole("button", { name: "Sair" });
+    await expect(logout).toBeDisabled();
+    const logoutClickDispatched = await logout.evaluate((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("O controle de logout precisa permanecer um button nativo.");
+      }
+      let clickDispatched = false;
+      button.addEventListener("click", () => {
+        clickDispatched = true;
+      });
+      button.click();
+      return clickDispatched;
+    });
+    expect(logoutClickDispatched).toBe(false);
+    expect(new URL(page.url()).pathname).toBe("/usuarios");
+
     const form = page.locator("form", {
       has: page.locator('input[name="runtimeUnlockKey"]'),
     });
