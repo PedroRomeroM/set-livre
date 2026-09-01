@@ -529,7 +529,9 @@ Management API durante o job confiável, para assinar paths já autorizados e op
 grants ao browser. O workflow valida formato/quebras de linha, transporta os arquivos separados do
 artifact e o instalador publica cada um como `root:<grupo-da-aplicação> 0640`; segredo de uma aplicação
 é recusado no arquivo da outra. A chave do backoffice vira cookie HttpOnly assinado de cinco minutos;
-nenhum dos valores entra em bundle, release, log ou browser storage. O preflight
+os candidatos efêmeros do contrato de host reproduzem exatamente esse conjunto obrigatório de chaves,
+para que o laboratório Linux valide o mesmo envelope aceito em produção.
+Nenhum dos valores entra em bundle, release, log ou browser storage. O preflight
 `set-livre-deploy-ready-v11` distingue hosts que já validam esse contrato dos instaladores anteriores
 antes de qualquer upload ou migration.
 

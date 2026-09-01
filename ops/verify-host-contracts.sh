@@ -944,8 +944,9 @@ fixture_runtime_environment_digest() {
     printf '\0'
   } | sha256sum | cut --delimiter=' ' --fields=1
 }
+fixture_supabase_secret_key="sb_secret_ci_server_contract_key"
 write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL" "" \
-  "sb_secret_ci_server_contract_key"
+  "$fixture_supabase_secret_key"
 fixture_runtime_unlock_key="$(printf 'A%.0s' {1..43})"
 write_fixture_environment "$temporary_directory/backoffice.env" \
   "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
@@ -1483,7 +1484,8 @@ package_candidate() {
     --create --file=- --directory "$candidate_directory" . \
     | gzip --best --no-name > "$candidate_archive"
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
-  write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
+  write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL" "" \
+    "$fixture_supabase_secret_key"
   write_fixture_environment "$candidate_backoffice_environment" \
     "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
   candidate_runtime_environment_digest="$(
