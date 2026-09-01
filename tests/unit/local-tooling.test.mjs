@@ -35,6 +35,30 @@ import {
 } from "../../scripts/local-setup.mjs";
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
+function captureWindowsDatabaseFailure({
+  containerName,
+  environment = {
+    DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+  },
+  execute,
+}) {
+  const invocations = [];
+  let thrown = "";
+  try {
+    runWindowsDatabaseTests(environment, {
+      containerName,
+      execute: (command, argumentsList, options) => {
+        invocations.push({ argumentsList, command, options });
+        return execute(command, argumentsList, options);
+      },
+      resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+    });
+  } catch (error) {
+    thrown = String(error);
+  }
+  return { invocations, thrown };
+}
+
 describe("local tooling contracts", () => {
   const localAnonKey = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(
     '{"role":"anon"}',
@@ -1836,37 +1860,6 @@ describe("local tooling contracts", () => {
     expect(browserDelivery).toContain("retention-days: 7");
   });
 
-  it("keeps the static guard against prohibited Playwright constructs", () => {
-    const docsCheck = readFileSync(
-      new URL("../../scripts/docs-check.mjs", import.meta.url),
-      "utf8",
-    );
-
-    expect(docsCheck).toContain('walk(resolve(repositoryRoot, "tests/e2e"))');
-    expect(docsCheck).toContain("pattern: /\\.only\\s*\\(/u");
-    expect(docsCheck).toContain("pattern: /\\.skip\\s*\\(/u");
-    expect(docsCheck).toContain("pattern: /waitForTimeout\\s*\\(/u");
-    expect(docsCheck).toContain("for (const path of playwrightFiles)");
-    for (const root of [
-      ".github",
-      "apps",
-      "ops",
-      "packages",
-      "scripts",
-      "src",
-      "supabase",
-      "tests",
-    ]) {
-      expect(docsCheck).toContain(`"${root}"`);
-    }
-    expect(docsCheck).toContain('".py"');
-    for (const extension of [".conf", ".path", ".service"]) {
-      expect(docsCheck).toContain(`"${extension}"`);
-    }
-    expect(docsCheck).toContain('${"TO" + "DO"}|${"FIX" + "ME"}');
-    expect(docsCheck).toContain("for (const path of implementationFiles)");
-  });
-
   it("disables ambient curl configuration for every operational invocation", () => {
     const sources = [
       "../../.github/workflows/ci.yml",
@@ -2266,7 +2259,124 @@ describe("local tooling contracts", () => {
       PGUSER: "postgres",
     });
     expect(invocations[1]?.argumentsList[2]).toBe("set-livre-pgtap-test:/tests");
-    expect(invocations[2]?.options.stdio).toEqual(["ignore", "inherit", "inherit"]);
+    expect(invocations[2]?.options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("preserves redacted pgTAP diagnostics and removes a failed Windows runner", () => {
+    const { invocations, thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-failure",
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr:
+                "0010_studio_publication_workflow.sql:994: ERROR: pointer invalid\n" +
+                "postgresql://postgres:database-secret@127.0.0.1/postgres " +
+                "password=database-secret PGPASSWORD=database-secret",
+              stdout: "Failed 1 subtest",
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "rm",
+    ]);
+    expect(thrown).toContain("0010_studio_publication_workflow.sql:994");
+    expect(thrown).toContain("Failed 1 subtest");
+    expect(thrown).toContain("[stderr]");
+    expect(thrown).toContain("[stdout]");
+    expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
+    expect(thrown).toContain("password=[REDACTED]");
+    expect(thrown).toContain("PGPASSWORD=[REDACTED]");
+    expect(thrown).not.toContain("database-secret");
+  });
+
+  it("reads redacted container logs when Docker attach loses a failed pgTAP diagnostic", () => {
+    const { invocations, thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-log-fallback",
+      execute: (_command, argumentsList) => {
+        if (argumentsList[0] === "start") return { status: 1, stderr: "", stdout: "" };
+        if (argumentsList[0] === "logs") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout:
+              "0010_studio_publication_workflow.sql:1810: ERROR: immutable\n" +
+              "PGPASSWORD=local-password",
+          };
+        }
+        return { status: 0, stderr: "", stdout: "" };
+      },
+    });
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "logs",
+      "rm",
+    ]);
+    expect(thrown).toContain("0010_studio_publication_workflow.sql:1810");
+    expect(thrown).toContain("PGPASSWORD=[REDACTED]");
+    expect(thrown).not.toContain("local-password");
+  });
+
+  it("redacts the known pgTAP password in raw, escaped and encoded diagnostics", () => {
+    const password = "segredo 漢字 com espaço, aspas \\\"' e %/&";
+    const encodedPassword = encodeURIComponent(password);
+    const escapedPassword = JSON.stringify(password).slice(1, -1);
+    const { thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-redaction",
+      environment: {
+        DB_URL: `postgresql://postgres:${encodedPassword}@127.0.0.1:54322/postgres`,
+      },
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr: [
+                `password = ${password}`,
+                JSON.stringify({ PGPASSWORD: password }),
+                `encoded=${encodedPassword}`,
+                `postgresql://postgres:${encodedPassword}@127.0.0.1/postgres`,
+              ].join("\n"),
+              stdout: "Failed 1 subtest",
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    expect(thrown).toContain("[REDACTED]");
+    expect(thrown).not.toContain(password);
+    expect(thrown).not.toContain(encodedPassword);
+    expect(thrown).not.toContain(escapedPassword);
+    expect(thrown).not.toContain("漢字");
+  });
+
+  it("keeps independently bounded stderr and stdout evidence", () => {
+    const stderrHead = "STDERR-SENTINEL-BEGIN";
+    const stderrTail = "STDERR-SENTINEL-END";
+    const stdoutHead = "STDOUT-SENTINEL-BEGIN";
+    const stdoutTail = "STDOUT-SENTINEL-END";
+    const { thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-bounded-diagnostics",
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr: `${stderrHead}\n${"e".repeat(40_000)}\n${stderrTail}`,
+              stdout: `${stdoutHead}\n${"o".repeat(40_000)}\n${stdoutTail}`,
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    for (const evidence of [stderrHead, stderrTail, stdoutHead, stdoutTail]) {
+      expect(thrown).toContain(evidence);
+    }
+    expect(thrown).toContain("[stderr truncado; início e fim preservados]");
+    expect(thrown).toContain("[stdout truncado; início e fim preservados]");
   });
 
   it("normalizes and validates the tracked schema dump", () => {

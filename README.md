@@ -89,9 +89,9 @@ docs/              contratos vivos, ADRs, roadmap e runbooks
 
 ## Documentação
 
-O índice canônico é [`docs/README.md`](docs/README.md). Planos de features são transitórios: depois de
-merge e deploy, o arquivo correspondente em `docs/features/` é removido e os contratos duráveis ficam
-nos documentos de domínio e testes.
+O índice canônico é [`docs/README.md`](docs/README.md). O ciclo de vida dos planos transitórios e a
+regra de fonte canônica seguem o
+[`ADR-015`](docs/adr/ADR-015-living-documentation-and-qa.md).
 
 ## Entrega
 

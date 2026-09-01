@@ -41,8 +41,8 @@ notificações e backoffice. Eles guardam regras duráveis; não repetem o hist�
 
 ## Documentos transitórios
 
-- [`features/`](features/): somente features planejadas ou ainda em entrega; o plano permanece até
-  review, merge e deploy verdes e então é apagado, preservando os fatos duráveis nas fontes canônicas.
+- [`features/`](features/): planos transitórios cujo ciclo de vida segue o
+  [`ADR-015`](adr/ADR-015-living-documentation-and-qa.md).
 - [`open-decisions.md`](open-decisions.md): decisões humanas ainda abertas.
 - [`technical-debt.md`](technical-debt.md): dívida aceita com dono e condição de saída.
 

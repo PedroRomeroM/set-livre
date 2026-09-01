@@ -118,9 +118,12 @@ No Windows, `npm run test:db` usa a imagem pinada
 `public.ecr.aws/supabase/pg_prove:3.36` em um container efêmero na rede local oficial do Supabase.
 Os testes são copiados com `docker cp`, sem bind mount sujeito a permissões/compartilhamento do
 OneDrive; host, usuário, senha e database entram apenas no ambiente do processo/container. O runner
-sempre remove o container no `finally` e preserva a primeira falha se a limpeza também falhar. Linux
-continua usando o comando oficial `supabase test db --local`. Em ambos, `0000_test_setup.sql` cria a
-extensão pgTAP idempotentemente antes das suítes, e o gate ainda valida readiness e artefatos gerados.
+sempre remove o container no `finally` e preserva a primeira falha se a limpeza também falhar. Quando
+o pgTAP reprova, o wrapper informa o código de saída e preserva início e fim de `stderr` e `stdout` em
+blocos rotulados e limitados separadamente. DSNs, parâmetros de senha e o segredo conhecido nas formas
+literal, JSON escapada ou percent-encoded são redigidos antes de qualquer saída. Linux continua usando o comando oficial
+`supabase test db --local`. Em ambos, `0000_test_setup.sql` cria a extensão pgTAP idempotentemente
+antes das suítes, e o gate ainda valida readiness e artefatos gerados.
 
 ## Variáveis locais
 

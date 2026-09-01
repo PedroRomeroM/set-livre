@@ -3,6 +3,7 @@ import { apiSuccessSchema, identityRecoveryRequestResultSchema } from "@set-livr
 import { expect, test, type Page } from "@playwright/test";
 
 import {
+  captureFeat002AuthEmailFence,
   cleanupFeat002QaIdentity,
   confirmFeat002Registration,
   createFeat002QaIdentity,
@@ -70,14 +71,14 @@ test("SL-F002-E2E-004 @p1 recuperação não enumera e-mail inexistente", async 
   const missingIdentity = createFeat002QaIdentity(testInfo, "004_missing");
 
   try {
-    const signupNotBefore = await submitFeat002Registration(page, existingIdentity);
-    await confirmFeat002Registration(page, existingIdentity, signupNotBefore);
+    const signupEmailFence = await submitFeat002Registration(page, existingIdentity);
+    await confirmFeat002Registration(page, existingIdentity, signupEmailFence);
     await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
-    const recoveryNotBefore = new Date(Date.now() - 1_000);
+    const recoveryEmailFence = await captureFeat002AuthEmailFence(existingIdentity);
     const existingResponse = await requestRecoveryThroughUi(page, existingIdentity.email);
-    await trackFeat002AuthEmail(existingIdentity, "recovery", recoveryNotBefore);
+    await trackFeat002AuthEmail(existingIdentity, "recovery", recoveryEmailFence);
 
     await page.getByRole("button", { name: "Informar outro e-mail" }).click();
     const missingResponse = await requestRecoveryThroughUi(page, missingIdentity.email);

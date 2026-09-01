@@ -329,12 +329,12 @@ export async function registerAndConfirmFeat003Identity(
   identity: Feat003QaIdentity,
   personType: PersonType,
 ) {
-  const notBefore = await submitFeat002Registration(
+  const emailFence = await submitFeat002Registration(
     page,
     identity,
     personType === "individual" ? "Pessoa física" : "Pessoa jurídica",
   );
-  return confirmFeat002Registration(page, identity, notBefore);
+  return confirmFeat002Registration(page, identity, emailFence);
 }
 
 export async function loginFeat003Identity(

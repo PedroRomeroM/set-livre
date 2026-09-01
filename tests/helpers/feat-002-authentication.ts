@@ -13,10 +13,12 @@ import { gotoExpectedPage } from "./expected-page";
 import { cleanupLocalAuthUser } from "./local-auth-cleanup";
 import {
   assertQaAuthEmail,
+  captureLocalAuthEmailFence,
   deleteAllExactLocalAuthEmails,
   deleteExactLocalAuthEmail,
   waitForLocalAuthEmail,
   type LocalAuthEmail,
+  type LocalAuthEmailFence,
   type LocalAuthEmailType,
 } from "./local-auth-mailpit";
 
@@ -190,21 +192,27 @@ export async function submitFeat002Registration(
   await expect(privacyAcceptance).toBeChecked();
   await expect(personTypeChoice).toBeChecked();
 
-  const notBefore = new Date(Date.now() - 1_000);
+  const emailFence = await captureFeat002AuthEmailFence(identity);
   await page.getByRole("button", { name: "Criar conta" }).click();
   await expect(page.getByRole("status")).toContainText("Confira seu e-mail");
-  return notBefore;
+  return emailFence;
+}
+
+export async function captureFeat002AuthEmailFence(identity: Feat002QaIdentity) {
+  return captureLocalAuthEmailFence({ recipientEmail: identity.email });
 }
 
 export async function trackFeat002AuthEmail(
   identity: Feat002QaIdentity,
   emailType: LocalAuthEmailType,
-  notBefore: Date,
+  emailFence: LocalAuthEmailFence,
 ) {
+  if (emailFence.recipientEmail !== identity.email) {
+    throw new Error("O fence de e-mail Auth QA não corresponde à identidade exata.");
+  }
   const email = await waitForLocalAuthEmail({
     emailType,
-    notBefore,
-    recipientEmail: identity.email,
+    fence: emailFence,
   });
   identity.emails.push(email);
   return email;
@@ -253,9 +261,9 @@ export async function readFeat002IdentitySession(page: Page) {
 export async function confirmFeat002Registration(
   page: Page,
   identity: Feat002QaIdentity,
-  notBefore: Date,
+  emailFence: LocalAuthEmailFence,
 ) {
-  const email = await trackFeat002AuthEmail(identity, "signup", notBefore);
+  const email = await trackFeat002AuthEmail(identity, "signup", emailFence);
   await navigateFeat002AuthCallback(page, email.callbackUrl);
   await expect
     .poll(

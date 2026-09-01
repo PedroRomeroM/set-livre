@@ -24,6 +24,18 @@ Cada dependência passa a ser declarada em uma destas categorias:
 
 Uma branch implementa somente uma feature de produto. Contratos bootstrap compartilhados entram na fundação ou na primeira feature que possui legitimamente a fonte canônica. A branch não antecipa UI, permissões ou comportamento público de outra feature.
 
+### Exceção transitória do lote de fundação
+
+Por aprovação humana expressa em 1º de setembro de 2026, o PR `#11`, na branch
+`codex/platform-foundation-batch`, é a única exceção à regra de uma feature por branch. O lote fica
+limitado a FEAT-006, FEAT-007, FEAT-031, FEAT-008, FEAT-009, FEAT-030, FEAT-012, FEAT-013,
+FEAT-016 e FEAT-017, nessa ordem executável.
+
+Cada fatia continua vertical, rastreável em commit próprio, validada antes do push e submetida a
+review do SHA atualizado antes da próxima. O lote termina com gates completos e review holístico do
+diff contra `main`. Nenhuma feature fora da lista pode entrar nesse PR; depois do merge, a regra
+normal de uma feature por branch volta a valer sem nova exceção implícita.
+
 O estado e a ordem executável vigentes ficam exclusivamente em [`docs/roadmap.md`](../roadmap.md). A
 ordem aprovada por este ADR é:
 
@@ -72,7 +84,8 @@ Exemplos de quebra dos ciclos:
 
 ## Alternativas
 
-- Implementar todas as features de um ciclo no mesmo PR: rejeitado por ampliar risco e violar a regra de uma feature por branch.
+- Implementar permanentemente ciclos inteiros no mesmo PR: rejeitado por ampliar risco e violar a
+  regra de uma feature por branch. A exceção transitória acima possui escopo e término explícitos.
 - Ignorar as dependências declaradas: rejeitado por perder contratos do produto.
 - Manter a ordem numérica: rejeitado porque não produz cortes verticais utilizáveis.
 
@@ -84,3 +97,4 @@ Exemplos de quebra dos ciclos:
 - integrações futuras não permitem declarar produção pronta antes de suas dependências reais;
 - `docs:check` deve provar presença única das 34 features e coerência entre status e planos transitórios;
 - mudanças nessa sequência exigem atualizar este ADR e `docs/roadmap.md` no mesmo PR.
+- a exceção do lote de fundação não cria precedente para branches multifuncionais futuras.

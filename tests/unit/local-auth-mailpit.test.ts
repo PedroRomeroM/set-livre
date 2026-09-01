@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  captureLocalAuthEmailFence,
   deleteAllExactLocalAuthEmails,
   deleteExactLocalAuthEmail,
   extractLocalAuthCallbackLink,
@@ -138,7 +139,27 @@ describe("local Auth Mailpit helper", () => {
     expect(message).not.toContain(secondToken);
   });
 
-  it("uses an exact recipient and lower bound before reading a message", async () => {
+  it("captures only existing message IDs for the exact recipient", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        messages: [
+          messageSummary({
+            ID: "wrong-recipient",
+            To: [{ Address: "qa_worker_other@set-livre.local" }],
+          }),
+          messageSummary({ ID: "existing-message" }),
+        ],
+      }),
+    );
+
+    await expect(captureLocalAuthEmailFence({ recipientEmail }, fetchMock)).resolves.toEqual({
+      existingMessageIds: ["existing-message"],
+      recipientEmail,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an exact recipient and an ID fence without comparing independent clocks", async () => {
     const fetchMock = vi.fn(async (input: URL) => {
       if (input.pathname === "/api/v1/search") {
         return jsonResponse({
@@ -147,12 +168,15 @@ describe("local Auth Mailpit helper", () => {
               ID: "wrong-recipient",
               To: [{ Address: "qa_worker_other@set-livre.local" }],
             }),
-            messageSummary({ Created: "2026-08-11T08:00:00Z", ID: "stale-message" }),
-            messageSummary(),
+            messageSummary({ ID: "existing-message" }),
+            messageSummary({
+              Created: "2026-08-11T07:00:00Z",
+              ID: "new-message-from-container-clock",
+            }),
           ],
         });
       }
-      return jsonResponse(messageDetail());
+      return jsonResponse(messageDetail({ ID: "new-message-from-container-clock" }));
     });
     const fetchImpl: MailpitFetch = fetchMock;
 
@@ -160,14 +184,13 @@ describe("local Auth Mailpit helper", () => {
       findLocalAuthEmailOnce(
         {
           emailType: "signup",
-          notBefore: new Date("2026-08-11T08:20:00Z"),
-          recipientEmail,
+          fence: { existingMessageIds: ["existing-message"], recipientEmail },
         },
         fetchImpl,
       ),
     ).resolves.toEqual({
       callbackUrl: signupCallback,
-      messageId: "mailpit-message-001",
+      messageId: "new-message-from-container-clock",
       subject: "Confirme seu e-mail",
     });
 
@@ -176,7 +199,9 @@ describe("local Auth Mailpit helper", () => {
     expect(searchUrl?.origin).toBe(LOCAL_MAILPIT_ORIGIN);
     expect(searchUrl?.pathname).toBe("/api/v1/search");
     expect(searchUrl?.searchParams.get("query")).toBe(`to:${recipientEmail}`);
-    expect(fetchMock.mock.calls[1]?.[0].pathname).toBe("/api/v1/message/mailpit-message-001");
+    expect(fetchMock.mock.calls[1]?.[0].pathname).toBe(
+      "/api/v1/message/new-message-from-container-clock",
+    );
   });
 
   it("polls until the exact message exists without putting the callback in the assertion value", async () => {
@@ -193,8 +218,7 @@ describe("local Auth Mailpit helper", () => {
       waitForLocalAuthEmail(
         {
           emailType: "signup",
-          notBefore: new Date("2026-08-11T08:20:00Z"),
-          recipientEmail,
+          fence: { existingMessageIds: [], recipientEmail },
           timeoutMs: 1_000,
         },
         fetchMock,
@@ -315,8 +339,7 @@ describe("local Auth Mailpit helper", () => {
     const refusedFetch: MailpitFetch = async () => new Response(providerSecret, { status: 500 });
     const input = {
       emailType: "signup" as const,
-      notBefore: new Date("2026-08-11T08:20:00Z"),
-      recipientEmail,
+      fence: { existingMessageIds: [], recipientEmail },
     };
 
     const invalidPayloadMessage = await capturedAsyncError(() =>

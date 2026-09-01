@@ -1,6 +1,7 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 
 import {
+  captureFeat002AuthEmailFence,
   cleanupFeat002QaIdentity,
   confirmFeat002Registration,
   createFeat002QaIdentity,
@@ -154,8 +155,8 @@ test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos"
 
   try {
     await expectRegistrationClosedWithoutHydration(browser, testInfo);
-    const notBefore = await submitFeat002Registration(page, identity);
-    const session = await confirmFeat002Registration(page, identity, notBefore);
+    const emailFence = await submitFeat002Registration(page, identity);
+    const session = await confirmFeat002Registration(page, identity, emailFence);
 
     expect(identity.emails[0]?.subject).toBe("Confirme seu cadastro na Set Livre");
     expect(session).toMatchObject({
@@ -179,8 +180,8 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
   const identity = createFeat002QaIdentity(testInfo, "002");
 
   try {
-    const notBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    const confirmedSession = await confirmFeat002Registration(page, identity, notBefore);
+    const emailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    const confirmedSession = await confirmFeat002Registration(page, identity, emailFence);
     await logoutFeat002Identity(page);
 
     await corruptNextSuccessfulLoginPayload(page);
@@ -281,19 +282,19 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
   const newPassword = `${identity.password}Z7`;
 
   try {
-    const signupNotBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    const confirmedSession = await confirmFeat002Registration(page, identity, signupNotBefore);
+    const signupEmailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    const confirmedSession = await confirmFeat002Registration(page, identity, signupEmailFence);
     await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
-    const recoveryNotBefore = new Date(Date.now() - 1_000);
+    const recoveryEmailFence = await captureFeat002AuthEmailFence(identity);
     await page.getByRole("button", { name: "Enviar instruções" }).click();
     await expect(page.getByRole("status")).toContainText(
       "Se existir uma conta para o endereço informado",
     );
 
-    const recoveryEmail = await trackFeat002AuthEmail(identity, "recovery", recoveryNotBefore);
+    const recoveryEmail = await trackFeat002AuthEmail(identity, "recovery", recoveryEmailFence);
     expect(recoveryEmail.subject).toBe("Redefina sua senha da Set Livre");
     await navigateFeat002AuthCallback(page, recoveryEmail.callbackUrl);
     await expectCurrentPath(page, "/recuperar-senha?modo=nova-senha");
@@ -425,7 +426,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     await logoutFeat002Identity(page);
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
-    const expiringRecoveryNotBefore = new Date(Date.now() - 1_000);
+    const expiringRecoveryEmailFence = await captureFeat002AuthEmailFence(identity);
     await page.getByRole("button", { name: "Enviar instruções" }).click();
     await expect(page.getByRole("status")).toContainText(
       "Se existir uma conta para o endereço informado",
@@ -433,7 +434,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     const expiringRecoveryEmail = await trackFeat002AuthEmail(
       identity,
       "recovery",
-      expiringRecoveryNotBefore,
+      expiringRecoveryEmailFence,
     );
     await navigateFeat002AuthCallback(page, expiringRecoveryEmail.callbackUrl);
     await expectCurrentPath(page, "/recuperar-senha?modo=nova-senha");
@@ -496,8 +497,8 @@ test("SL-F002-E2E-005 @p0 returnTo externo é rejeitado com fallback literal", a
   });
 
   try {
-    const notBefore = await submitFeat002Registration(page, identity);
-    const signupEmail = await trackFeat002AuthEmail(identity, "signup", notBefore);
+    const signupEmailFence = await submitFeat002Registration(page, identity);
+    const signupEmail = await trackFeat002AuthEmail(identity, "signup", signupEmailFence);
     const adversarialCallback = new URL(signupEmail.callbackUrl);
     const callbackFragment = new URLSearchParams(adversarialCallback.hash.slice(1));
     callbackFragment.set("returnTo", `${externalOrigin}/capture`);
@@ -542,8 +543,8 @@ test("SL-F002-E2E-008 @p0 login preserva o retorno privado de criação e ediç�
   ] as const;
 
   try {
-    const notBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    await confirmFeat002Registration(page, identity, notBefore);
+    const emailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    await confirmFeat002Registration(page, identity, emailFence);
     await logoutFeat002Identity(page);
 
     for (const [index, target] of targets.entries()) {

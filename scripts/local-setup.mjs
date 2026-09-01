@@ -816,6 +816,66 @@ export function runSupabase(
 }
 
 const pgProveImage = "public.ecr.aws/supabase/pg_prove:3.36";
+const pgTapDiagnosticLimit = 16_384;
+
+function knownSecretVariants(secrets) {
+  const variants = new Set();
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || secret === "" || secret === "[REDACTED]") continue;
+    const encoded = encodeURIComponent(secret);
+    const jsonEscaped = JSON.stringify(secret).slice(1, -1);
+    for (const variant of [
+      secret,
+      encoded,
+      encoded.replaceAll(/%[0-9A-F]{2}/gu, (match) => match.toLowerCase()),
+      encoded.replaceAll("%20", "+"),
+      jsonEscaped,
+    ]) {
+      if (variant !== "") variants.add(variant);
+    }
+  }
+  return [...variants].sort((left, right) => right.length - left.length);
+}
+
+function redactDiagnostic(rawDiagnostic, secrets = []) {
+  let redacted = String(rawDiagnostic ?? "");
+  for (const secret of knownSecretVariants(secrets)) {
+    redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted
+    .replaceAll(/postgres(?:ql)?:\/\/[^\s@]+@/giu, "postgresql://[REDACTED]@")
+    .replaceAll(
+      /((?:"(?:PGPASSWORD|password)"|'(?:PGPASSWORD|password)'|\b(?:PGPASSWORD|password)\b)\s*(?:=|:)\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/giu,
+      (_match, prefix, value) => {
+        const quote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+        return `${prefix}${quote}[REDACTED]${quote}`;
+      },
+    )
+    .trim();
+}
+
+function truncateDiagnosticStream(redacted, label) {
+  if (redacted.length <= pgTapDiagnosticLimit) return redacted;
+  const marker = `\n...[${label} truncado; início e fim preservados]...\n`;
+  const available = pgTapDiagnosticLimit - marker.length;
+  const headLength = Math.ceil(available / 2);
+  const tailLength = Math.floor(available / 2);
+  return `${redacted.slice(0, headLength)}${marker}${redacted.slice(-tailLength)}`;
+}
+
+function formatPgTapDiagnostic({ errorMessage, stderr, stdout }, secrets) {
+  return [
+    ["stderr", stderr],
+    ["stdout", stdout],
+    ["runner-error", errorMessage],
+  ]
+    .map(([label, raw]) => {
+      const redacted = redactDiagnostic(raw, secrets);
+      return redacted === "" ? "" : `[${label}]\n${truncateDiagnosticStream(redacted, label)}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
 
 export function runWindowsDatabaseTests(
   values,
@@ -826,23 +886,51 @@ export function runWindowsDatabaseTests(
   } = {},
 ) {
   const databaseUrl = new URL(values.DB_URL);
+  const databasePassword = decodeURIComponent(databaseUrl.password);
+  const diagnosticSecrets = [databasePassword, databaseUrl.password];
   const environment = {
     ...resolveLocalDockerEnvironment(),
     PGDATABASE: decodeURIComponent(databaseUrl.pathname.slice(1)),
     PGHOST: `supabase_db_${supabaseLocalProjectId}`,
-    PGPASSWORD: decodeURIComponent(databaseUrl.password),
+    PGPASSWORD: databasePassword,
     PGPORT: "5432",
     PGUSER: decodeURIComponent(databaseUrl.username),
   };
-  const invoke = (argumentsList, { attached = false, label }) => {
+  const invoke = (argumentsList, { label, readLogsOnEmptyFailure = false }) => {
     const result = execute("docker", argumentsList, {
       encoding: "utf8",
       env: environment,
       maxBuffer: 128 * 1024 * 1024,
-      stdio: ["ignore", attached ? "inherit" : "pipe", attached ? "inherit" : "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     if (result.error !== undefined || result.status !== 0) {
-      throw new Error(`${label} falhou no runner pgTAP efêmero do Windows.`);
+      const status = result.status === null ? "sem código" : `código ${result.status}`;
+      let diagnostic = formatPgTapDiagnostic(
+        {
+          errorMessage: result.error?.message,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        },
+        diagnosticSecrets,
+      );
+      if (diagnostic === "" && readLogsOnEmptyFailure) {
+        const logs = execute("docker", ["logs", containerName], {
+          encoding: "utf8",
+          env: environment,
+          maxBuffer: 128 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        diagnostic = formatPgTapDiagnostic(
+          {
+            errorMessage: logs.error?.message,
+            stderr: logs.stderr,
+            stdout: logs.stdout,
+          },
+          diagnosticSecrets,
+        );
+      }
+      const suffix = diagnostic === "" ? "" : `\n${diagnostic}`;
+      throw new Error(`${label} falhou no runner pgTAP efêmero do Windows (${status}).${suffix}`);
     }
     return result.stdout ?? "";
   };
@@ -886,8 +974,8 @@ export function runWindowsDatabaseTests(
       { label: "A cópia dos testes" },
     );
     invoke(["start", "--attach", containerName], {
-      attached: true,
       label: "A execução dos testes SQL",
+      readLogsOnEmptyFailure: true,
     });
   } catch (error) {
     failure = error;
@@ -919,7 +1007,7 @@ export function parseSupabaseCliError(rawError) {
       const payload = JSON.parse(line);
       const message = payload?.error?.message ?? payload?.message;
       if (typeof message === "string" && message !== "") {
-        return message.replaceAll(/postgres(?:ql)?:\/\/[^\s@]+@/giu, "postgresql://[REDACTED]@");
+        return redactDiagnostic(message);
       }
     } catch {
       // A CLI mistura progresso textual e um erro JSON final; somente o JSON é seguro para diagnóstico.
