@@ -712,7 +712,7 @@ verify_periodic_cleanup_retries_application_gate() (
   local cleanup_unit_source="$temporary_directory/${cleanup_unit}"
   local application_unit_source="$temporary_directory/${application_unit}"
   local timer_unit_source="$temporary_directory/${timer_unit}"
-  local blocker attempts recovered
+  local application_state blocker attempts retry_observed terminal_state_observed
 
   # Invocada indiretamente pelo trap local do probe.
   # shellcheck disable=SC2317,SC2329
@@ -852,21 +852,34 @@ CLEANUP_UNIT_PROBE
     || fail "gate inicial não permaneceu failed após a falha de cleanup."
 
   sudo systemctl start "$timer_unit"
-  recovered=false
+  application_state=""
+  retry_observed=false
+  terminal_state_observed=false
   for _ in {1..100}; do
     if privileged_regular_file_exists "${probe_state}/applications-started"; then
       attempts="$(sudo cat -- "${probe_state}/cleanup-attempts")"
       if [[ ${attempts} =~ ^[0-9]+$ ]] && (( attempts >= 2 )); then
-        recovered=true
-        break
+        retry_observed=true
+        # O último ExecStart publica o efeito antes de o systemd registrar o estado
+        # terminal da oneshot. O marcador prova o efeito; este snapshot é a fence
+        # que prova que o mesmo gate já voltou ao estado reativável.
+        application_state="$(
+          sudo systemctl show --property=ActiveState,Result "$application_unit"
+        )"
+        if grep --fixed-strings --line-regexp 'ActiveState=inactive' \
+          <<< "$application_state" >/dev/null \
+          && grep --fixed-strings --line-regexp 'Result=success' \
+            <<< "$application_state" >/dev/null; then
+          terminal_state_observed=true
+          break
+        fi
       fi
     fi
     /usr/bin/sleep 0.05
   done
-  [[ ${recovered} == true ]] \
+  [[ ${retry_observed} == true ]] \
     || fail "timer não repetiu o gate depois que o cleanup transitório se recuperou."
-  [[ $(sudo systemctl show --property=Result --value "$application_unit") == success \
-    && $(sudo systemctl show --property=ActiveState --value "$application_unit") == inactive ]] \
+  [[ ${terminal_state_observed} == true ]] \
     || fail "gate repetido não terminou com sucesso em estado reativável."
   sudo systemctl is-active --quiet "$timer_unit" \
     || fail "timer periódico não permaneceu ativo após recuperar os apps."
