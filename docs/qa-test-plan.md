@@ -216,7 +216,7 @@ asserções para grants/RLS, binding curto, polling passivo sem renovação, cor
 relógio, expiração, bootstrap one-shot,
 papel/último admin, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
-runner completo, após a FEAT-008, possui dez arquivos e 486 testes. A regressão transversal de tempo força timestamps
+runner completo, após a FEAT-008, possui dez arquivos e 489 testes. A regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
 domínio que mantêm `created_at/updated_at`.
 
@@ -237,8 +237,10 @@ Os quinze cenários `SL-F008-E2E-001..014` e `SL-F008-CACHE-001` expandem para 5
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
-prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 100 asserções para
+prévia e encerra requests da página antes do teardown. `0009_studio_media.sql` possui 103 asserções para
 schema, grants/RLS e Storage A/B, limite e liberação de reservas rejeitadas, clone, idempotência,
+liquidação da emissão do token nas duas ordens possíveis da corrida, compensação idempotente e liberação
+imediata da vigésima vaga quando o Storage não entrega autorização,
 claim único pré-processamento/replay/rejeição, renovação terminal que impede takeover após a expiração
 anterior, token stale, conflito definitivo entre chaves, ausência de sessão presa e ordem global de locks
 com begin sobreposto às fachadas claimed de finalize e reject via `dblink`, além de contagens de

@@ -276,6 +276,7 @@ export type Database = {
           studio_id: string | null;
           updated_at: string;
           upload_expires_at: string;
+          upload_token_issued_at: string | null;
           uploaded_by: string;
           width: number | null;
         };
@@ -310,6 +311,7 @@ export type Database = {
           studio_id?: string | null;
           updated_at?: string;
           upload_expires_at: string;
+          upload_token_issued_at?: string | null;
           uploaded_by: string;
           width?: number | null;
         };
@@ -344,6 +346,7 @@ export type Database = {
           studio_id?: string | null;
           updated_at?: string;
           upload_expires_at?: string;
+          upload_token_issued_at?: string | null;
           uploaded_by?: string;
           width?: number | null;
         };

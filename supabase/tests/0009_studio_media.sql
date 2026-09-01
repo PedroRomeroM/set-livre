@@ -420,7 +420,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(100);
+select plan(103);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -530,11 +530,13 @@ select is(
 );
 select ok(
   (
-    select pg_catalog.count(*) = 10
+    select pg_catalog.count(*) = 12
     from (
       values
         ('private.get_owner_studio_media(uuid,uuid)'),
         ('private.prepare_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,text,bigint,text)'),
+        ('private.confirm_studio_media_upload_token(uuid,uuid,uuid,bigint,uuid)'),
+        ('private.reject_unsigned_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid)'),
         ('private.begin_studio_media_finalize_claim(uuid,uuid,uuid,bigint,uuid,uuid,uuid)'),
         ('private.renew_studio_media_finalize_claim(uuid)'),
         ('private.release_studio_media_finalize_claim(uuid)'),
@@ -564,6 +566,21 @@ select ok(
     and not pg_catalog.has_function_privilege(
       'app_dal',
       'private.finalize_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid,uuid,text,bigint,integer,integer,text)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'anon',
+      'private.confirm_studio_media_upload_token(uuid,uuid,uuid,bigint,uuid)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'authenticated',
+      'private.reject_unsigned_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'service_role',
+      'private.reject_unsigned_studio_media_upload(uuid,uuid,uuid,bigint,uuid,uuid)',
       'EXECUTE'
     )
     and not pg_catalog.has_table_privilege('app_dal', 'public.studio_media', 'SELECT')
@@ -2181,6 +2198,65 @@ select matches(
   ),
   '^23514:studio_media_limit_reached$',
   'lock da revisão contabiliza pendentes e impede a vigésima primeira mídia'
+);
+
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f008_limit_token_issued',
+  private.confirm_studio_media_upload_token(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    1,
+    '88000000-0000-4000-8000-000000000001'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_limit_token_preserved',
+  private.reject_unsigned_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    1,
+    '88000000-0000-4000-8000-000000000001',
+    '8a000000-0000-4000-8000-000000000010'
+  )::text,
+  true
+);
+reset role;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.f008_limit_token_issued')::jsonb
+      ->> 'state' = 'issued'
+    and pg_catalog.current_setting('set_livre.test.f008_limit_token_preserved')::jsonb
+      ->> 'state' = 'issued'
+    and exists (
+      select 1
+      from public.studio_media as media
+      where media.id = '88000000-0000-4000-8000-000000000001'
+        and media.status = 'pending_upload'
+        and media.upload_token_issued_at is not null
+    )
+    and not exists (
+      select 1
+      from audit.events as event
+      where event.action = 'studio.media_upload_rejected'
+        and event.idempotency_key = '88000000-0000-4000-8000-000000000001'
+    ),
+  'confirmação vencedora impede que uma compensação concorrente rejeite o token emitido'
 );
 
 update public.studio_revisions as revision
@@ -4957,9 +5033,117 @@ begin
 end;
 $block$;
 
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f008_unsigned_reject',
+  private.reject_unsigned_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    2,
+    '88000000-0000-4000-8000-000000000002',
+    '8a000000-0000-4000-8000-000000000020'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_unsigned_replay',
+  private.reject_unsigned_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    2,
+    '88000000-0000-4000-8000-000000000002',
+    '8a000000-0000-4000-8000-000000000021'
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_unsigned_replacement',
+  private.prepare_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        ->> 'studioId'
+    )::uuid,
+    (
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+        #>> '{revision,id}'
+    )::uuid,
+    2,
+    '8a000000-0000-4000-8000-000000000022',
+    '8a000000-0000-4000-8000-000000000023',
+    'image/jpeg',
+    10,
+    null
+  )::text,
+  true
+);
+reset role;
+
+select ok(
+  pg_catalog.current_setting('set_livre.test.f008_unsigned_reject')::jsonb
+      ->> 'state' = 'rejected'
+    and pg_catalog.current_setting('set_livre.test.f008_unsigned_reject')
+      = pg_catalog.current_setting('set_livre.test.f008_unsigned_replay')
+    and pg_catalog.current_setting('set_livre.test.f008_unsigned_replacement')::jsonb
+      ->> 'mediaId' is not null
+    and (
+      select media.status = 'rejected'
+        and media.rejection_code = 'upload_token_signing_failed'
+        and media.upload_token_issued_at is null
+        and media.cleanup_after = media.rejected_at
+      from public.studio_media as media
+      where media.id = '88000000-0000-4000-8000-000000000002'
+    )
+    and (
+      select pg_catalog.count(*) filter (where media.status = 'pending_upload') = 20
+      from public.studio_media as media
+      where media.prepared_revision_id = (
+        pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb
+          #>> '{revision,id}'
+      )::uuid
+    )
+    and (
+      select pg_catalog.count(*) = 1
+      from audit.events as event
+      where event.action = 'studio.media_upload_rejected'
+        and event.idempotency_key = '88000000-0000-4000-8000-000000000002'
+    ),
+  'falha de assinatura rejeita uma única vez, libera quota imediatamente e permite nova reserva'
+);
+select matches(
+  private.feat008_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.confirm_studio_media_upload_token(
+          '81000000-0000-4000-8000-000000000001', %L::uuid, %L::uuid, 2,
+          '88000000-0000-4000-8000-000000000002'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb ->> 'studioId',
+      pg_catalog.current_setting('set_livre.test.f008_limit_create')::jsonb #>> '{revision,id}'
+    )
+  ),
+  '^40001:studio_media_upload_token_rejected$',
+  'compensação vencedora cerca confirmação tardia e nenhum token rejeitado retorna ao navegador'
+);
+
 select ok(
   (
-    select pg_catalog.count(*) = 12
+    select pg_catalog.count(*) = 13
     from private.studio_command_requests as request
     where request.owner_user_id = '81000000-0000-4000-8000-000000000001'
       and request.action like 'studio.media.%'

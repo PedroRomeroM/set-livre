@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   assertMutableAccount: vi.fn(),
+  confirmStudioMediaUploadToken: vi.fn(),
   createUploadToken: vi.fn(),
   deleteStudioMedia: vi.fn(),
   download: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     throw error;
   }),
   prepareStudioMediaUpload: vi.fn(),
+  rejectUnsignedStudioMediaUpload: vi.fn(),
   rejectStudioMediaUpload: vi.fn(),
   renewStudioMediaFinalizeClaim: vi.fn(),
   reorderStudioMedia: vi.fn(),
@@ -37,9 +39,11 @@ vi.mock("../../src/domains/studios/server/studio-service", () => ({
 vi.mock("../../src/domains/studios/server/studio-media-dal", () => {
   class StudioMediaFinalizeClaimBusyError extends Error {}
   return {
+    confirmStudioMediaUploadToken: mocks.confirmStudioMediaUploadToken,
     deleteStudioMedia: mocks.deleteStudioMedia,
     finalizeStudioMediaUpload: mocks.finalizeStudioMediaUpload,
     prepareStudioMediaUpload: mocks.prepareStudioMediaUpload,
+    rejectUnsignedStudioMediaUpload: mocks.rejectUnsignedStudioMediaUpload,
     rejectStudioMediaUpload: mocks.rejectStudioMediaUpload,
     renewStudioMediaFinalizeClaim: mocks.renewStudioMediaFinalizeClaim,
     reorderStudioMedia: mocks.reorderStudioMedia,
@@ -90,7 +94,7 @@ const previewPath = `owners/${studioTestIds.userId}/studios/${studioTestIds.stud
 const checksumSha256 = "7".repeat(64);
 const preparation = {
   bucket: "studio-media" as const,
-  expiresAt: "2026-08-31T12:00:00.000Z",
+  expiresAt: "2099-08-31T12:00:00.000Z",
   mediaId,
   path: mediaPath,
   revisionId: studioTestIds.revisionId,
@@ -187,10 +191,28 @@ const galleryMutationCommands = [
 describe("studio media service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.confirmStudioMediaUploadToken.mockResolvedValue({
+      issuedAt: "2026-09-01T03:55:00.000Z",
+      mediaId,
+      revisionId: studioTestIds.revisionId,
+      revisionVersion: 3,
+      scope: studioTestIds.userId,
+      state: "issued",
+      studioId: studioTestIds.studioId,
+    });
     mocks.createUploadToken.mockResolvedValue("signed-upload-token");
     mocks.download.mockResolvedValue(new Blob([new Uint8Array(512)]));
     mocks.finalizeStudioMediaUpload.mockResolvedValue(galleryRecord);
     mocks.prepareStudioMediaUpload.mockResolvedValue(preparation);
+    mocks.rejectUnsignedStudioMediaUpload.mockResolvedValue({
+      mediaId,
+      rejectedAt: "2026-09-01T03:55:01.000Z",
+      revisionId: studioTestIds.revisionId,
+      revisionVersion: 3,
+      scope: studioTestIds.userId,
+      state: "rejected",
+      studioId: studioTestIds.studioId,
+    });
     mocks.renewStudioMediaFinalizeClaim.mockImplementation(async () => ({
       leaseExpiresAt: leaseExpiresAt(),
     }));
@@ -250,6 +272,14 @@ describe("studio media service", () => {
       userId: studioTestIds.userId,
     });
     expect(mocks.createUploadToken).toHaveBeenCalledWith(mediaPath);
+    expect(mocks.confirmStudioMediaUploadToken).toHaveBeenCalledWith({
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      mediaId,
+      studioId: studioTestIds.studioId,
+      userId: studioTestIds.userId,
+    });
+    expect(mocks.rejectUnsignedStudioMediaUpload).not.toHaveBeenCalled();
   });
 
   it("verifies the stored bytes before finalizing and returns only signed browser data", async () => {
@@ -558,6 +588,76 @@ describe("studio media service", () => {
       code: "SERVICE_UNAVAILABLE",
       status: 503,
     });
+    expect(mocks.rejectUnsignedStudioMediaUpload).toHaveBeenCalledWith({
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      mediaId,
+      requestId: studioTestIds.requestId,
+      studioId: studioTestIds.studioId,
+      userId: studioTestIds.userId,
+    });
+    expect(mocks.confirmStudioMediaUploadToken).not.toHaveBeenCalled();
+  });
+
+  it("does not return a signed token when its database confirmation fails", async () => {
+    const confirmationError = {
+      code: "40001",
+      message: "studio_media_upload_token_rejected",
+    };
+    mocks.confirmStudioMediaUploadToken.mockRejectedValueOnce(confirmationError);
+
+    await expect(
+      executeStudioMediaCommand(
+        {
+          action: "studio.media.upload.prepare",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            ...boundary,
+            declaredByteSize: 512,
+            declaredChecksumSha256: null,
+            declaredMimeType: "image/jpeg",
+          },
+        },
+        context,
+      ),
+    ).rejects.toBe(confirmationError);
+    expect(mocks.createUploadToken).toHaveBeenCalledWith(mediaPath);
+    expect(mocks.rejectUnsignedStudioMediaUpload).toHaveBeenCalledWith({
+      expectedRevisionId: studioTestIds.revisionId,
+      expectedRevisionVersion: 3,
+      mediaId,
+      requestId: studioTestIds.requestId,
+      studioId: studioTestIds.studioId,
+      userId: studioTestIds.userId,
+    });
+  });
+
+  it("terminalizes an expired replay before asking Storage for another token", async () => {
+    mocks.prepareStudioMediaUpload.mockResolvedValueOnce({
+      ...preparation,
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
+
+    await expect(
+      executeStudioMediaCommand(
+        {
+          action: "studio.media.upload.prepare",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            ...boundary,
+            declaredByteSize: 512,
+            declaredChecksumSha256: null,
+            declaredMimeType: "image/jpeg",
+          },
+        },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "UPLOAD_EXPIRED", status: 409 });
+    expect(mocks.rejectUnsignedStudioMediaUpload).toHaveBeenCalledOnce();
+    expect(mocks.createUploadToken).not.toHaveBeenCalled();
+    expect(mocks.confirmStudioMediaUploadToken).not.toHaveBeenCalled();
   });
 
   it("fails recoverably before downloading when the bounded image worker is saturated", async () => {

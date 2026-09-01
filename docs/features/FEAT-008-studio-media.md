@@ -20,9 +20,12 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
   validada somente ao enviar a revisão;
 - JPEG, PNG, WebP e AVIF são aceitos até 15 MiB, 8.192 px por dimensão e 36 milhões de pixels;
 - `studio.media.upload.prepare` deriva o path e emite token assinado sem sobrescrita, com deadline
-  server-side de dois segundos que aborta a request privilegiada ao Storage. Reserva
-  expirada ou rejeitada pelo servidor deixa de consumir a cota imediatamente; renovar cria nova
-  idempotência, mídia, path e token;
+  server-side de dois segundos que aborta a request privilegiada ao Storage. O banco confirma a emissão
+  antes de o token alcançar o browser. Falha de assinatura, confirmação ou replay expirado executa uma
+  compensação estreita pela identidade persistida: se nenhuma emissão venceu o mesmo advisory lock, a
+  reserva vira `upload_token_signing_failed`, libera cota e entra no cleanup imediatamente; uma emissão
+  concorrente já confirmada nunca é cancelada. Nenhuma conexão permanece aberta durante Storage;
+  renovar cria nova idempotência, mídia, path e token;
 - o browser envia o arquivo diretamente ao bucket privado `studio-media`;
 - `studio.media.upload.finalize` persiste antes do processamento um claim único por dono + chave, que
   reserva também a mídia e contém lease cercada de 30 segundos. Retry da mesma chave aguarda sem ocupar
@@ -73,6 +76,8 @@ pertencem respectivamente a FEAT-030, FEAT-009 e FEAT-011 e não são antecipado
 ## Segurança e dados
 
 - tabelas `studio_media` e `studio_revision_media`, RLS habilitada e grants mínimos;
+- `studio_media.upload_token_issued_at` cerca a primeira emissão confirmada. O `app_dal` executa somente
+  as fachadas estreitas de confirmação e compensação; o helper genérico de rejeição permanece revogado;
 - `private.studio_media_finalize_claims` preserva identidade, hash, revisão esperada, mídia única, lease
   e terminal. Sem FK para estúdio/mídia mutáveis, o tombstone sobrevive ao cleanup e impede reutilização
   por outra chave; mantém RLS sem policy e não concede leitura direta nem ao `app_dal`;

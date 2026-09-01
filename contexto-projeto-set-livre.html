@@ -69,14 +69,16 @@
               <td>
                 FEAT-002, FEAT-003, FEAT-004, FEAT-006, FEAT-007 e FEAT-031 estão implementadas. A
                 FEAT-008 está em validação no PR incremental: galeria privada versionada, upload
-                direto ao Storage com token assinado sob deadline server-side de dois segundos e
-                verificação autoritativa, originais preservados, prévias WebP limitadas e assinadas,
-                deadline server-side único de 15 segundos que aborta download, geração e upload da
-                prévia, e claim persistente único com lease cercada de 30 segundos antes desse
-                processamento. A mesma chave aguarda, retoma ou reproduz o terminal; outra chave não
-                toma a mesma mídia. O candidato só sai do banco com o token, cuja lease vigente é
-                renovada atomicamente por 30 segundos antes do upload; o deadline restante é de no
-                máximo 15 segundos. Begin e wrappers terminais usam a ordem
+                direto ao Storage com token assinado sob deadline server-side de dois segundos. A
+                emissão é confirmada no banco antes da resposta; falha de assinatura ou confirmação
+                rejeita e libera a reserva apenas quando nenhuma emissão concorrente venceu. O fluxo
+                mantém verificação autoritativa, originais preservados, prévias WebP limitadas e
+                assinadas, deadline server-side único de 15 segundos que aborta download, geração e
+                upload da prévia, e claim persistente único com lease cercada de 30 segundos antes
+                desse processamento. A mesma chave aguarda, retoma ou reproduz o terminal; outra
+                chave não toma a mesma mídia. O candidato só sai do banco com o token, cuja lease
+                vigente é renovada atomicamente por 30 segundos antes do upload; o deadline restante
+                é de no máximo 15 segundos. Begin e wrappers terminais usam a ordem
                 advisory–dono–claim–revisão/mídia, derivam do claim todas as identidades e a conexão
                 volta ao pool durante Storage/Sharp. A lease é liberada antes da assinatura
                 privilegiada da resposta, limitada a dois segundos. O cleanup registra em ledger

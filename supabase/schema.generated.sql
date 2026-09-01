@@ -2297,6 +2297,98 @@ COMMENT ON FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expected
 
 
 
+CREATE OR REPLACE FUNCTION "private"."confirm_studio_media_upload_token"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  issued_time timestamptz := pg_catalog.clock_timestamp();
+  media public.studio_media%rowtype;
+begin
+  if p_user_id is null
+    or p_studio_id is null
+    or p_expected_revision_id is null
+    or p_expected_revision_version is null
+    or p_expected_revision_version < 1
+    or p_media_id is null
+  then
+    raise exception using errcode = '22023', message = 'invalid_studio_media_upload_token_confirmation';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('studio-media-reject:' || p_media_id::text, 0)
+  );
+  perform private.assert_studio_owner_mutable(p_user_id);
+
+  perform studio.id
+  from public.studios as studio
+  where studio.id = p_studio_id
+    and studio.owner_user_id = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+
+  perform revision.id
+  from public.studio_revisions as revision
+  where revision.id = p_expected_revision_id
+    and revision.studio_id = p_studio_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+
+  select candidate.*
+  into media
+  from public.studio_media as candidate
+  where candidate.id = p_media_id
+    and candidate.studio_id = p_studio_id
+    and candidate.prepared_revision_id = p_expected_revision_id
+    and candidate.uploaded_by = p_user_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+  end if;
+  if media.status = 'rejected'
+    and media.rejection_code = 'upload_token_signing_failed'
+  then
+    raise exception using errcode = '40001', message = 'studio_media_upload_token_rejected';
+  end if;
+  if media.status <> 'pending_upload' then
+    raise exception using errcode = '40001', message = 'studio_media_upload_token_conflict';
+  end if;
+  if media.upload_token_issued_at is null and media.upload_expires_at <= issued_time then
+    raise exception using errcode = '40001', message = 'studio_media_upload_expired';
+  end if;
+
+  update public.studio_media as candidate
+  set upload_token_issued_at = coalesce(candidate.upload_token_issued_at, issued_time)
+  where candidate.id = media.id
+  returning candidate.* into media;
+
+  return pg_catalog.jsonb_build_object(
+    'scope', p_user_id,
+    'studioId', p_studio_id,
+    'revisionId', p_expected_revision_id,
+    'revisionVersion', p_expected_revision_version,
+    'mediaId', p_media_id,
+    'state', 'issued',
+    'issuedAt', media.upload_token_issued_at
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."confirm_studio_media_upload_token"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."confirm_studio_media_upload_token"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") IS 'Confirma atomicamente a primeira autorização assinada antes que o token alcance o navegador.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -3284,6 +3376,10 @@ begin
     or old.declared_checksum_sha256 is distinct from new.declared_checksum_sha256
     or old.prepared_at is distinct from new.prepared_at
     or old.upload_expires_at is distinct from new.upload_expires_at
+    or (
+      old.upload_token_issued_at is not null
+      and old.upload_token_issued_at is distinct from new.upload_token_issued_at
+    )
     or (
       old.studio_id is distinct from new.studio_id
       and not (
@@ -5748,9 +5844,12 @@ begin
     or p_media_id is null
     or p_request_id is null
     or p_rejection_code is null
-    or p_rejection_code <> all (
-      array['validation_failed'::text, 'object_missing'::text, 'superseded'::text]
-    )
+    or p_rejection_code <> all (array[
+      'validation_failed'::text,
+      'object_missing'::text,
+      'superseded'::text,
+      'upload_token_signing_failed'::text
+    ])
   then
     raise exception using errcode = '22023', message = 'invalid_studio_media_reject';
   end if;
@@ -5758,7 +5857,19 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('studio-media-reject:' || p_media_id::text, 0)
   );
-  perform private.assert_studio_owner_mutable(p_user_id);
+  if p_rejection_code = 'upload_token_signing_failed' then
+    perform profile.id
+    from public.profiles as profile
+    join public.owner_profiles as owner on owner.user_id = profile.id
+    where profile.id = p_user_id
+    for update of profile, owner;
+
+    if not found then
+      raise exception using errcode = 'P0002', message = 'studio_media_not_found';
+    end if;
+  else
+    perform private.assert_studio_owner_mutable(p_user_id);
+  end if;
 
   perform studio.id
   from public.studios as studio
@@ -5792,6 +5903,22 @@ begin
   if not found then
     raise exception using errcode = 'P0002', message = 'studio_media_not_found';
   end if;
+
+  if p_rejection_code = 'upload_token_signing_failed'
+    and media.upload_token_issued_at is not null
+  then
+    return pg_catalog.jsonb_build_object(
+      'scope', p_user_id,
+      'studioId', p_studio_id,
+      'revisionId', p_expected_revision_id,
+      'revisionVersion', p_expected_revision_version,
+      'mediaId', p_media_id,
+      'status', media.status,
+      'tokenWasIssued', true,
+      'issuedAt', media.upload_token_issued_at
+    );
+  end if;
+
   if media.status not in ('pending_upload', 'rejected') then
     raise exception using errcode = '40001', message = 'studio_media_reject_conflict';
   end if;
@@ -5802,7 +5929,10 @@ begin
       status = 'rejected',
       rejection_code = p_rejection_code,
       rejected_at = rejected_time,
-      cleanup_after = greatest(rejected_time, media.upload_expires_at),
+      cleanup_after = case
+        when p_rejection_code = 'upload_token_signing_failed' then rejected_time
+        else greatest(rejected_time, media.upload_expires_at)
+      end,
       cleanup_next_attempt_at = null
     where candidate.id = media.id;
 
@@ -5842,7 +5972,7 @@ $$;
 ALTER FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza uma reserva pela identidade persistida, inclusive quando a revisão foi supersedida; replay preserva o primeiro fato e libera a quota imediatamente.';
+COMMENT ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Terminaliza a reserva pela identidade persistida; falha de assinatura só vence quando nenhuma autorização foi confirmada.';
 
 
 
@@ -5929,6 +6059,55 @@ ALTER FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "u
 
 
 COMMENT ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") IS 'Deriva toda identidade mutável do claim cercado e terminaliza a reserva e o tombstone na mesma transação.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."reject_unsigned_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  settlement jsonb;
+begin
+  settlement := private.reject_studio_media_upload(
+    p_user_id,
+    p_studio_id,
+    p_expected_revision_id,
+    p_expected_revision_version,
+    p_media_id,
+    p_request_id,
+    'upload_token_signing_failed'
+  );
+
+  if coalesce((settlement ->> 'tokenWasIssued')::boolean, false) then
+    return pg_catalog.jsonb_build_object(
+      'scope', settlement ->> 'scope',
+      'studioId', settlement ->> 'studioId',
+      'revisionId', settlement ->> 'revisionId',
+      'revisionVersion', (settlement ->> 'revisionVersion')::bigint,
+      'mediaId', settlement ->> 'mediaId',
+      'state', 'issued',
+      'issuedAt', settlement ->> 'issuedAt'
+    );
+  end if;
+
+  return pg_catalog.jsonb_build_object(
+    'scope', settlement ->> 'scope',
+    'studioId', settlement ->> 'studioId',
+    'revisionId', settlement ->> 'revisionId',
+    'revisionVersion', (settlement ->> 'revisionVersion')::bigint,
+    'mediaId', settlement ->> 'mediaId',
+    'state', 'rejected',
+    'rejectedAt', settlement ->> 'rejectedAt'
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."reject_unsigned_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."reject_unsigned_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") IS 'Compensa uma assinatura não entregue sem cancelar uma autorização confirmada por tentativa concorrente.';
 
 
 
@@ -9854,6 +10033,7 @@ CREATE TABLE IF NOT EXISTS "public"."studio_media" (
     "cleanup_last_succeeded" boolean,
     "cleanup_last_error_code" "text",
     "updated_at" timestamp with time zone DEFAULT "clock_timestamp"() NOT NULL,
+    "upload_token_issued_at" timestamp with time zone,
     CONSTRAINT "studio_media_actual_mime_check" CHECK ((("actual_mime_type" IS NULL) OR ("actual_mime_type" = ANY (ARRAY['image/jpeg'::"text", 'image/png'::"text", 'image/webp'::"text", 'image/avif'::"text"])))),
     CONSTRAINT "studio_media_actual_size_check" CHECK ((("actual_size_bytes" IS NULL) OR (("actual_size_bytes" >= 1) AND ("actual_size_bytes" <= 15728640)))),
     CONSTRAINT "studio_media_bucket_check" CHECK (("storage_bucket" = 'studio-media'::"text")),
@@ -9875,10 +10055,12 @@ CASE "declared_mime_type"
     ELSE NULL::"text"
 END)) AND ("split_part"("storage_path", '/'::"text", 8) = ''::"text"))),
     CONSTRAINT "studio_media_preview_path_identity_check" CHECK ((("preview_storage_path" = "regexp_replace"("storage_path", '\.(avif|jpg|png|webp)$'::"text", '.preview.webp'::"text")) AND ("split_part"("preview_storage_path", '/'::"text", 7) = "format"('%s.preview.webp'::"text", "id")))),
-    CONSTRAINT "studio_media_rejection_code_check" CHECK ((("rejection_code" IS NULL) OR ("rejection_code" = ANY (ARRAY['validation_failed'::"text", 'object_missing'::"text", 'superseded'::"text", 'mime_mismatch'::"text", 'size_mismatch'::"text", 'checksum_mismatch'::"text", 'decode_failed'::"text", 'dimension_invalid'::"text"])))),
+    CONSTRAINT "studio_media_rejection_code_check" CHECK ((("rejection_code" IS NULL) OR ("rejection_code" = ANY (ARRAY['validation_failed'::"text", 'object_missing'::"text", 'superseded'::"text", 'upload_token_signing_failed'::"text", 'mime_mismatch'::"text", 'size_mismatch'::"text", 'checksum_mismatch'::"text", 'decode_failed'::"text", 'dimension_invalid'::"text"])))),
     CONSTRAINT "studio_media_state_coherence_check" CHECK (((("status" = 'pending_upload'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" >= ("prepared_at" + '24:00:00'::interval))) OR (("status" = 'ready'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NOT NULL) AND ("actual_size_bytes" IS NOT NULL) AND ("width" IS NOT NULL) AND ("height" IS NOT NULL) AND ("checksum_sha256" IS NOT NULL) AND ("rejection_code" IS NULL) AND ("finalized_at" IS NOT NULL) AND ("rejected_at" IS NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NULL)) OR (("status" = 'rejected'::"text") AND ("studio_id" IS NOT NULL) AND ("prepared_revision_id" IS NOT NULL) AND ("actual_mime_type" IS NULL) AND ("actual_size_bytes" IS NULL) AND ("width" IS NULL) AND ("height" IS NULL) AND ("checksum_sha256" IS NULL) AND ("rejection_code" IS NOT NULL) AND ("finalized_at" IS NULL) AND ("rejected_at" IS NOT NULL) AND ("delete_requested_at" IS NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'delete_pending'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NULL) AND ("cleanup_after" IS NOT NULL)) OR (("status" = 'deleted'::"text") AND ("delete_requested_at" IS NOT NULL) AND ("deleted_at" IS NOT NULL) AND ("cleanup_after" IS NULL)))),
     CONSTRAINT "studio_media_status_check" CHECK (("status" = ANY (ARRAY['pending_upload'::"text", 'ready'::"text", 'rejected'::"text", 'delete_pending'::"text", 'deleted'::"text"]))),
     CONSTRAINT "studio_media_timestamps_check" CHECK ((("updated_at" >= "prepared_at") AND (("finalized_at" IS NULL) OR ("finalized_at" >= "prepared_at")) AND (("rejected_at" IS NULL) OR ("rejected_at" >= "prepared_at")) AND (("delete_requested_at" IS NULL) OR ("delete_requested_at" >= "prepared_at")) AND (("deleted_at" IS NULL) OR ("deleted_at" >= "delete_requested_at")))),
+    CONSTRAINT "studio_media_upload_token_issued_at_check" CHECK ((("upload_token_issued_at" IS NULL) OR (("upload_token_issued_at" >= "prepared_at") AND ("upload_token_issued_at" <= "upload_expires_at")))),
+    CONSTRAINT "studio_media_upload_token_rejection_coherence_check" CHECK ((("rejection_code" IS DISTINCT FROM 'upload_token_signing_failed'::"text") OR ("upload_token_issued_at" IS NULL))),
     CONSTRAINT "studio_media_upload_window_check" CHECK (("upload_expires_at" = ("prepared_at" + '02:00:00'::interval)))
 );
 
@@ -9887,6 +10069,10 @@ ALTER TABLE "public"."studio_media" OWNER TO "postgres";
 
 
 COMMENT ON TABLE "public"."studio_media" IS 'Objeto original e prévia WebP imutáveis no bucket privado; estado físico é independente das associações versionadas.';
+
+
+
+COMMENT ON COLUMN "public"."studio_media"."upload_token_issued_at" IS 'Primeira autorização de upload confirmada pelo servidor; permanece nula quando nenhum token foi entregue.';
 
 
 
@@ -11152,6 +11338,11 @@ GRANT ALL ON FUNCTION "private"."complete_profile"("p_user_id" "uuid", "p_expect
 
 
 
+REVOKE ALL ON FUNCTION "private"."confirm_studio_media_upload_token"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."confirm_studio_media_upload_token"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid") TO "app_dal";
+
+
+
 REVOKE ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."consume_identity_recovery_context"("p_token" "uuid", "p_user_id" "uuid", "p_auth_session_id" "uuid", "p_session_scope" "uuid", "p_attempt_id" "uuid") TO "app_dal";
 
@@ -11363,6 +11554,11 @@ REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload"("p_user_id" "uuid"
 
 REVOKE ALL ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."reject_studio_media_upload_claimed"("p_claim_token" "uuid", "p_request_id" "uuid", "p_rejection_code" "text") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."reject_unsigned_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."reject_unsigned_studio_media_upload"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_media_id" "uuid", "p_request_id" "uuid") TO "app_dal";
 
 
 

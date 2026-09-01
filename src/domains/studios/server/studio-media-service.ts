@@ -1,15 +1,21 @@
 import "server-only";
 
-import type { StudioCommand, StudioMediaCommand } from "@set-livre/contracts";
+import type {
+  StudioCommand,
+  StudioMediaCommand,
+  StudioMediaUploadPreparationRecord,
+} from "@set-livre/contracts";
 import { z } from "zod";
 
 import type { PrivateCommandContext } from "@/domains/commands/server/private-command-context";
 import { ApiRouteError } from "@/lib/server/api-route";
 
 import {
+  confirmStudioMediaUploadToken,
   deleteStudioMedia,
   finalizeStudioMediaUpload,
   prepareStudioMediaUpload,
+  rejectUnsignedStudioMediaUpload,
   rejectStudioMediaUpload,
   renewStudioMediaFinalizeClaim,
   reorderStudioMedia,
@@ -84,6 +90,29 @@ function mediaStorage(context: PrivateCommandContext) {
     throw new Error("O adaptador privado de mídia não foi configurado na rota de comandos.");
   }
   return context.studioMediaStorage;
+}
+
+function mediaUploadTokenBoundary(
+  preparation: StudioMediaUploadPreparationRecord,
+  context: PrivateCommandContext,
+) {
+  return {
+    expectedRevisionId: preparation.revisionId,
+    expectedRevisionVersion: preparation.revisionVersion,
+    mediaId: preparation.mediaId,
+    studioId: preparation.studioId,
+    userId: context.session.userId,
+  };
+}
+
+async function rejectUndeliveredUploadToken(
+  preparation: StudioMediaUploadPreparationRecord,
+  context: PrivateCommandContext,
+) {
+  return rejectUnsignedStudioMediaUpload({
+    ...mediaUploadTokenBoundary(preparation, context),
+    requestId: context.requestId,
+  });
 }
 
 async function signCommandGallery(
@@ -220,7 +249,29 @@ export async function executeStudioMediaCommand(
           requestId: context.requestId,
           userId: context.session.userId,
         });
-        const signedToken = await storage.createUploadToken(preparation.path);
+        if (Date.parse(preparation.expiresAt) <= Date.now()) {
+          await rejectUndeliveredUploadToken(preparation, context);
+          throw new ApiRouteError(
+            409,
+            "UPLOAD_EXPIRED",
+            "A autorização de envio expirou. Renove o envio antes de continuar.",
+          );
+        }
+
+        let signedToken: string;
+        try {
+          signedToken = await storage.createUploadToken(preparation.path);
+        } catch (error) {
+          await rejectUndeliveredUploadToken(preparation, context);
+          throw error;
+        }
+
+        try {
+          await confirmStudioMediaUploadToken(mediaUploadTokenBoundary(preparation, context));
+        } catch (error) {
+          await rejectUndeliveredUploadToken(preparation, context);
+          throw error;
+        }
         return { ...preparation, signedToken };
       }
       case "studio.media.upload.finalize": {

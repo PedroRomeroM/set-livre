@@ -12,10 +12,12 @@ vi.mock("../../src/lib/server/dal-pool", () => ({
 }));
 
 import {
+  confirmStudioMediaUploadToken,
   deleteStudioMedia,
   finalizeStudioMediaUpload,
   prepareStudioMediaUpload,
   readOwnerStudioMediaRecord,
+  rejectUnsignedStudioMediaUpload,
   rejectStudioMediaUpload,
   renewStudioMediaFinalizeClaim,
   reorderStudioMedia,
@@ -31,6 +33,8 @@ const leaseExpiresAt = "2026-08-31T12:00:30.000Z";
 const path = `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.png`;
 const previewPath = `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.preview.webp`;
 const expiresAt = "2026-08-31T12:00:00.000Z";
+const issuedAt = "2026-08-31T10:00:01.000Z";
+const rejectedAt = "2026-08-31T10:00:02.000Z";
 const revision = {
   expectedRevisionId: studioTestIds.revisionId,
   expectedRevisionVersion: 3,
@@ -127,6 +131,64 @@ describe("studio media DAL", () => {
         "image/png",
         68,
         null,
+      ],
+    );
+  });
+
+  it("settles upload-token delivery only through the narrow app_dal routines", async () => {
+    const issued = {
+      issuedAt,
+      mediaId,
+      revisionId: studioTestIds.revisionId,
+      revisionVersion: 3,
+      scope: studioTestIds.userId,
+      state: "issued" as const,
+      studioId: studioTestIds.studioId,
+    };
+    const rejected = {
+      mediaId,
+      rejectedAt,
+      revisionId: studioTestIds.revisionId,
+      revisionVersion: 3,
+      scope: studioTestIds.userId,
+      state: "rejected" as const,
+      studioId: studioTestIds.studioId,
+    };
+    mocks.query
+      .mockResolvedValueOnce({ rows: [{ result: issued }] })
+      .mockResolvedValueOnce({ rows: [{ result: rejected }] });
+
+    await expect(
+      confirmStudioMediaUploadToken({
+        ...revision,
+        mediaId,
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual(issued);
+    await expect(
+      rejectUnsignedStudioMediaUpload({
+        ...revision,
+        mediaId,
+        requestId: studioTestIds.requestId,
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual(rejected);
+
+    expect(mocks.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("private.confirm_studio_media_upload_token"),
+      [studioTestIds.userId, studioTestIds.studioId, studioTestIds.revisionId, 3, mediaId],
+    );
+    expect(mocks.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("private.reject_unsigned_studio_media_upload"),
+      [
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        studioTestIds.revisionId,
+        3,
+        mediaId,
+        studioTestIds.requestId,
       ],
     );
   });

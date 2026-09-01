@@ -40,7 +40,11 @@ consomem.
 1. A UI faz somente feedback imediato de tipo, tamanho e limite.
 2. `studio.media.upload.prepare` valida sessão, dono, revisão/versionamento e idempotência, cria
    `pending_upload` e emite token assinado sem sobrescrita. A assinatura privilegiada possui deadline
-   server-side de dois segundos, aborta a request ao Storage e falha como indisponibilidade recuperável.
+   server-side de dois segundos e aborta a request ao Storage. Antes de devolver o token, uma fachada
+   DAL estreita confirma `upload_token_issued_at`; falha de assinatura ou de confirmação chama a
+   compensação estreita pela identidade persistida. Sob o mesmo advisory lock, a confirmação vencedora
+   preserva o token, enquanto a compensação vencedora grava `upload_token_signing_failed`, libera a cota
+   e agenda cleanup imediato. Nenhuma conexão fica aberta durante a chamada externa ao Storage.
 3. O browser envia o original diretamente ao Storage, com deadline de 60 segundos; o upload não
    atravessa a VM. Essa etapa usa o cliente oficial dedicado de Storage com a chave pública e o token
    assinado, sem criar outro cliente Auth nem persistir sessão no navegador.

@@ -30,12 +30,13 @@ A árvore possui a baseline inicial `20260824000100`, a migration de role de pro
 `20260831193500_harden_studio_media_superseded_reservations`,
 `20260831234000_harden_studio_media_cleanup_run_counts` e
 `20260831235000_harden_studio_media_finalize_claims`, seguida por
-`20260901023051_preserve_studio_media_cleanup_run_membership`, que é o head atual. Antes do primeiro deploy, enquanto o
-projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
+`20260901023051_preserve_studio_media_cleanup_run_membership` e
+`20260901035413_harden_studio_media_upload_token_settlement`, que é o head atual. Antes do primeiro deploy, enquanto o
+projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 17
 migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
 Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
 dump de schema. O runner executa um setup idempotente e nove suítes pgTAP; com o próprio teste de
-setup, o recorte atual totaliza 486 asserções para baseline/isolamento, identidade/legal, perfil,
+setup, o recorte atual totaliza 489 asserções para baseline/isolamento, identidade/legal, perfil,
 dono/recebedor, estúdios, mídia e backoffice.
 
 A baseline implementada inclui:
@@ -309,7 +310,8 @@ vídeo, nunca regras ou FAQ.
 - objeto: bucket privado fixo, `storage_path` original e `preview_storage_path` WebP;
 - declaração: MIME, bytes e SHA-256 opcional recebidos antes do upload;
 - verificação: MIME, bytes, dimensões e SHA-256 autoritativos;
-- ciclo: `pending_upload/ready/rejected/delete_pending/deleted`, código de rejeição e timestamps;
+- ciclo: `pending_upload/ready/rejected/delete_pending/deleted`, primeira emissão confirmada do token,
+  código de rejeição e timestamps;
 - cleanup: instante elegível, tentativas, claim/lease cercado por token, backoff e resultado terminal.
 
 `studio_revision_media(revision_id, media_id, position, is_cover)` mantém a associação versionada. A
@@ -329,6 +331,12 @@ Constraints:
 - candidato `pending_upload` expirado não consome cota e não pode ser finalizado; renovação cria nova
   identidade, enquanto o objeto anterior segue para cleanup;
 - remover a última associação agenda o par de objetos para cleanup em vez de apagar linha do Storage.
+
+`confirm_studio_media_upload_token` e `reject_unsigned_studio_media_upload` compartilham o advisory lock
+da mídia e liquidam a fronteira após a chamada externa: confirmação grava a primeira emissão;
+compensação grava `upload_token_signing_failed`, libera cota e agenda cleanup imediato somente quando
+nenhuma emissão foi confirmada. O helper genérico de rejeição continua revogado do `app_dal`, e nenhuma
+transação ou conexão permanece presa durante o Storage.
 
 As tabelas e `storage.objects` não concedem ao browser os paths, leitura do objeto nem assinatura
 arbitrária. O dono elegível lê o JSON estrito apenas pela rotina privada do DAL; toda escrita direta

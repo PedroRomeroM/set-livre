@@ -53,6 +53,26 @@ const studioMediaFinalizeClaimSchema = z.discriminatedUnion("state", [
 const studioMediaFinalizeLeaseSchema = z.strictObject({
   leaseExpiresAt: z.iso.datetime({ offset: true }),
 });
+const studioMediaUploadTokenSettlementSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    issuedAt: z.iso.datetime({ offset: true }),
+    mediaId: z.uuid(),
+    revisionId: z.uuid(),
+    revisionVersion: z.number().int().positive(),
+    scope: z.uuid(),
+    state: z.literal("issued"),
+    studioId: z.uuid(),
+  }),
+  z.strictObject({
+    mediaId: z.uuid(),
+    rejectedAt: z.iso.datetime({ offset: true }),
+    revisionId: z.uuid(),
+    revisionVersion: z.number().int().positive(),
+    scope: z.uuid(),
+    state: z.literal("rejected"),
+    studioId: z.uuid(),
+  }),
+]);
 type StudioMediaFinalizeWorkClaim = Exclude<
   z.infer<typeof studioMediaFinalizeClaimSchema>,
   { state: "waiting" }
@@ -140,6 +160,59 @@ export async function prepareStudioMediaUpload(input: {
     ],
   );
   return exactlyOneResult(result.rows, studioMediaUploadPreparationRecordSchema);
+}
+
+export async function confirmStudioMediaUploadToken(input: {
+  expectedRevisionId: string;
+  expectedRevisionVersion: number;
+  mediaId: string;
+  studioId: string;
+  userId: string;
+}) {
+  const revision = parseRevisionIdentity(input);
+  const mediaId = z.uuid().parse(input.mediaId);
+  const userId = z.uuid().parse(input.userId);
+  const result = await commandDalPool().query(
+    `select private.confirm_studio_media_upload_token(
+       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid
+     ) as result`,
+    [
+      userId,
+      revision.studioId,
+      revision.expectedRevisionId,
+      revision.expectedRevisionVersion,
+      mediaId,
+    ],
+  );
+  return exactlyOneResult(result.rows, studioMediaUploadTokenSettlementSchema);
+}
+
+export async function rejectUnsignedStudioMediaUpload(input: {
+  expectedRevisionId: string;
+  expectedRevisionVersion: number;
+  mediaId: string;
+  requestId: string;
+  studioId: string;
+  userId: string;
+}) {
+  const revision = parseRevisionIdentity(input);
+  const mediaId = z.uuid().parse(input.mediaId);
+  const requestId = z.uuid().parse(input.requestId);
+  const userId = z.uuid().parse(input.userId);
+  const result = await commandDalPool().query(
+    `select private.reject_unsigned_studio_media_upload(
+       $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid
+     ) as result`,
+    [
+      userId,
+      revision.studioId,
+      revision.expectedRevisionId,
+      revision.expectedRevisionVersion,
+      mediaId,
+      requestId,
+    ],
+  );
+  return exactlyOneResult(result.rows, studioMediaUploadTokenSettlementSchema);
 }
 
 export async function withStudioMediaFinalizeClaim<T>(
