@@ -8,7 +8,59 @@ import { NextResponse } from "next/server";
 
 import { readBackofficeSupabaseEnvironment } from "./config";
 
-export async function createBackofficeRouteSupabaseClient() {
+type BackofficeSupabaseClientOptions = Readonly<{ signal?: AbortSignal }>;
+
+function createBackofficeSignalBoundFetch(signal: AbortSignal): typeof globalThis.fetch {
+  return (input, init) => {
+    const requestSignal = init?.signal;
+    const effectiveSignal =
+      requestSignal === undefined || requestSignal === null || requestSignal === signal
+        ? signal
+        : AbortSignal.any([signal, requestSignal]);
+    return globalThis.fetch(input, { ...init, signal: effectiveSignal });
+  };
+}
+
+function signalBoundGlobalOptions(options?: BackofficeSupabaseClientOptions) {
+  return options?.signal === undefined
+    ? {}
+    : { global: { fetch: createBackofficeSignalBoundFetch(options.signal) } };
+}
+
+export function mergeBackofficeSupabaseResponseHeaders(target: Headers, source: Headers) {
+  for (const [name, value] of source) {
+    const normalizedName = name.toLowerCase();
+    if (normalizedName === "set-cookie") continue;
+    if (normalizedName === "x-middleware-set-cookie" && target.has(name)) {
+      target.append(name, value);
+      continue;
+    }
+    target.set(name, value);
+  }
+  for (const cookie of source.getSetCookie()) {
+    target.append("set-cookie", cookie);
+  }
+}
+
+export async function withBackofficeSupabaseResponseHeaderMerge<T>(
+  target: Headers,
+  execute: (capture: (source: Headers) => void) => Promise<T>,
+) {
+  let source: Headers | undefined;
+  try {
+    return await execute((headers) => {
+      source = headers;
+    });
+  } finally {
+    if (source !== undefined) {
+      mergeBackofficeSupabaseResponseHeaders(target, source);
+    }
+  }
+}
+
+export async function createBackofficeRouteSupabaseClient(
+  options?: BackofficeSupabaseClientOptions,
+) {
   const environment = readBackofficeSupabaseEnvironment();
   const cookieStore = await cookies();
   const cookieResponse = new NextResponse(null);
@@ -16,6 +68,7 @@ export async function createBackofficeRouteSupabaseClient() {
   const client = createServerClient<Database>(environment.supabaseOrigin, environment.anonKey, {
     auth: { flowType: "pkce" },
     cookieOptions: { ...forcedCookieOptions, name: cookieStorageKey },
+    ...signalBoundGlobalOptions(options),
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll: (cookiesToSet, headers) => {
@@ -34,13 +87,16 @@ export async function createBackofficeRouteSupabaseClient() {
   return { client, responseHeaders: cookieResponse.headers };
 }
 
-export async function createBackofficeComponentSupabaseClient() {
+export async function createBackofficeComponentSupabaseClient(
+  options?: BackofficeSupabaseClientOptions,
+) {
   const environment = readBackofficeSupabaseEnvironment();
   const cookieStore = await cookies();
   const { name: cookieStorageKey, ...forcedCookieOptions } = environment.cookieOptions;
   return createServerClient<Database>(environment.supabaseOrigin, environment.anonKey, {
     auth: { flowType: "pkce" },
     cookieOptions: { ...forcedCookieOptions, name: cookieStorageKey },
+    ...signalBoundGlobalOptions(options),
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll: (cookiesToSet) => {

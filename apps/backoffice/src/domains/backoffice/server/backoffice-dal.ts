@@ -450,12 +450,13 @@ export async function listBackofficeStudioReviews(input: {
 export async function getBackofficeStudioReview(input: {
   auth: BackofficeAuthContext;
   studioId: string;
+  touchActivity: boolean;
 }) {
   const result = await backofficeDalPool().query(
     `select private.get_backoffice_studio_review(
-       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid
+       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid, $5::boolean
      ) as result`,
-    [...bindingArguments(input.auth), input.studioId],
+    [...bindingArguments(input.auth), input.studioId, input.touchActivity],
   );
   return exactlyOne(
     result.rows,

@@ -5,6 +5,7 @@ import type {
   BackofficeStudioCommand,
   BackofficeStudioCommandResult,
   BackofficeStudioReviewDetail,
+  BackofficeStudioReadActivity,
 } from "@set-livre/contracts";
 import { Alert, Button, ButtonLink, Checkbox, Field, Textarea } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -85,6 +86,7 @@ export function StudioReviewDetail({
   const [decision, setDecision] = useState<ReviewDecision>();
   const [expiredPreviewIdentity, setExpiredPreviewIdentity] = useState<string>();
   const [mediaStates, setMediaStates] = useState<Readonly<Record<string, MediaLoadState>>>({});
+  const [interactiveReadError, setInteractiveReadError] = useState<unknown>();
   const [notice, setNotice] = useState<string>();
   const [pendingSnapshot, setPendingSnapshot] = useState<string>();
   const [preparedInitialDetail, setPreparedInitialDetail] =
@@ -108,6 +110,7 @@ export function StudioReviewDetail({
   const completionRef = useRef<HTMLElement>(null);
   const confirmationRef = useRef<HTMLElement>(null);
   const decisionOpening = useRef(false);
+  const interactiveReadController = useRef<AbortController | undefined>(undefined);
   const pendingDecision = useRef<PendingDecision | undefined>(undefined);
   const returnFocusAction = useRef<ReviewAction | undefined>(undefined);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
@@ -137,31 +140,51 @@ export function StudioReviewDetail({
     () => backofficeQueryKeys.studio(session.scope, initialDetail.studioId),
     [initialDetail.studioId, session.scope],
   );
+  async function readDetail(activity: BackofficeStudioReadActivity, signal?: AbortSignal) {
+    try {
+      return await readBackofficeStudioReviewClient(
+        { activity, expectedScope: session.scope, studioId: initialDetail.studioId },
+        signal,
+      );
+    } catch (error) {
+      if (isNotFoundStudioReview(error)) {
+        clearAttempt("decision");
+        setNotice("O caso deixou de estar disponível e o estado privado anterior foi descartado.");
+        setTerminalUnavailableFor({ detail: initialDetail, identity: detailIdentity });
+      }
+      throw error;
+    }
+  }
   const review = useQuery({
     enabled: automaticRefetchEnabled,
-    queryFn: async ({ signal }) => {
-      try {
-        return await readBackofficeStudioReviewClient(
-          { expectedScope: session.scope, studioId: initialDetail.studioId },
-          signal,
-        );
-      } catch (error) {
-        if (isNotFoundStudioReview(error)) {
-          clearAttempt("decision");
-          setNotice(
-            "O caso deixou de estar disponível e o estado privado anterior foi descartado.",
-          );
-          setTerminalUnavailableFor({ detail: initialDetail, identity: detailIdentity });
-        }
-        throw error;
-      }
-    },
+    queryFn: ({ signal }) => readDetail("passive", signal),
     queryKey: detailQueryKey,
     refetchInterval: automaticRefetchEnabled ? 4 * 60 * 1_000 : false,
     refetchOnReconnect: automaticRefetchEnabled,
     refetchOnWindowFocus: automaticRefetchEnabled,
     retry: false,
   });
+  async function refetchInteractiveDetail() {
+    await queryClient.cancelQueries({ exact: true, queryKey: detailQueryKey });
+    interactiveReadController.current?.abort(
+      new DOMException("A leitura interativa foi substituída.", "AbortError"),
+    );
+    const controller = new AbortController();
+    interactiveReadController.current = controller;
+    setInteractiveReadError(undefined);
+    try {
+      const detail = await readDetail("interactive", controller.signal);
+      queryClient.setQueryData(detailQueryKey, detail);
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) setInteractiveReadError(error);
+      return false;
+    } finally {
+      if (interactiveReadController.current === controller) {
+        interactiveReadController.current = undefined;
+      }
+    }
+  }
   const authoritativeDetail = seedIsCurrent && !terminallyUnavailable ? review.data : undefined;
   const snapshot =
     authoritativeDetail === undefined
@@ -195,6 +218,15 @@ export function StudioReviewDetail({
     };
   }, [initialDetail, queryClient, session.scope]);
 
+  useEffect(
+    () => () => {
+      interactiveReadController.current?.abort(
+        new DOMException("A revisão foi encerrada.", "AbortError"),
+      );
+    },
+    [],
+  );
+
   async function discardAndRefreshAuthoritativeDetail(error: unknown) {
     const notFound = isNotFoundStudioReview(error);
     clearAttempt("decision");
@@ -213,9 +245,9 @@ export function StudioReviewDetail({
       scope: session.scope,
       studioId: initialDetail.studioId,
     });
-    const refreshed = await review.refetch({ cancelRefetch: true });
+    const refreshed = await refetchInteractiveDetail();
     setRefreshing(false);
-    if (refreshed.isSuccess) {
+    if (refreshed) {
       setRequiresAuthoritativeRead(false);
       setNotice(
         notFound
@@ -319,9 +351,9 @@ export function StudioReviewDetail({
     setRefreshing(true);
     setExpiredPreviewIdentity(undefined);
     setMediaStates({});
-    const refreshed = await review.refetch({ cancelRefetch: true });
+    const refreshed = await refetchInteractiveDetail();
     setRefreshing(false);
-    if (refreshed.isSuccess) {
+    if (refreshed) {
       setRequiresAuthoritativeRead(false);
       setNotice(successNotice);
     }
@@ -398,8 +430,7 @@ export function StudioReviewDetail({
   if (
     !seedIsCurrent ||
     refreshing ||
-    (requiresAuthoritativeRead && review.isFetching) ||
-    (review.isPending && authoritativeDetail === undefined)
+    (!requiresAuthoritativeRead && review.isPending && authoritativeDetail === undefined)
   ) {
     return (
       <section aria-busy aria-labelledby="studio-review-loading" className={styles.pageStack}>
@@ -409,19 +440,21 @@ export function StudioReviewDetail({
     );
   }
 
+  const blockingReadError = requiresAuthoritativeRead ? interactiveReadError : review.error;
   if (
-    review.isError &&
+    blockingReadError !== null &&
+    blockingReadError !== undefined &&
     (requiresAuthoritativeRead ||
       authoritativeDetail === undefined ||
-      isNotFoundStudioReview(review.error))
+      isNotFoundStudioReview(blockingReadError))
   ) {
-    if (isNotFoundStudioReview(review.error)) {
+    if (isNotFoundStudioReview(blockingReadError)) {
       return <StudioReviewUnavailable notice={notice} />;
     }
     return (
       <section aria-labelledby="studio-review-read-error" className={styles.pageStack}>
         <Alert title="Não foi possível confirmar o estado atual" variant="error">
-          <p id="studio-review-read-error">{studioReviewReadErrorMessage(review.error)}</p>
+          <p id="studio-review-read-error">{studioReviewReadErrorMessage(blockingReadError)}</p>
           <p>
             Os detalhes e as decisões permanecem fechados até uma leitura autoritativa concluir.
           </p>
@@ -511,7 +544,9 @@ export function StudioReviewDetail({
                 disabled={!interactive || review.isFetching}
                 loading={review.isFetching}
                 loadingLabel="Atualizando novamente"
-                onClick={() => void review.refetch({ cancelRefetch: true })}
+                onClick={() =>
+                  void refreshAuthoritativeDetail("O estado autoritativo foi atualizado novamente.")
+                }
                 variant="secondary"
               >
                 Tentar atualizar novamente

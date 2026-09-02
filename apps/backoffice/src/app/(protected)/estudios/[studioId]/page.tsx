@@ -12,6 +12,7 @@ import {
   toBrowserBackofficeSession,
 } from "@/domains/backoffice/server/backoffice-session";
 import { BackofficeApiError } from "@/lib/server/api-route";
+import { createBackofficeComponentSupabaseClient } from "@/lib/supabase/server";
 
 export default async function BackofficeStudioReviewPage({
   params,
@@ -29,8 +30,9 @@ export default async function BackofficeStudioReviewPage({
   let detail;
   try {
     detail = await readBackofficeStudioReview({
+      activity: "interactive",
       auth: state.auth,
-      client: state.client,
+      createSigningClient: (signal) => createBackofficeComponentSupabaseClient({ signal }),
       studioId: parsedStudioId.data,
     });
   } catch (error) {

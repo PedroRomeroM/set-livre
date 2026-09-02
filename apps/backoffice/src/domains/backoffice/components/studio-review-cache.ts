@@ -52,6 +52,7 @@ export async function reconcileSuccessfulStudioReview(input: {
     const detail = assertStudioReviewBoundary(
       input.readDetail === undefined
         ? await readBackofficeStudioReviewClient({
+            activity: "passive",
             expectedScope: input.scope,
             studioId: input.result.studioId,
           })

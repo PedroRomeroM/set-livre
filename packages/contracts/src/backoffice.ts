@@ -228,6 +228,8 @@ export const backofficeStudioReviewStateSchema = z.enum([
   "moderation",
   "disabled",
 ]);
+export const backofficeStudioReadActivityHeader = "x-set-livre-studio-read-activity";
+export const backofficeStudioReadActivitySchema = z.enum(["interactive", "passive"]);
 
 type BackofficeStudioReviewState = z.infer<typeof backofficeStudioReviewStateSchema>;
 type StudioStatus = z.infer<typeof studioStatusSchema>;
@@ -728,6 +730,7 @@ export type BackofficeStudioReviewQueueItem = z.infer<typeof backofficeStudioRev
 export type BackofficeStudioReviewQueueQuery = z.infer<
   typeof backofficeStudioReviewQueueQuerySchema
 >;
+export type BackofficeStudioReadActivity = z.infer<typeof backofficeStudioReadActivitySchema>;
 export type BackofficeUserList = z.infer<typeof backofficeUserListSchema>;
 export type BackofficeUserPii = z.infer<typeof backofficeUserPiiSchema>;
 export type BackofficeUserQuery = z.infer<typeof backofficeUserQuerySchema>;

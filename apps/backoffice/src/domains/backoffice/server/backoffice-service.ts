@@ -7,6 +7,7 @@ import {
   backofficeUserQuerySchema,
   type BackofficeStudioReviewDetailRecord,
   type BackofficeCommand,
+  type BackofficeStudioReadActivity,
   type BackofficeStudioReviewQueueQuery,
   type BackofficeUserQuery,
 } from "@set-livre/contracts";
@@ -60,6 +61,9 @@ type BackofficeStudioSigningClient = Readonly<{
     }>;
   }>;
 }>;
+type BackofficeStudioSigningClientFactory = (
+  signal: AbortSignal,
+) => BackofficeStudioSigningClient | Promise<BackofficeStudioSigningClient>;
 type BackofficeStudioSigningFetch = NonNullable<ConstructorParameters<typeof StorageClient>[2]>;
 
 function backofficeStudioPreviewUnavailable() {
@@ -155,7 +159,7 @@ function signedBackofficeStudioRevision(
 
 async function signBackofficeStudioReviewMedia(
   record: BackofficeStudioReviewDetailRecord,
-  client: BackofficeStudioSigningClient,
+  createSigningClient: BackofficeStudioSigningClientFactory,
   requestSignal?: AbortSignal,
 ) {
   const paths = [
@@ -182,6 +186,7 @@ async function signBackofficeStudioReviewMedia(
   let signing: Awaited<ReturnType<ReturnType<StorageClient["from"]>["createSignedUrls"]>>;
   try {
     signing = await withBackofficeStudioSigningDeadline(requestSignal, async (signal) => {
+      const client = await createSigningClient(signal);
       const accessToken = await readBackofficeStudioStorageAccessToken(client);
       return new StorageClient(
         storageOrigin,
@@ -340,8 +345,9 @@ export async function readBackofficeStudioReviews(
 }
 
 export async function readBackofficeStudioReview(input: {
+  activity: BackofficeStudioReadActivity;
   auth: BackofficeAuthContext;
-  client: BackofficeStudioSigningClient;
+  createSigningClient: BackofficeStudioSigningClientFactory;
   signal?: AbortSignal;
   studioId: string;
 }) {
@@ -350,11 +356,12 @@ export async function readBackofficeStudioReview(input: {
     const record = await getBackofficeStudioReview({
       auth: input.auth,
       studioId,
+      touchActivity: input.activity === "interactive",
     });
     if (record.scope !== input.auth.userId || record.studioId !== studioId) {
       throw new Error("backoffice_studio_response_boundary_violation");
     }
-    return await signBackofficeStudioReviewMedia(record, input.client, input.signal);
+    return await signBackofficeStudioReviewMedia(record, input.createSigningClient, input.signal);
   } catch (error) {
     if (error instanceof BackofficeApiError) throw error;
     translateBackofficeDatabaseError(error);

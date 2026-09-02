@@ -2,6 +2,7 @@ import {
   apiSuccessSchema,
   backofficeStudioReviewDetailSchema,
   backofficeStudioReviewQueueSchema,
+  backofficeStudioReadActivityHeader,
 } from "@set-livre/contracts";
 import { expect, test } from "@playwright/test";
 import { z } from "zod";
@@ -202,6 +203,7 @@ test("SL-F030-E2E-010 @p0 resposta perdida e refetch concorrente preservam formu
       }
     });
     await page.route(detailPattern, async (route) => {
+      expect(route.request().headers()[backofficeStudioReadActivityHeader]).toBe("passive");
       automaticDetailReads += 1;
       const response = await route.fetch();
       if (automaticDetailReads === 1) {
@@ -391,6 +393,7 @@ test("SL-F030-E2E-012 @p0 conflito seguido de 503 e 404 nunca reexpõe snapshot 
 
     detailPattern = `**/api/studios/${pending.studioId}`;
     await page.route(detailPattern, async (route) => {
+      expect(route.request().headers()[backofficeStudioReadActivityHeader]).toBe("interactive");
       detailReads += 1;
       await route.fulfill({
         json:
@@ -608,7 +611,7 @@ test("SL-F030-E2E-015 @p0 rota cobre loading, erro recuperável, 404 e descarte 
     if (!executeRevoked) return;
     await withE2EAdminClient(async (client) => {
       await client.query(
-        "grant execute on function private.get_backoffice_studio_review(uuid, uuid, timestamptz, uuid) to app_dal",
+        "grant execute on function private.get_backoffice_studio_review(uuid, uuid, timestamptz, uuid, boolean) to app_dal",
       );
     });
     executeRevoked = false;
@@ -643,7 +646,7 @@ test("SL-F030-E2E-015 @p0 rota cobre loading, erro recuperável, 404 e descarte 
 
     await withE2EAdminClient(async (client) => {
       await client.query(
-        "revoke execute on function private.get_backoffice_studio_review(uuid, uuid, timestamptz, uuid) from app_dal",
+        "revoke execute on function private.get_backoffice_studio_review(uuid, uuid, timestamptz, uuid, boolean) from app_dal",
       );
     });
     executeRevoked = true;

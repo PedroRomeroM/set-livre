@@ -24,6 +24,10 @@ import {
   backofficeIdentityActionDiscriminator,
   enforceBackofficeRateLimit,
 } from "../../apps/backoffice/src/lib/server/rate-limit";
+import {
+  mergeBackofficeSupabaseResponseHeaders,
+  withBackofficeSupabaseResponseHeaderMerge,
+} from "../../apps/backoffice/src/lib/supabase/server";
 
 function protectedRequest() {
   return new Request("http://backoffice.local/api/commands", {
@@ -159,5 +163,49 @@ describe("backoffice command telemetry", () => {
     expect(response.status).toBe(429);
     expect(response.headers.get("x-session-refresh")).toBe("preserved");
     expect(operationalLog).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("backoffice Supabase response headers", () => {
+  it("preserves every prior and refreshed cookie while merging signing headers", () => {
+    const target = new Headers({ "x-middleware-set-cookie": "prior=1; Path=/" });
+    target.append("set-cookie", "prior=1; Path=/");
+    const source = new Headers({
+      "x-middleware-set-cookie": "access=2; Path=/,refresh=3; Path=/",
+      "x-session-refresh": "preserved",
+    });
+    source.append("set-cookie", "access=2; Path=/");
+    source.append("set-cookie", "refresh=3; Path=/");
+
+    mergeBackofficeSupabaseResponseHeaders(target, source);
+
+    expect(target.getSetCookie()).toEqual([
+      "prior=1; Path=/",
+      "access=2; Path=/",
+      "refresh=3; Path=/",
+    ]);
+    expect(target.get("x-middleware-set-cookie")).toBe(
+      "prior=1; Path=/, access=2; Path=/,refresh=3; Path=/",
+    );
+    expect(target.get("x-session-refresh")).toBe("preserved");
+  });
+
+  it("waits for late session refreshes before merging signing headers", async () => {
+    const target = new Headers();
+    const source = new Headers();
+
+    const result = await withBackofficeSupabaseResponseHeaderMerge(
+      target,
+      async (captureResponseHeaders) => {
+        captureResponseHeaders(source);
+        expect(target.getSetCookie()).toEqual([]);
+        source.append("set-cookie", "access=2; Path=/");
+        source.append("set-cookie", "refresh=3; Path=/");
+        return "signed";
+      },
+    );
+
+    expect(result).toBe("signed");
+    expect(target.getSetCookie()).toEqual(["access=2; Path=/", "refresh=3; Path=/"]);
   });
 });

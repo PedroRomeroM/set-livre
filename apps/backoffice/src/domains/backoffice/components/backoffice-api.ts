@@ -8,6 +8,7 @@ import {
   backofficeStudioCommandResultSchema,
   backofficeStudioReviewDetailSchema,
   backofficeStudioReviewQueueSchema,
+  backofficeStudioReadActivityHeader,
   backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
@@ -21,6 +22,7 @@ import {
   type BackofficeStudioReviewDetail,
   type BackofficeStudioReviewQueue,
   type BackofficeStudioReviewQueueQuery,
+  type BackofficeStudioReadActivity,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyList,
   type BackofficeUserList,
@@ -232,13 +234,20 @@ export async function listBackofficeStudioReviewsClient(
 }
 
 export async function readBackofficeStudioReviewClient(
-  input: Readonly<{ expectedScope: string; studioId: string }>,
+  input: Readonly<{
+    activity: BackofficeStudioReadActivity;
+    expectedScope: string;
+    studioId: string;
+  }>,
   signal?: AbortSignal,
 ): Promise<BackofficeStudioReviewDetail> {
   const detail = await backofficeRequest(
     `/api/studios/${encodeURIComponent(input.studioId)}`,
     backofficeStudioReviewDetailSchema,
-    signal === undefined ? undefined : { signal },
+    {
+      headers: { [backofficeStudioReadActivityHeader]: input.activity },
+      ...(signal === undefined ? {} : { signal }),
+    },
   );
   if (detail.scope !== input.expectedScope || detail.studioId !== input.studioId) {
     rejectBackofficePrivateBoundary();

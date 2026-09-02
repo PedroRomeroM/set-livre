@@ -66,7 +66,14 @@ O detalhe compara:
 Preço não aparece enquanto a FEAT-016 não existir. Mídia continua em bucket privado e recebe URLs
 assinadas por cinco minutos somente depois de a sessão, o papel e o vínculo editorial serem validados.
 Somente a operação Storage de assinatura em lote atravessa a policy; listagem/download autenticado
-direto permanecem negados. O path privado e qualquer chave privilegiada permanecem fora do DTO.
+direto permanecem negados. O refresh Auth necessário para obter o token e a assinatura Storage usam o
+mesmo `AbortSignal` e o mesmo deadline de dois segundos; timeout ou desconexão cancela a chamada em voo
+antes de responder `503`. O path privado e qualquer chave privilegiada permanecem fora do DTO.
+
+O detalhe automático relê em segundo plano a cada quatro minutos, no foco e na reconexão com atividade
+`passive`: sessão, papel e conteúdo continuam autoritativos, mas `last_seen_at` não muda. Carregamento
+SSR, tentativa manual e recuperação explícita usam atividade `interactive`; comandos já renovam a
+atividade na própria transação. Portanto polling nunca estende os 30 minutos de inatividade.
 
 Ações:
 

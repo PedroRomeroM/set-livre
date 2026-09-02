@@ -439,8 +439,10 @@ persistido, nunca inferência por ponteiro, auditoria ou evento.
 
 `private.list_backoffice_studio_reviews(...)` deriva a fila diretamente de estúdio, ponteiros, revisão e
 sequência causal do evento; pagina por `(event_sequence, studio_id)` e não cria tabela de casos.
-`private.get_backoffice_studio_review(...)` escolhe a candidata somente quando ela permanece `pending`;
-em moderação/restauração escolhe exclusivamente `published_revision_id`, sem projetar draft privado.
+`private.get_backoffice_studio_review(..., p_touch_activity)` escolhe a candidata somente quando ela
+permanece `pending`; em moderação/restauração escolhe exclusivamente `published_revision_id`, sem
+projetar draft privado. O argumento booleano é obrigatório na DAL e permite que polling passivo execute
+a mesma revalidação de binding/papel sem atualizar `last_seen_at`; a chamada operacional usa `true`.
 Depois compõe publicação, checklist, capacidades e paths de mídia somente para assinatura server-side.
 `private.execute_backoffice_studio_command(...)` decide
 ou modera sob lock de estúdio/revisões, fence de versão e ledger idempotente. Aprovação/rejeição usam o

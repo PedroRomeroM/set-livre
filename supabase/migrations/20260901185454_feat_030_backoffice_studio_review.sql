@@ -926,7 +926,8 @@ create or replace function private.get_backoffice_studio_review(
   p_actor_user_id uuid,
   p_auth_session_id uuid,
   p_auth_expires_at timestamptz,
-  p_studio_id uuid
+  p_studio_id uuid,
+  p_touch_activity boolean default true
 ) returns jsonb
   language plpgsql security definer
   set search_path to ''
@@ -939,7 +940,7 @@ declare
   selected_revision_id uuid;
   submitted_event public.studio_review_events%rowtype;
 begin
-  if p_studio_id is null then
+  if p_studio_id is null or p_touch_activity is null then
     raise exception using errcode = '22023', message = 'invalid_backoffice_studio_review';
   end if;
 
@@ -951,7 +952,7 @@ begin
     p_auth_expires_at,
     'reviewer',
     false,
-    true
+    p_touch_activity
   );
 
   select studio.*
@@ -1057,7 +1058,7 @@ end;
 $function$;
 
 alter function private.get_backoffice_studio_review(
-  uuid, uuid, timestamptz, uuid
+  uuid, uuid, timestamptz, uuid, boolean
 ) owner to postgres;
 
 create or replace function private.can_sign_backoffice_studio_media(
@@ -2412,7 +2413,7 @@ alter function private.execute_backoffice_studio_command(
 insert into private.dal_routine_allowlist (signature)
 values
   ('private.list_backoffice_studio_reviews(uuid,uuid,timestamptz,bigint,uuid,integer)'),
-  ('private.get_backoffice_studio_review(uuid,uuid,timestamptz,uuid)'),
+  ('private.get_backoffice_studio_review(uuid,uuid,timestamptz,uuid,boolean)'),
   ('private.execute_backoffice_studio_command(uuid,uuid,timestamptz,uuid,uuid,bigint,text,text,uuid,uuid)');
 
 revoke all on function private.backoffice_studio_revision_json(uuid)
@@ -2421,7 +2422,7 @@ revoke all on function private.list_backoffice_studio_reviews(
   uuid, uuid, timestamptz, bigint, uuid, integer
 ) from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.get_backoffice_studio_review(
-  uuid, uuid, timestamptz, uuid
+  uuid, uuid, timestamptz, uuid, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.backoffice_studio_command_result_json(
   uuid, text, uuid, uuid
@@ -2434,7 +2435,7 @@ grant execute on function private.list_backoffice_studio_reviews(
   uuid, uuid, timestamptz, bigint, uuid, integer
 ) to app_dal;
 grant execute on function private.get_backoffice_studio_review(
-  uuid, uuid, timestamptz, uuid
+  uuid, uuid, timestamptz, uuid, boolean
 ) to app_dal;
 grant execute on function private.execute_backoffice_studio_command(
   uuid, uuid, timestamptz, uuid, uuid, bigint, text, text, uuid, uuid
@@ -2444,8 +2445,8 @@ comment on function private.list_backoffice_studio_reviews(
   uuid, uuid, timestamptz, bigint, uuid, integer
 ) is 'Fila privada keyset; reviewer vê candidatas pendentes e somente admin vê desativações.';
 comment on function private.get_backoffice_studio_review(
-  uuid, uuid, timestamptz, uuid
-) is 'Detalhe privado estrito com candidata, versão vigente, mídia, conteúdo e checklist derivados.';
+  uuid, uuid, timestamptz, uuid, boolean
+) is 'Detalhe privado estrito; polling passivo revalida sem renovar a inatividade da sessão.';
 comment on function private.execute_backoffice_studio_command(
   uuid, uuid, timestamptz, uuid, uuid, bigint, text, text, uuid, uuid
 ) is 'Decide ou modera estúdio atomicamente com fence, ledger, evento, outbox e audit.';

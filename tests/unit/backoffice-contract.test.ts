@@ -2,6 +2,7 @@ import {
   backofficeCommandSchema,
   backofficeRuntimeUnlockPayloadSchema,
   backofficeSessionSchema,
+  backofficeStudioReadActivityHeader,
   backofficeTaxonomyItemSchema,
   backofficeUserListSchema,
   backofficeUserSummarySchema,
@@ -144,14 +145,16 @@ describe("backoffice contracts", () => {
 
   it("does not impose the command deadline on cancellable studio reads", async () => {
     vi.useFakeTimers();
-    installAbortAwareFetch();
+    const fetchMock = installAbortAwareFetch();
     const requestController = new AbortController();
 
     const outcome = readBackofficeStudioReviewClient(
-      { expectedScope: actorId, studioId: targetId },
+      { activity: "passive", expectedScope: actorId, studioId: targetId },
       requestController.signal,
     ).catch((error: unknown) => error);
     expect(vi.getTimerCount()).toBe(0);
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(new Headers(request?.headers).get(backofficeStudioReadActivityHeader)).toBe("passive");
 
     requestController.abort(new DOMException("Leitura substituída.", "AbortError"));
     await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
@@ -187,12 +190,14 @@ describe("backoffice contracts", () => {
     ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
     await expect(
       readBackofficeStudioReviewClient({
+        activity: "interactive",
         expectedScope: actorId,
         studioId: studioTestIds.studioId,
       }),
     ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
     await expect(
       readBackofficeStudioReviewClient({
+        activity: "interactive",
         expectedScope: backofficeStudioReviewTestIds.reviewerId,
         studioId: studioTestIds.otherStudioId,
       }),

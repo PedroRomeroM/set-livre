@@ -517,7 +517,10 @@ Cada um retorna somente campos de tela:
   moderação/restauração, projeção exclusiva da publicação; capacidades são autoritativas e mídia contém
   apenas URLs assinadas e expiração. O cliente aceita a projeção somente quando `scope` e `studioId`
   correspondem à key solicitada; loading, erro e 404 iniciais possuem boundaries próprias, e um 404
-  conclusivo posterior descarta o detalhe privado do cache.
+  conclusivo posterior descarta o detalhe privado do cache. A rota aceita somente a atividade
+  allowlisted `interactive | passive` no header interno; ausência significa `interactive`, enquanto o
+  polling do cliente envia `passive`. A fábrica Auth e a assinatura Storage nascem dentro do mesmo
+  deadline abortável e qualquer cookie renovado continua sendo publicado na resposta da rota.
 
 Durante o login, `get_my_profile()` também fornece somente a projeção allowlisted de aparência. Essa leitura recebe `AbortSignal`, tem deadline server-side de um segundo e degrada para `system`; retorno posterior ao encerramento da operação não pode escrever cookie nem disparar cleanup Auth.
 

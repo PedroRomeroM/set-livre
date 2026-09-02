@@ -77,6 +77,10 @@ function signingClient() {
   };
 }
 
+function signingClientFactory(client = signingClient()) {
+  return async () => client;
+}
+
 function requiredRoute(): RequiredRouteBackofficeSession {
   return {
     auth,
@@ -139,11 +143,17 @@ describe("FEAT-030 backoffice review service boundaries", () => {
     });
 
     const detail = await readBackofficeStudioReview({
+      activity: "passive",
       auth,
-      client: signingClient(),
+      createSigningClient: signingClientFactory(),
       studioId: studioTestIds.studioId,
     });
 
+    expect(dalMocks.getBackofficeStudioReview).toHaveBeenCalledWith({
+      auth,
+      studioId: studioTestIds.studioId,
+      touchActivity: false,
+    });
     expect(storageFetch).toHaveBeenCalledOnce();
     expect(observedSignal).toBeInstanceOf(AbortSignal);
     expect(requireAbortSignal(observedSignal).aborted).toBe(false);
@@ -163,8 +173,9 @@ describe("FEAT-030 backoffice review service boundaries", () => {
 
       await expect(
         readBackofficeStudioReview({
+          activity: "interactive",
           auth,
-          client,
+          createSigningClient: signingClientFactory(client),
           studioId: studioTestIds.studioId,
         }),
       ).rejects.toThrow("backoffice_studio_response_boundary_violation");
@@ -193,8 +204,9 @@ describe("FEAT-030 backoffice review service boundaries", () => {
     );
 
     const operation = readBackofficeStudioReview({
+      activity: "interactive",
       auth,
-      client: signingClient(),
+      createSigningClient: signingClientFactory(),
       signal: requestController.signal,
       studioId: studioTestIds.studioId,
     });
@@ -228,8 +240,9 @@ describe("FEAT-030 backoffice review service boundaries", () => {
     );
 
     const operation = readBackofficeStudioReview({
+      activity: "interactive",
       auth,
-      client: signingClient(),
+      createSigningClient: signingClientFactory(),
       studioId: studioTestIds.studioId,
     });
     const rejection = expect(operation).rejects.toMatchObject({
@@ -245,12 +258,25 @@ describe("FEAT-030 backoffice review service boundaries", () => {
 
   it("bounds session retrieval inside the same server-side signing deadline", async () => {
     vi.useFakeTimers();
+    let observedSignal: AbortSignal | null = null;
+    let markSessionStarted: (() => void) | undefined;
+    const sessionStarted = new Promise<void>((resolve) => {
+      markSessionStarted = resolve;
+    });
     const operation = readBackofficeStudioReview({
+      activity: "interactive",
       auth,
-      client: {
-        auth: {
-          getSession: () => new Promise(() => undefined),
-        },
+      createSigningClient: (signal) => {
+        observedSignal = signal;
+        return {
+          auth: {
+            getSession: () =>
+              new Promise((_resolve, reject) => {
+                markSessionStarted?.();
+                signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+              }),
+          },
+        };
       },
       studioId: studioTestIds.studioId,
     });
@@ -259,9 +285,11 @@ describe("FEAT-030 backoffice review service boundaries", () => {
       status: 503,
     });
 
+    await sessionStarted;
     await vi.advanceTimersByTimeAsync(backofficeStudioPreviewSigningDeadlineMs);
 
     await rejection;
+    expect(requireAbortSignal(observedSignal).aborted).toBe(true);
   });
 
   it("maps malformed user and studio cursors to typed 422 responses", async () => {
@@ -307,8 +335,9 @@ describe("FEAT-030 backoffice review service boundaries", () => {
   it("rejects malformed route UUIDs as safe 404 responses before reaching the DAL", async () => {
     await expect(
       readBackofficeStudioReview({
+        activity: "interactive",
         auth,
-        client: signingClient(),
+        createSigningClient: signingClientFactory(),
         studioId: "not-a-uuid",
       }),
     ).rejects.toEqual(

@@ -5270,7 +5270,7 @@ COMMENT ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_au
 
 
 
-CREATE OR REPLACE FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid", "p_touch_activity" boolean DEFAULT true) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -5282,7 +5282,7 @@ declare
   selected_revision_id uuid;
   submitted_event public.studio_review_events%rowtype;
 begin
-  if p_studio_id is null then
+  if p_studio_id is null or p_touch_activity is null then
     raise exception using errcode = '22023', message = 'invalid_backoffice_studio_review';
   end if;
 
@@ -5294,7 +5294,7 @@ begin
     p_auth_expires_at,
     'reviewer',
     false,
-    true
+    p_touch_activity
   );
 
   select studio.*
@@ -5400,10 +5400,10 @@ end;
 $$;
 
 
-ALTER FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid", "p_touch_activity" boolean) OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid") IS 'Detalhe privado estrito com candidata, versão vigente, mídia, conteúdo e checklist derivados.';
+COMMENT ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid", "p_touch_activity" boolean) IS 'Detalhe privado estrito; polling passivo revalida sem renovar a inatividade da sessão.';
 
 
 
@@ -14567,8 +14567,8 @@ GRANT ALL ON FUNCTION "private"."get_backoffice_session"("p_user_id" "uuid", "p_
 
 
 
-REVOKE ALL ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid") TO "app_dal";
+REVOKE ALL ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid", "p_touch_activity" boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_studio_id" "uuid", "p_touch_activity" boolean) TO "app_dal";
 
 
 

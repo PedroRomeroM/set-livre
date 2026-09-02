@@ -532,7 +532,7 @@ from (
 
 begin;
 
-select plan(62);
+select plan(63);
 
 select has_column(
   'public',
@@ -578,7 +578,7 @@ select ok(
   )
   and pg_catalog.has_function_privilege(
     'app_dal',
-    'private.get_backoffice_studio_review(uuid,uuid,timestamptz,uuid)',
+    'private.get_backoffice_studio_review(uuid,uuid,timestamptz,uuid,boolean)',
     'EXECUTE'
   )
   and pg_catalog.has_function_privilege(
@@ -944,6 +944,20 @@ select pg_catalog.set_config(
   )::text,
   true
 );
+reset role;
+update private.backoffice_sessions as session_binding
+set last_seen_at = session_binding.opened_at
+where session_binding.auth_session_id = 'a4000000-0000-4000-8000-000000000002';
+select pg_catalog.set_config(
+  'set_livre.test.f030_passive_last_seen',
+  (
+    select session_binding.last_seen_at::text
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = 'a4000000-0000-4000-8000-000000000002'
+  ),
+  true
+);
+set local role app_dal;
 select pg_catalog.set_config(
   'set_livre.test.f030_reviewer_detail',
   private.get_backoffice_studio_review(
@@ -953,11 +967,21 @@ select pg_catalog.set_config(
     (
       pg_catalog.current_setting('set_livre.test.f030_approve')::jsonb
         ->> 'studioId'
-    )::uuid
+    )::uuid,
+    false
   )::text,
   true
 );
 reset role;
+select is(
+  (
+    select session_binding.last_seen_at
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = 'a4000000-0000-4000-8000-000000000002'
+  ),
+  pg_catalog.current_setting('set_livre.test.f030_passive_last_seen')::timestamptz,
+  'polling passivo do detalhe revalida a sessão sem renovar a inatividade'
+);
 
 create temporary table feat030_keyset_pages (
   page_number integer not null,
