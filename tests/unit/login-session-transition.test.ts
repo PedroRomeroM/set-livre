@@ -265,6 +265,7 @@ describe("ambiguous login session transition", () => {
     );
 
     expect(loginMutation).toContain("handleAmbiguousLoginTransportError(error");
+    expect(loginMutation).toContain("beginSessionTransition: onSessionTransition");
     expect(loginMutation).toContain("pendingLogin.current = undefined;");
     expect(loginMutation).toContain("hideAndResetLoginCredentialForm(formRef.current);");
     expect(loginMutation).toContain(

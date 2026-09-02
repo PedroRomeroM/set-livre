@@ -254,6 +254,16 @@ describe("identity mutation cache security", () => {
     expect(content).toContain("observedScopeChanged");
     expect(content).toContain("identitySessionForScope(await readIdentitySession(), sessionScope)");
     expect(content).toContain("sessionQuery.error instanceof IdentitySessionScopeChangedError");
+    expect(content).toContain('import { flushSync } from "react-dom";');
+    const committedTransition = content.slice(
+      content.indexOf("const beginSessionTransition = useCallback"),
+      content.indexOf("const sessionScope ="),
+    );
+    expect(committedTransition).toContain("flushSync(() => {");
+    expect(committedTransition.indexOf("flushSync(() => {")).toBeLessThan(
+      committedTransition.indexOf("setSessionTransitionStarted(true);"),
+    );
+    expect(content.match(/onSessionTransition=\{beginSessionTransition\}/gu)).toHaveLength(2);
     expect(content).toContain("setSessionTransitionStarted(true);");
     expect(content).toContain("queryClient.clear();");
     expect(content).toContain(

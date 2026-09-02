@@ -86,9 +86,9 @@ prova que login preserva os destinos canônicos de criação e edição de estú
 codificação alternativa ou UUID inválido; uma rota de edição com UUID válido em maiúsculas é
 redirecionada primeiro ao path minúsculo e somente esse destino canônico atravessa o login.
 Em resultado de login ambíguo, credenciais efêmeras, formulário e caches privados são redigidos antes
-de o browser solicitar a releitura SSR; a fronteira visual fail-closed é iniciada antes dessa
-solicitação, e nenhuma atualização React ocorre depois que a navegação começa. O cenário P0 exige a
-requisição de documento e o resultado autoritativo nos três engines.
+de o browser solicitar a releitura SSR; a fronteira visual fail-closed é commitada sincronamente com
+`flushSync` antes dessa solicitação, e nenhuma atualização React ocorre depois que a navegação começa.
+O cenário P0 exige a requisição de documento e o resultado autoritativo nos três engines.
 
 ## Segurança do E2E
 
@@ -156,6 +156,8 @@ Recomposições de segurança aguardam a superfície autoritativa final e suas e
 uma navegação intermediária. Reload seguido de redirect ou nova composição SSR pode cancelar um
 documento transitório legitimamente; o teste continua exigindo a tela final, a ausência dos dados
 privados anteriores e, quando aplicável, a evidência explícita de que o reload ocorreu.
+Gestos que iniciam logout commitam sincronamente a fronteira neutra antes da mutation e da requisição;
+o cenário mantém a resposta suspensa e comprova que PII e controles privados já saíram da composição.
 
 ## Matriz da FEAT-006
 

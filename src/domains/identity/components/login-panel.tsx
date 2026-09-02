@@ -9,7 +9,8 @@ import { Alert, Button, Field, Input, Stack } from "@set-livre/ui";
 import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 
 import { seedAuthoritativeIdentitySession } from "./account-query-keys";
 import { fieldErrorProp, firstFieldErrors, formValue, type FieldErrors } from "./form-utils";
@@ -285,6 +286,11 @@ function PreparedLoginPanel({
 }: LoginPanelProps) {
   const queryClient = useQueryClient();
   const [sessionTransitionStarted, setSessionTransitionStarted] = useState(false);
+  const beginSessionTransition = useCallback(() => {
+    flushSync(() => {
+      setSessionTransitionStarted(true);
+    });
+  }, []);
   const sessionScope = identitySessionScope(initialSession);
   const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
   const sessionQuery = useQuery({
@@ -350,18 +356,14 @@ function PreparedLoginPanel({
   return observedSession.authenticated ? (
     <AuthenticatedPanel
       logoutNeedsVerification={logoutNeedsVerification}
-      onSessionTransition={() => {
-        setSessionTransitionStarted(true);
-      }}
+      onSessionTransition={beginSessionTransition}
       session={observedSession}
     />
   ) : (
     <LoginForm
       loginWasRevalidated={loginNeedsVerification}
       logoutWasVerified={logoutNeedsVerification}
-      onSessionTransition={() => {
-        setSessionTransitionStarted(true);
-      }}
+      onSessionTransition={beginSessionTransition}
       returnTo={returnTo}
     />
   );
