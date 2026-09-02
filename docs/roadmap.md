@@ -15,7 +15,7 @@ checks.
 |     6 | FEAT-031 | Backoffice de usuários e taxonomias | Em andamento | FEAT-003, FEAT-007                               | [plano](features/FEAT-031-backoffice-users-taxonomy.md)       |
 |     7 | FEAT-008 | Mídia de estúdio                    | Em andamento | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
 |     8 | FEAT-009 | Submissão e controle editorial      | Em andamento | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |
-|     9 | FEAT-030 | Backoffice de revisão de estúdio    | Em andamento | FEAT-008, FEAT-009                               | [plano](features/FEAT-030-backoffice-studio-review.md)        |
+|     9 | FEAT-030 | Backoffice de revisão de estúdio    | Concluída    | FEAT-008, FEAT-009                               | —                                                             |
 |    10 | FEAT-012 | Disponibilidade semanal             | Planejada    | FEAT-006                                         | [plano](features/FEAT-012-weekly-availability.md)             |
 |    11 | FEAT-013 | Exceções e bloqueios de agenda      | Planejada    | FEAT-012                                         | [plano](features/FEAT-013-calendar-exceptions-blocks.md)      |
 |    12 | FEAT-016 | Precificação                        | Planejada    | FEAT-006, FEAT-012                               | [plano](features/FEAT-016-pricing.md)                         |
