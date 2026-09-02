@@ -67,17 +67,15 @@
             <tr>
               <td>Produto</td>
               <td>
-                FEAT-002, FEAT-003 e FEAT-004 estão implementadas na baseline. O PR incremental
-                reúne a fundação do catálogo: cadastro e revisões de estúdio, conteúdo e taxonomias,
-                backoffice administrativo, galeria privada e fluxo editorial. A FEAT-030 está em
-                candidato local: separa <code>support</code>, <code>reviewer</code> e
-                <code>admin</code>, oferece fila/detalhe privados, decide candidatas atomicamente,
-                revalida o checklist sob locks antes da aprovação, preserva a publicação em
-                rejeições e restaura exatamente o estado anterior à desativação. Polling do detalhe
-                é passivo para a janela de inatividade, enquanto refresh explícito é operacional; o
-                refresh Auth e a assinatura privada compartilham um deadline realmente abortável. O
-                candidato local passou auditoria e gates completos; o lote ainda depende dos checks
-                remotos, do review limpo no SHA exato, merge e deploy. As demais features continuam
+                FEAT-002, FEAT-003 e FEAT-004 estão implementadas na baseline. A fundação do
+                catálogo inclui cadastro e revisões de estúdio, conteúdo e taxonomias, backoffice
+                administrativo, galeria privada, fluxo editorial e revisão editorial. O backoffice
+                separa <code>support</code>, <code>reviewer</code> e <code>admin</code>, oferece
+                fila/detalhe privados, decide candidatas atomicamente, revalida o checklist sob
+                locks antes da aprovação, preserva a publicação em rejeições e restaura exatamente o
+                estado anterior à desativação. Polling do detalhe é passivo para a janela de
+                inatividade, enquanto refresh explícito é operacional; o refresh Auth e a assinatura
+                privada compartilham um deadline realmente abortável. As demais features continuam
                 no estado indicado pelo roadmap.
               </td>
             </tr>
@@ -150,10 +148,10 @@
       <section>
         <h2>Qualidade e entrega</h2>
         <p>
-          A regra normal é uma feature por branch. O PR de fundação atual é uma exceção única,
-          limitada e registrada no ADR-017; cada fatia mantém commit, testes e review próprios.
-          Antes do merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build,
-          audit e Knip conforme o risco.
+          A regra normal é uma feature por branch. O lote de fundação é uma exceção única, limitada
+          e registrada no ADR-017; cada fatia mantém commit, testes e review próprios. Antes do
+          merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build, audit e
+          Knip conforme o risco.
         </p>
         <p>
           Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status
