@@ -37,7 +37,7 @@ describe("ambiguous login session transition", () => {
     },
   );
 
-  it("redacts ephemeral credentials, form and caches before the authoritative reload", () => {
+  it("redacts client state and closes the boundary before the authoritative reload", () => {
     const calls: string[] = [];
     const handled = handleAmbiguousLoginTransportError(
       new IdentityApiError("RESPONSE_INVALID", "Erro seguro."),
@@ -55,8 +55,8 @@ describe("ambiguous login session transition", () => {
       "clear-ref",
       "redact-form",
       "clear-cache",
-      "reload-ssr",
       "hide-session-boundary",
+      "reload-ssr",
     ]);
   });
 
@@ -80,8 +80,8 @@ describe("ambiguous login session transition", () => {
       "clear-ref",
       "redact-form",
       "clear-cache",
-      "reload-ssr",
       "hide-session-boundary",
+      "reload-ssr",
     ]);
   });
 
@@ -105,8 +105,33 @@ describe("ambiguous login session transition", () => {
       "clear-ref",
       "redact-form",
       "clear-cache",
-      "reload-ssr",
       "hide-session-boundary",
+      "reload-ssr",
+    ]);
+  });
+
+  it("still reloads authoritatively when closing the React boundary throws", () => {
+    const transitionError = new Error("boundary transition failed");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => {
+          calls.push("hide-session-boundary");
+          throw transitionError;
+        },
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => calls.push("clear-cache"),
+        reloadAuthoritativeSession: () => calls.push("reload-ssr"),
+      }),
+    ).toThrow(transitionError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "clear-cache",
+      "hide-session-boundary",
+      "reload-ssr",
     ]);
   });
 
@@ -131,8 +156,8 @@ describe("ambiguous login session transition", () => {
       "clear-ref",
       "redact-form",
       "clear-cache",
-      "reload-ssr",
       "hide-session-boundary",
+      "reload-ssr",
     ]);
   });
 

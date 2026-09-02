@@ -86,8 +86,9 @@ prova que login preserva os destinos canônicos de criação e edição de estú
 codificação alternativa ou UUID inválido; uma rota de edição com UUID válido em maiúsculas é
 redirecionada primeiro ao path minúsculo e somente esse destino canônico atravessa o login.
 Em resultado de login ambíguo, credenciais efêmeras, formulário e caches privados são redigidos antes
-de o browser solicitar a releitura SSR; a fronteira visual fail-closed só é publicada depois dessa
-solicitação. O cenário P0 exige a requisição de documento e o resultado autoritativo nos três engines.
+de o browser solicitar a releitura SSR; a fronteira visual fail-closed é iniciada antes dessa
+solicitação, e nenhuma atualização React ocorre depois que a navegação começa. O cenário P0 exige a
+requisição de documento e o resultado autoritativo nos três engines.
 
 ## Segurança do E2E
 
@@ -129,7 +130,9 @@ Os servidores Playwright usam
 `APP_ENV=test`: somente os buckets de rede compartilhados do login e do desbloqueio local recebem
 capacidade para a matriz multibrowser de identidades únicas. Os buckets por identidade continuam
 limitados a dez tentativas, e os runtimes `local`, `development` e `production` preservam o limite de
-rede de 30 tentativas por 15 minutos.
+rede de 30 tentativas por 15 minutos. Esse mesmo ambiente desativa, pela opção suportada
+`devIndicators`, o chrome visual do Next nos dois aplicativos: reflow e overflow medem apenas a UI do
+produto, enquanto erros de build e runtime continuam sendo emitidos pelo framework.
 
 Os dois servidores Next compartilham cada pool PostgreSQL no escopo global do respectivo processo,
 inclusive entre bundles e recompilações do modo de desenvolvimento. O orçamento completo é exercitado

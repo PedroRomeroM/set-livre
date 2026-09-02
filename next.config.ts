@@ -10,6 +10,7 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  devIndicators: process.env.APP_ENV === "test" ? false : { position: "bottom-left" },
   generateBuildId: async () => process.env.APP_RELEASE_SHA ?? "local",
   output: "standalone",
   poweredByHeader: false,

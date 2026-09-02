@@ -60,9 +60,9 @@ export function handleAmbiguousLoginTransportError(
     actions.redactPrivateCaches();
   } finally {
     try {
-      actions.reloadAuthoritativeSession();
-    } finally {
       actions.beginSessionTransition();
+    } finally {
+      actions.reloadAuthoritativeSession();
     }
   }
   return true;
