@@ -315,14 +315,16 @@ Comandos validam hora cheia e ownership.
 
 | Action                             | Papel                      |
 | ---------------------------------- | -------------------------- |
-| `admin.studio.approve`             | reviewer/admin             |
-| `admin.studio.reject`              | reviewer/admin             |
-| `admin.studio.disable`             | admin                      |
-| `admin.studio.restore`             | admin                      |
+| `backoffice.studio.approve`        | reviewer/admin             |
+| `backoffice.studio.reject`         | reviewer/admin             |
+| `backoffice.studio.disable`        | admin                      |
+| `backoffice.studio.restore`        | admin                      |
 | `backoffice.user.suspend/restore`  | support/admin              |
 | `backoffice.user.revealPii`        | support/admin              |
 | `backoffice.access.grantSupport`   | admin + autenticação forte |
 | `backoffice.access.revokeSupport`  | admin + autenticação forte |
+| `backoffice.access.grantReviewer`  | admin + autenticação forte |
+| `backoffice.access.revokeReviewer` | admin + autenticação forte |
 | `backoffice.access.grantAdmin`     | admin + autenticação forte |
 | `backoffice.access.revokeAdmin`    | admin + autenticação forte |
 | `backoffice.taxonomy.upsert`       | admin                      |
@@ -343,16 +345,33 @@ O recorte implementado do backoffice usa endpoints próprios na aplicação `:30
   um cookie HttpOnly assinado, vinculado ao usuário + `session_id` Auth e válido por cinco minutos;
 - `POST /api/users` recebe `{ query?, cursor? }`, limita 50 itens e mantém e-mail/filtro fora da URL;
 - `GET /api/taxonomies` devolve catálogo, versão e contagem de uso somente para admin;
+- `POST /api/studios` recebe `{ cursor? }` e devolve até 50 casos keyset para reviewer/admin; somente
+  admin recebe moderação e restauração;
+- `GET /api/studios/[studioId]` devolve a submissão pendente ou, para moderação/restauração, a publicação
+  exata, além de checklist, capacidades e URLs assinadas curtas; draft não submetido e paths privados
+  nunca entram no DTO; antes de solicitar qualquer assinatura, o serviço confirma novamente que
+  `scope` e `studioId` retornados pela DAL correspondem à sessão e à rota;
 - `/acessos/[userId]` compõe papéis no Server Component por uma fachada admin-only; listas e DTOs do
   browser nunca carregam o conjunto de papéis;
-- `POST /api/commands` aceita exclusivamente a união discriminada das dez actions
+- `POST /api/commands` aceita exclusivamente a união discriminada allowlisted das actions
   `backoffice.*` acima.
 
-As rotas privadas de comandos, diretório e taxonomias validam a sessão administrativa e sua binding
-antes de consumir o bucket compartilhado ou ler o body. O contexto já verificado é passado à camada de
-serviço; ela não abre uma segunda janela de autenticação entre o limiter e a DAL. Headers acumulados
-durante renovação ou invalidação da sessão são preservados tanto no sucesso quanto se limiter, parse,
-runtime lock ou DAL rejeitarem a requisição depois dessa autenticação.
+Cursores opacos de usuários ou estúdios que não tenham sido emitidos pela própria listagem retornam
+`422 VALIDATION_FAILED`; UUID inválido em rota de detalhe retorna o mesmo `404 NOT_FOUND` seguro de um
+registro não visível. As duas fronteiras falham antes de consultar a DAL.
+
+As rotas privadas usam uma fronteira única que valida a sessão administrativa e sua binding e preserva
+os headers resultantes antes de executar o callback específico. Rate limit, leitura do body, parse e
+serviço só executam depois dessa autenticação; a camada de serviço não abre uma segunda janela antes da
+DAL. Os headers permanecem tanto no sucesso quanto se limiter, parse, runtime lock ou DAL rejeitarem a
+requisição depois dessa autenticação.
+
+Depois do discriminador Zod, comandos passam também por bucket de identidade + action derivado do
+scope autenticado; o bucket de rede do túnel não é a única proteção. Leituras propagam cancelamento e a
+assinatura de mídia possui deadline server-side. A expiração publicada de uma preview é contada desde o
+início da assinatura, nunca depois de uma chamada lenta. Somente os comandos de estúdio possuem deadline
+client-side de dez segundos: vencimento é resposta ambígua e conserva payload + `idempotencyKey` exatos;
+login, sessão e comandos administrativos preexistentes não herdam essa política.
 
 Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
 distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.
@@ -368,6 +387,12 @@ Chave ausente no processo retorna `503/RUNTIME_UNLOCK_UNAVAILABLE` e chave diver
 `403/RUNTIME_UNLOCK_DENIED`. Nenhuma resposta expõe SQL, provider, chave ou detalhe de autorização.
 Antes de validar a action, falhas de origem, limite, JSON e schema são registradas apenas como
 `backoffice.command`; a telemetria recebe a action específica somente depois do discriminador Zod.
+
+Os quatro comandos de estúdio incluem `expectedScope`, `idempotencyKey`, `studioId` e
+`expectedPublicationVersion`. Aprovação/rejeição exigem também `expectedRevisionId`; somente rejeição
+aceita `reason` não vazio. O cliente nunca envia status, papel efetivo, ponteiro ou estado de
+restauração. Conflito conclusivo retorna `409/STALE_STATE`; resposta ambígua conserva exatamente o
+mesmo payload e a mesma chave para replay, sem liberar outra decisão.
 
 ## 6. Read models e DTOs
 
@@ -486,6 +511,13 @@ Cada um retorna somente campos de tela:
 - `list_owner_payments`;
 - `get_owner_activation_status`: contrato completo somente para `/dono`;
 - `get_owner_recipient_status`: status compacto para recebimentos e refetch.
+- `list_backoffice_studio_reviews`: fila privada derivada, ordenada por sequência causal + estúdio e
+  paginada por cursor opaco;
+- `get_backoffice_studio_review`: comparação privada da submissão `pending` com a publicação ou, na
+  moderação/restauração, projeção exclusiva da publicação; capacidades são autoritativas e mídia contém
+  apenas URLs assinadas e expiração. O cliente aceita a projeção somente quando `scope` e `studioId`
+  correspondem à key solicitada; loading, erro e 404 iniciais possuem boundaries próprias, e um 404
+  conclusivo posterior descarta o detalhe privado do cache.
 
 Durante o login, `get_my_profile()` também fornece somente a projeção allowlisted de aparência. Essa leitura recebe `AbortSignal`, tem deadline server-side de um segundo e degrada para `system`; retorno posterior ao encerramento da operação não pode escrever cookie nem disparar cleanup Auth.
 
@@ -572,7 +604,8 @@ Documento/código devem manter mapa único. Regras:
 - calendário invalida availability/quote;
 - pagamento confirmado invalida calendar/reservation/payment;
 - cancelamento invalida calendar/reservation/payment/payout;
-- admin review invalida fila/status/public;
+- `backoffice.studio.*` substitui/invalida fila e detalhe no backoffice; consumidores owner/public,
+  quando implementados em outra origem, relerão a fonte canônica por seus próprios boundaries e fences;
 - taxonomy invalida filtros e editores.
 
 Na FEAT-002, `identityQueryKeys.sessions = ["identity", "session"]` é o prefixo de invalidação e `identityQueryKeys.session(userId | "anonymous")` cria a key privada escopada. Recovery usa o prefixo `identityQueryKeys.recoveryStatuses = ["identity", "recovery", "status"]` e a factory `identityQueryKeys.recoveryStatus(scope)`, em que `scope` é o UUID público/opaco recebido pelo Server Component ou `anonymous`. O normalizer rejeita uma resposta cujo scope não corresponda antes de publicá-la no cache. O formulário de nova senha só monta com `allowed=true`, scope correspondente e `fetchStatus="idle"`; `fetching` ou `paused` mantém a verificação fechada, e uma troca de scope remove as famílias recovery/session e recompõe a rota no servidor.

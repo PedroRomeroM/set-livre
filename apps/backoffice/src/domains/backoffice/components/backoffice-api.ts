@@ -5,6 +5,9 @@ import {
   apiSuccessSchema,
   backofficeSessionSchema,
   backofficeRuntimeUnlockResultSchema,
+  backofficeStudioCommandResultSchema,
+  backofficeStudioReviewDetailSchema,
+  backofficeStudioReviewQueueSchema,
   backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
@@ -13,6 +16,11 @@ import {
   type BackofficeCommand,
   type BackofficeLoginPayload,
   type BackofficeRuntimeUnlockPayload,
+  type BackofficeStudioCommand,
+  type BackofficeStudioCommandResult,
+  type BackofficeStudioReviewDetail,
+  type BackofficeStudioReviewQueue,
+  type BackofficeStudioReviewQueueQuery,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyList,
   type BackofficeUserList,
@@ -23,6 +31,8 @@ import {
 import { z } from "zod";
 
 import { notifyBackofficeSessionChanged } from "./session-events";
+
+const studioCommandRequestTimeoutMs = 10_000;
 
 export class BackofficeClientError extends Error {
   readonly code: string;
@@ -58,6 +68,15 @@ export function isStaleBackofficeError(error: unknown) {
   return error instanceof BackofficeClientError && error.code === "STALE_STATE";
 }
 
+function rejectBackofficePrivateBoundary(): never {
+  notifyBackofficeSessionChanged();
+  throw new BackofficeClientError({
+    code: "RESPONSE_INVALID",
+    message: "A resposta privada não corresponde à sessão ou ao registro solicitado.",
+    status: 200,
+  });
+}
+
 async function responsePayload(response: Response) {
   try {
     return (await response.json()) as unknown;
@@ -74,17 +93,57 @@ async function backofficeRequest<T>(
   path: string,
   schema: z.ZodType<T>,
   options?: RequestInit,
+  timeoutMs?: number,
 ): Promise<T> {
-  const response = await fetch(path, {
-    cache: "no-store",
-    credentials: "same-origin",
-    ...options,
-    headers: {
-      ...(options?.body === undefined ? {} : { "content-type": "application/json" }),
-      ...options?.headers,
-    },
-  });
-  const payload = await responsePayload(response);
+  const deadlineController = timeoutMs === undefined ? undefined : new AbortController();
+  const externalSignal = options?.signal;
+  const signal = deadlineController
+    ? externalSignal === undefined || externalSignal === null
+      ? deadlineController.signal
+      : AbortSignal.any([externalSignal, deadlineController.signal])
+    : externalSignal;
+  const deadline =
+    deadlineController === undefined
+      ? undefined
+      : globalThis.setTimeout(
+          () =>
+            deadlineController.abort(
+              new DOMException("O prazo da solicitação ao backoffice expirou.", "TimeoutError"),
+            ),
+          timeoutMs,
+        );
+  let response: Response;
+  let payload: unknown;
+  try {
+    response = await fetch(path, {
+      cache: "no-store",
+      credentials: "same-origin",
+      ...options,
+      headers: {
+        ...(options?.body === undefined ? {} : { "content-type": "application/json" }),
+        ...options?.headers,
+      },
+      ...(signal === undefined ? {} : { signal }),
+    });
+    payload = await responsePayload(response);
+  } catch (error) {
+    if (deadlineController?.signal.aborted === true) {
+      throw new BackofficeClientError({
+        code: "REQUEST_TIMEOUT",
+        message: "A solicitação demorou mais que o esperado. Verifique o estado antes de repetir.",
+        status: 504,
+      });
+    }
+    if (externalSignal?.aborted === true) throw error;
+    if (error instanceof BackofficeClientError) throw error;
+    throw new BackofficeClientError({
+      code: "NETWORK_UNAVAILABLE",
+      message: "Não foi possível conectar ao backoffice. Verifique sua conexão e tente novamente.",
+      status: 503,
+    });
+  } finally {
+    if (deadline !== undefined) globalThis.clearTimeout(deadline);
+  }
   if (!response.ok) {
     const error = apiErrorSchema.safeParse(payload);
     if (!error.success) {
@@ -156,14 +215,61 @@ export function listBackofficeTaxonomiesClient(): Promise<BackofficeTaxonomyList
   return backofficeRequest("/api/taxonomies", backofficeTaxonomyListSchema);
 }
 
+export async function listBackofficeStudioReviewsClient(
+  input: Readonly<{
+    expectedScope: string;
+    query: BackofficeStudioReviewQueueQuery;
+  }>,
+  signal?: AbortSignal,
+): Promise<BackofficeStudioReviewQueue> {
+  const queue = await backofficeRequest("/api/studios", backofficeStudioReviewQueueSchema, {
+    body: JSON.stringify(input.query),
+    method: "POST",
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (queue.scope !== input.expectedScope) rejectBackofficePrivateBoundary();
+  return queue;
+}
+
+export async function readBackofficeStudioReviewClient(
+  input: Readonly<{ expectedScope: string; studioId: string }>,
+  signal?: AbortSignal,
+): Promise<BackofficeStudioReviewDetail> {
+  const detail = await backofficeRequest(
+    `/api/studios/${encodeURIComponent(input.studioId)}`,
+    backofficeStudioReviewDetailSchema,
+    signal === undefined ? undefined : { signal },
+  );
+  if (detail.scope !== input.expectedScope || detail.studioId !== input.studioId) {
+    rejectBackofficePrivateBoundary();
+  }
+  return detail;
+}
+
+export function executeBackofficeStudioCommand(
+  command: BackofficeStudioCommand,
+): Promise<BackofficeStudioCommandResult> {
+  return backofficeRequest(
+    "/api/commands",
+    backofficeStudioCommandResultSchema,
+    {
+      body: JSON.stringify(command),
+      method: "POST",
+    },
+    studioCommandRequestTimeoutMs,
+  );
+}
+
 export function executeBackofficeUserCommand(
   command: Extract<
     BackofficeCommand,
     {
       action:
         | "backoffice.access.grantAdmin"
+        | "backoffice.access.grantReviewer"
         | "backoffice.access.grantSupport"
         | "backoffice.access.revokeAdmin"
+        | "backoffice.access.revokeReviewer"
         | "backoffice.access.revokeSupport"
         | "backoffice.user.restore"
         | "backoffice.user.suspend";

@@ -1,5 +1,4 @@
 import { PageFrame, Panel } from "@set-livre/ui";
-import Link from "next/link";
 import type { ReactNode } from "react";
 
 import styles from "./owner.module.css";
@@ -30,27 +29,27 @@ export function OwnerPageFrame({
 
         <div className={styles.ownerLayout}>
           <nav aria-label="Área do dono" className={styles.ownerNav}>
-            <Link
+            <a
               aria-current={currentPage === "overview" ? "page" : undefined}
               className={styles.ownerNavLink}
               href="/dono"
             >
               Ativação
-            </Link>
-            <Link
+            </a>
+            <a
               aria-current={currentPage === "recipient" ? "page" : undefined}
               className={styles.ownerNavLink}
               href="/dono/recebimentos"
             >
               Recebimentos
-            </Link>
-            <Link
+            </a>
+            <a
               aria-current={currentPage === "studio-create" ? "page" : undefined}
               className={styles.ownerNavLink}
               href="/dono/estudios/novo"
             >
               Novo estúdio
-            </Link>
+            </a>
           </nav>
           <Panel className={styles.ownerContent}>{children}</Panel>
         </div>

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { parseDalDatabaseUrl } from "@set-livre/contracts";
+import { databaseCommandPoolTimeouts, parseDalDatabaseUrl } from "@set-livre/contracts";
 import { Pool } from "pg";
 import { z } from "zod";
 
@@ -24,8 +24,8 @@ export function commandDalPool() {
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 10_000,
     max: 2,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
+    query_timeout: databaseCommandPoolTimeouts.queryTimeoutMs,
+    statement_timeout: databaseCommandPoolTimeouts.statementTimeoutMs,
   });
   commandPool.on("error", () => undefined);
   poolRegistry.setLivreWebCommandDalPool = commandPool;

@@ -7,14 +7,15 @@ import {
   cleanupFeat006QaIdentity,
   createFeat006QaIdentity,
   createFeat006StudioThroughUi,
+  disableFeat006PublishedStudio,
   feat006DefaultCore,
   fillFeat006Core,
   mutateFeat006DraftForConflict,
+  publishFeat006Studio,
   provisionFeat006Owner,
   readFeat006StudioEvidence,
   saveFeat006StudioThroughUi,
   setFeat006ProfileStatus,
-  setFeat006StudioStatus,
   setFeat006StudioTypeActive,
 } from "../../helpers/feat-006-studio-core-revision";
 
@@ -454,12 +455,15 @@ test("SL-F006-E2E-012 @p1 estúdio desabilitado permanece estritamente somente l
     await provisionFeat006Owner(page, identity, "012");
     await fillFeat006Core(page);
     const editor = await createFeat006StudioThroughUi(page);
-    await setFeat006StudioStatus(editor.studioId, "disabled");
+    await publishFeat006Studio(editor);
+    await disableFeat006PublishedStudio(editor.studioId);
     await page.reload({ waitUntil: "domcontentloaded" });
 
     await expect(page.getByText("Estúdio desabilitado", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Salvar rascunho" })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: /Criar rascunho e salvar|Salvar rascunho/iu }),
+    ).toBeDisabled();
     await expect(page.getByRole("button", { name: "Descartar rascunho" })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toBeDisabled();

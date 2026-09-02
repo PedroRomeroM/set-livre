@@ -27,7 +27,8 @@ Famílias:
 - `owner.payments(...)`;
 - `backoffice.users(scope,filterFingerprint)`;
 - `backoffice.taxonomies(scope)`;
-- `admin.reviewQueue(...)`;
+- `backoffice.studios(scope)`;
+- `backoffice.studio(scope,studioId)`;
 - `admin.finance(...)`;
 - `admin.operations(...)`.
 
@@ -72,7 +73,7 @@ Medir; não usar Infinity em dado operacional.
 | `studio.revision.*`     | editor, owner studios, review queue                                                                                                |
 | `studio.media.*`        | editor/media                                                                                                                       |
 | `studio.pause/resume`   | owner, public list/detail, availability                                                                                            |
-| `admin.studio.*`        | review, owner, public                                                                                                              |
+| `backoffice.studio.*`   | fila/detalhe do scope; quando implementados, owner/public relerão a fonte por seus próprios boundaries de versão                   |
 | `backoffice.user.*`     | diretório do scope atual; PII revelada não entra no QueryCache                                                                     |
 | `backoffice.access.*`   | diretório do scope atual; remoção de acesso força nova validação da sessão                                                         |
 | `backoffice.taxonomy.*` | catálogo administrativo e, quando expostos, catálogos públicos/editores                                                            |
@@ -174,6 +175,18 @@ Medir; não usar Infinity em dado operacional.
   payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
   resposta conclusiva descarta a tentativa e invalida o read model. PII usa apenas estado React
   efêmero, expira em 60 segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
+- a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
+  `backoffice.studio(scope,studioId)`. Cada normalizer confirma `scope` e, no detalhe, `studioId`
+  antes de devolver a resposta ao TanStack Query; divergência sinaliza recomposição de sessão e nunca
+  entra na key anterior. A leitura SSR remove e resemeia a key exata antes de habilitar o observer,
+  inclusive ao voltar para um caso já visitado. Sucesso de `backoffice.studio.*` substitui somente o
+  detalhe autoritativo correspondente e invalida fila/detalhe, sem atualização otimista. Conflito
+  remove a tentativa e exige GET antes de outra decisão; `404` conclusivo cancela o observer, remove
+  a key e elimina a visão privada. Erro ambíguo de comando preserva action, payload e chave; erro de
+  leitura oferece apenas nova leitura. URL assinada é projeção efêmera: conteúdo equivalente aceita
+  somente expiração posterior, e expiração nunca participa da autoridade editorial. Não existe
+  invalidação fictícia entre processos; quando os consumidores owner/public forem implementados em
+  outra origem, observarão o novo fato pelo próprio GET autoritativo e por seus fences de versão;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

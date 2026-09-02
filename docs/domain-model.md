@@ -216,17 +216,21 @@ published → changes_pending | paused | disabled
 changes_pending → published | paused | disabled
 paused → published | changes_pending | disabled
 rejected → pending_review
-disabled → published | paused (somente admin)
+disabled → published | changes_pending | paused (somente admin)
 ```
 
 Regras:
 
 - `published_revision_id` pode existir em `published`, `changes_pending`, `paused`, `disabled`;
+- `disabled_from_status` existe somente em `disabled` e registra exatamente `published`,
+  `changes_pending` ou `paused`; restauração usa esse fato e o limpa na mesma transação;
 - `draft_revision_id` e `published_revision_id`, quando presentes, são diferentes e pertencem ao
   próprio estúdio;
 - estúdio ainda inédito aponta para exatamente um draft; descartar esse draft remove a entidade;
 - primeira aprovação é obrigatória;
 - rejeitar alteração não remove revisão pública;
+- rejeitar marca a candidata submetida como `rejected` e cria uma nova revisão `draft` completa,
+  clonando campos, taxonomias, FAQ e relações de mídia para que somente o dono faça a correção;
 - pausa não cancela reservas;
 - `paused` preserva os dois ponteiros. Retomar deriva `changes_pending` quando a candidata apontada
   está `pending`; caso contrário deriva `published`, preserva a candidata privada e mantém uma
@@ -235,7 +239,8 @@ Regras:
   arquivamento anterior bloqueia o submit e arquivamento concorrente espera a decisão atômica;
 - a timeline editorial usa uma sequência causal monotônica do banco; `occurred_at` descreve o fato,
   mas não decide qual review é o mais recente;
-- disabled bloqueia novas ações e exige auditoria.
+- disabled bloqueia novas ações de produto, preserva ponteiros e exige auditoria; apenas admin pode
+  desativar/restaurar, enquanto reviewer decide somente candidatas pendentes.
 
 ## 6. Estado de revisão
 

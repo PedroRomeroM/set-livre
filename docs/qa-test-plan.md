@@ -136,6 +136,10 @@ inclusive entre bundles e recompilações do modo de desenvolvimento. O orçamen
 por teste unitário como `2 + 1 + 2 + 1 = 6`, preservando quatro das dez conexões do runtime para os
 helpers restritos, readiness, recuperação e variação operacional. A suíte crítica longa é regressão
 obrigatória para impedir que instâncias duplicadas voltem a saturar `app_runtime_local`.
+O deadline de cada chamada do driver é deliberadamente posterior ao `statement_timeout` autoritativo
+do PostgreSQL: `3 s > 2 s` nos pools de comando e E2E, e `2 s > 1 s` no readiness. Assim, uma
+instrução lenta retorna o erro terminal do banco e deixa o estado transacional conhecido, enquanto a
+margem restante cobre fila curta do pool e transporte sem aumentar o tempo permitido à instrução SQL.
 
 Os helpers do próprio runner mantêm somente um pool administrativo e um pool DAL por processo, cada
 um com no máximo uma conexão. Toda operação adquire e libera um cliente do pool; transações permanecem
@@ -274,6 +278,33 @@ consulta somente evidência administrativa allowlisted. `0010_studio_publication
 schema, grants/RLS, ownership, checklist derivado, imutabilidade pendente, ponteiros, idempotência,
 ordem causal, corrida entre submit e arquivamento de taxonomia, pausa/retomada, suspensão de conta,
 outbox, auditoria, índices estruturais e cascade restrito ao agregado nunca publicado.
+
+## Matriz da FEAT-030
+
+Os cenários `SL-F030-E2E-*` cobrem:
+
+- aprovação inicial, rejeição de alteração com preservação pública, recusa de conta sem papel e duas
+  decisões concorrentes com uma única transição nos três engines;
+- concessão/revogação de `reviewer` pela UI, com invalidação da sessão já aberta nos três engines;
+- desativação/restauração do estado exato em desktop, 390 px, 320 px e altura compacta;
+- resposta perdida após commit com repetição byte a byte da mesma intenção; preview inválida com
+  bloqueio da decisão e renovação; conflito seguido de releitura `503/404` e `404` direto do comando,
+  ambos descartando formulário, mídia e snapshot antes da nova leitura;
+- recuperação da carga inicial e da próxima página da fila sem descartar itens já confirmados;
+- loading, erro inicial recuperável e 404 contextual da rota; 404 conclusivo em refetch elimina o
+  detalhe privado anterior e impede nova decisão;
+- ausência de `/admin` no aplicativo público;
+- axe, teclado, foco, alvos de toque e tema escuro nas quatro composições;
+- comparação sem overflow e ação operável a 200% em Chromium, Firefox e WebKit.
+
+O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
+no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as
+páginas antes de remover fixtures. `0011_backoffice_studio_review.sql` prova papéis e separação de
+capacidades, grants/RLS, policy A/B de Storage, fila/detalhe, keyset real com desempate e cursor DAL,
+decisões, restauração exata, locks, idempotência, auditoria/outbox, clone integral da rejeição e
+ausência de fence residual. A corrida de aprovação usa dois reviewers com sessões independentes; outro
+cenário arquiva uma taxonomia após a submissão e prova que read model e comando removem a aprovação sem
+qualquer efeito parcial.
 
 ## Contrato por feature
 

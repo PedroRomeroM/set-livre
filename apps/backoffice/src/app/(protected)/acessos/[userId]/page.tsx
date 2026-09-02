@@ -7,6 +7,7 @@ import {
   AccessRoleActions,
   type BackofficeAccessTransition,
 } from "@/domains/backoffice/components/access-role-actions";
+import { backofficeLandingPath } from "@/domains/backoffice/backoffice-authorization";
 import styles from "@/domains/backoffice/components/backoffice.module.css";
 import { readBackofficeUserAccess } from "@/domains/backoffice/server/backoffice-service";
 import {
@@ -38,6 +39,17 @@ function accessTransitions(roles: readonly string[]): readonly BackofficeAccessT
           buttonLabel: "Revisar concessão administrativa",
           confirmation: "Conceder acesso administrativo a esta conta.",
         },
+    roles.includes("reviewer")
+      ? {
+          action: "backoffice.access.revokeReviewer",
+          buttonLabel: "Revisar revogação de revisão",
+          confirmation: "Revogar o acesso à revisão editorial de estúdios desta conta.",
+        }
+      : {
+          action: "backoffice.access.grantReviewer",
+          buttonLabel: "Revisar concessão de revisão",
+          confirmation: "Conceder acesso à revisão editorial de estúdios desta conta.",
+        },
   ];
 }
 
@@ -48,7 +60,9 @@ export default async function BackofficeAccessDetailPage({
 }) {
   const state = await readComponentBackofficeState();
   if (state === undefined) return null;
-  if (!state.session.roles.includes("admin")) redirect("/usuarios");
+  if (!state.session.roles.includes("admin")) {
+    redirect(backofficeLandingPath(state.session.roles));
+  }
   const parsedUserId = z.uuid().safeParse((await params).userId);
   if (!parsedUserId.success) notFound();
   const access = await readBackofficeUserAccess({ auth: state.auth, userId: parsedUserId.data });
@@ -79,6 +93,8 @@ export default async function BackofficeAccessDetailPage({
           <dd>{access.roles.includes("support") ? "Concedido" : "Não concedido"}</dd>
           <dt>Administração</dt>
           <dd>{access.roles.includes("admin") ? "Concedido" : "Não concedido"}</dd>
+          <dt>Revisão editorial</dt>
+          <dd>{access.roles.includes("reviewer") ? "Concedido" : "Não concedido"}</dd>
           <dt>Conta</dt>
           <dd>{user.status === "active" ? "Ativa" : "Suspensa"}</dd>
         </dl>

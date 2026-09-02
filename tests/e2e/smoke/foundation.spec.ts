@@ -1,48 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import {
+  expectPresentRawHtmlScriptsUseNonce,
+  expectRawHtmlScriptsUseNonce,
+  policyNonce,
+} from "../../helpers/content-security-policy";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
 const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
-
-function scriptDirective(contentSecurityPolicy: string) {
-  return (
-    contentSecurityPolicy
-      .split(";")
-      .map((directive) => directive.trim())
-      .find((directive) => directive.startsWith("script-src ")) ?? ""
-  );
-}
-
-function policyNonce(contentSecurityPolicy: string) {
-  const scriptSource = scriptDirective(contentSecurityPolicy);
-  const matches = [...scriptSource.matchAll(/'nonce-([a-f0-9]{32})'/gu)];
-  expect(matches, "script-src deve declarar exatamente um nonce por request.").toHaveLength(1);
-  expect(scriptSource).toContain("'strict-dynamic'");
-  expect(scriptSource).toContain("'unsafe-eval'");
-  expect(scriptSource).not.toContain("'unsafe-inline'");
-  return matches[0]?.[1] ?? "";
-}
-
-function expectRawHtmlScriptsUseNonce(html: string, nonce: string) {
-  const scriptTags = html.match(/<script(?:\s[^>]*)?>/gu) ?? [];
-  expect(
-    scriptTags.length,
-    "O HTML precisa conter o bootstrap JavaScript do Next.",
-  ).toBeGreaterThan(0);
-  expect(
-    scriptTags.every((scriptTag) => scriptTag.includes(`nonce="${nonce}"`)),
-    "Todo script do HTML precisa usar o nonce da mesma response.",
-  ).toBe(true);
-}
-
-function expectPresentRawHtmlScriptsUseNonce(html: string, nonce: string) {
-  const scriptTags = html.match(/<script(?:\s[^>]*)?>/gu) ?? [];
-  expect(
-    scriptTags.every((scriptTag) => scriptTag.includes(`nonce="${nonce}"`)),
-    "Todo script presente no HTML de erro precisa usar o nonce da mesma response.",
-  ).toBe(true);
-}
 
 function expectDevelopmentHtmlRequiresRevalidation(cacheControl: string) {
   expect(cacheControl).toContain("no-cache");

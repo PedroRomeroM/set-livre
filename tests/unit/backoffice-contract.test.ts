@@ -9,19 +9,48 @@ import {
 } from "@set-livre/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BackofficeClientError,
+  executeBackofficeStudioCommand,
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
+  listBackofficeStudioReviewsClient,
+  readBackofficeStudioReviewClient,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
 import { useBackofficeHydrated } from "../../apps/backoffice/src/domains/backoffice/components/use-backoffice-hydrated";
 import { backofficeAuthNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/auth-rate-limit-profile";
+import {
+  backofficeStudioReviewDetailFixture,
+  backofficeStudioReviewTestIds,
+  studioTestIds,
+} from "./studio-test-fixture";
 
 const actorId = "10000000-0000-4000-8000-000000000001";
 const targetId = "10000000-0000-4000-8000-000000000002";
 const idempotencyKey = "10000000-0000-4000-8000-000000000003";
+const revisionId = "10000000-0000-4000-8000-000000000004";
+
+function installAbortAwareFetch() {
+  const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      if (signal?.aborted === true) {
+        reject(signal.reason);
+        return;
+      }
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function BackofficeHydrationProbe() {
   return createElement("span", null, useBackofficeHydrated() ? "open" : "closed");
@@ -85,9 +114,99 @@ describe("backoffice contracts", () => {
     ).toBe(false);
   });
 
-  it("accepts only the roles delivered by FEAT-031", () => {
-    expect(platformRolesSchema.parse(["support", "admin"])).toEqual(["support", "admin"]);
-    expect(platformRolesSchema.safeParse(["reviewer"]).success).toBe(false);
+  it("limits the ambiguous deadline to studio commands and preserves their exact key", async () => {
+    vi.useFakeTimers();
+    const fetchMock = installAbortAwareFetch();
+    const command = {
+      action: "backoffice.studio.approve",
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: {
+        expectedPublicationVersion: 1,
+        expectedRevisionId: revisionId,
+        studioId: targetId,
+      },
+    } as const;
+
+    const outcome = executeBackofficeStudioCommand(command).catch((error: unknown) => error);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(outcome).resolves.toMatchObject({
+      code: "REQUEST_TIMEOUT",
+      status: 504,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(JSON.parse(String(request?.body))).toMatchObject({ idempotencyKey });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not impose the command deadline on cancellable studio reads", async () => {
+    vi.useFakeTimers();
+    installAbortAwareFetch();
+    const requestController = new AbortController();
+
+    const outcome = readBackofficeStudioReviewClient(
+      { expectedScope: actorId, studioId: targetId },
+      requestController.signal,
+    ).catch((error: unknown) => error);
+    expect(vi.getTimerCount()).toBe(0);
+
+    requestController.abort(new DOMException("Leitura substituída.", "AbortError"));
+    await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
+  });
+
+  it("rejects late studio reads before another private scope or record reaches the cache", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const response = (data: unknown) =>
+      new Response(JSON.stringify({ data, requestId: "10000000-0000-4000-8000-000000000099" }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          response({
+            items: [],
+            nextCursor: null,
+            scope: backofficeStudioReviewTestIds.reviewerId,
+          }),
+        )
+        .mockResolvedValueOnce(response(backofficeStudioReviewDetailFixture()))
+        .mockResolvedValueOnce(response(backofficeStudioReviewDetailFixture())),
+    );
+
+    await expect(
+      listBackofficeStudioReviewsClient({ expectedScope: actorId, query: {} }),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    await expect(
+      readBackofficeStudioReviewClient({
+        expectedScope: actorId,
+        studioId: studioTestIds.studioId,
+      }),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    await expect(
+      readBackofficeStudioReviewClient({
+        expectedScope: backofficeStudioReviewTestIds.reviewerId,
+        studioId: studioTestIds.otherStudioId,
+      }),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    expect(dispatchEvent).toHaveBeenCalledTimes(3);
+  });
+
+  it("accepts only the operational roles delivered by FEAT-031 and FEAT-030", () => {
+    expect(platformRolesSchema.parse(["support", "reviewer", "admin"])).toEqual([
+      "support",
+      "reviewer",
+      "admin",
+    ]);
+    expect(platformRolesSchema.safeParse(["finance"]).success).toBe(false);
     expect(platformRolesSchema.safeParse(["admin", "admin"]).success).toBe(false);
   });
 

@@ -1,15 +1,13 @@
 import { readBackofficeTaxonomies } from "@/domains/backoffice/server/backoffice-service";
-import { requireRouteBackofficeSession } from "@/domains/backoffice/server/backoffice-session";
-import { backofficeNetworkDiscriminator, runBackofficeRoute } from "@/lib/server/api-route";
+import { backofficeNetworkDiscriminator } from "@/lib/server/api-route";
+import { runProtectedBackofficeRoute } from "@/lib/server/protected-api-route";
 import { enforceBackofficeRateLimit } from "@/lib/server/rate-limit";
 
 export async function GET(request: Request) {
-  return runBackofficeRoute(
+  return runProtectedBackofficeRoute(
     request,
     "backoffice.taxonomies.read",
-    async (_requestId, _setAction, setResponseHeaders) => {
-      const route = await requireRouteBackofficeSession();
-      setResponseHeaders(route.responseHeaders);
+    async ({ route }) => {
       enforceBackofficeRateLimit(
         "backoffice.taxonomies.network",
         backofficeNetworkDiscriminator(request),

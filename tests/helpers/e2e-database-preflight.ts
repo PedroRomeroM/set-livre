@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { z } from "zod";
 
+import { databaseCommandPoolTimeouts } from "@set-livre/contracts";
+
 import { readSafeE2EEnvironment } from "./e2e-environment";
 import { createPlaywrightOperationalEnvironment } from "./playwright-web-server";
 
@@ -44,8 +46,8 @@ function databasePool(scope: DatabaseScope) {
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 0,
     max: 1,
-    query_timeout: 2_000,
-    statement_timeout: 2_000,
+    query_timeout: databaseCommandPoolTimeouts.queryTimeoutMs,
+    statement_timeout: databaseCommandPoolTimeouts.statementTimeoutMs,
   });
   pool.on("error", () => {
     if (pools[scope] === pool) delete pools[scope];

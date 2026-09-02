@@ -696,6 +696,7 @@ export type Database = {
       studios: {
         Row: {
           created_at: string;
+          disabled_from_status: string | null;
           draft_revision_id: string | null;
           id: string;
           owner_user_id: string;
@@ -706,6 +707,7 @@ export type Database = {
         };
         Insert: {
           created_at?: string;
+          disabled_from_status?: string | null;
           draft_revision_id?: string | null;
           id?: string;
           owner_user_id: string;
@@ -716,6 +718,7 @@ export type Database = {
         };
         Update: {
           created_at?: string;
+          disabled_from_status?: string | null;
           draft_revision_id?: string | null;
           id?: string;
           owner_user_id?: string;

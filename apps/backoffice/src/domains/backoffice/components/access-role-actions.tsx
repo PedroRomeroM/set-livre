@@ -5,7 +5,8 @@ import type {
   BackofficeSession,
   BackofficeUserSummary,
 } from "@set-livre/contracts";
-import { Alert, Button, Field, PasswordInput } from "@set-livre/ui";
+import { Alert, Button, Field } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";

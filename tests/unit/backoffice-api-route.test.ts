@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const sessionMocks = vi.hoisted(() => ({
+  requireRouteBackofficeSession: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("../../apps/backoffice/src/lib/supabase/config", () => ({
@@ -10,80 +13,151 @@ vi.mock("../../apps/backoffice/src/lib/supabase/config", () => ({
     environment: "local",
   }),
 }));
+vi.mock(
+  "../../apps/backoffice/src/domains/backoffice/server/backoffice-session",
+  () => sessionMocks,
+);
 
+import { BackofficeApiError } from "../../apps/backoffice/src/lib/server/api-route";
+import { runProtectedBackofficeRoute } from "../../apps/backoffice/src/lib/server/protected-api-route";
 import {
-  BackofficeApiError,
-  runBackofficeRoute,
-} from "../../apps/backoffice/src/lib/server/api-route";
+  backofficeIdentityActionDiscriminator,
+  enforceBackofficeRateLimit,
+} from "../../apps/backoffice/src/lib/server/rate-limit";
+
+function protectedRequest() {
+  return new Request("http://backoffice.local/api/commands", {
+    headers: {
+      host: "backoffice.local",
+      origin: "http://backoffice.local",
+    },
+    method: "POST",
+  });
+}
+
+beforeEach(() => {
+  sessionMocks.requireRouteBackofficeSession.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("backoffice command telemetry", () => {
-  it("uses a generic action until a command discriminator has been validated", () => {
-    const routeSource = readFileSync(
-      resolve(process.cwd(), "apps/backoffice/src/app/api/commands/route.ts"),
-      "utf8",
-    );
-    const apiRouteSource = readFileSync(
-      resolve(process.cwd(), "apps/backoffice/src/lib/server/api-route.ts"),
-      "utf8",
-    );
-
-    expect(routeSource).toMatch(/runBackofficeRoute\(\s*request,\s*"backoffice\.command"/u);
-    expect(apiRouteSource).toContain('"backoffice.command"');
-    expect(routeSource.indexOf("parseOrBackofficeInputError(")).toBeLessThan(
-      routeSource.indexOf("setAction(command.action)"),
-    );
-    expect(routeSource).not.toMatch(
-      /runBackofficeRoute\(\s*request,\s*"backoffice\.user\.suspend"/u,
-    );
-  });
-
-  it("authenticates every private backoffice surface before rate limiting or reading a body", () => {
-    const routePaths = [
-      "apps/backoffice/src/app/api/commands/route.ts",
-      "apps/backoffice/src/app/api/taxonomies/route.ts",
-      "apps/backoffice/src/app/api/users/route.ts",
-    ];
-
-    for (const routePath of routePaths) {
-      const routeSource = readFileSync(resolve(process.cwd(), routePath), "utf8");
-      const authentication = routeSource.indexOf("await requireRouteBackofficeSession()");
-      const rateLimit = routeSource.indexOf("enforceBackofficeRateLimit(");
-      const bodyRead = routeSource.indexOf("await readLimitedJson(request)");
-
-      expect(authentication, routePath).toBeGreaterThan(-1);
-      expect(authentication, routePath).toBeLessThan(rateLimit);
-      if (bodyRead !== -1) expect(authentication, routePath).toBeLessThan(bodyRead);
-    }
-
-    const serviceSource = readFileSync(
-      resolve(process.cwd(), "apps/backoffice/src/domains/backoffice/server/backoffice-service.ts"),
-      "utf8",
-    );
-    expect(serviceSource).not.toContain("await requireRouteBackofficeSession()");
-  });
-
-  it("preserves session response headers when a downstream stage rejects the request", async () => {
+  it("keeps telemetry generic until the protected callback validates an action", async () => {
     const operationalLog = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    try {
-      const response = await runBackofficeRoute(
-        new Request("http://backoffice.local/api/commands", {
-          headers: {
-            host: "backoffice.local",
-            origin: "http://backoffice.local",
-          },
-          method: "POST",
-        }),
-        "backoffice.command",
-        async (_requestId, _setAction, setResponseHeaders) => {
-          setResponseHeaders({ "x-session-refresh": "preserved" });
-          throw new BackofficeApiError(429, "RATE_LIMITED", "Tente novamente depois.");
-        },
-      );
+    sessionMocks.requireRouteBackofficeSession.mockResolvedValue({
+      responseHeaders: new Headers(),
+    });
+    const rejectInvalidAction = vi.fn((): "backoffice.studio.approve" => {
+      throw new BackofficeApiError(422, "VALIDATION_FAILED", "Action inválida.");
+    });
 
-      expect(response.status).toBe(429);
-      expect(response.headers.get("x-session-refresh")).toBe("preserved");
-    } finally {
-      operationalLog.mockRestore();
-    }
+    const beforeValidation = await runProtectedBackofficeRoute(
+      protectedRequest(),
+      "backoffice.command",
+      async ({ setAction }) => {
+        setAction(rejectInvalidAction());
+        return { data: { accepted: true } };
+      },
+    );
+    const afterValidation = await runProtectedBackofficeRoute(
+      protectedRequest(),
+      "backoffice.command",
+      async ({ setAction }) => {
+        setAction("backoffice.studio.approve");
+        throw new BackofficeApiError(429, "RATE_LIMITED", "Tente novamente depois.");
+      },
+    );
+
+    expect(beforeValidation.status).toBe(422);
+    expect(afterValidation.status).toBe(429);
+    expect(operationalLog).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('"action":"backoffice.command"'),
+    );
+    expect(operationalLog).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('"action":"backoffice.studio.approve"'),
+    );
+  });
+
+  it("partitions command limits by a private hash of identity and validated action", () => {
+    const scope = "a1000000-0000-4000-8000-000000000099";
+    const approve = backofficeIdentityActionDiscriminator(scope, "backoffice.studio.approve");
+    const reject = backofficeIdentityActionDiscriminator(scope, "backoffice.studio.reject");
+
+    expect(approve).toMatch(/^[a-f0-9]{64}$/u);
+    expect(approve).not.toContain(scope);
+    expect(approve).not.toContain("approve");
+    expect(reject).not.toBe(approve);
+    expect(backofficeIdentityActionDiscriminator(scope, "backoffice.studio.approve")).toBe(approve);
+  });
+
+  it("enforces identity and action buckets independently from the shared network bucket", () => {
+    const partition = `unit.backoffice.commands.${randomUUID()}`;
+    const scope = "a1000000-0000-4000-8000-000000000099";
+    const approve = backofficeIdentityActionDiscriminator(scope, "backoffice.studio.approve");
+    const reject = backofficeIdentityActionDiscriminator(scope, "backoffice.studio.reject");
+    const options = { limit: 1, windowMs: 60_000 } as const;
+
+    enforceBackofficeRateLimit(partition, approve, options);
+    expect(() => enforceBackofficeRateLimit(partition, approve, options)).toThrowError(
+      BackofficeApiError,
+    );
+    expect(() => enforceBackofficeRateLimit(partition, reject, options)).not.toThrow();
+  });
+
+  it("stops rate limit, body parsing and execution when authentication fails", async () => {
+    const operationalLog = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const rateLimit = vi.fn();
+    const readBody = vi.fn();
+    const execute = vi.fn();
+    const protectedCallback = vi.fn(async () => {
+      rateLimit();
+      readBody();
+      execute();
+      return { data: { accepted: true } };
+    });
+    sessionMocks.requireRouteBackofficeSession.mockRejectedValue(
+      new BackofficeApiError(401, "UNAUTHENTICATED", "Entre novamente para continuar."),
+    );
+
+    const response = await runProtectedBackofficeRoute(
+      protectedRequest(),
+      "backoffice.command",
+      protectedCallback,
+    );
+
+    expect(response.status).toBe(401);
+    expect(sessionMocks.requireRouteBackofficeSession).toHaveBeenCalledTimes(1);
+    expect(protectedCallback).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
+    expect(readBody).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(operationalLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs authentication before the callback and preserves its headers on downstream rejection", async () => {
+    const operationalLog = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const order: string[] = [];
+    sessionMocks.requireRouteBackofficeSession.mockImplementation(async () => {
+      order.push("auth");
+      return { responseHeaders: new Headers({ "x-session-refresh": "preserved" }) };
+    });
+
+    const response = await runProtectedBackofficeRoute(
+      protectedRequest(),
+      "backoffice.command",
+      async () => {
+        order.push("callback");
+        throw new BackofficeApiError(429, "RATE_LIMITED", "Tente novamente depois.");
+      },
+    );
+
+    expect(order).toEqual(["auth", "callback"]);
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-session-refresh")).toBe("preserved");
+    expect(operationalLog).toHaveBeenCalledTimes(1);
   });
 });

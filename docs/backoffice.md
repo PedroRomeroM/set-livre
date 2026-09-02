@@ -10,7 +10,8 @@ Acesso:
 
 - autenticação Supabase;
 - perfil ativo e completo;
-- papel `support` ou `admin` revalidado no banco a cada leitura/comando;
+- ao menos um papel `support`, `reviewer` ou `admin`, sempre revalidado no banco; cada superfície
+  exige ainda sua capacidade explícita;
 - binding por `session_id` Auth com 30 minutos de inatividade e oito horas absolutas;
 - revalidação client-side no mount, a cada 15 segundos, no foco e por evento entre abas; mudança de
   identidade ou autorização oculta o DOM privado, limpa o QueryCache e recompõe a rota; esse polling
@@ -20,8 +21,10 @@ Acesso:
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
 - nenhum service role no browser.
 
-`support` opera usuários. `admin` também administra acessos e taxonomias. `reviewer` e `finance` só
-serão introduzidos pelas features proprietárias; não existem antecipadamente no schema ou na UI.
+`support` opera usuários. `reviewer` revisa candidatas editoriais. `admin` substitui deliberadamente
+ambos e também administra acessos, taxonomias e moderação de estúdios. As capacidades não são
+hierárquicas por acidente: a função privada recebe o papel exigido em cada chamada. `finance` continua
+fora do schema e da UI até sua feature proprietária.
 
 ## 2. Rotas
 
@@ -33,7 +36,7 @@ serão introduzidos pelas features proprietárias; não existem antecipadamente 
 | `/taxonomias`    | tipos/tags/comodidades | implementada, só admin |
 | `/acessos`       | papéis                 | implementada, só admin |
 | `/acessos/[id]`  | detalhe server-only    | implementada, só admin |
-| `/estudios[/id]` | fila e revisão         | FEAT-030               |
+| `/estudios[/id]` | fila e revisão         | implementada           |
 | `/reservas[/id]` | operação               | FEAT-033               |
 | `/pagamentos`    | transações             | FEAT-032               |
 | `/reembolsos`    | pendências             | FEAT-032               |
@@ -42,27 +45,43 @@ serão introduzidos pelas features proprietárias; não existem antecipadamente 
 | `/operacao`      | jobs/saúde             | FEAT-033               |
 | `/auditoria`     | eventos permitidos     | FEAT-033               |
 
-## 3. Revisão de estúdio planejada
+## 3. Revisão e moderação de estúdio
 
-Tela compara:
+A fila usa paginação keyset e deriva seus casos dos ponteiros, revisões e eventos editoriais já
+canônicos; não existe tabela paralela de caso. `reviewer` vê candidatas pendentes. `admin` vê também
+estúdios publicados/pausados sem submissão pendente para moderação e os desabilitados que podem ser
+restaurados. Um draft ainda não submetido nunca aparece nem tem mídia assinada nessa superfície.
+
+O detalhe compara:
 
 - versão pública, se houver;
-- revisão pendente;
+- revisão submetida pendente ou, em moderação/restauração, a revisão publicada exata;
 - dados;
 - endereço;
 - mídia;
 - tags/amenities;
 - FAQ/regras;
-- preço/configurações relevantes.
+- checklist editorial derivado.
+
+Preço não aparece enquanto a FEAT-016 não existir. Mídia continua em bucket privado e recebe URLs
+assinadas por cinco minutos somente depois de a sessão, o papel e o vínculo editorial serem validados.
+Somente a operação Storage de assinatura em lote atravessa a policy; listagem/download autenticado
+direto permanecem negados. O path privado e qualquer chave privilegiada permanecem fora do DTO.
 
 Ações:
 
 - aprovar;
 - rejeitar com motivo;
 - desabilitar em ação separada;
-- abrir owner/studio context.
+- restaurar exatamente o estado guardado antes da desativação.
 
-Aprovação é atômica e audita. Reviewer não altera conteúdo em nome do dono.
+Aprovação/rejeição recebem a revisão e a versão editorial esperadas; desativação/restauração recebem a
+versão editorial. Todas usam idempotência, lock, evento de auditoria e retorno autoritativo na mesma
+transação. Antes de aprovar, o banco bloqueia as taxonomias referenciadas e recalcula o checklist
+canônico; item arquivado depois da submissão remove `canApprove` e impede publicação sem efeito parcial.
+Aprovar preserva `paused` quando esse era o estado operacional. Rejeitar conserva a versão pública e
+clona integralmente a candidata rejeitada para um novo draft do dono. Reviewer não altera conteúdo em
+nome do dono.
 
 ## 4. Usuários
 
@@ -83,7 +102,7 @@ Aprovação é atômica e audita. Reviewer não altera conteúdo em nome do dono
 
 Somente `admin` vê e abre `/acessos`, `/acessos/[userId]` e `/taxonomias`; chamada direta continua sendo
 recusada pelo banco. A lista de contas não devolve papéis. O detalhe consulta uma única conta no servidor,
-deriva somente as transições explícitas `grant/revoke support/admin` e envia ao cliente a ação permitida,
+deriva somente as transições explícitas `grant/revoke support/reviewer/admin` e envia ao cliente a ação permitida,
 o alvo mascarado e a versão opaca da conta. Alterar papel usa `expectedAccountVersion`, lock de
 autorização, idempotência e reautenticação recente; o browser nunca propõe um conjunto arbitrário de
 papéis. Os botões de transição permanecem desabilitados no HTML inicial e só aceitam interação depois
@@ -106,7 +125,7 @@ desbloqueio envia a chave local somente ao endpoint de autenticação. O valor n
 cookie HttpOnly/SameSite estrito, assinado, não renovável por polling e vinculado ao usuário e ao
 `session_id` Auth. Ele expira em cinco minutos e é apagado em login, logout ou invalidação da sessão.
 Sem cookie válido, `/api/commands` falha fechado com `423/RUNTIME_LOCKED` antes de chamar a DAL.
-Comandos, diretório e taxonomias autenticam a binding administrativa antes de consumir o bucket de
+Comandos, diretório, taxonomias e revisão editorial autenticam a binding administrativa antes de consumir o bucket de
 rede ou ler qualquer body privado; o serviço recebe esse mesmo contexto verificado até a DAL.
 O formulário possui nome acessível próprio e constitui um landmark entre a navegação e o conteúdo
 principal.
@@ -175,7 +194,7 @@ Audit é append-only para operadores. Export controlado.
 - cookie storage key próprio e headers `private, no-store`;
 - claims, sessão Auth canônica, perfil e papéis são revalidados no servidor;
 - tabelas administrativas usam RLS fechado e zero grants para browser;
-- DAL executa somente as onze fachadas allowlisted e não lê tabelas diretamente;
+- DAL executa somente as fachadas allowlisted e não lê tabelas diretamente;
 - ledger idempotente guarda hash de payload/resultado, mas PII guarda apenas versões para detectar
   replay stale, nunca valor ou hash reutilizável;
 - erros públicos são allowlisted e logs usam request ID sem e-mail, documento ou payload; falha
@@ -185,8 +204,10 @@ Audit é append-only para operadores. Export controlado.
 
 - app público 404 em `/admin`;
 - usuário comum não entra;
-- `support` opera conta/PII, mas não enxerga nem chama acessos/taxonomias;
-- admin recente gerencia papéis e o último admin permanece protegido;
+- `support` opera conta/PII, mas não enxerga nem chama acessos, taxonomias ou revisão editorial;
+- `reviewer` acessa somente fila/detalhe e decide candidatas; `admin` substitui esse papel de forma
+  explícita e é o único que desabilita/restaura;
+- admin recente gerencia os três papéis e o último admin permanece protegido;
 - lista/sessão do browser não expõem papéis e o detalhe de acesso é composto no servidor;
 - login, logout global, desbloqueio, busca e taxonomias permanecem fechados antes da hidratação, sem
   perder entrada antecipada nem aceitar ação sem handler;
@@ -198,7 +219,10 @@ Audit é append-only para operadores. Export controlado.
 - troca de sessão/papel elimina imediatamente a composição privada após a revalidação;
 - polling passivo não mantém uma sessão inativa viva;
 - correção regressiva do relógio preserva atividade/encerramento monotônicos sem violar constraints;
-- conflitos de conta, papel e taxonomia exigem novo read model e nova confirmação;
+- conflitos de conta, papel, taxonomia e revisão exigem novo read model e nova confirmação;
+- aprovação/rejeição concorrentes produzem uma única decisão; rejeição preserva publicação e cria a
+  correção completa, enquanto desativação/restauração recuperam `published`, `changes_pending` ou
+  `paused` sem inferência;
 - status, acesso e taxonomia bloqueiam cancelamento/troca enquanto a requisição está em voo; se a
   resposta se perder, conservam a mesma chave/tentativa até o replay autoritativo;
 - desktop é a composição principal, com operação íntegra em 390 px, 320 px e altura compacta;

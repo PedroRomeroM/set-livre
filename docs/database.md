@@ -39,8 +39,8 @@ A baseline implementada inclui:
   liberando a quota sem depender da versão corrente;
 - workflow editorial do dono com checklist autoritativo, revisão pendente imutável, pausa/retomada,
   idempotência, outbox mínima e versão de publicação independente;
-- usuários administrativos, binding curto de sessão, papéis `support/admin`, PII temporária,
-  taxonomias versionadas, idempotência e auditoria redigida;
+- usuários administrativos, binding curto de sessão, papéis `support/reviewer/admin`, PII temporária,
+  taxonomias versionadas, revisão/moderação editorial, idempotência e auditoria redigida;
 - relógio lógico monotônico no binding administrativo e nos dez pares `created_at/updated_at` do
   domínio, preservado no banco mesmo quando o relógio de parede do host sofre uma correção regressiva;
 - read models públicos `security invoker` sob `auth.uid()`;
@@ -172,12 +172,13 @@ Nome, telefone e documentos continuam canônicos em `profiles`; esta tabela não
 ### 4.3 `platform_roles`
 
 - `user_id`;
-- `role`: `support/admin` no recorte implementado;
+- `role`: `support/reviewer/admin` no recorte implementado;
 - `granted_by`;
 - `created_at`;
 - PK `(user_id, role)`.
 
-Sem escrita pelo browser. `reviewer` e `finance` só entram com as features que os consomem. O primeiro
+Sem escrita pelo browser. `reviewer` é consumido exclusivamente pela revisão editorial; `finance`
+continua ausente até sua feature proprietária. O primeiro
 admin usa o bootstrap privado one-shot; depois disso, somente admin com autenticação recente altera
 papéis, e a salvaguarda transacional mantém ao menos um admin ativo. Um trigger em toda concessão ou
 revogação incrementa `profiles.account_version`; essa versão opaca invalida sessão/clientes sem publicar
@@ -188,9 +189,14 @@ o conjunto de papéis no browser.
 Binding por `auth_session_id`, usuário, abertura, último uso, expiração absoluta e fechamento. A
 sessão expira após 30 minutos de inatividade ou oito horas, respeita a sessão Auth canônica e exige
 login feito nos últimos cinco minutos para gestão de papéis. Remoção de todos os papéis ou suspensão
-fecha bindings existentes. `private.backoffice_session_context(..., p_touch_activity)` separa
+fecha bindings existentes. `private.backoffice_session_context(..., p_required_role,
+p_require_strong_authentication, p_touch_activity)` exige `support`, `reviewer` ou `admin` na própria
+fachada; `admin` substitui os dois papéis operacionais somente por regra explícita. O valor especial
+`backoffice` valida apenas a existência de algum papel para abrir/reler a sessão. O último argumento separa
 revalidação passiva de atividade real: `get_backoffice_session` passa `false`, enquanto leituras
-operacionais e comandos passam `true`.
+operacionais e comandos passam `true`. A revalidação passiva mantém `FOR SHARE` na binding: leituras
+simultâneas da mesma sessão não se serializam, mas fechamento concorrente ainda espera o snapshot
+terminar. Caminhos que renovam `last_seen_at` preservam `FOR UPDATE`.
 
 #### `private.backoffice_command_requests`
 
@@ -334,9 +340,15 @@ compensação grava `upload_token_signing_failed`, libera cota e agenda cleanup 
 nenhuma emissão foi confirmada. O helper genérico de rejeição continua revogado do `app_dal`, e nenhuma
 transação ou conexão permanece presa durante o Storage.
 
-As tabelas e `storage.objects` não concedem ao browser os paths, leitura do objeto nem assinatura
-arbitrária. O dono elegível lê o JSON estrito apenas pela rotina privada do DAL; toda escrita direta
-permanece revogada. O `app_dal` recebe `execute` somente no read model, prepare, begin/renew/release do
+As tabelas não concedem ao browser paths nem escrita direta. O dono elegível lê o JSON estrito apenas
+pela rotina privada do DAL. A única leitura adicional em `storage.objects` é a policy da FEAT-030:
+`authenticated` pode ler um objeto `ready` somente quando `auth.uid()` + `session_id` correspondem a
+uma binding ativa com `reviewer/admin` e a relação pertence à submissão `pending` ainda apontada ou à
+revisão `published` escolhida para moderação/restauração pelo admin. Um draft não submetido nunca
+qualifica. `storage.allow_only_operation('storage.object.sign_many')` limita essa policy à assinatura
+em lote usada pelo servidor; listagem e download autenticado direto continuam sem linhas. Isso permite
+criar URL assinada curta sem liberar listagem ou assinatura arbitrária. O `app_dal` recebe `execute`
+somente no read model, prepare, begin/renew/release do
 claim, fachadas terminalizadoras cercadas e ordem/capa/exclusão. Candidato, replay e mutações internas
 não são invocáveis diretamente. A manutenção expõe ao `service_role` apenas as fachadas RPC estreitas do
 cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da aplicação alcança `net`.
@@ -417,6 +429,31 @@ Os FKs de `studio_review_events` e `email_outbox` para estúdio e revisão usam 
 para acompanhar a exclusão do agregado nunca publicado. Assim, descartar a correção criada após uma
 primeira rejeição remove eventos e intenção pendente na mesma transação. O comando nunca exclui um
 estúdio com `published_revision_id`; nesse caso, preserva o histórico e volta ao ponteiro aprovado.
+
+#### 4.10.2 Decisão e moderação da FEAT-030
+
+`studios.disabled_from_status` guarda exclusivamente `published | changes_pending | paused` enquanto o
+estúdio está `disabled`; fora desse estado permanece nulo. A constraint de ponteiros exige publicação
+vigente e conserva a candidata quando a origem era `changes_pending`. Assim, restaurar usa o fato
+persistido, nunca inferência por ponteiro, auditoria ou evento.
+
+`private.list_backoffice_studio_reviews(...)` deriva a fila diretamente de estúdio, ponteiros, revisão e
+sequência causal do evento; pagina por `(event_sequence, studio_id)` e não cria tabela de casos.
+`private.get_backoffice_studio_review(...)` escolhe a candidata somente quando ela permanece `pending`;
+em moderação/restauração escolhe exclusivamente `published_revision_id`, sem projetar draft privado.
+Depois compõe publicação, checklist, capacidades e paths de mídia somente para assinatura server-side.
+`private.execute_backoffice_studio_command(...)` decide
+ou modera sob lock de estúdio/revisões, fence de versão e ledger idempotente. Aprovação/rejeição usam o
+ID exato da candidata; desativação/restauração exigem admin. Evento editorial, outbox e auditoria entram
+na mesma transação. Aprovação também bloqueia as taxonomias referenciadas e recalcula o checklist antes
+da primeira transição; arquivamento posterior à submissão falha sem publicação, ledger ou fence residual.
+A rejeição clona dados centrais, taxonomias, FAQ e relações de mídia para novo draft sem copiar o objeto
+físico.
+
+Transições temporárias de status de revisão usam `private.studio_review_transition_fences`, vinculadas à
+transação e ao backend, para satisfazer as invariantes dos triggers. O comando remove o fence antes do
+retorno e os testes exigem zero resíduo. Toda alteração de status ou ponteiro continua incrementando
+`publication_version` pelo trigger canônico.
 
 ### 4.11 `owner_payment_recipients`
 
@@ -855,11 +892,13 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `private.get_backoffice_user_access(...)` exige admin e compõe no servidor uma única conta com seus
   papéis para a rota de detalhe;
 - `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
+- `private.list_backoffice_studio_reviews(...)` exige reviewer/admin e devolve fila keyset; somente
+  admin recebe linhas de moderação/desativação;
+- `private.get_backoffice_studio_review(...)` exige reviewer/admin e devolve o detalhe editorial; casos
+  sem candidata pendente e estúdios desabilitados são exclusivos de admin.
 
 ### Backoffice/private planejados
 
-- `private.list_review_queue(...)`;
-- `private.get_review_case(uuid)`;
 - `private.list_admin_payments(...)`;
 - `private.get_operational_overview(...)`.
 
@@ -898,15 +937,16 @@ Implementados:
   para admin revalidado;
 - `private.set_backoffice_user_status(...)` e `private.reveal_backoffice_user_pii(...)` atendem
   `support/admin`, com versão e auditoria;
-- `private.set_backoffice_user_role(...)` deriva somente uma das quatro actions explícitas de
-  concessão/revogação `support/admin`, compara `expectedAccountVersion`, exige admin com autenticação
+- `private.set_backoffice_user_role(...)` deriva somente uma das seis actions explícitas de
+  concessão/revogação `support/reviewer/admin`, compara `expectedAccountVersion`, exige admin com autenticação
   recente e protege o último admin ativo;
 - `private.upsert_backoffice_taxonomy(...)` e `private.transition_backoffice_taxonomy(...)` exigem
   admin, versão otimista e preservação histórica; a transição deriva o estado da action explícita.
+- `private.execute_backoffice_studio_command(...)` deriva `approve/reject/disable/restore` da action
+  allowlisted, exige versão e revisão esperadas, serializa a decisão e registra ledger/audit/outbox.
 
 Planejados por suas features proprietárias:
 
-- review;
 - calendar;
 - pricing/addons;
 - quote/attempt/hold;

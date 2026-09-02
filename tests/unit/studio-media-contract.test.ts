@@ -1,4 +1,5 @@
 import {
+  studioMediaCollectionSchema,
   studioMediaCommandSchema,
   studioMediaGalleryRecordSchema,
   studioMediaGallerySchema,
@@ -8,6 +9,7 @@ import {
   studioMediaPreviewMaximumBytes,
   studioMediaPreviewMaximumEdge,
   studioMediaPreviewPathSchema,
+  studioMediaRecordCollectionSchema,
   studioMediaUploadPreparationRecordSchema,
   studioMediaUploadCandidateSchema,
   studioMediaVerificationSchema,
@@ -170,6 +172,55 @@ describe("studio media contracts", () => {
         items: [item, { ...item, id: scope, position: 2 }],
       }),
     ).toThrow("exatamente uma capa");
+
+    const otherMediaId = "87000000-0000-4000-8000-000000000005";
+    const signedSecondItem = {
+      ...item,
+      id: otherMediaId,
+      isCover: false,
+      position: 2,
+      previewUrl: "https://example.test/private-2.jpg",
+    };
+    const recordItem = {
+      byteSize: item.byteSize,
+      checksumSha256: item.checksumSha256,
+      height: item.height,
+      id: item.id,
+      isCover: item.isCover,
+      mimeType: item.mimeType,
+      position: item.position,
+      previewStoragePath: previewPath,
+      width: item.width,
+    };
+    const recordSecondItem = {
+      ...recordItem,
+      id: otherMediaId,
+      isCover: false,
+      position: 2,
+      previewStoragePath: previewPath.replace(mediaId, otherMediaId),
+    };
+    const invalidCollections = [
+      {
+        record: [recordItem, { ...recordSecondItem, id: mediaId }],
+        signed: [item, { ...signedSecondItem, id: mediaId }],
+      },
+      {
+        record: [recordItem, { ...recordSecondItem, position: 3 }],
+        signed: [item, { ...signedSecondItem, position: 3 }],
+      },
+      {
+        record: [{ ...recordItem, isCover: false }],
+        signed: [{ ...item, isCover: false }],
+      },
+      {
+        record: [recordItem, { ...recordSecondItem, isCover: true }],
+        signed: [item, { ...signedSecondItem, isCover: true }],
+      },
+    ];
+    for (const collection of invalidCollections) {
+      expect(studioMediaRecordCollectionSchema.safeParse(collection.record).success).toBe(false);
+      expect(studioMediaCollectionSchema.safeParse(collection.signed).success).toBe(false);
+    }
   });
 
   it("preserva o namespace da revisão de origem quando uma associação é clonada", () => {
@@ -198,6 +249,17 @@ describe("studio media contracts", () => {
     };
 
     expect(studioMediaGalleryRecordSchema.parse(gallery)).toEqual(gallery);
+    expect(
+      studioMediaGalleryRecordSchema.safeParse({
+        ...gallery,
+        items: [
+          {
+            ...item,
+            previewStoragePath: clonedPreviewPath.replace(scope, sourceRevisionId),
+          },
+        ],
+      }).success,
+    ).toBe(false);
     expect(() =>
       studioMediaGalleryRecordSchema.parse({
         ...gallery,
@@ -214,7 +276,21 @@ describe("studio media contracts", () => {
           },
         ],
       }),
-    ).toThrow("identidade da galeria");
+    ).toThrow("identidade da coleção");
+    expect(
+      studioMediaGalleryRecordSchema.safeParse({
+        ...gallery,
+        items: [
+          {
+            ...item,
+            previewStoragePath: clonedPreviewPath.replace(
+              `/${mediaId}.preview.webp`,
+              `/${scope}.preview.webp`,
+            ),
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });
 

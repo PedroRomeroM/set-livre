@@ -50,7 +50,7 @@ describe("shared restricted command DAL pool", () => {
       expect.objectContaining({
         application_name: "set-livre-web-command-dal",
         max: 2,
-        query_timeout: 2_000,
+        query_timeout: 3_000,
         statement_timeout: 2_000,
       }),
     ]);
@@ -75,7 +75,7 @@ describe("shared restricted command DAL pool", () => {
       expect.objectContaining({
         application_name: "set-livre-web-readiness",
         max: 1,
-        query_timeout: 1_000,
+        query_timeout: 2_000,
         statement_timeout: 1_000,
       }),
     ]);
@@ -102,5 +102,26 @@ describe("shared restricted command DAL pool", () => {
     expect(connectionBudget).toEqual([2, 1, 2, 1]);
     expect(allocatedConnections).toBe(6);
     expect(10 - allocatedConnections).toBe(4);
+  });
+
+  it("lets PostgreSQL finish each server-side timeout before the driver deadline", async () => {
+    vi.resetModules();
+    const { commandDalPool } = await import("../../src/lib/server/dal-pool");
+    const { isDatabaseReady } = await import("../../src/lib/server/database-readiness");
+
+    commandDalPool();
+    await expect(isDatabaseReady()).resolves.toBe(false);
+
+    const deadlines = z
+      .array(
+        z.object({
+          query_timeout: z.number().int().positive(),
+          statement_timeout: z.number().int().positive(),
+        }),
+      )
+      .parse(mocks.configurations);
+    for (const deadline of deadlines) {
+      expect(deadline.query_timeout).toBeGreaterThan(deadline.statement_timeout);
+    }
   });
 });

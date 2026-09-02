@@ -1,11 +1,15 @@
 import "server-only";
 
-import { BackofficeApiError } from "./api-route";
+import { BackofficeApiError, hashBackofficePrivateValue } from "./api-route";
 
 type Bucket = { count: number; limit: number; resetAt: number };
 
 const buckets = new Map<string, Bucket>();
 const maximumBuckets = 2_000;
+
+export function backofficeIdentityActionDiscriminator(scope: string, action: string) {
+  return hashBackofficePrivateValue(JSON.stringify([scope, action]));
+}
 
 function sweepExpired(now: number) {
   let inspected = 0;

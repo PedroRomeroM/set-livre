@@ -101,6 +101,19 @@ privado e limpam o cache antes da recomposição. Ledger e auditoria registram a
 motivo/versões e correlação, nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada
 transacionalmente a 500 itens e arquivada sem apagar referências.
 
+Na FEAT-030, `reviewer` recebe somente fila, detalhe e decisão editorial; `support` recebe zero linhas e
+zero comando dessa superfície. `admin` substitui reviewer de forma explícita e é o único papel de
+desativação/restauração. O banco revalida binding, sessão Auth, perfil e papel em cada fachada. A policy
+de `storage.objects` aceita somente `auth.uid()` + `session_id` da binding vigente, mídia `ready` e uma
+relação pertencente à submissão `pending` ainda apontada ou à publicação selecionada para
+moderação/restauração. Draft não submetido permanece privado até do backoffice; a policy não concede
+listagem geral, escrita ou acesso a outros estúdios. Ela também exige a operação exata
+`storage.object.sign_many`; download
+autenticado e listagem permanecem negados. O servidor troca os paths por URLs assinadas de cinco minutos e não envia path, secret
+key, papel ou claims ao browser. Antes da assinatura, o serviço revalida `scope` e `studioId` do read
+model contra sessão e rota. Decisão e moderação usam versão/ID esperados, lock, ledger e auditoria
+redigida; aprovação também relê o checklist sob locks, e uma corrida produz conflito sem efeito parcial.
+
 Além da sessão e da autorização no banco, toda mutação exige um desbloqueio local do runtime. A chave de
 43 caracteres base64url existe apenas no EnvironmentFile do processo e na entrada efêmera do formulário;
 ela não é armazenada no browser. O servidor compara seu digest em tempo constante e emite por cinco
@@ -196,10 +209,18 @@ emissão do certificado, `nosniff`, referrer policy, permissions policy e bloque
 Antes do go-live, Nginx aceita somente o Host do IP reservado, não expõe o backoffice e envia `noindex`
 em toda resposta pública, além de bloquear crawling no `robots.txt`.
 
-Novas origens CSP entram apenas com a integração consumidora e teste. A galeria privada acrescenta em
-`img-src` somente a origem Supabase já validada pelo ambiente: HTTPS exato fora do desenvolvimento e
-o loopback HTTP canônico no stack local. Path, credencial, origem ampla, HTTP remoto e token injetável
-são recusados antes de compor o header. Respostas autenticadas e HTML dinâmico não são cacheados;
+Primitives React server-safe permanecem no barrel raiz de `@set-livre/ui`; componentes client-only,
+como `PasswordInput`, usam subpath explícito. Essa fronteira impede que um import server-side crie
+scripts de boundary não consumidos e preserva o contrato de que todo script emitido no HTML recebe o
+nonce da própria resposta sob `strict-dynamic`. Navegações estruturais dentro desses boundaries usam
+âncoras nativas e não introduzem o runtime cliente de `next/link` onde nenhuma interação depende dele.
+
+Novas origens CSP entram apenas com a integração consumidora e teste. A aplicação pública acrescenta a
+origem Supabase validada em `img-src` e `connect-src` porque envia mídia diretamente; o backoffice usa
+somente `img-src`, pois suas APIs e assinaturas executam no servidor. Em ambos, a origem é HTTPS exata
+fora do desenvolvimento e o loopback HTTP canônico no stack local. Path, credencial, origem ampla,
+HTTP remoto e token injetável são recusados antes de compor o header. O erro global continua com a
+política mínima, pois não consome mídia ou API remota. Respostas autenticadas e HTML dinâmico não são cacheados;
 assets com hash podem receber cache imutável.
 
 Uploads de estúdio usam token assinado curto, path derivado, allowlist de MIME, validação real dos
@@ -256,7 +277,9 @@ Cobertura proporcional inclui:
 - isolamento entre ao menos dois usuários, dono e admin;
 - role escalation, IDOR, origem inválida e body grande;
 - expiração/revogação da sessão administrativa, último admin, PII efêmera e fronteira
-  `support/admin`;
+  `support/reviewer/admin`;
+- isolamento de fila/detalhe/mídia entre suporte, reviewer e admin; decisão concorrente e restauração
+  exata de estúdio;
 - concorrência/idempotência de reserva e pagamento quando implementados;
 - webhook inválido/replay e upload spoof quando suas features existirem;
 - redaction, CSP, secret scan e release/rollback;

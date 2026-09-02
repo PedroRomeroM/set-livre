@@ -1,7 +1,8 @@
 "use client";
 
 import type { BackofficeSession } from "@set-livre/contracts";
-import { Alert, Button, Field, PasswordInput } from "@set-livre/ui";
+import { Alert, Button, Field } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";

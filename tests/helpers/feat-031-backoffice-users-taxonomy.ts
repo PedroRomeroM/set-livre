@@ -73,7 +73,7 @@ export function createFeat031Operator(
 export async function provisionFeat031Operator(
   page: Page,
   operator: Feat031Operator,
-  role: "admin" | "support",
+  role: "admin" | "reviewer" | "support",
   suffix: string,
 ) {
   await registerAndConfirmFeat003Identity(page, operator, "individual");
@@ -100,7 +100,7 @@ export async function provisionFeat031Operator(
 export async function loginFeat031Backoffice(
   page: Page,
   operator: Feat031Operator,
-  options: { unlockRuntime?: boolean } = {},
+  options: { landing?: "/estudios" | "/usuarios"; unlockRuntime?: boolean } = {},
 ) {
   const safeE2EEnvironment = readSafeE2EEnvironment();
   const login = await page.goto(`${safeE2EEnvironment.backofficeBaseUrl}/entrar`);
@@ -117,8 +117,14 @@ export async function loginFeat031Backoffice(
   await stageFeat002PasswordForSubmission(passwordControl, operator.password);
   await expect(emailControl).toHaveValue(operator.email);
   await submit.click();
-  await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toBe("/usuarios");
-  await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
+  const landing = options.landing ?? "/usuarios";
+  await expect.poll(() => new URL(page.url()).pathname, { timeout: 15_000 }).toBe(landing);
+  await expect(
+    page.getByRole("heading", {
+      level: 1,
+      name: landing === "/estudios" ? "Estúdios" : "Usuários",
+    }),
+  ).toBeVisible();
   if (options.unlockRuntime === false) return;
   await unlockFeat031Backoffice(page);
 }
@@ -310,7 +316,7 @@ export async function setFeat031UserStatusConcurrently(
 
 export async function setFeat031RolesConcurrently(
   userId: string,
-  roles: readonly ("admin" | "support")[],
+  roles: readonly ("admin" | "reviewer" | "support")[],
 ) {
   await withFeat031AdminPool(async (pool) => {
     await pool.query("begin");
@@ -328,11 +334,11 @@ export async function setFeat031RolesConcurrently(
         `select platform_role.role
          from public.platform_roles as platform_role
          where platform_role.user_id = $1::uuid
-         order by case platform_role.role when 'support' then 1 else 2 end`,
+         order by case platform_role.role when 'support' then 1 when 'reviewer' then 2 else 3 end`,
         [userId],
       );
       const persistedRoles = z
-        .array(z.strictObject({ role: z.enum(["admin", "support"]) }))
+        .array(z.strictObject({ role: z.enum(["admin", "reviewer", "support"]) }))
         .parse(persisted.rows)
         .map(({ role }) => role);
       expect(persistedRoles).toEqual([...roles]);
@@ -401,7 +407,9 @@ export async function readFeat031Roles(userId: string) {
       `select role from public.platform_roles where user_id = $1::uuid order by role`,
       [userId],
     );
-    return z.array(z.strictObject({ role: z.enum(["admin", "support"]) })).parse(result.rows);
+    return z
+      .array(z.strictObject({ role: z.enum(["admin", "reviewer", "support"]) }))
+      .parse(result.rows);
   });
 }
 

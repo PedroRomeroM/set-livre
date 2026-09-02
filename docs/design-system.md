@@ -132,7 +132,11 @@ Nenhuma cor semântica é redefinida por tema.
 - `Field` + `Input`: `Field` associa label persistente, descrição, obrigatório e erro ao controle filho por `id`, `aria-describedby`, `aria-required` e `aria-invalid`; `Input` preserva toda a API nativa.
 - `Checkbox`: checkbox nativo com label clicável e descrição associada. O alvo completo possui no mínimo 44 px.
 - `ChoiceGroup`: grupo de radios nativos limitado ao recorte real `individual | company`, com modos controlado e não controlado mutuamente exclusivos, legend, descrição, obrigatório e erro de grupo.
-- `PasswordInput`: Client Component que preserva a API nativa, usa botão textual `Mostrar senha`/`Ocultar senha` com `aria-controls` e `aria-pressed` e recebe requisitos tipados com estado textual `Requisito`, `Pendente` ou `Atendido`.
+- `PasswordInput`: Client Component exportado pelo subpath explícito
+  `@set-livre/ui/password-input`; preserva a API nativa, usa botão textual `Mostrar senha`/`Ocultar senha`
+  com `aria-controls` e `aria-pressed` e recebe requisitos tipados com estado textual `Requisito`,
+  `Pendente` ou `Atendido`. O barrel raiz mantém somente primitives server-safe para não arrastar esse
+  boundary cliente a páginas, loading e not-found que não o consomem.
 - `Alert`: feedback de seção `status` (`role=status`) ou `error` (`role=alert`), com conteúdo atômico e significado independente de cor.
 - `Panel`, `Stack`, `PageFrame` e `AuthFrame`: superfícies e composição responsiva; `PageFrame` é o landmark `main`, aplica safe areas e limita largura, enquanto `AuthFrame` fornece um único `h1` e reflow próprio para autenticação.
 
@@ -141,6 +145,9 @@ Todos os controles têm foco visível, fonte de input de 16 px, alvo mínimo de 
 Exemplo mínimo:
 
 ```tsx
+import { Field } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
+
 <Field label="Senha" required>
   <PasswordInput autoComplete="new-password" requirements={passwordRequirements} />
 </Field>
@@ -178,6 +185,9 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
 
 - `ButtonLink`: âncora nativa para transições de rota com as variantes e dimensões de `Button`;
   preserva `href`, foco e o retry do navegador sem aninhar controles interativos;
+- navegação estrutural do dono e recuperação de `not-found` usam âncoras nativas. Elas continuam
+  operáveis sem hidratação e mantêm loading/not-found server-safe, sem carregar `next/link` apenas para
+  trocar entre três URLs canônicas;
 - `Textarea`: textarea nativo que preserva toda a API HTML, herda borda, erro, disabled, foco e forced
   colors de `Input`, possui altura mínima de 9 rem e resize vertical. O contador de descrição pertence
   ao `Field`, não à primitive;
@@ -242,6 +252,18 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   cobre 320 px, mobile, tema escuro, teclado, axe e reflow a 200%, com alvos mínimos de 44 px.
 - anúncios sequenciais usam uma ocorrência nova da live region e incluem o nome do arquivo, evitando
   que duas conclusões com texto semelhante sejam deduplicadas por tecnologia assistiva.
+
+### 3.8 Composição da FEAT-030
+
+- fila e detalhe permanecem no shell próprio do backoffice e reutilizam `Alert` e `Button`, sem criar
+  primitive ou sistema visual paralelo;
+- estado editorial e capacidade aparecem por texto, não apenas por cor. A comparação usa seções e
+  rótulos explícitos para candidata/publicação, mantendo leitura linear no mobile e no reflow;
+- galeria reserva a proporção persistida, limita dimensões e usa `object-fit: contain`; vídeo validado
+  possui preview `youtube-nocookie`, e paths privados nunca aparecem na composição;
+- controles permanecem operáveis por teclado e toque, com alvos mínimos de 44 px;
+- 320 px, altura compacta, tema escuro, axe e reflow a 160 CSS px fazem parte do contrato da
+  composição.
 
 ## 4. Contratos
 

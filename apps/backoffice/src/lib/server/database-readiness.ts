@@ -1,6 +1,10 @@
 import "server-only";
 
-import { databaseMigrationHead, parseDalDatabaseUrl } from "@set-livre/contracts";
+import {
+  databaseMigrationHead,
+  databaseReadinessPoolTimeouts,
+  parseDalDatabaseUrl,
+} from "@set-livre/contracts";
 import { Pool } from "pg";
 import { z } from "zod";
 
@@ -31,8 +35,8 @@ function getDatabaseConnection() {
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 10_000,
     max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
+    query_timeout: databaseReadinessPoolTimeouts.queryTimeoutMs,
+    statement_timeout: databaseReadinessPoolTimeouts.statementTimeoutMs,
   });
   pool.on("error", () => undefined);
   const databaseConnection = { pool, sessionRole: configuration.sessionRole };

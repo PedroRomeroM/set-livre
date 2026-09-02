@@ -2,6 +2,8 @@
 
 export const backofficeQueryKeys = {
   session: (scope: string) => ["backoffice", "session", scope] as const,
+  studio: (scope: string, studioId: string) => ["backoffice", "studios", scope, studioId] as const,
+  studios: (scope: string) => ["backoffice", "studios", scope] as const,
   taxonomies: (scope: string) => ["backoffice", "taxonomies", scope] as const,
   users: (scope: string, filterFingerprint: string) =>
     ["backoffice", "users", scope, filterFingerprint] as const,

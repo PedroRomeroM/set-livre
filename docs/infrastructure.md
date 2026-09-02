@@ -490,6 +490,10 @@ seguidos pelo DAL e readiness do backoffice. Os quatro slots restantes do limite
 para verificação de deploy, recuperação e variação operacional. Cada processo conserva seus pools em
 um registro global tipado, para que bundles ou recompilações do Next não dupliquem conexões além desse
 orçamento.
+O `statement_timeout` permanece em dois segundos para comandos e um segundo para readiness. O timeout
+da chamada do driver termina um segundo depois em cada caso; essa ordem evita a corrida entre cliente
+e servidor, preserva o erro PostgreSQL e oferece margem apenas à fila curta do pool e ao transporte,
+sem ampliar o tempo de execução autorizado para SQL.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de

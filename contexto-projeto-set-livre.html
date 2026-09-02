@@ -69,12 +69,13 @@
               <td>
                 FEAT-002, FEAT-003 e FEAT-004 estão implementadas na baseline. O PR incremental
                 reúne a fundação do catálogo: cadastro e revisões de estúdio, conteúdo e taxonomias,
-                backoffice administrativo, galeria privada e fluxo editorial. A FEAT-009 já possui
-                candidato local completo, com checklist, submissão imutável, preservação da versão
-                publicada, pausa/retomada, descarte íntegro após primeira rejeição e recuperação
-                segura de respostas ambíguas. O lote ainda depende dos gates finais, review limpo no
-                SHA exato, merge e deploy; as demais features continuam no estado indicado pelo
-                roadmap.
+                backoffice administrativo, galeria privada e fluxo editorial. A FEAT-030 está em
+                candidato local: separa <code>support</code>, <code>reviewer</code> e
+                <code>admin</code>, oferece fila/detalhe privados, decide candidatas atomicamente,
+                revalida o checklist sob locks antes da aprovação, preserva a publicação em
+                rejeições e restaura exatamente o estado anterior à desativação. O lote ainda
+                depende da auditoria, dos gates completos e do review limpo no SHA exato, merge e
+                deploy; as demais features continuam no estado indicado pelo roadmap.
               </td>
             </tr>
             <tr>
@@ -127,6 +128,10 @@
             separadas.
           </li>
           <li>
+            O backoffice usa papéis explícitos: suporte opera usuários, reviewer decide conteúdo e
+            admin substitui ambos deliberadamente e executa moderação.
+          </li>
+          <li>
             A entrega usa releases imutáveis, ativação atômica e recuperação fail-closed. Os
             detalhes técnicos e procedimentos ficam na
             <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>.
@@ -145,9 +150,7 @@
           A regra normal é uma feature por branch. O PR de fundação atual é uma exceção única,
           limitada e registrada no ADR-017; cada fatia mantém commit, testes e review próprios.
           Antes do merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build,
-          audit e Knip conforme o risco. Nos cenários de recomposição de segurança, o Playwright
-          sincroniza pela superfície autoritativa final, sem depender de navegação intermediária que
-          um reload ou redirect pode cancelar legitimamente.
+          audit e Knip conforme o risco.
         </p>
         <p>
           Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status

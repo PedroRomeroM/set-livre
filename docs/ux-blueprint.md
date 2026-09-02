@@ -329,6 +329,16 @@ Financeiro:
 
 Definido em documento próprio. Composição densa, filtros server-side, preview de impacto e confirmação forte.
 
+Na revisão editorial, `/estudios` apresenta uma fila keyset sem filtros em URL e
+`/estudios/[studioId]` compara candidata/publicação por seções semânticas. Conteúdo, endereço,
+taxonomias, FAQ, regras, vídeo, checklist e mídia privada permanecem legíveis em uma coluna no mobile;
+preço não aparece antes da feature proprietária. Reviewer decide candidata, admin também modera e
+restaura. Ações incompatíveis ficam ausentes ou desabilitadas conforme o read model autoritativo.
+Conflito fecha a confirmação e exige releitura; resposta ambígua conserva a mesma tentativa para replay.
+Loading/refetch/erro/expiração de mídia fecham ações e nunca reutilizam URL assinada, confirmação ou
+conteúdo de outro snapshot/escopo. Fotos são mostradas integralmente e vídeo validado permanece
+inspecionável sem ampliar a CSP.
+
 ## 12. Estados obrigatórios
 
 Toda rota:

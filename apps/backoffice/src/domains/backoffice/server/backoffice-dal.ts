@@ -3,11 +3,17 @@ import "server-only";
 import {
   backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
+  backofficeStudioCommandResultSchema,
+  backofficeStudioReviewDetailRecordSchema,
+  backofficeStudioReviewQueueItemSchema,
+  backofficeStudioReviewQueueSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
   backofficeUserSummarySchema,
   platformRolesSchema,
   type BackofficeAccessCommand,
+  type BackofficeStudioCommand,
+  type BackofficeStudioReviewQueueQuery,
   type BackofficeTaxonomyStatusCommand,
   type BackofficeTaxonomyUpsertCommand,
   type BackofficeUserRevealPiiCommand,
@@ -15,7 +21,7 @@ import {
 } from "@set-livre/contracts";
 import { z } from "zod";
 
-import { backofficeDalPool } from "@/lib/server/dal-pool";
+import { backofficeDalPool } from "../../../lib/server/dal-pool";
 
 import type { BackofficeAuthContext } from "./auth-context";
 
@@ -58,8 +64,37 @@ const taxonomyMutationResultSchema = backofficeTaxonomyItemSchema.extend({
   updatedAt: timestampSchema,
 });
 const cursorSchema = z.strictObject({ createdAt: z.iso.datetime(), id: z.uuid() });
+const studioReviewCursorSchema = z.strictObject({
+  sequence: z.number().int().nonnegative().safe(),
+  studioId: z.uuid(),
+});
+const studioReviewQueueRowSchema = z.strictObject({
+  disabled_from_status: z.enum(["published", "changes_pending", "paused"]).nullable(),
+  has_published: z.boolean(),
+  name: z.string().trim().min(2).max(120),
+  publication_version: pgSafeIntegerSchema.pipe(z.number().int().positive()),
+  review_state: z.enum(["reviewPending", "moderation", "disabled"]),
+  revision_id: z.uuid(),
+  sort_sequence: pgSafeIntegerSchema,
+  studio_id: z.uuid(),
+  studio_status: z.enum([
+    "draft",
+    "pending_review",
+    "published",
+    "changes_pending",
+    "paused",
+    "rejected",
+    "disabled",
+  ]),
+  submitted_at: timestampSchema.nullable(),
+});
 
 export type BackofficeBinding = z.infer<typeof sessionRowSchema>;
+
+export class BackofficeCursorError extends Error {
+  override readonly message = "O cursor informado não foi emitido por esta listagem.";
+  override readonly name = "BackofficeCursorError";
+}
 
 function exactlyOne<T>(rows: readonly unknown[], schema: z.ZodType<T>, boundary: string): T {
   if (rows.length !== 1) {
@@ -79,14 +114,34 @@ function encodeBackofficeUserCursor(value: z.infer<typeof cursorSchema>) {
 function decodeBackofficeUserCursor(value: string | null | undefined) {
   if (value === undefined || value === null) return null;
   if (value.length > 512 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
-    throw new Error("Cursor de usuários inválido.");
+    throw new BackofficeCursorError();
   }
   try {
     const bytes = Buffer.from(value, "base64url");
     if (bytes.toString("base64url") !== value) throw new Error("non-canonical");
     return cursorSchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
   } catch {
-    throw new Error("Cursor de usuários inválido.");
+    throw new BackofficeCursorError();
+  }
+}
+
+function encodeBackofficeStudioReviewCursor(value: z.infer<typeof studioReviewCursorSchema>) {
+  return Buffer.from(JSON.stringify(studioReviewCursorSchema.parse(value)), "utf8").toString(
+    "base64url",
+  );
+}
+
+function decodeBackofficeStudioReviewCursor(value: string | null | undefined) {
+  if (value === undefined || value === null) return null;
+  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new BackofficeCursorError();
+  }
+  try {
+    const bytes = Buffer.from(value, "base64url");
+    if (bytes.toString("base64url") !== value) throw new Error("non-canonical");
+    return studioReviewCursorSchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
+  } catch {
+    throw new BackofficeCursorError();
   }
 }
 
@@ -339,5 +394,107 @@ export async function transitionBackofficeTaxonomy(input: {
     result.rows,
     z.strictObject({ result: taxonomyMutationResultSchema }),
     "transition_backoffice_taxonomy",
+  ).result;
+}
+
+export async function listBackofficeStudioReviews(input: {
+  auth: BackofficeAuthContext;
+  query: BackofficeStudioReviewQueueQuery;
+}) {
+  const cursor = decodeBackofficeStudioReviewCursor(input.query.cursor);
+  const result = await backofficeDalPool().query(
+    `select
+       disabled_from_status,
+       has_published,
+       name,
+       publication_version,
+       review_state,
+       revision_id,
+       sort_sequence,
+       studio_id,
+       studio_status,
+       submitted_at
+     from private.list_backoffice_studio_reviews(
+       $1::uuid, $2::uuid, $3::timestamptz, $4::bigint, $5::uuid, $6::integer
+     )`,
+    [...bindingArguments(input.auth), cursor?.sequence ?? null, cursor?.studioId ?? null, 51],
+  );
+  const rows = z.array(studioReviewQueueRowSchema).max(51).parse(result.rows);
+  const visibleRows = rows.slice(0, 50);
+  const cursorSource = rows.length > 50 ? visibleRows.at(-1) : undefined;
+  return backofficeStudioReviewQueueSchema.parse({
+    items: visibleRows.map((row) =>
+      backofficeStudioReviewQueueItemSchema.parse({
+        disabledFromStatus: row.disabled_from_status,
+        hasPublished: row.has_published,
+        name: row.name,
+        publicationVersion: row.publication_version,
+        reviewState: row.review_state,
+        revisionId: row.revision_id,
+        studioId: row.studio_id,
+        studioStatus: row.studio_status,
+        submittedAt: row.submitted_at,
+      }),
+    ),
+    nextCursor:
+      cursorSource === undefined
+        ? null
+        : encodeBackofficeStudioReviewCursor({
+            sequence: cursorSource.sort_sequence,
+            studioId: cursorSource.studio_id,
+          }),
+    scope: input.auth.userId,
+  });
+}
+
+export async function getBackofficeStudioReview(input: {
+  auth: BackofficeAuthContext;
+  studioId: string;
+}) {
+  const result = await backofficeDalPool().query(
+    `select private.get_backoffice_studio_review(
+       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid
+     ) as result`,
+    [...bindingArguments(input.auth), input.studioId],
+  );
+  return exactlyOne(
+    result.rows,
+    z.strictObject({ result: backofficeStudioReviewDetailRecordSchema }),
+    "get_backoffice_studio_review",
+  ).result;
+}
+
+export async function executeBackofficeStudioCommand(input: {
+  auth: BackofficeAuthContext;
+  command: BackofficeStudioCommand;
+  requestId: string;
+}) {
+  const { command } = input;
+  const expectedRevisionId =
+    command.action === "backoffice.studio.approve" || command.action === "backoffice.studio.reject"
+      ? command.payload.expectedRevisionId
+      : null;
+  const rejectionReason =
+    command.action === "backoffice.studio.reject" ? command.payload.reason : null;
+  const result = await backofficeDalPool().query(
+    `select private.execute_backoffice_studio_command(
+       $1::uuid, $2::uuid, $3::timestamptz, $4::uuid, $5::uuid,
+       $6::bigint, $7::text, $8::text, $9::uuid, $10::uuid
+     ) as result`,
+    [
+      ...bindingArguments(input.auth),
+      command.payload.studioId,
+      expectedRevisionId,
+      command.payload.expectedPublicationVersion,
+      command.action,
+      rejectionReason,
+      command.idempotencyKey,
+      input.requestId,
+    ],
+  );
+  return exactlyOne(
+    result.rows,
+    z.strictObject({ result: backofficeStudioCommandResultSchema }),
+    "execute_backoffice_studio_command",
   ).result;
 }

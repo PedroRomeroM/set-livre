@@ -8,7 +8,7 @@ import {
 } from "@set-livre/contracts";
 import { cookies } from "next/headers";
 
-import { BackofficeApiError } from "@/lib/server/api-route";
+import { BackofficeApiError } from "../../../lib/server/api-route";
 
 import type { BackofficeAuthContext } from "./auth-context";
 import {

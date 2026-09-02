@@ -199,7 +199,7 @@ export const studioPublicationChecklistItemSchema = z
     }
   });
 
-const studioPublicationChecklistSchema = z
+export const studioPublicationChecklistSchema = z
   .array(studioPublicationChecklistItemSchema)
   .length(3)
   .refine(

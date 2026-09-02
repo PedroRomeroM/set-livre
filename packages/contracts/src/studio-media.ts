@@ -189,19 +189,90 @@ const studioMediaGalleryBoundaryShape = {
   studioId: z.uuid(),
 } as const;
 
-function validateStudioMediaOrderAndCover(
+type StudioMediaCollectionItem = Readonly<{
+  id: string;
+  isCover: boolean;
+  position: number;
+  previewStoragePath?: string;
+}>;
+
+function validateStudioMediaCollection(
+  items: ReadonlyArray<StudioMediaCollectionItem>,
+  context: z.RefinementCtx,
+) {
+  items.forEach((item, index) => {
+    if (item.position !== index + 1) {
+      context.addIssue({
+        code: "custom",
+        message: "A ordem da galeria precisa ser contínua.",
+        path: [index, "position"],
+      });
+    }
+  });
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    context.addIssue({
+      code: "custom",
+      message: "A galeria não pode repetir a mesma foto.",
+    });
+  }
+  const coverCount = items.filter((item) => item.isCover).length;
+  if (coverCount !== (items.length === 0 ? 0 : 1)) {
+    context.addIssue({
+      code: "custom",
+      message: "Uma galeria não vazia precisa possuir exatamente uma capa.",
+    });
+  }
+}
+
+export const studioMediaItemSchema = studioMediaRecordBaseSchema
+  .omit({ previewStoragePath: true })
+  .extend({ previewUrl: z.url() })
+  .refine((item) => item.width * item.height <= studioMediaMaximumPixels, {
+    message: "A foto excede o orçamento seguro de pixels.",
+    path: ["width"],
+  });
+
+export const studioMediaRecordCollectionSchema = z
+  .array(studioMediaRecordSchema)
+  .max(studioMediaMaximumFiles)
+  .superRefine(validateStudioMediaCollection);
+
+export const studioMediaCollectionSchema = z
+  .array(studioMediaItemSchema)
+  .max(studioMediaMaximumFiles)
+  .superRefine(validateStudioMediaCollection);
+
+export function validateStudioMediaPreviewIdentity(
+  collection: Readonly<{
+    items: ReadonlyArray<Pick<StudioMediaCollectionItem, "id" | "previewStoragePath">>;
+    ownerScope?: string;
+    studioId: string;
+  }>,
+  context: z.RefinementCtx,
+  path: ReadonlyArray<string | number> = ["items"],
+) {
+  collection.items.forEach((item, index) => {
+    if (item.previewStoragePath === undefined) return;
+    const identity = pathIdentity(item.previewStoragePath, true);
+    if (
+      identity === undefined ||
+      identity.studioId !== collection.studioId ||
+      identity.mediaId !== item.id ||
+      (collection.ownerScope !== undefined && identity.scope !== collection.ownerScope)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "A prévia não corresponde à identidade da coleção de mídia.",
+        path: [...path, index, "previewStoragePath"],
+      });
+    }
+  });
+}
+
+function validateStudioMediaGalleryBoundary(
   gallery: Readonly<{
     canEdit: boolean;
-    items: ReadonlyArray<{
-      id?: string;
-      isCover: boolean;
-      position: number;
-      previewStoragePath?: string;
-    }>;
     revisionStatus: "approved" | "draft" | "pending" | "rejected" | "superseded";
-    revisionId?: string;
-    scope?: string;
-    studioId?: string;
   }>,
   context: z.RefinementCtx,
 ) {
@@ -212,76 +283,32 @@ function validateStudioMediaOrderAndCover(
       path: ["canEdit"],
     });
   }
-  const mediaIds = gallery.items.flatMap((item) => (item.id === undefined ? [] : [item.id]));
-  gallery.items.forEach((item, index) => {
-    if (item.position !== index + 1) {
-      context.addIssue({
-        code: "custom",
-        message: "A ordem da galeria precisa ser contínua.",
-        path: ["items", index, "position"],
-      });
-    }
-    if (
-      item.id !== undefined &&
-      item.previewStoragePath !== undefined &&
-      gallery.scope !== undefined &&
-      gallery.studioId !== undefined &&
-      gallery.revisionId !== undefined
-    ) {
-      const identity = pathIdentity(item.previewStoragePath, true);
-      if (
-        identity === undefined ||
-        identity.scope !== gallery.scope ||
-        identity.studioId !== gallery.studioId ||
-        identity.mediaId !== item.id
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "A prévia não corresponde à identidade da galeria.",
-          path: ["items", index, "previewStoragePath"],
-        });
-      }
-    }
-  });
-  if (new Set(mediaIds).size !== mediaIds.length) {
-    context.addIssue({
-      code: "custom",
-      message: "A galeria não pode repetir a mesma foto.",
-      path: ["items"],
-    });
-  }
-  const coverCount = gallery.items.filter((item) => item.isCover).length;
-  if (coverCount !== (gallery.items.length === 0 ? 0 : 1)) {
-    context.addIssue({
-      code: "custom",
-      message: "Uma galeria não vazia precisa possuir exatamente uma capa.",
-      path: ["items"],
-    });
-  }
 }
 
 export const studioMediaGalleryRecordSchema = z
   .strictObject({
     ...studioMediaGalleryBoundaryShape,
-    items: z.array(studioMediaRecordSchema).max(studioMediaMaximumFiles),
+    items: studioMediaRecordCollectionSchema,
   })
-  .superRefine(validateStudioMediaOrderAndCover);
-
-export const studioMediaItemSchema = studioMediaRecordBaseSchema
-  .omit({ previewStoragePath: true })
-  .extend({ previewUrl: z.url() })
-  .refine((item) => item.width * item.height <= studioMediaMaximumPixels, {
-    message: "A foto excede o orçamento seguro de pixels.",
-    path: ["width"],
+  .superRefine(validateStudioMediaGalleryBoundary)
+  .superRefine((gallery, context) => {
+    validateStudioMediaPreviewIdentity(
+      {
+        items: gallery.items,
+        ownerScope: gallery.scope,
+        studioId: gallery.studioId,
+      },
+      context,
+    );
   });
 
 export const studioMediaGallerySchema = z
   .strictObject({
     ...studioMediaGalleryBoundaryShape,
-    items: z.array(studioMediaItemSchema).max(studioMediaMaximumFiles),
+    items: studioMediaCollectionSchema,
     previewExpiresAt: z.iso.datetime({ offset: true }),
   })
-  .superRefine(validateStudioMediaOrderAndCover);
+  .superRefine(validateStudioMediaGalleryBoundary);
 
 const studioMediaUploadPreparationRecordShape = {
   bucket: z.literal(studioMediaBucket),

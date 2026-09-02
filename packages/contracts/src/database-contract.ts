@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260901170636" as const;
+export const databaseMigrationHead = "20260901185454" as const;
+export const databaseCommandPoolTimeouts = Object.freeze({
+  queryTimeoutMs: 3_000,
+  statementTimeoutMs: 2_000,
+});
+export const databaseReadinessPoolTimeouts = Object.freeze({
+  queryTimeoutMs: 2_000,
+  statementTimeoutMs: 1_000,
+});
 const databaseProductionPoolerHost = "aws-0-sa-east-1.pooler.supabase.com" as const;
 const databaseProductionProjectRef = "oirvvnojgkzdppkdvhej" as const;
 

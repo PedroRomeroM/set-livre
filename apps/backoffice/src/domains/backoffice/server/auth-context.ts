@@ -3,7 +3,7 @@ import "server-only";
 import { identityEmailSchema } from "@set-livre/contracts";
 import { z } from "zod";
 
-import { backofficeAuthCookieName } from "@/lib/supabase/config";
+import { backofficeAuthCookieName } from "../../../lib/supabase/config";
 
 const claimsSchema = z.object({
   email: identityEmailSchema,

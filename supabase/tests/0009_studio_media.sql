@@ -517,16 +517,43 @@ select policies_are(
   array[]::text[],
   'associações não possuem policy browser; leitura ocorre somente no DAL'
 );
-select is(
+select ok(
   (
-    select pg_catalog.count(*)::integer
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(
+        policy.policyname = 'studio_media_select_backoffice_review'
+        and policy.permissive = 'PERMISSIVE'
+        and policy.roles = array['authenticated'::name]
+        and policy.cmd = 'SELECT'
+        and pg_catalog.regexp_replace(policy.qual, '[[:space:]]', '', 'g')
+          = pg_catalog.regexp_replace(
+              '((bucket_id = ''studio-media''::text) AND storage.allow_only_operation(''storage.object.sign_many''::text) AND private.can_sign_backoffice_studio_media(name))',
+              '[[:space:]]',
+              '',
+              'g'
+            )
+        and policy.with_check is null
+      )
     from pg_catalog.pg_policies as policy
     where policy.schemaname = 'storage'
       and policy.tablename = 'objects'
-      and policy.policyname like 'studio_media_objects_%'
-  ),
-  0,
-  'browser não recebe policy de upload, listagem, assinatura ou download no Storage'
+  )
+    and pg_catalog.has_function_privilege(
+      'authenticated',
+      'private.can_sign_backoffice_studio_media(text)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'anon',
+      'private.can_sign_backoffice_studio_media(text)',
+      'EXECUTE'
+    )
+    and not pg_catalog.has_function_privilege(
+      'authenticated',
+      'private.can_sign_backoffice_studio_media(text)',
+      'EXECUTE WITH GRANT OPTION'
+    ),
+  'Storage expõe somente a policy authenticated de assinatura múltipla com helper não delegável'
 );
 select ok(
   (

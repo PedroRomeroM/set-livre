@@ -1,20 +1,18 @@
 import { backofficeRuntimeUnlockPayloadSchema } from "@set-livre/contracts";
 
-import { requireRouteBackofficeSession } from "@/domains/backoffice/server/backoffice-session";
 import { unlockBackofficeRuntime } from "@/domains/backoffice/server/runtime-unlock";
 import {
   backofficeNetworkDiscriminator,
   hashBackofficePrivateValue,
   parseOrBackofficeInputError,
   readLimitedJson,
-  runBackofficeRoute,
 } from "@/lib/server/api-route";
 import { backofficeAuthNetworkRateLimitOptions } from "@/lib/server/auth-rate-limit-profile";
+import { runProtectedBackofficeRoute } from "@/lib/server/protected-api-route";
 import { enforceBackofficeRateLimit } from "@/lib/server/rate-limit";
 
 export async function POST(request: Request) {
-  return runBackofficeRoute(request, "backoffice.auth.unlock", async () => {
-    const route = await requireRouteBackofficeSession();
+  return runProtectedBackofficeRoute(request, "backoffice.auth.unlock", async ({ route }) => {
     enforceBackofficeRateLimit(
       "backoffice.unlock.network",
       backofficeNetworkDiscriminator(request),
@@ -31,7 +29,6 @@ export async function POST(request: Request) {
     );
     return {
       data: await unlockBackofficeRuntime(route.auth, payload),
-      responseHeaders: route.responseHeaders,
     };
   });
 }

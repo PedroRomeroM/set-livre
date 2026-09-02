@@ -13,6 +13,7 @@ import {
   backofficeAuthCookieNames,
   parseBackofficeAuthContext,
 } from "@/domains/backoffice/server/auth-context";
+import { createBackofficeContentSecurityPolicy } from "@/lib/content-security-policy";
 import { readBackofficeSupabaseEnvironment } from "@/lib/supabase/config";
 
 const globalErrorDocument = `<!doctype html>
@@ -64,20 +65,23 @@ function applyBackofficeHeaders(response: NextResponse, contentSecurityPolicy: s
 
 export async function proxy(request: NextRequest) {
   const nonce = randomUUID().replaceAll("-", "");
-  const contentSecurityPolicy = createContentSecurityPolicy(
-    nonce,
-    process.env.NODE_ENV === "development",
-  );
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   if (request.nextUrl.pathname === "/_global-error") {
-    return createGlobalErrorResponse(contentSecurityPolicy);
+    return createGlobalErrorResponse(createContentSecurityPolicy(nonce, isDevelopment));
   }
+
+  const environment = readBackofficeSupabaseEnvironment();
+  const contentSecurityPolicy = createBackofficeContentSecurityPolicy(
+    nonce,
+    isDevelopment,
+    environment.supabaseOrigin,
+  );
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
   requestHeaders.set(contentSecurityPolicyNonceHeaderName, nonce);
 
-  const environment = readBackofficeSupabaseEnvironment();
   const { name: cookieStorageKey, ...forcedCookieOptions } = environment.cookieOptions;
   let response = NextResponse.next({ request: { headers: requestHeaders } });
   applyBackofficeHeaders(response, contentSecurityPolicy);

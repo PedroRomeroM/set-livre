@@ -1010,7 +1010,8 @@ with inserted_studio as (
     id,
     owner_user_id,
     status,
-    draft_revision_id,
+    published_revision_id,
+    disabled_from_status,
     publication_version
   )
   values (
@@ -1018,6 +1019,7 @@ with inserted_studio as (
     '91000000-0000-4000-8000-000000000001',
     'disabled',
     '94100000-0000-4000-8000-000000000007',
+    'published',
     2
   )
   returning id
@@ -1045,7 +1047,7 @@ select
   inserted_studio.id,
   1,
   1,
-  'draft',
+  'approved',
   'Estudio QA FEAT 009 desabilitado',
   'Estudio factual desabilitado para comprovar leitura segura sem antecipar comando administrativo.',
   'Rua da Publicacao',
@@ -1298,7 +1300,7 @@ select ok(
       pg_catalog.current_setting('set_livre.test.f009_incomplete')::jsonb
         ->> 'studioId'
     )
-  ) = '23514:studio_status_transition_invalid'
+  ) = '23514:studio_disable_transition_invalid'
     and (
       select studio.status = 'draft' and studio.publication_version = 1
       from public.studios as studio
@@ -1307,7 +1309,7 @@ select ok(
           ->> 'studioId'
       )::uuid
     ),
-  'FEAT 009 nao antecipa transicao administrativa para disabled e preserva o estado'
+  'transicao direta para disabled permanece fechada fora do comando administrativo FEAT 030'
 );
 
 select is(

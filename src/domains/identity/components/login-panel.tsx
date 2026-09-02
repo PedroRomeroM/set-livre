@@ -5,7 +5,8 @@ import {
   type IdentityLoginPayload,
   type IdentitySession,
 } from "@set-livre/contracts";
-import { Alert, Button, Field, Input, PasswordInput, Stack } from "@set-livre/ui";
+import { Alert, Button, Field, Input, Stack } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";

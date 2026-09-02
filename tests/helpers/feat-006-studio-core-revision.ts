@@ -299,28 +299,25 @@ export async function mutateFeat006DraftForConflict(
   });
 }
 
-export async function setFeat006StudioStatus(
-  studioId: string,
-  status: "disabled" | "draft" | "published",
-) {
+export async function disableFeat006PublishedStudio(studioId: string) {
   const parsedStudioId = z.uuid().parse(studioId);
   await withFeat006AdminPool(async (pool) => {
     const result = await withFeat006HistoricalStateSeed(pool, () =>
       pool.query(
         `update public.studios as studio
-            set status = $2,
-                publication_version = case
-                  when studio.status is distinct from $2 then studio.publication_version + 1
-                  else studio.publication_version
-                end,
+            set status = 'disabled',
+                disabled_from_status = 'published',
+                publication_version = studio.publication_version + 1,
                 updated_at = pg_catalog.clock_timestamp()
           where studio.id = $1::uuid
+            and studio.status = 'published'
+            and studio.published_revision_id is not null
         returning studio.id`,
-        [parsedStudioId, status],
+        [parsedStudioId],
       ),
     );
     if (result.rows.length !== 1) {
-      throw new Error("A fixture FEAT-006 não alterou exatamente um status de estúdio.");
+      throw new Error("A fixture FEAT-006 não desabilitou exatamente um estúdio publicado.");
     }
   });
 }
@@ -511,14 +508,18 @@ export async function cleanupFeat006QaIdentity(identity: Feat006QaIdentity) {
   if (identity.userId !== undefined) {
     try {
       await cleanupFeat006OwnedStudioRows(identity.userId);
-    } catch {
-      failures.push(new Error("Não foi possível remover os fatos locais da FEAT-006."));
+    } catch (error) {
+      failures.push(
+        new Error("Não foi possível remover os fatos locais da FEAT-006.", { cause: error }),
+      );
     }
   }
   try {
     await cleanupFeat004QaIdentity(identity);
-  } catch {
-    failures.push(new Error("Não foi possível remover a identidade-base da FEAT-006."));
+  } catch (error) {
+    failures.push(
+      new Error("Não foi possível remover a identidade-base da FEAT-006.", { cause: error }),
+    );
   }
   if (failures.length > 0) {
     throw new AggregateError(failures, "A limpeza exata do cenário FEAT-006 falhou.");

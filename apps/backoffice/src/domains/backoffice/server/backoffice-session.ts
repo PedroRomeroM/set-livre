@@ -9,12 +9,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { z } from "zod";
 
-import { BackofficeApiError } from "@/lib/server/api-route";
+import { BackofficeApiError } from "../../../lib/server/api-route";
 import {
   createBackofficeComponentSupabaseClient,
   createBackofficeRouteSupabaseClient,
   createBackofficeTransientSupabaseClient,
-} from "@/lib/supabase/server";
+} from "../../../lib/supabase/server";
 
 import {
   clearBackofficeAuthCookies,
@@ -144,7 +144,9 @@ async function readBoundSession(client: BackofficeSupabaseClient) {
 }
 
 export async function readComponentBackofficeState() {
-  return readBoundSession(await createBackofficeComponentSupabaseClient());
+  const client = await createBackofficeComponentSupabaseClient();
+  const state = await readBoundSession(client);
+  return state === undefined ? undefined : { ...state, client };
 }
 
 export async function readComponentBackofficeSession() {

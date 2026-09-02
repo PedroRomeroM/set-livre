@@ -19,6 +19,7 @@ import {
   uploadFeat008Photos,
   type Feat008QaIdentity,
 } from "./feat-008-studio-media";
+import { expectRawHtmlScriptsUseNonce, policyNonce } from "./content-security-policy";
 
 const studioStatusSchema = z.enum([
   "changes_pending",
@@ -120,6 +121,9 @@ export async function openFeat009Publication(page: Page, studioId: string) {
   const parsedStudioId = z.uuid().parse(studioId);
   const navigation = await page.goto(`/dono/estudios/${parsedStudioId}/publicacao`);
   expect(navigation?.status()).toBe(200);
+  if (navigation === null) throw new Error("A navegação da publicação não retornou uma response.");
+  const nonce = policyNonce(navigation.headers()["content-security-policy"] ?? "");
+  expectRawHtmlScriptsUseNonce(await navigation.text(), nonce);
   await expect(
     page.getByRole("heading", { level: 1, name: "Publicação do estúdio" }),
   ).toBeVisible();
