@@ -111,10 +111,6 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(page.getByRole("button", { name: "Confirmar ação", exact: true })).toBeVisible();
 
     const skipLink = page.getByRole("link", { name: "Ir para o conteúdo" });
-    await skipLink.focus();
-    await expect(skipLink).toBeFocused();
-    await expect(skipLink).toBeVisible();
-
     const simulatedSafeArea = { left: 24, right: 20, top: 16 };
     await skipLink.evaluate((element, safeArea) => {
       if (!(element instanceof HTMLElement)) {
@@ -124,6 +120,9 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       element.style.setProperty("--sl-skip-link-inset-right", `${safeArea.right}px`);
       element.style.setProperty("--sl-skip-link-inset-left", `${safeArea.left}px`);
     }, simulatedSafeArea);
+    await skipLink.focus();
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeVisible();
 
     const layout = await page.evaluate((safeArea) => {
       const clientWidth = document.documentElement.clientWidth;
@@ -139,9 +138,17 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           text: element.textContent?.trim().slice(0, 80) ?? "",
         };
       });
-      const skipLinkRectangle = document
-        .querySelector<HTMLAnchorElement>('a[href="#conteudo-principal"]')
-        ?.getBoundingClientRect();
+      const skipLinkElement = document.querySelector<HTMLAnchorElement>(
+        'a[href="#conteudo-principal"]',
+      );
+      const skipLinkRectangle = skipLinkElement?.getBoundingClientRect();
+      const skipLinkStyle = skipLinkElement ? getComputedStyle(skipLinkElement) : undefined;
+      const skipLinkTextRectangle = (() => {
+        if (!skipLinkElement) return undefined;
+        const range = document.createRange();
+        range.selectNodeContents(skipLinkElement);
+        return range.getBoundingClientRect();
+      })();
       return {
         bodyClientWidth: document.body.clientWidth,
         bodyFits: document.body.scrollWidth <= window.innerWidth,
@@ -158,6 +165,9 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           naturalWidth: image.naturalWidth,
           objectFit: getComputedStyle(image).objectFit,
         })),
+        internallyOverflowing: measuredElements
+          .filter((element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth)
+          .slice(0, 16),
         overflowing: measuredElements
           .filter((element) => element.left < 0 || element.right > clientWidth)
           .map((element) => ({
@@ -171,13 +181,21 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             ? null
             : {
                 fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
+                clientWidth: skipLinkElement?.clientWidth ?? 0,
                 left: skipLinkRectangle.left,
                 right: skipLinkRectangle.right,
                 safeAreaCleared:
                   skipLinkRectangle.left >= safeArea.left &&
                   skipLinkRectangle.right <= clientWidth - safeArea.right &&
                   skipLinkRectangle.top >= safeArea.top,
+                scrollWidth: skipLinkElement?.scrollWidth ?? 0,
+                textLeft: skipLinkTextRectangle?.left ?? 0,
+                textRight: skipLinkTextRectangle?.right ?? 0,
                 top: skipLinkRectangle.top,
+                whiteSpace: skipLinkStyle?.whiteSpace ?? "",
+                width: skipLinkRectangle.width,
+                wordBreak: skipLinkStyle?.wordBreak ?? "",
+                overflowWrap: skipLinkStyle?.overflowWrap ?? "",
               },
         windowInnerWidth: window.innerWidth,
       };
@@ -189,6 +207,9 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);
     expect(layout.skipLink?.safeAreaCleared, layoutEvidence).toBe(true);
+    expect(layout.skipLink?.scrollWidth, layoutEvidence).toBeLessThanOrEqual(
+      layout.skipLink?.clientWidth ?? 0,
+    );
     expect(layout.images.length).toBeGreaterThan(0);
     expect(
       layout.images.every(
