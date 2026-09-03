@@ -88,9 +88,10 @@ Workflows de pull request não recebem secrets de produção e o checkout remove
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
 Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
 e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
-O job Linux possui orçamento explícito de 75 minutos para acomodar a matriz Playwright completa, build,
-pacote, contratos do host e smoke standalone no mesmo gate. Um teste de contrato impede regressão ao
-antigo limite de 45 minutos, que cancelava o build depois de todos os testes terem passado.
+O job Linux possui orçamento explícito de 90 minutos para acomodar a matriz Playwright completa, build,
+pacote, contratos do host e smoke standalone no mesmo gate. Um teste de contrato impede regressão a
+limites menores: 45 minutos cancelavam o build depois dos testes e 75 minutos interromperam uma matriz
+de 421 casos no cenário 402 antes dos contratos de release.
 Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
 `Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
 review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).

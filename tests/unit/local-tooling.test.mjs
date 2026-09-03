@@ -1781,7 +1781,7 @@ describe("local tooling contracts", () => {
 
     expect(qualityStart).toBeGreaterThan(-1);
     expect(windowsStart).toBeGreaterThan(qualityStart);
-    expect(qualityJob).toContain("timeout-minutes: 75");
+    expect(qualityJob).toContain("timeout-minutes: 90");
     expect(qualityJob).not.toContain("timeout-minutes: 45");
   });
 
