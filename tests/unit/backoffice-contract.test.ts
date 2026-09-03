@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
   backofficeCommandSchema,
   backofficeRuntimeUnlockPayloadSchema,
@@ -58,6 +61,25 @@ function BackofficeHydrationProbe() {
 }
 
 describe("backoffice contracts", () => {
+  it("keeps the focused skip link inside the viewport safe areas", () => {
+    const styles = readFileSync(
+      resolve(
+        process.cwd(),
+        "apps/backoffice/src/domains/backoffice/components/backoffice.module.css",
+      ),
+      "utf8",
+    );
+    const skipLinkRules = styles.match(/\.skipLink\s*\{(?<rules>[^}]*)\}/)?.groups?.rules;
+
+    expect(skipLinkRules).toBeDefined();
+    expect(skipLinkRules).toContain("env(safe-area-inset-top)");
+    expect(skipLinkRules).toContain("env(safe-area-inset-right)");
+    expect(skipLinkRules).toContain("env(safe-area-inset-left)");
+    expect(skipLinkRules).toContain("var(--sl-skip-link-inset-top)");
+    expect(skipLinkRules).toContain("var(--sl-skip-link-inset-right)");
+    expect(skipLinkRules).toContain("var(--sl-skip-link-inset-left)");
+  });
+
   it("exposes a closed server snapshot for backoffice hydration boundaries", () => {
     expect(renderToStaticMarkup(createElement(BackofficeHydrationProbe))).toBe(
       "<span>closed</span>",

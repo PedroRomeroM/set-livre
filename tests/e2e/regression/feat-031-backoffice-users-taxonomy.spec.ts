@@ -164,33 +164,44 @@ test("SL-F031-E2E-006 @p1 busca e cursor permanecem no servidor sem filtro na UR
         bounds.top + bounds.height / 2,
       );
       const clientWidth = document.documentElement.clientWidth;
+      const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
+        const rectangle = element.getBoundingClientRect();
+        return {
+          className: element.getAttribute("class"),
+          left: rectangle.left,
+          right: rectangle.right,
+          tag: element.tagName,
+          width: rectangle.width,
+        };
+      });
       return {
         bodyScrollWidth: document.body.scrollWidth,
         buttonBottom: Math.round(bounds.bottom),
         buttonTop: Math.round(bounds.top),
         clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
         hitInsideButton: hit === button || (hit !== null && button.contains(hit)),
         hitTag: hit?.tagName ?? null,
-        overflowing: [...document.querySelectorAll("body *")]
-          .map((element) => {
-            const rectangle = element.getBoundingClientRect();
-            return {
-              className: element.getAttribute("class"),
-              left: Math.round(rectangle.left),
-              right: Math.round(rectangle.right),
-              tag: element.tagName,
-              width: Math.round(rectangle.width),
-            };
-          })
+        overflowing: measuredElements
           .filter((element) => element.left < 0 || element.right > clientWidth)
+          .map((element) => ({
+            ...element,
+            left: Math.round(element.left * 1000) / 1000,
+            right: Math.round(element.right * 1000) / 1000,
+            width: Math.round(element.width * 1000) / 1000,
+          }))
           .slice(0, 12),
         viewportHeight: window.innerHeight,
+        windowInnerWidth: window.innerWidth,
       };
     });
-    expect(hitEvidence.overflowing).toEqual([]);
+    const hitEvidenceJson = JSON.stringify(hitEvidence, null, 2);
+    expect(hitEvidence.overflowing, hitEvidenceJson).toEqual([]);
     expect(hitEvidence).toMatchObject({
       bodyScrollWidth: hitEvidence.clientWidth,
+      documentScrollWidth: hitEvidence.clientWidth,
       hitInsideButton: true,
+      windowInnerWidth: hitEvidence.clientWidth,
     });
     await loadMore.click();
     await expect(page.getByRole("article")).toHaveCount(52);

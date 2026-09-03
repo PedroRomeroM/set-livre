@@ -301,8 +301,9 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - ausência de `/admin` no aplicativo público;
 - axe, teclado, foco, alvos de toque e tema escuro nas quatro composições;
 - comparação sem overflow e ação operável a 200% em Chromium, Firefox e WebKit; o cenário de 160 ×
-  360 também foca o link de salto do backoffice e preserva medidas subpixel no diagnóstico para não
-  ocultar um overflow de um pixel por arredondamento.
+  360 também foca o link de salto do backoffice, verifica sua contenção com recuos de `safe-area` e
+  preserva medidas subpixel no diagnóstico para não ocultar um overflow de um pixel por
+  arredondamento.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as

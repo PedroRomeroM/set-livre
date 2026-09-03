@@ -115,7 +115,17 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(skipLink).toBeFocused();
     await expect(skipLink).toBeVisible();
 
-    const layout = await page.evaluate(() => {
+    const simulatedSafeArea = { left: 24, right: 20, top: 16 };
+    await skipLink.evaluate((element, safeArea) => {
+      if (!(element instanceof HTMLElement)) {
+        throw new Error("O link de salto não expõe estilos de elemento HTML.");
+      }
+      element.style.setProperty("--sl-skip-link-inset-top", `${safeArea.top}px`);
+      element.style.setProperty("--sl-skip-link-inset-right", `${safeArea.right}px`);
+      element.style.setProperty("--sl-skip-link-inset-left", `${safeArea.left}px`);
+    }, simulatedSafeArea);
+
+    const layout = await page.evaluate((safeArea) => {
       const clientWidth = document.documentElement.clientWidth;
       const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
         const rectangle = element.getBoundingClientRect();
@@ -163,16 +173,22 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
                 fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
                 left: skipLinkRectangle.left,
                 right: skipLinkRectangle.right,
+                safeAreaCleared:
+                  skipLinkRectangle.left >= safeArea.left &&
+                  skipLinkRectangle.right <= clientWidth - safeArea.right &&
+                  skipLinkRectangle.top >= safeArea.top,
+                top: skipLinkRectangle.top,
               },
         windowInnerWidth: window.innerWidth,
       };
-    });
+    }, simulatedSafeArea);
     const layoutEvidence = JSON.stringify(layout, null, 2);
     expect(layout.bodyFits, layoutEvidence).toBe(true);
     expect(layout.documentFits, layoutEvidence).toBe(true);
     expect(layout.overflowing).toEqual([]);
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);
+    expect(layout.skipLink?.safeAreaCleared, layoutEvidence).toBe(true);
     expect(layout.images.length).toBeGreaterThan(0);
     expect(
       layout.images.every(

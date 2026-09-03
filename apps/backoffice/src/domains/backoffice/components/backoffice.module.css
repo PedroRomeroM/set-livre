@@ -4,10 +4,14 @@
 }
 
 .skipLink {
+  --sl-skip-link-inset-top: max(0.5rem, env(safe-area-inset-top));
+  --sl-skip-link-inset-right: max(0.5rem, env(safe-area-inset-right));
+  --sl-skip-link-inset-left: max(0.5rem, env(safe-area-inset-left));
+
   position: fixed;
   z-index: 20;
-  inset: 0.5rem auto auto 0.5rem;
-  max-width: calc(100% - 1rem);
+  inset: var(--sl-skip-link-inset-top) auto auto var(--sl-skip-link-inset-left);
+  max-width: calc(100% - var(--sl-skip-link-inset-left) - var(--sl-skip-link-inset-right));
   padding: 0.75rem 1rem;
   color: var(--sl-color-canvas);
   background: var(--sl-color-ink);
