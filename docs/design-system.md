@@ -228,6 +228,9 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
 - grids externos e internos usam tracks `minmax(0, 1fr)`, descendentes encolhíveis e quebra de
   identificadores longos. Em 320 px, cada grupo vira uma coluna sem scroll horizontal; 390 px, altura
   compacta e tema escuro preservam os mesmos controles e alvos de 44 px;
+- o shell mantém largura física de 320 px mesmo diante de e-mail operacional longo: o resumo de
+  sessão recebe largura definida no mobile, os filhos de stacks permanecem contidos e grids de uma
+  coluna conservam o mínimo explícito zero, sem acionar shrink-to-fit do navegador;
 - resposta ambígua bloqueia os campos afetados e apresenta repetição da mesma tentativa idempotente,
   sem spinner permanente nem criação de um novo comando silencioso.
 - login, desbloqueio, busca de usuários e gestão de taxonomias reutilizam um único snapshot de
@@ -263,7 +266,9 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   possui preview `youtube-nocookie`, e paths privados nunca aparecem na composição;
 - controles permanecem operáveis por teclado e toque, com alvos mínimos de 44 px;
 - 320 px, altura compacta, tema escuro, axe e reflow a 160 CSS px fazem parte do contrato da
-  composição.
+  composição. Perguntas e respostas externas sem oportunidade natural de quebra permanecem contidas
+  diretamente em sua lista de definição; no viewport equivalente a 200%, a quebra emergencial não
+  amplia a página.
 
 ## 4. Contratos
 

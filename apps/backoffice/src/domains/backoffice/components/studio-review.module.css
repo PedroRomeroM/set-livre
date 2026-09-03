@@ -89,9 +89,20 @@
 
 .definitionList {
   display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
   gap: 0.5rem 1rem;
   margin: 0;
+}
+
+.definitionList > *,
+.definitionList dt,
+.definitionList dd {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .definitionList dt {
@@ -214,5 +225,13 @@
 
   .actions > * {
     flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 12rem) {
+  .definitionList > *,
+  .definitionList dt,
+  .definitionList dd {
+    word-break: break-all;
   }
 }

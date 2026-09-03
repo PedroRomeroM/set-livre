@@ -1,4 +1,7 @@
 .shell {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100svh;
   background: var(--sl-color-canvas);
 }
@@ -42,9 +45,12 @@
 .sessionSummary,
 .main,
 .pageStack,
+.pageStack > *,
 .cardGrid,
-.card {
+.card,
+.actions {
   min-width: 0;
+  max-width: 100%;
 }
 
 .brand,
@@ -76,6 +82,7 @@
 }
 
 .sessionSummary span {
+  min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -352,6 +359,10 @@
     width: 100%;
   }
 
+  .sessionSummary span {
+    width: 100%;
+  }
+
   .overviewGrid,
   .cardGrid,
   .taxonomyGrid {
@@ -362,7 +373,7 @@
   .taxonomyFormBoundary,
   .definitionList,
   .runtimeUnlockBoundary {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .runtimeUnlockBoundary > button {

@@ -341,7 +341,58 @@ test("SL-F031-E2E-018 @p1 concessões refletem status ativo e perfil completo", 
     await expect(page.getByRole("button", { name: /^Revisar concessão/u })).toHaveCount(0);
     expect(await readFeat031Roles(suspendedTarget.userId)).toEqual([{ role: "support" }]);
 
-    await page.getByRole("link", { name: "Voltar à busca de acessos" }).click();
+    const backToAccessSearch = page.getByRole("link", { name: "Voltar à busca de acessos" });
+    const configuredViewport = page.viewportSize();
+    if (configuredViewport === null) {
+      throw new Error("O cenário responsivo exige uma viewport explícita.");
+    }
+    const expectedViewportWidth = configuredViewport.width;
+    await backToAccessSearch.scrollIntoViewIfNeeded();
+    const backLinkLayout = await backToAccessSearch.evaluate((link) => {
+      const bounds = link.getBoundingClientRect();
+      const clientWidth = document.documentElement.clientWidth;
+      const hit = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return {
+        bodyScrollWidth: document.body.scrollWidth,
+        clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        hitInsideLink: hit === link || (hit !== null && link.contains(hit)),
+        hitTag: hit?.tagName ?? null,
+        linkBottom: bounds.bottom,
+        linkLeft: bounds.left,
+        linkRight: bounds.right,
+        linkTop: bounds.top,
+        viewportHeight: window.innerHeight,
+        visualViewportScale: window.visualViewport?.scale ?? 1,
+        visualViewportWidth: window.visualViewport?.width ?? window.innerWidth,
+        windowInnerWidth: window.innerWidth,
+      };
+    });
+    const backLinkLayoutEvidence = JSON.stringify(backLinkLayout, null, 2);
+    expect(backLinkLayout, backLinkLayoutEvidence).toMatchObject({
+      bodyScrollWidth: expectedViewportWidth,
+      clientWidth: expectedViewportWidth,
+      documentScrollWidth: expectedViewportWidth,
+      hitInsideLink: true,
+      windowInnerWidth: expectedViewportWidth,
+    });
+    expect(backLinkLayout.visualViewportScale, backLinkLayoutEvidence).toBeCloseTo(1, 5);
+    expect(backLinkLayout.visualViewportWidth, backLinkLayoutEvidence).toBeCloseTo(
+      expectedViewportWidth,
+      5,
+    );
+    expect(backLinkLayout.linkLeft, backLinkLayoutEvidence).toBeGreaterThanOrEqual(0);
+    expect(backLinkLayout.linkRight, backLinkLayoutEvidence).toBeLessThanOrEqual(
+      expectedViewportWidth,
+    );
+    expect(backLinkLayout.linkTop, backLinkLayoutEvidence).toBeGreaterThanOrEqual(0);
+    expect(backLinkLayout.linkBottom, backLinkLayoutEvidence).toBeLessThanOrEqual(
+      backLinkLayout.viewportHeight,
+    );
+    await backToAccessSearch.click();
     card = await searchUser(page, incompleteTarget.email, incompleteTarget.userId);
     await card.getByRole("link", { name: "Gerenciar acesso" }).click();
     await expect(page.getByText("Ativa", { exact: true })).toBeVisible();

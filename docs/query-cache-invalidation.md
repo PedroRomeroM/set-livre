@@ -129,9 +129,11 @@ Medir; não usar Infinity em dado operacional.
 - o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
   até o GET autoritativo do mesmo usuário/estúdio terminar em `idle` sem erro. Refetch de montagem,
   foco ou conflito volta ao boundary neutro; erro de sessão/acesso limpa o cliente inteiro e recompõe
-  SSR. Resultado de mutation só publica sobre uma key já existente do mesmo usuário/estúdio; callback
-  tardio depois da limpeza falha fechado e não recria dados privados. Outros estúdios do mesmo dono
-  são preservados e scopes de outro usuário são removidos;
+  SSR. Essa recomposição é one-shot por `QueryClient`: painéis irmãos podem observar a mesma falha,
+  mas apenas o primeiro limpa o cliente e inicia o hard reload. Resultado de mutation só publica sobre
+  uma key já existente do mesmo usuário/estúdio; callback tardio depois da limpeza falha fechado e não
+  recria dados privados. Outros estúdios do mesmo dono são preservados e scopes de outro usuário são
+  removidos;
 - create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
   mesma chave quando o resultado é ambíguo. Campos e ações concorrentes ficam bloqueados durante esse
   retry. Criação aceita entra em estado terminal e exige navegação explícita para o editor, sem gerar

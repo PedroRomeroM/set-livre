@@ -7,6 +7,7 @@ import {
 import type { QueryClient } from "@tanstack/react-query";
 
 const studioPrivateRoot = ["owner", "private", "studio-editor"] as const;
+const recomposingStudioClients = new WeakSet<QueryClient>();
 const studioPrivateTaxonomiesRoot = ["owner", "private", "studio-taxonomies"] as const;
 const studioPrivateMediaRoot = ["owner", "private", "studio-media"] as const;
 
@@ -46,9 +47,15 @@ export function studioRevisionToken(editor: StudioEditor): StudioRevisionToken {
   };
 }
 
-export function recomposeStudioClientBoundary(queryClient: QueryClient) {
+export function recomposeStudioClientBoundary(
+  queryClient: QueryClient,
+  reload: () => void = () => window.location.reload(),
+) {
+  if (recomposingStudioClients.has(queryClient)) return false;
+  recomposingStudioClients.add(queryClient);
   queryClient.clear();
-  window.location.reload();
+  reload();
+  return true;
 }
 
 export class StudioScopeChangedError extends Error {

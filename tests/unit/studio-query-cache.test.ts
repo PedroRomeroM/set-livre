@@ -5,7 +5,7 @@ import {
   type StudioMediaGallery,
 } from "@set-livre/contracts";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { clearIdentityAndAccountQueryCache } from "../../src/domains/identity/components/account-query-keys";
 import {
@@ -16,6 +16,7 @@ import {
   publishStudioMediaGallery,
   preserveNewestStudioEditor,
   preserveNewestStudioMediaGallery,
+  recomposeStudioClientBoundary,
   removeStudioMediaGallery,
   studioEditorCanRender,
   studioMediaOrderMatchesIntent,
@@ -39,6 +40,24 @@ function editorFor(scope: string, studioId: string, revisionId: string): StudioE
 }
 
 describe("studio private query cache", () => {
+  it("recompõe uma fronteira privada uma única vez por cliente", () => {
+    const queryClient = new QueryClient();
+    const reload = vi.fn();
+    queryClient.setQueryData(
+      studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId),
+      studioEditorFixture,
+    );
+
+    expect(recomposeStudioClientBoundary(queryClient, reload)).toBe(true);
+    expect(recomposeStudioClientBoundary(queryClient, reload)).toBe(false);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(
+      queryClient.getQueryData(
+        studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId),
+      ),
+    ).toBeUndefined();
+  });
+
   it("aceita rollback de revisão em uma releitura autoritativa sem aceitar resultado tardio de comando", async () => {
     const queryClient = new QueryClient();
     const queryKey = studioQueryKeys.media(studioTestIds.userId, studioTestIds.studioId);
