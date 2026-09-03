@@ -45,6 +45,14 @@ export default defineConfig({
   preserveOutput: "failures-only",
   projects: [
     {
+      name: "contract-chromium",
+      testMatch: /contract\/.*\.spec\.ts/,
+      use: {
+        browserName: "chromium",
+        viewport: { height: 900, width: 1440 },
+      },
+    },
+    {
       name: "desktop-chromium",
       testMatch: /(?:smoke|regression)\/.*\.spec\.ts/,
       use: {

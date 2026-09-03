@@ -157,6 +157,9 @@ arquivos para produção.
 - Não se testa wrapper, inode, árvore de processo ou chamada interna quando o comportamento final pode
   ser comprovado diretamente.
 - Não se duplica o mesmo cenário em várias camadas sem risco diferente e explícito.
+- Cenários independentes de engine e composição responsiva, inclusive contratos HTTP ou dimensões
+  fixadas pela própria spec, ficam em `tests/e2e/contract/` e rodam uma única vez no Chromium; somente
+  cenários com risco visual, responsivo ou de engine explícito são multiplicados entre projetos.
 
 Ao concluir uma feature, seus cenários automatizados ficam nas specs Playwright e o plano transitório em
 `docs/features/` é removido. Contratos permanentes relevantes são consolidados no documento de domínio.

@@ -17,7 +17,7 @@
   background: var(--sl-color-ink);
   border-radius: var(--sl-radius-md);
   overflow-wrap: anywhere;
-  transform: translateY(-150%);
+  transform: translateY(calc(-100% - var(--sl-skip-link-inset-top) - 1px));
 }
 
 .skipLink:focus {

@@ -5,7 +5,8 @@ import { Alert, Button, Field } from "@set-livre/ui";
 import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 
 import {
   BackofficeClientError,
@@ -42,6 +43,7 @@ export function BackofficeShell({
   const router = useRouter();
   const queryClient = useQueryClient();
   const intentionalLogout = useRef(false);
+  const [logoutTransitionStarted, setLogoutTransitionStarted] = useState(false);
   const pendingRuntimeKey = useRef<string>(undefined);
   const unlockForm = useRef<HTMLFormElement>(null);
   const currentSession = useQuery({
@@ -93,6 +95,9 @@ export function BackofficeShell({
     mutationFn: () => logoutBackofficeClient(session.scope),
     onSuccess: () => {
       intentionalLogout.current = true;
+      flushSync(() => {
+        setLogoutTransitionStarted(true);
+      });
       queryClient.clear();
       notifyBackofficeSessionChanged();
       router.replace("/entrar?saida=sucesso");
@@ -122,7 +127,7 @@ export function BackofficeShell({
   const runtimeControlsDisabled =
     !isHydrated || !currentSession.isFetchedAfterMount || unlock.isPending;
 
-  if (privateViewUnsafe) {
+  if (logoutTransitionStarted || privateViewUnsafe) {
     return (
       <main className={styles.main} id="conteudo-principal">
         <p role="status">Encerrando a visualização privada…</p>

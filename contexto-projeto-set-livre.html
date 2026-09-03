@@ -148,18 +148,21 @@
       <section>
         <h2>Qualidade e entrega</h2>
         <p>
-          A regra normal é uma feature por branch. O lote de fundação é uma exceção única, limitada
-          e registrada no ADR-017; cada fatia mantém commit, testes e review próprios. Antes do
-          merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build, audit e
-          Knip conforme o risco.
+          A regra normal é uma feature por branch. A conclusão da fundação é uma exceção
+          transitória, limitada a dois PRs consecutivos e registrada no ADR-017; cada fatia mantém
+          commit, testes e review próprios. Planos de feature já concluída são removidos conforme o
+          ADR-015. Antes do merge passam format, lint, tipos, Vitest, banco, documentação,
+          Playwright, build, audit e Knip conforme o risco.
         </p>
         <p>
           Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status
           <code>Completed</code>, corrige findings aplicáveis, resolve as conversas e repete o ciclo
           até uma declaração explícita de review limpo. Antes do merge, uma revisão holística cobre
           todo o diff contra <code>main</code>; timeout ou ausência de resposta nunca equivalem a
-          aprovação. O CI repete os gates em Windows e Linux limpos. Os contratos detalhados ficam
-          nas fontes canônicas de <a href="docs/development.md">desenvolvimento</a>,
+          aprovação. O CI repete os gates em Windows e Linux limpos. Cenários Playwright sem risco
+          de engine ou composição rodam uma vez no projeto <code>contract-chromium</code>; somente
+          riscos responsivos, visuais ou de engine justificam multiplicação. Os contratos detalhados
+          ficam nas fontes canônicas de <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a>,
           <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
         </p>

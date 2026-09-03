@@ -111,7 +111,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(page.getByRole("button", { name: "Confirmar ação", exact: true })).toBeVisible();
 
     const skipLink = page.getByRole("link", { name: "Ir para o conteúdo" });
-    const simulatedSafeArea = { left: 24, right: 20, top: 16 };
+    const simulatedSafeArea = { left: 24, right: 20, top: 59 };
     await skipLink.evaluate((element, safeArea) => {
       if (!(element instanceof HTMLElement)) {
         throw new Error("O link de salto não expõe estilos de elemento HTML.");
@@ -120,6 +120,12 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       element.style.setProperty("--sl-skip-link-inset-right", `${safeArea.right}px`);
       element.style.setProperty("--sl-skip-link-inset-left", `${safeArea.left}px`);
     }, simulatedSafeArea);
+    await expect(skipLink).not.toBeFocused();
+    const hiddenSkipLink = await skipLink.evaluate((element) => {
+      const rectangle = element.getBoundingClientRect();
+      return { bottom: rectangle.bottom, top: rectangle.top };
+    });
+    expect(hiddenSkipLink.bottom, JSON.stringify(hiddenSkipLink)).toBeLessThanOrEqual(0);
     await skipLink.focus();
     await expect(skipLink).toBeFocused();
     await expect(skipLink).toBeVisible();

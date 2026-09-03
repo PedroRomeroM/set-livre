@@ -320,7 +320,7 @@ describe("identity mutation cache security", () => {
     );
     const specs = [
       "tests/e2e/critical/feat-002-authentication.spec.ts",
-      "tests/e2e/regression/feat-002-authentication.spec.ts",
+      "tests/e2e/contract/feat-002-authentication.spec.ts",
       "tests/e2e/reflow/feat-002-authentication.spec.ts",
     ]
       .map((fileName) => readFileSync(resolve(process.cwd(), fileName), "utf8"))

@@ -224,6 +224,8 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - revalidação de sessão/papel fecha a composição privada anterior; conflitos de conta, papel e
   taxonomia descartam confirmações versionadas e exigem nova leitura nas quatro composições de
   regressão;
+- logout confirmado oculta sincronamente todo o shell privado antes da navegação, inclusive quando a
+  resposta da próxima rota permanece suspensa;
 - axe, teclado, toque, contraste e ausência de overflow em desktop, mobile, 320 px e tema escuro.
 
 Os testes provam a fronteira `support/admin` pela UI, rota, API e banco. PII efêmera nunca entra no
@@ -266,7 +268,7 @@ fecha `1/0/1` mesmo depois de o run B reassumir a lease e concluir o mesmo objet
 
 ## Matriz da FEAT-009
 
-Os cenários `SL-F009-E2E-*` exercitam a matriz definida no plano da feature:
+Os cenários `SL-F009-E2E-*` exercitam a matriz permanente desta feature:
 
 - cinco P0 nos três engines cobrem submissão completa/incompleta, preservação da versão publicada,
   replay idempotente e pausa/retomada com ponteiros estáveis;
@@ -302,8 +304,9 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - axe, teclado, foco, alvos de toque e tema escuro nas quatro composições;
 - comparação sem overflow e ação operável a 200% em Chromium, Firefox e WebKit; o cenário de 160 ×
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
-  estabelecida, e verifica tanto a caixa quanto o conteúdo rolável do link de salto. O diagnóstico
-  preserva medidas subpixel e lista overflow interno para não ocultar defeitos por arredondamento.
+  estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
+  verifica tanto a caixa quanto o conteúdo rolável depois do foco. O diagnóstico preserva medidas
+  subpixel e lista overflow interno para não ocultar defeitos por arredondamento.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as

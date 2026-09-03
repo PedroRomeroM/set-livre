@@ -26,14 +26,19 @@ Uma branch implementa somente uma feature de produto. Contratos bootstrap compar
 
 ### Exceção transitória do lote de fundação
 
-Por aprovação humana expressa em 1º de setembro de 2026, o PR `#11`, na branch
-`codex/platform-foundation-batch`, é a única exceção à regra de uma feature por branch. O lote fica
-limitado a FEAT-006, FEAT-007, FEAT-031, FEAT-008, FEAT-009, FEAT-030, FEAT-012, FEAT-013,
-FEAT-016 e FEAT-017, nessa ordem executável.
+Por aprovação humana expressa em 1º de setembro de 2026 e redução posterior do tamanho do primeiro
+diff, o lote de fundação pode ocupar exatamente dois PRs consecutivos, que são a única exceção à regra
+de uma feature por branch:
+
+1. o PR `#11`, na branch `codex/platform-foundation-batch`, fica limitado a FEAT-006, FEAT-007,
+   FEAT-031, FEAT-008, FEAT-009 e FEAT-030;
+2. o PR sucessor nasce de `main` atualizada somente depois do merge e deploy comprovado do `#11` e
+   fica limitado a FEAT-012, FEAT-013, FEAT-016 e FEAT-017, nessa ordem executável.
 
 Cada fatia continua vertical, rastreável em commit próprio, validada antes do push e submetida a
-review do SHA atualizado antes da próxima. O lote termina com gates completos e review holístico do
-diff contra `main`. Nenhuma feature fora da lista pode entrar nesse PR; depois do merge, a regra
+review do SHA atualizado antes da próxima. Cada um dos dois PRs termina com gates completos, review
+incremental limpo, revisão holística do diff contra `main`, merge protegido e deploy comprovado.
+Nenhuma feature fora da lista de seu corte pode entrar nesses PRs; depois do merge do segundo, a regra
 normal de uma feature por branch volta a valer sem nova exceção implícita.
 
 O estado e a ordem executável vigentes ficam exclusivamente em [`docs/roadmap.md`](../roadmap.md). A
