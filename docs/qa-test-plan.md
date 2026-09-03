@@ -231,8 +231,12 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - uma nova busca descarta confirmação, acknowledgment, retry e comando de status associados ao alvo
   anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa
   enquanto a anterior ou uma mutação está em voo;
+- listas privadas de usuários e taxonomias rejeitam uma resposta cujo `scope` já pertence a outra
+  composição antes que o TanStack Query a aceite no cache;
 - o detalhe de acessos oferece concessões somente para conta ativa com perfil completo, explica a
-  restrição e mantém disponíveis as revogações de papéis já concedidos;
+  restrição e mantém disponíveis as revogações de papéis já concedidos; UUID válido de uma conta que
+  deixou de existir retorna a fronteira contextual de not-found com HTTP 404 e `noindex`, sem
+  renderizar detalhes privados;
 - logout confirmado oculta sincronamente todo o shell privado antes da navegação, inclusive quando a
   resposta da próxima rota permanece suspensa;
 - axe, teclado, toque, contraste e ausência de overflow em desktop, mobile, 320 px e tema escuro.
@@ -253,8 +257,9 @@ domínio que mantêm `created_at/updated_at`.
 Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 
 - P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
-  antes/depois da persistência, retomada dos demais itens enfileirados após verificação segura, recusa
-  definitiva com liberação server-side da reserva e isolamento entre donos nos três engines;
+  antes/depois da persistência, reconciliação autoritativa que reutiliza o token já assinado quando a
+  confirmação ambígua foi commitada, retomada dos demais itens enfileirados após verificação segura,
+  recusa definitiva com liberação server-side da reserva e isolamento entre donos nos três engines;
 - regressões em desktop, 390 px, 320 px e altura compacta provam controles acessíveis, dimensões
   reservadas/CLS, hidratação fail-closed, conflito autoritativo de galeria, avanço concorrente logo
   após o preparo com terminalização server-side, resposta perdida, replay da mesma chave idempotente

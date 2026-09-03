@@ -635,6 +635,40 @@ describe("studio media service", () => {
     });
   });
 
+  it("returns the already signed token when settlement proves an ambiguous confirmation committed", async () => {
+    const confirmationError = new Error("A resposta da confirmação foi perdida.");
+    mocks.confirmStudioMediaUploadToken.mockRejectedValueOnce(confirmationError);
+    mocks.rejectUnsignedStudioMediaUpload.mockResolvedValueOnce({
+      issuedAt: "2026-09-01T03:55:00.000Z",
+      mediaId,
+      revisionId: studioTestIds.revisionId,
+      revisionVersion: 3,
+      scope: studioTestIds.userId,
+      state: "issued",
+      studioId: studioTestIds.studioId,
+    });
+
+    await expect(
+      executeStudioMediaCommand(
+        {
+          action: "studio.media.upload.prepare",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            ...boundary,
+            declaredByteSize: 512,
+            declaredChecksumSha256: null,
+            declaredMimeType: "image/jpeg",
+          },
+        },
+        context,
+      ),
+    ).resolves.toEqual({ ...preparation, signedToken: "signed-upload-token" });
+    expect(mocks.createUploadToken).toHaveBeenCalledOnce();
+    expect(mocks.confirmStudioMediaUploadToken).toHaveBeenCalledOnce();
+    expect(mocks.rejectUnsignedStudioMediaUpload).toHaveBeenCalledOnce();
+  });
+
   it("terminalizes an expired replay before asking Storage for another token", async () => {
     mocks.prepareStudioMediaUpload.mockResolvedValueOnce({
       ...preparation,

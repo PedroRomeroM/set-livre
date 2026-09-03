@@ -14,6 +14,7 @@ import {
   readComponentBackofficeState,
   toBrowserBackofficeSession,
 } from "@/domains/backoffice/server/backoffice-session";
+import { BackofficeApiError } from "@/lib/server/api-route";
 
 function accessTransitions(
   roles: readonly string[],
@@ -84,7 +85,13 @@ export default async function BackofficeAccessDetailPage({
   }
   const parsedUserId = z.uuid().safeParse((await params).userId);
   if (!parsedUserId.success) notFound();
-  const access = await readBackofficeUserAccess({ auth: state.auth, userId: parsedUserId.data });
+  let access;
+  try {
+    access = await readBackofficeUserAccess({ auth: state.auth, userId: parsedUserId.data });
+  } catch (error) {
+    if (error instanceof BackofficeApiError && error.status === 404) notFound();
+    throw error;
+  }
   const user = backofficeUserSummarySchema.parse({
     accountVersion: access.account_version,
     createdAt: access.created_at,

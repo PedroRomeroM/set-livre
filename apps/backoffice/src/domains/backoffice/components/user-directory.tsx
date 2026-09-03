@@ -224,11 +224,17 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
     queryKey: backofficeQueryKeys.users(session.scope, activeFilter.fingerprint),
-    queryFn: ({ pageParam }) =>
-      listBackofficeUsersClient({
-        cursor: pageParam,
-        ...(activeFilter.query === "" ? {} : { query: activeFilter.query }),
-      }),
+    queryFn: ({ pageParam, signal }) =>
+      listBackofficeUsersClient(
+        {
+          expectedScope: session.scope,
+          query: {
+            cursor: pageParam,
+            ...(activeFilter.query === "" ? {} : { query: activeFilter.query }),
+          },
+        },
+        signal,
+      ),
     getNextPageParam: (page) => page.nextCursor,
   });
   const invalidateUsers = () =>

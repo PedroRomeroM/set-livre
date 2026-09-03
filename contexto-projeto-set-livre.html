@@ -128,6 +128,11 @@
             Leituras por read models pequenos; escritas críticas por API, DAL e função SQL privada.
           </li>
           <li>
+            Respostas privadas são validadas contra o escopo da sessão antes do cache; registros
+            ausentes fecham em 404 contextual e efeitos externos ambíguos são reconciliados pelo
+            estado autoritativo antes de responder.
+          </li>
+          <li>
             Produção usa HTTPS na VM Oracle; aplicação pública e backoffice permanecem superfícies
             separadas.
           </li>

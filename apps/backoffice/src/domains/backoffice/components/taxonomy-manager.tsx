@@ -171,7 +171,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   const pendingActivationCommand = useRef<BackofficeTaxonomyStatusCommand>(undefined);
   const pendingUpsertCommand = useRef<BackofficeTaxonomyUpsertCommand>(undefined);
   const taxonomies = useQuery({
-    queryFn: listBackofficeTaxonomiesClient,
+    queryFn: ({ signal }) => listBackofficeTaxonomiesClient(session.scope, signal),
     queryKey: backofficeQueryKeys.taxonomies(session.scope),
   });
   const invalidate = () =>

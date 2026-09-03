@@ -358,6 +358,31 @@ test("SL-F031-E2E-018 @p1 concessões refletem status ativo e perfil completo", 
   }
 });
 
+test("SL-F031-E2E-019 @p1 conta inexistente usa a fronteira contextual de 404", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const admin = createFeat031Operator(testInfo, "019_access_not_found");
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031019");
+    await loginFeat031Backoffice(page, admin);
+
+    const accessUrl = new URL(
+      "/acessos/31000000-0000-4000-8000-000000000019",
+      page.url(),
+    ).toString();
+    const response = await page.goto(accessUrl);
+    expect(response?.status()).toBe(404);
+    await expect(page.getByText("Conta não encontrada", { exact: true })).toBeVisible();
+    await expect(page.getByText("Nenhum acesso privado foi exibido.")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^Acessos da conta/u })).toHaveCount(0);
+    await expect(page.locator('meta[name="robots"][content*="noindex"]').first()).toBeAttached();
+  } finally {
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [admin] });
+  }
+});
+
 test("SL-F031-E2E-008 @p1 mudança de papel encerra a composição privada anterior", async ({
   page,
 }, testInfo) => {

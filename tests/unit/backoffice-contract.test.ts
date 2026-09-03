@@ -21,6 +21,8 @@ import {
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
   listBackofficeStudioReviewsClient,
+  listBackofficeTaxonomiesClient,
+  listBackofficeUsersClient,
   readBackofficeStudioReviewClient,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
 import { useBackofficeHydrated } from "../../apps/backoffice/src/domains/backoffice/components/use-backoffice-hydrated";
@@ -182,7 +184,7 @@ describe("backoffice contracts", () => {
     await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
   });
 
-  it("rejects late studio reads before another private scope or record reaches the cache", async () => {
+  it("rejects late private reads before another scope or record reaches the cache", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal("BroadcastChannel", undefined);
@@ -203,10 +205,27 @@ describe("backoffice contracts", () => {
             scope: backofficeStudioReviewTestIds.reviewerId,
           }),
         )
+        .mockResolvedValueOnce(
+          response({ items: [], scope: backofficeStudioReviewTestIds.reviewerId }),
+        )
+        .mockResolvedValueOnce(
+          response({
+            items: [],
+            nextCursor: null,
+            scope: backofficeStudioReviewTestIds.reviewerId,
+          }),
+        )
         .mockResolvedValueOnce(response(backofficeStudioReviewDetailFixture()))
         .mockResolvedValueOnce(response(backofficeStudioReviewDetailFixture())),
     );
 
+    await expect(
+      listBackofficeUsersClient({ expectedScope: actorId, query: {} }),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    await expect(listBackofficeTaxonomiesClient(actorId)).rejects.toMatchObject({
+      code: "RESPONSE_INVALID",
+      status: 200,
+    });
     await expect(
       listBackofficeStudioReviewsClient({ expectedScope: actorId, query: {} }),
     ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
@@ -224,7 +243,7 @@ describe("backoffice contracts", () => {
         studioId: studioTestIds.otherStudioId,
       }),
     ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
-    expect(dispatchEvent).toHaveBeenCalledTimes(3);
+    expect(dispatchEvent).toHaveBeenCalledTimes(5);
   });
 
   it("accepts only the operational roles delivered by FEAT-031 and FEAT-030", () => {

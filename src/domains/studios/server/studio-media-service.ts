@@ -269,7 +269,8 @@ export async function executeStudioMediaCommand(
         try {
           await confirmStudioMediaUploadToken(mediaUploadTokenBoundary(preparation, context));
         } catch (error) {
-          await rejectUndeliveredUploadToken(preparation, context);
+          const settlement = await rejectUndeliveredUploadToken(preparation, context);
+          if (settlement.state === "issued") return { ...preparation, signedToken };
           throw error;
         }
         return { ...preparation, signedToken };

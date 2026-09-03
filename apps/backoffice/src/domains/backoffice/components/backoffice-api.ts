@@ -206,15 +206,28 @@ export function unlockBackofficeRuntimeClient(payload: BackofficeRuntimeUnlockPa
   });
 }
 
-export function listBackofficeUsersClient(query: BackofficeUserQuery): Promise<BackofficeUserList> {
-  return backofficeRequest("/api/users", backofficeUserListSchema, {
-    body: JSON.stringify(query),
+export async function listBackofficeUsersClient(
+  input: Readonly<{ expectedScope: string; query: BackofficeUserQuery }>,
+  signal?: AbortSignal,
+): Promise<BackofficeUserList> {
+  const users = await backofficeRequest("/api/users", backofficeUserListSchema, {
+    body: JSON.stringify(input.query),
     method: "POST",
+    ...(signal === undefined ? {} : { signal }),
   });
+  if (users.scope !== input.expectedScope) rejectBackofficePrivateBoundary();
+  return users;
 }
 
-export function listBackofficeTaxonomiesClient(): Promise<BackofficeTaxonomyList> {
-  return backofficeRequest("/api/taxonomies", backofficeTaxonomyListSchema);
+export async function listBackofficeTaxonomiesClient(
+  expectedScope: string,
+  signal?: AbortSignal,
+): Promise<BackofficeTaxonomyList> {
+  const taxonomies = await backofficeRequest("/api/taxonomies", backofficeTaxonomyListSchema, {
+    ...(signal === undefined ? {} : { signal }),
+  });
+  if (taxonomies.scope !== expectedScope) rejectBackofficePrivateBoundary();
+  return taxonomies;
 }
 
 export async function listBackofficeStudioReviewsClient(
