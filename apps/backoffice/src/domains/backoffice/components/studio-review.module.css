@@ -227,3 +227,10 @@
     flex: 1 1 100%;
   }
 }
+
+@media (max-width: 12rem) {
+  .definitionList > div > dt,
+  .definitionList > div > dd {
+    word-break: break-all;
+  }
+}
