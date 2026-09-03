@@ -3,6 +3,7 @@
 import {
   formatStudioPostalCode,
   studioCorePayloadSchema,
+  studioEditorSchema,
   type StudioEditor,
   type StudioTypeOption,
 } from "@set-livre/contracts";
@@ -36,7 +37,8 @@ import {
 } from "./studio-api";
 import {
   assertStudioEditorBoundary,
-  publishStudioEditor,
+  preserveNewestStudioEditor,
+  publishStudioEditorAfterPendingRead,
   recomposeStudioClientBoundary,
   removeStudioMediaGallery,
   studioEditorCanRender,
@@ -66,6 +68,7 @@ type StudioCoreFormState = {
 type CreateCommand = Parameters<typeof createStudio>[0];
 type UpdateCommand = Parameters<typeof updateStudioCore>[0];
 type DiscardCommand = Parameters<typeof discardStudioDraft>[0];
+type PendingEditorCommand<T> = Readonly<{ command: T; expectedEditor: StudioEditor }>;
 type StudioCoreConflictKind = "discard" | "update";
 type StudioCoreConflict = Readonly<{
   kind: StudioCoreConflictKind;
@@ -754,7 +757,8 @@ function EditStudioForm({
   formRevision: StudioRevisionToken;
   initialEditor: StudioEditor;
   initialTypes: readonly StudioTypeOption[];
-  onAuthoritativeRevisionAdvance: ((editor: StudioEditor) => void) | undefined;
+  onAuthoritativeRevisionAdvance:
+    ((editor: StudioEditor, commandRevision: StudioRevisionToken) => void) | undefined;
   onAuthoritativeRevisionReplacement: (editor: StudioEditor) => void;
   onCommandFinish: () => void;
   onCommandStart: () => void;
@@ -787,9 +791,16 @@ function EditStudioForm({
     refetchOnWindowFocus: conflictRecoveryIdle ? "always" : false,
     retry: false,
     staleTime: 0,
+    structuralSharing: (current, candidate) =>
+      preserveNewestStudioEditor(
+        current === undefined ? undefined : studioEditorSchema.parse(current),
+        studioEditorSchema.parse(candidate),
+        userId,
+        initialEditor.studioId,
+      ),
   });
-  const pendingUpdate = useRef<UpdateCommand>(undefined);
-  const pendingDiscard = useRef<DiscardCommand>(undefined);
+  const pendingUpdate = useRef<PendingEditorCommand<UpdateCommand>>(undefined);
+  const pendingDiscard = useRef<PendingEditorCommand<DiscardCommand>>(undefined);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
@@ -804,12 +815,30 @@ function EditStudioForm({
     }
   }, [editorQuery.error, queryClient]);
 
+  async function publish(editor: StudioEditor, expectedEditor: StudioEditor) {
+    try {
+      return await publishStudioEditorAfterPendingRead(
+        queryClient,
+        editor,
+        expectedEditor,
+        userId,
+        initialEditor.studioId,
+      );
+    } catch (error) {
+      if (error instanceof StudioScopeChangedError) {
+        recomposeStudioClientBoundary(queryClient);
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   const updateMutation = useMutation({
     mutationFn: () => {
       if (pendingUpdate.current === undefined) {
         throw new Error("A atualização não possui solicitação idempotente preparada.");
       }
-      return updateStudioCore(pendingUpdate.current);
+      return updateStudioCore(pendingUpdate.current.command);
     },
     networkMode: "always",
     onError: async (error) => {
@@ -841,25 +870,19 @@ function EditStudioForm({
     },
     onSuccess: async (editor) => {
       try {
+        const pending = pendingUpdate.current;
+        if (pending === undefined) {
+          throw new Error("A atualização perdeu a evidência causal do editor.");
+        }
         pendingUpdate.current = undefined;
         setPendingConflictRecovery(undefined);
         setConflict(undefined);
         setFieldErrors({});
-        setFormState(editorFormState(editor));
-        await queryClient.cancelQueries({
-          queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
-        });
-        try {
-          publishStudioEditor(queryClient, editor, userId, initialEditor.studioId);
-        } catch (error) {
-          if (error instanceof StudioScopeChangedError) {
-            recomposeStudioClientBoundary(queryClient);
-            return;
-          }
-          throw error;
-        }
+        const published = await publish(editor, pending.expectedEditor);
+        if (published === undefined) return;
+        setFormState(editorFormState(published));
         setSuccessMessage("Rascunho salvo com a versão canônica mais recente.");
-        onAuthoritativeRevisionAdvance?.(editor);
+        onAuthoritativeRevisionAdvance?.(published, studioRevisionToken(editor));
       } finally {
         onCommandFinish();
       }
@@ -871,7 +894,7 @@ function EditStudioForm({
       if (pendingDiscard.current === undefined) {
         throw new Error("O descarte não possui solicitação idempotente preparada.");
       }
-      return discardStudioDraft(pendingDiscard.current);
+      return discardStudioDraft(pendingDiscard.current.command);
     },
     networkMode: "always",
     onError: async (error) => {
@@ -897,6 +920,10 @@ function EditStudioForm({
     },
     onSuccess: async (result) => {
       try {
+        const pending = pendingDiscard.current;
+        if (pending === undefined) {
+          throw new Error("O descarte perdeu a evidência causal do editor.");
+        }
         pendingDiscard.current = undefined;
         setPendingConflictRecovery(undefined);
         setConflict(undefined);
@@ -909,21 +936,11 @@ function EditStudioForm({
           onStudioDeleted?.();
           return;
         }
-        await queryClient.cancelQueries({
-          queryKey: studioQueryKeys.editor(userId, initialEditor.studioId),
-        });
-        try {
-          publishStudioEditor(queryClient, result.editor, userId, initialEditor.studioId);
-        } catch (error) {
-          if (error instanceof StudioScopeChangedError) {
-            recomposeStudioClientBoundary(queryClient);
-            return;
-          }
-          throw error;
-        }
-        setFormState(editorFormState(result.editor));
+        const published = await publish(result.editor, pending.expectedEditor);
+        if (published === undefined) return;
+        setFormState(editorFormState(published));
         setSuccessMessage("O rascunho foi descartado; a versão publicada permaneceu intacta.");
-        onAuthoritativeRevisionReplacement(result.editor);
+        onAuthoritativeRevisionReplacement(published);
       } finally {
         onCommandFinish();
       }
@@ -982,15 +999,18 @@ function EditStudioForm({
       return;
     }
     pendingUpdate.current = {
-      action: "studio.revision.updateCore",
-      expectedScope: userId,
-      idempotencyKey: crypto.randomUUID(),
-      payload: {
-        ...parsed.data,
-        expectedRevisionId: formRevision.id,
-        expectedRevisionVersion: formRevision.version,
-        studioId: initialEditor.studioId,
+      command: {
+        action: "studio.revision.updateCore",
+        expectedScope: userId,
+        idempotencyKey: crypto.randomUUID(),
+        payload: {
+          ...parsed.data,
+          expectedRevisionId: formRevision.id,
+          expectedRevisionVersion: formRevision.version,
+          studioId: initialEditor.studioId,
+        },
       },
+      expectedEditor: studioEditorSchema.parse(editorQuery.data),
     };
     onCommandStart();
     updateMutation.mutate();
@@ -999,14 +1019,17 @@ function EditStudioForm({
   function beginDiscard() {
     if (pendingDiscard.current === undefined) {
       pendingDiscard.current = {
-        action: "studio.draft.discard",
-        expectedScope: userId,
-        idempotencyKey: crypto.randomUUID(),
-        payload: {
-          expectedRevisionId: discardRevision.id,
-          expectedRevisionVersion: discardRevision.version,
-          studioId: initialEditor.studioId,
+        command: {
+          action: "studio.draft.discard",
+          expectedScope: userId,
+          idempotencyKey: crypto.randomUUID(),
+          payload: {
+            expectedRevisionId: discardRevision.id,
+            expectedRevisionVersion: discardRevision.version,
+            studioId: initialEditor.studioId,
+          },
         },
+        expectedEditor: studioEditorSchema.parse(editorQuery.data),
       };
     }
     onCommandStart();
@@ -1234,7 +1257,10 @@ export function StudioCorePanel(
         initialEditor: StudioEditor;
         initialTypes: readonly StudioTypeOption[];
         mode: "edit";
-        onAuthoritativeRevisionAdvance?: (editor: StudioEditor) => void;
+        onAuthoritativeRevisionAdvance?: (
+          editor: StudioEditor,
+          commandRevision: StudioRevisionToken,
+        ) => void;
         onAuthoritativeRevisionReplacement: (editor: StudioEditor) => void;
         onCommandFinish: () => void;
         onCommandStart: () => void;

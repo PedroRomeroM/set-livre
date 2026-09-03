@@ -1,4 +1,9 @@
-import type { StudioEditor, StudioMediaGallery, StudioPublication } from "@set-livre/contracts";
+import {
+  studioEditorSchema,
+  type StudioEditor,
+  type StudioMediaGallery,
+  type StudioPublication,
+} from "@set-livre/contracts";
 import type { QueryClient } from "@tanstack/react-query";
 
 const studioPrivateRoot = ["owner", "private", "studio-editor"] as const;
@@ -389,17 +394,82 @@ export function assertStudioEditorBoundary(
   return editor;
 }
 
-export function publishStudioEditor(
-  queryClient: QueryClient,
-  editor: StudioEditor,
+type StudioEditorEvidence =
+  | Readonly<{ editor: StudioEditor; kind: "authoritative-read" }>
+  | Readonly<{
+      editor: StudioEditor;
+      expectedEditor: StudioEditor;
+      kind: "command-result";
+    }>;
+
+function studioEditorProjectionToken(editor: StudioEditor) {
+  return JSON.stringify(studioEditorSchema.parse(editor));
+}
+
+function selectStudioEditor(
+  current: StudioEditor | undefined,
+  evidence: StudioEditorEvidence,
   expectedUserId: string,
   expectedStudioId: string,
 ) {
-  const scoped = assertStudioEditorBoundary(editor, expectedUserId, expectedStudioId);
+  const scopedCandidate = assertStudioEditorBoundary(
+    evidence.editor,
+    expectedUserId,
+    expectedStudioId,
+  );
+  const scopedExpected =
+    evidence.kind === "command-result"
+      ? assertStudioEditorBoundary(evidence.expectedEditor, expectedUserId, expectedStudioId)
+      : undefined;
+  if (current === undefined) return scopedCandidate;
+  const scopedCurrent = assertStudioEditorBoundary(current, expectedUserId, expectedStudioId);
+  if (
+    scopedCurrent.revision.number === scopedCandidate.revision.number &&
+    scopedCurrent.revision.id !== scopedCandidate.revision.id
+  ) {
+    throw new StudioScopeChangedError();
+  }
+  if (evidence.kind === "command-result") {
+    if (
+      scopedExpected === undefined ||
+      studioEditorProjectionToken(scopedCurrent) !== studioEditorProjectionToken(scopedExpected)
+    ) {
+      return scopedCurrent;
+    }
+    return scopedCandidate;
+  }
+  if (
+    scopedCurrent.revision.number === scopedCandidate.revision.number &&
+    scopedCurrent.revision.version > scopedCandidate.revision.version
+  )
+    return scopedCurrent;
+  return scopedCandidate;
+}
+
+export function preserveNewestStudioEditor(
+  current: StudioEditor | undefined,
+  candidate: StudioEditor,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return selectStudioEditor(
+    current,
+    { editor: candidate, kind: "authoritative-read" },
+    expectedUserId,
+    expectedStudioId,
+  );
+}
+
+function publishSelectedStudioEditor(
+  queryClient: QueryClient,
+  evidence: StudioEditorEvidence,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
   const queryKey = studioQueryKeys.editor(expectedUserId, expectedStudioId);
   const current = queryClient.getQueryData<StudioEditor>(queryKey);
   if (current === undefined) throw new StudioScopeChangedError();
-  assertStudioEditorBoundary(current, expectedUserId, expectedStudioId);
+  const selected = selectStudioEditor(current, evidence, expectedUserId, expectedStudioId);
   queryClient.removeQueries({
     predicate: (query) => {
       const key = query.queryKey;
@@ -412,6 +482,52 @@ export function publishStudioEditor(
       );
     },
   });
-  queryClient.setQueryData(queryKey, scoped);
-  return scoped;
+  queryClient.setQueryData(queryKey, selected);
+  return selected;
+}
+
+export function publishStudioEditor(
+  queryClient: QueryClient,
+  editor: StudioEditor,
+  expectedEditor: StudioEditor,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return publishSelectedStudioEditor(
+    queryClient,
+    { editor, expectedEditor, kind: "command-result" },
+    expectedUserId,
+    expectedStudioId,
+  );
+}
+
+export function publishAuthoritativeStudioEditor(
+  queryClient: QueryClient,
+  editor: StudioEditor,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  return publishSelectedStudioEditor(
+    queryClient,
+    { editor, kind: "authoritative-read" },
+    expectedUserId,
+    expectedStudioId,
+  );
+}
+
+export async function publishStudioEditorAfterPendingRead(
+  queryClient: QueryClient,
+  editor: StudioEditor,
+  expectedEditor: StudioEditor,
+  expectedUserId: string,
+  expectedStudioId: string,
+) {
+  const queryKey = studioQueryKeys.editor(expectedUserId, expectedStudioId);
+  if (queryClient.isFetching({ exact: true, queryKey }) > 0) {
+    await queryClient.refetchQueries(
+      { exact: true, queryKey },
+      { cancelRefetch: false, throwOnError: false },
+    );
+  }
+  return publishStudioEditor(queryClient, editor, expectedEditor, expectedUserId, expectedStudioId);
 }

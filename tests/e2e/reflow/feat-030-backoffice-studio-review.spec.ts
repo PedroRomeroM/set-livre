@@ -155,6 +155,19 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
         range.selectNodeContents(skipLinkElement);
         return range.getBoundingClientRect();
       })();
+      const skipLinkContentBounds = (() => {
+        if (!skipLinkRectangle || !skipLinkStyle) return undefined;
+        return {
+          left:
+            skipLinkRectangle.left +
+            Number.parseFloat(skipLinkStyle.borderLeftWidth) +
+            Number.parseFloat(skipLinkStyle.paddingLeft),
+          right:
+            skipLinkRectangle.right -
+            Number.parseFloat(skipLinkStyle.borderRightWidth) -
+            Number.parseFloat(skipLinkStyle.paddingRight),
+        };
+      })();
       return {
         bodyClientWidth: document.body.clientWidth,
         bodyFits: document.body.scrollWidth <= window.innerWidth,
@@ -187,14 +200,14 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             ? null
             : {
                 fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
-                clientWidth: skipLinkElement?.clientWidth ?? 0,
+                contentLeft: skipLinkContentBounds?.left ?? 0,
+                contentRight: skipLinkContentBounds?.right ?? 0,
                 left: skipLinkRectangle.left,
                 right: skipLinkRectangle.right,
                 safeAreaCleared:
                   skipLinkRectangle.left >= safeArea.left &&
                   skipLinkRectangle.right <= clientWidth - safeArea.right &&
                   skipLinkRectangle.top >= safeArea.top,
-                scrollWidth: skipLinkElement?.scrollWidth ?? 0,
                 textLeft: skipLinkTextRectangle?.left ?? 0,
                 textRight: skipLinkTextRectangle?.right ?? 0,
                 top: skipLinkRectangle.top,
@@ -213,8 +226,11 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);
     expect(layout.skipLink?.safeAreaCleared, layoutEvidence).toBe(true);
-    expect(layout.skipLink?.scrollWidth, layoutEvidence).toBeLessThanOrEqual(
-      layout.skipLink?.clientWidth ?? 0,
+    expect(layout.skipLink?.textLeft, layoutEvidence).toBeGreaterThanOrEqual(
+      layout.skipLink?.contentLeft ?? Number.POSITIVE_INFINITY,
+    );
+    expect(layout.skipLink?.textRight, layoutEvidence).toBeLessThanOrEqual(
+      layout.skipLink?.contentRight ?? Number.NEGATIVE_INFINITY,
     );
     expect(layout.images.length).toBeGreaterThan(0);
     expect(

@@ -18,9 +18,9 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260901185454_feat_030_backoffice_studio_review`, criada depois de
-`20260901170636_allow_discard_reviewed_unpublished_studios`; uma feature nova nunca é inserida antes
-de uma migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
+`20260903061604_expose_backoffice_access_eligibility`, criada depois de
+`20260901185454_feat_030_backoffice_studio_review`; uma feature nova nunca é inserida antes de uma
+migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
 preserva roles globais e ACLs de banco, que não fazem parte do dump de schema. O runner executa setup
@@ -182,7 +182,9 @@ continua ausente até sua feature proprietária. O primeiro
 admin usa o bootstrap privado one-shot; depois disso, somente admin com autenticação recente altera
 papéis, e a salvaguarda transacional mantém ao menos um admin ativo. Um trigger em toda concessão ou
 revogação incrementa `profiles.account_version`; essa versão opaca invalida sessão/clientes sem publicar
-o conjunto de papéis no browser.
+o conjunto de papéis no browser. Uma concessão nova exige `profiles.status = 'active'` e
+`completed_at` preenchido na própria função transacional; revogações permanecem disponíveis para
+reduzir privilégios mesmo quando a conta perdeu elegibilidade.
 
 #### `private.backoffice_sessions`
 
@@ -892,7 +894,7 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
   exato e paginação keyset por `created_at + id`, devolvendo somente e-mail mascarado, status e versão
   opaca, sem papéis; nome bruto não participa do filtro e permanece exclusivo da revelação auditada;
 - `private.get_backoffice_user_access(...)` exige admin e compõe no servidor uma única conta com seus
-  papéis para a rota de detalhe;
+  papéis, status e elegibilidade de perfil para a rota de detalhe;
 - `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
 - `private.list_backoffice_studio_reviews(...)` exige reviewer/admin e devolve fila keyset; somente
   admin recebe linhas de moderação/desativação;
@@ -935,13 +937,14 @@ Implementados:
   FEAT-009; somente `app_dal` executa essas assinaturas;
 - `private.open/get/close_backoffice_session(...)` vinculam a sessão Auth ao banco; GET passivo não
   renova a janela de inatividade;
-- `private.get_backoffice_user_access(...)` expõe papéis somente à composição server-only de um alvo
-  para admin revalidado;
+- `private.get_backoffice_user_access(...)` expõe papéis, status e completude do perfil somente à
+  composição server-only de um alvo para admin revalidado;
 - `private.set_backoffice_user_status(...)` e `private.reveal_backoffice_user_pii(...)` atendem
   `support/admin`, com versão e auditoria;
 - `private.set_backoffice_user_role(...)` deriva somente uma das seis actions explícitas de
-  concessão/revogação `support/reviewer/admin`, compara `expectedAccountVersion`, exige admin com autenticação
-  recente e protege o último admin ativo;
+  concessão/revogação `support/reviewer/admin`, compara `expectedAccountVersion`, exige admin com
+  autenticação recente, aceita novas concessões somente para conta ativa com perfil completo e
+  protege o último admin ativo;
 - `private.upsert_backoffice_taxonomy(...)` e `private.transition_backoffice_taxonomy(...)` exigem
   admin, versão otimista e preservação histórica; a transição deriva o estado da action explícita.
 - `private.execute_backoffice_studio_command(...)` deriva `approve/reject/disable/restore` da action

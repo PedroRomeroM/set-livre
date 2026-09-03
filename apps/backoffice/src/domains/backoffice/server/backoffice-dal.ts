@@ -45,7 +45,10 @@ const userRowSchema = z.strictObject({
   status: z.enum(["active", "suspended"]),
 });
 const listedUserRowSchema = userRowSchema.extend({ cursor_created_at: z.iso.datetime() });
-const accessRowSchema = userRowSchema.extend({ roles: platformRolesSchema });
+const accessRowSchema = userRowSchema.extend({
+  profile_completed: z.boolean(),
+  roles: platformRolesSchema,
+});
 const taxonomyRowSchema = z.strictObject({
   active: z.boolean(),
   id: z.uuid(),

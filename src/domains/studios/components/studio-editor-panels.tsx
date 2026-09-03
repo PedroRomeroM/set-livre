@@ -20,20 +20,43 @@ type StudioEditorRevisionState = Readonly<{
 }>;
 
 function sameRevision(left: StudioRevisionToken, right: StudioRevisionToken) {
-  return left.id === right.id && left.version === right.version;
+  return left.id === right.id && left.number === right.number && left.version === right.version;
+}
+
+function preserveNewestRevision(
+  current: StudioRevisionToken,
+  candidate: StudioRevisionToken,
+): StudioRevisionToken {
+  if (
+    current.id === candidate.id &&
+    current.number === candidate.number &&
+    current.version > candidate.version
+  ) {
+    return current;
+  }
+  return candidate;
 }
 
 function advanceEditorRevisions(
   current: StudioEditorRevisionState,
   source: StudioEditorFormSurface,
   saved: StudioRevisionToken,
+  commandResult: StudioRevisionToken = saved,
 ): StudioEditorRevisionState {
   const sourceRevision = current[source];
+  const accepted = preserveNewestRevision(sourceRevision, saved);
+  const selectedCommandResult = sameRevision(saved, commandResult);
+  const advanceSurface = (surface: StudioEditorFormSurface) => {
+    if (surface === source) return accepted;
+    return selectedCommandResult && sameRevision(current[surface], sourceRevision)
+      ? accepted
+      : current[surface];
+  };
   return {
-    content: sameRevision(current.content, sourceRevision) ? saved : current.content,
-    core: sameRevision(current.core, sourceRevision) ? saved : current.core,
-    discard: saved,
-    taxonomy: sameRevision(current.taxonomy, sourceRevision) ? saved : current.taxonomy,
+    content: advanceSurface("content"),
+    core: advanceSurface("core"),
+    discard: preserveNewestRevision(current.discard, accepted),
+    taxonomy: advanceSurface("taxonomy"),
   };
 }
 
@@ -62,10 +85,14 @@ export function StudioEditorPanels({
   const [commandSurface, setCommandSurface] = useState<StudioEditorCommandSurface>();
   const [studioDeleted, setStudioDeleted] = useState(false);
 
-  function acceptEditorSave(surface: StudioEditorFormSurface, editor: StudioEditor) {
+  function acceptEditorSave(
+    surface: StudioEditorFormSurface,
+    editor: StudioEditor,
+    commandRevision: StudioRevisionToken,
+  ) {
     const revision = studioRevisionToken(editor);
     setAuthoritativeEditor(editor);
-    setRevisions((current) => advanceEditorRevisions(current, surface, revision));
+    setRevisions((current) => advanceEditorRevisions(current, surface, revision, commandRevision));
   }
 
   function replaceAuthoritativeEditor(editor: StudioEditor) {
@@ -89,7 +116,9 @@ export function StudioEditorPanels({
         initialEditor={authoritativeEditor}
         initialTypes={initialTypes}
         mode="edit"
-        onAuthoritativeRevisionAdvance={(editor) => acceptEditorSave("core", editor)}
+        onAuthoritativeRevisionAdvance={(editor, commandRevision) =>
+          acceptEditorSave("core", editor, commandRevision)
+        }
         onAuthoritativeRevisionReplacement={replaceAuthoritativeEditor}
         onCommandFinish={() => finishCommand("core")}
         onCommandStart={() => setCommandSurface("core")}
@@ -107,13 +136,17 @@ export function StudioEditorPanels({
           onContentRevisionChange={(content) =>
             setRevisions((current) => ({ ...current, content }))
           }
-          onContentSave={(editor) => acceptEditorSave("content", editor)}
+          onContentSave={(editor, commandRevision) =>
+            acceptEditorSave("content", editor, commandRevision)
+          }
           onCommandFinish={() => finishCommand("commercial")}
           onCommandStart={() => setCommandSurface("commercial")}
           onTaxonomyRevisionChange={(taxonomy) =>
             setRevisions((current) => ({ ...current, taxonomy }))
           }
-          onTaxonomySave={(editor) => acceptEditorSave("taxonomy", editor)}
+          onTaxonomySave={(editor, commandRevision) =>
+            acceptEditorSave("taxonomy", editor, commandRevision)
+          }
           taxonomyRevision={revisions.taxonomy}
           userId={userId}
         />

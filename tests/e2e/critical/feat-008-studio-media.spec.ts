@@ -143,7 +143,7 @@ test("SL-F008-E2E-002 @p0 valida tamanho localmente e mantém rejeição de byte
   }
 });
 
-test("SL-F008-E2E-003 @p0 resposta de upload perdida recupera estados antes e depois da persistência", async ({
+test("SL-F008-E2E-003 @p0 resposta de upload perdida recupera estados e retoma a fila", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -168,8 +168,13 @@ test("SL-F008-E2E-003 @p0 resposta de upload perdida recupera estados antes e de
     expect(harness.uploadAttempts).toHaveLength(2);
     expect(new Set(harness.uploadAttempts).size).toBe(2);
 
-    harness.loseNextUploadAfterPersistence();
-    await page.getByLabel("Selecionar fotos").setInputFiles(feat008PngFile("depois.png"));
+    harness.loseNextResponse("studio.media.upload.finalize");
+    await page
+      .getByLabel("Selecionar fotos")
+      .setInputFiles([
+        feat008PngFile("finalizada-sem-resposta.png"),
+        feat008PngFile("fila-apos-finalizacao.png"),
+      ]);
     await expect(
       page.getByText(
         "O resultado não foi confirmado. Verifique o estado atual antes de repetir qualquer etapa.",
@@ -177,17 +182,40 @@ test("SL-F008-E2E-003 @p0 resposta de upload perdida recupera estados antes e de
       ),
     ).toBeVisible();
     await page.getByRole("button", { name: "Verificar estado atual" }).click();
-    await expect(page.getByText("2 de 20 fotos", { exact: true })).toBeVisible();
-    expect(harness.uploadAttempts).toHaveLength(3);
-    expect(new Set(harness.uploadAttempts).size).toBe(3);
+    await expect(page.getByText("3 de 20 fotos", { exact: true })).toBeVisible();
+    expect(harness.uploadAttempts).toHaveLength(4);
+    expect(new Set(harness.uploadAttempts).size).toBe(4);
+    expect(harness.idempotencyKeysFor("studio.media.upload.finalize")).toHaveLength(4);
+    expect(new Set(harness.idempotencyKeysFor("studio.media.upload.finalize")).size).toBe(4);
+
+    harness.loseNextUploadAfterPersistence();
+    await page
+      .getByLabel("Selecionar fotos")
+      .setInputFiles([
+        feat008PngFile("persistida-sem-resposta.png"),
+        feat008PngFile("fila-apos-upload.png"),
+      ]);
+    await expect(
+      page.getByText(
+        "O resultado não foi confirmado. Verifique o estado atual antes de repetir qualquer etapa.",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Verificar estado atual" }).click();
+    await expect(page.getByText("5 de 20 fotos", { exact: true })).toBeVisible();
+    expect(harness.uploadAttempts).toHaveLength(6);
+    expect(new Set(harness.uploadAttempts).size).toBe(6);
+    expect(harness.idempotencyKeysFor("studio.media.upload.finalize")).toHaveLength(6);
+    expect(new Set(harness.idempotencyKeysFor("studio.media.upload.finalize")).size).toBe(6);
+    expect(new Set(harness.gallery().items.map((item) => item.id)).size).toBe(5);
 
     harness.expireNextFinalize();
     await page.getByLabel("Selecionar fotos").setInputFiles(feat008PngFile("expirada.png"));
     await expect(page.getByRole("button", { name: "Renovar envio" })).toBeVisible();
     await page.getByRole("button", { name: "Renovar envio" }).click();
-    await expect(page.getByText("3 de 20 fotos", { exact: true })).toBeVisible();
-    expect(harness.uploadAttempts).toHaveLength(5);
-    expect(new Set(harness.uploadAttempts).size).toBe(5);
+    await expect(page.getByText("6 de 20 fotos", { exact: true })).toBeVisible();
+    expect(harness.uploadAttempts).toHaveLength(8);
+    expect(new Set(harness.uploadAttempts).size).toBe(8);
   } finally {
     await closeFeat008PageBeforeCleanup(page);
     await cleanupFeat008QaIdentity(identity);

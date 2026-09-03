@@ -5407,7 +5407,7 @@ COMMENT ON FUNCTION "private"."get_backoffice_studio_review"("p_actor_user_id" "
 
 
 
-CREATE OR REPLACE FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "roles" "text"[], "status" "text")
+CREATE OR REPLACE FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") RETURNS TABLE("account_version" bigint, "created_at" timestamp with time zone, "email_masked" "text", "id" "uuid", "profile_completed" boolean, "roles" "text"[], "status" "text")
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
@@ -5429,6 +5429,7 @@ begin
     profile.created_at,
     private.mask_backoffice_email(auth_user.email),
     profile.id,
+    profile.completed_at is not null,
     private.platform_roles_for_user(profile.id),
     profile.status
   from public.profiles as profile
@@ -5445,7 +5446,7 @@ $$;
 ALTER FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") IS 'Compõe no servidor o estado de acesso de uma conta para um admin revalidado.';
+COMMENT ON FUNCTION "private"."get_backoffice_user_access"("p_actor_user_id" "uuid", "p_auth_session_id" "uuid", "p_auth_expires_at" timestamp with time zone, "p_target_user_id" "uuid") IS 'Compõe no servidor papéis, status e elegibilidade de perfil de uma conta para um admin revalidado.';
 
 
 

@@ -146,7 +146,10 @@ export async function unlockFeat031Backoffice(page: Page) {
   ).toBeVisible();
 }
 
-export async function createFeat031DirectIdentity(scenario: string, owner = false) {
+async function createFeat031DirectIdentityWithProfile(
+  scenario: string,
+  options: Readonly<{ owner: boolean; profileCompleted: boolean }>,
+) {
   const userId = randomUUID();
   const namespace = `qa_f031_${safeNamespace(scenario)}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
   const email = assertQaAuthEmail(`${namespace}@example.test`);
@@ -185,13 +188,18 @@ export async function createFeat031DirectIdentity(scenario: string, owner = fals
          )`,
         [identity.userId, identity.email, legalIntent?.id],
       );
-      await pool.query(
-        `select private.complete_profile(
-           $1::uuid, 0, 'individual', $2::text, $3::text, $4::text, null
-         )`,
-        [identity.userId, identity.name, identity.phone, identity.taxId],
-      );
-      if (owner) {
+      if (options.profileCompleted) {
+        await pool.query(
+          `select private.complete_profile(
+             $1::uuid, 0, 'individual', $2::text, $3::text, $4::text, null
+           )`,
+          [identity.userId, identity.name, identity.phone, identity.taxId],
+        );
+      }
+      if (options.owner) {
+        if (!options.profileCompleted) {
+          throw new Error("Uma identidade incompleta não pode ser ativada como dona.");
+        }
         await pool.query(
           `select private.activate_owner(
              $1::uuid, '00000000-0000-4000-8000-000000000204'::uuid,
@@ -207,6 +215,17 @@ export async function createFeat031DirectIdentity(scenario: string, owner = fals
     }
   });
   return identity;
+}
+
+export function createFeat031DirectIdentity(scenario: string, owner = false) {
+  return createFeat031DirectIdentityWithProfile(scenario, { owner, profileCompleted: true });
+}
+
+export function createFeat031IncompleteIdentity(scenario: string) {
+  return createFeat031DirectIdentityWithProfile(scenario, {
+    owner: false,
+    profileCompleted: false,
+  });
 }
 
 export async function createFeat031BulkUsers(scenario: string, count = 52) {

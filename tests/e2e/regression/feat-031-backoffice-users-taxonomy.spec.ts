@@ -1,14 +1,17 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 import {
   cleanupFeat031Users,
   cleanupFeat031Taxonomy,
   createFeat031BulkUsers,
   createFeat031DirectIdentity,
+  createFeat031IncompleteIdentity,
   createFeat031Operator,
   loginFeat031Backoffice,
   provisionFeat031Operator,
   readFeat031Audit,
+  readFeat031Roles,
+  readFeat031UserStatus,
   setFeat031RolesConcurrently,
   setFeat031UserStatusConcurrently,
   updateFeat031TagConcurrently,
@@ -23,6 +26,36 @@ async function searchUser(page: Page, query: string, userId: string) {
     .filter({ has: page.getByText(`Identificador …${userId.slice(-8)}`, { exact: true }) });
   await expect(card).toBeVisible();
   return card;
+}
+
+async function holdNextBackofficeFingerprint(page: Page) {
+  await page.evaluate(() => {
+    const originalDigest = crypto.subtle.digest.bind(crypto.subtle);
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Reflect.set(window, "__releaseFeat031Fingerprint", release);
+    Object.defineProperty(crypto.subtle, "digest", {
+      configurable: true,
+      value: async (...args: Parameters<SubtleCrypto["digest"]>) => {
+        Object.defineProperty(crypto.subtle, "digest", {
+          configurable: true,
+          value: originalDigest,
+        });
+        await gate;
+        return originalDigest(...args);
+      },
+    });
+  });
+  return () =>
+    page.evaluate(() => {
+      const release = Reflect.get(window, "__releaseFeat031Fingerprint") as unknown;
+      if (typeof release !== "function") {
+        throw new Error("A busca FEAT-031 não publicou o gate de fingerprint.");
+      }
+      release();
+    });
 }
 
 async function emulateDocumentVisibility(page: Page, visibilityState: "hidden" | "visible") {
@@ -222,6 +255,106 @@ test("SL-F031-E2E-006 @p1 busca e cursor permanecem no servidor sem filtro na UR
   } finally {
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ bulk: bulk.identities, operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-017 @p1 nova busca descarta confirmação e tentativa de status anteriores", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "017_search_status_boundary");
+  const firstTarget = await createFeat031DirectIdentity("Busca status anterior");
+  const nextTarget = await createFeat031DirectIdentity("Busca status atual");
+  const abortCommand = async (route: Route) => route.abort("failed");
+  try {
+    await provisionFeat031Operator(page, support, "support", "031017");
+    await loginFeat031Backoffice(page, support);
+    const firstCard = await searchUser(page, firstTarget.email, firstTarget.userId);
+    await firstCard.getByRole("button", { name: "Revisar suspensão" }).click();
+    const firstConfirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await firstConfirmation
+      .getByRole("checkbox", { name: "Revisei o impacto desta alteração" })
+      .check();
+    await page.route("**/api/commands", abortCommand);
+    await firstConfirmation.getByRole("button", { name: "Confirmar" }).click();
+    await expect(firstConfirmation.getByRole("alert")).toContainText(
+      "O resultado não pôde ser confirmado. Repita a mesma tentativa",
+    );
+    await page.unroute("**/api/commands", abortCommand);
+
+    const releaseFingerprint = await holdNextBackofficeFingerprint(page);
+    const searchForm = page.locator("form").filter({
+      has: page.getByRole("textbox", { name: "Buscar usuários" }),
+    });
+    const searchInput = searchForm.getByRole("textbox", { name: "Buscar usuários" });
+    const searchButton = searchForm.getByRole("button");
+    await searchInput.fill(nextTarget.email);
+    await searchButton.click();
+    await expect(searchForm).toHaveAttribute("aria-busy", "true");
+    await expect(searchInput).toBeDisabled();
+    await expect(searchButton).toBeDisabled();
+    await searchForm.evaluate((form: HTMLFormElement) => form.requestSubmit());
+    await releaseFingerprint();
+    const nextCard = page.getByRole("article").filter({
+      has: page.getByText(`Identificador …${nextTarget.userId.slice(-8)}`, { exact: true }),
+    });
+    await expect(nextCard).toBeVisible();
+    await expect(page.getByRole("region", { name: "Confirmar suspensão" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Repetir mesma tentativa" })).toHaveCount(0);
+    expect(await readFeat031UserStatus(firstTarget.userId)).toMatchObject({ status: "active" });
+
+    await nextCard.getByRole("button", { name: "Revisar suspensão" }).click();
+    const nextConfirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await expect(
+      nextConfirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }),
+    ).not.toBeChecked();
+    await expect(nextConfirmation.getByRole("button", { name: "Confirmar" })).toBeDisabled();
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [firstTarget, nextTarget], operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-018 @p1 concessões refletem status ativo e perfil completo", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const admin = createFeat031Operator(testInfo, "018_access_eligibility");
+  const suspendedTarget = await createFeat031DirectIdentity("Acesso suspenso");
+  const incompleteTarget = await createFeat031IncompleteIdentity("Acesso incompleto");
+  try {
+    await setFeat031RolesConcurrently(suspendedTarget.userId, ["support"]);
+    await setFeat031UserStatusConcurrently(suspendedTarget.userId, "suspended");
+    await provisionFeat031Operator(page, admin, "admin", "031018");
+    await loginFeat031Backoffice(page, admin);
+    await page.getByRole("link", { name: "Acessos" }).click();
+
+    let card = await searchUser(page, suspendedTarget.email, suspendedTarget.userId);
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await expect(page.getByText("Suspensa", { exact: true })).toBeVisible();
+    await expect(page.getByText("Completo", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("status").filter({ hasText: "A conta está suspensa" }),
+    ).toContainText("Restaure-a antes de conceder novos acessos");
+    await expect(page.getByRole("button", { name: "Revisar revogação de suporte" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Revisar concessão/u })).toHaveCount(0);
+    expect(await readFeat031Roles(suspendedTarget.userId)).toEqual([{ role: "support" }]);
+
+    await page.getByRole("link", { name: "Voltar à busca de acessos" }).click();
+    card = await searchUser(page, incompleteTarget.email, incompleteTarget.userId);
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await expect(page.getByText("Ativa", { exact: true })).toBeVisible();
+    await expect(page.getByText("Incompleto", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("status").filter({ hasText: "O perfil está incompleto" }),
+    ).toContainText("precisa concluir o perfil antes de receber novos acessos");
+    await expect(page.getByRole("button", { name: /^Revisar concessão/u })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Ações de acesso" })).toHaveCount(0);
+    expect(await readFeat031Roles(incompleteTarget.userId)).toEqual([]);
+  } finally {
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [suspendedTarget, incompleteTarget], operators: [admin] });
   }
 });
 

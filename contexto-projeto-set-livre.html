@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 02/09/2026</p>
+      <p>Resumo executivo vivo · atualizado em 03/09/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -75,8 +75,11 @@
                 locks antes da aprovação, preserva a publicação em rejeições e restaura exatamente o
                 estado anterior à desativação. Polling do detalhe é passivo para a janela de
                 inatividade, enquanto refresh explícito é operacional; o refresh Auth e a assinatura
-                privada compartilham um deadline realmente abortável. As demais features continuam
-                no estado indicado pelo roadmap.
+                privada compartilham um deadline realmente abortável. Respostas atrasadas não podem
+                substituir uma revisão canônica mais nova, e a verificação de um upload retoma os
+                demais itens da fila. Novas buscas administrativas descartam confirmações
+                anteriores; concessões de papel só são oferecidas para contas ativas com perfil
+                completo. As demais features continuam no estado indicado pelo roadmap.
               </td>
             </tr>
             <tr>

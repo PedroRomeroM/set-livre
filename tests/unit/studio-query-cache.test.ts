@@ -1,4 +1,5 @@
 import {
+  studioEditorSchema,
   studioMediaGallerySchema,
   type StudioEditor,
   type StudioMediaGallery,
@@ -9,12 +10,16 @@ import { describe, expect, it } from "vitest";
 import { clearIdentityAndAccountQueryCache } from "../../src/domains/identity/components/account-query-keys";
 import {
   publishAuthoritativeStudioMediaGallery,
+  publishAuthoritativeStudioEditor,
   publishStudioEditor,
+  publishStudioEditorAfterPendingRead,
   publishStudioMediaGallery,
+  preserveNewestStudioEditor,
   preserveNewestStudioMediaGallery,
   removeStudioMediaGallery,
   studioEditorCanRender,
   studioMediaOrderMatchesIntent,
+  studioRevisionToken,
   StudioScopeChangedError,
   StudioMediaScopeChangedError,
   studioQueryKeys,
@@ -276,7 +281,13 @@ describe("studio private query cache", () => {
     };
 
     expect(
-      publishStudioEditor(queryClient, updated, studioTestIds.userId, studioTestIds.studioId),
+      publishStudioEditor(
+        queryClient,
+        updated,
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
     ).toEqual(updated);
     expect(
       queryClient.getQueryData(
@@ -288,6 +299,280 @@ describe("studio private query cache", () => {
         studioQueryKeys.editor(studioTestIds.otherUserId, studioTestIds.otherStudioId),
       ),
     ).toBeUndefined();
+  });
+
+  it("waits for a newer in-flight refetch without aborting it before publishing a command", async () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId);
+    const revision1 = studioRevisionToken(studioEditorFixture);
+    const commandResult = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        name: "Resposta atrasada N+1",
+        usageRules: "Conteúdo atrasado N+1.",
+        version: 2,
+      },
+    } satisfies StudioEditor;
+    const newerRefetch = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        name: "Leitura autoritativa N+2",
+        usageRules: "Conteúdo autoritativo N+2.",
+        version: 3,
+      },
+    } satisfies StudioEditor;
+    let readSignal: AbortSignal | undefined;
+    let resolveRead: ((editor: StudioEditor) => void) | undefined;
+    const delayedRead = new Promise<StudioEditor>((resolve) => {
+      resolveRead = resolve;
+    });
+    queryClient.setQueryData(queryKey, studioEditorFixture);
+
+    const pendingRead = queryClient.fetchQuery<StudioEditor>({
+      queryFn: ({ signal }) => {
+        readSignal = signal;
+        return delayedRead;
+      },
+      queryKey,
+      staleTime: 0,
+      structuralSharing: (cached, candidate) =>
+        preserveNewestStudioEditor(
+          cached === undefined ? undefined : studioEditorSchema.parse(cached),
+          studioEditorSchema.parse(candidate),
+          studioTestIds.userId,
+          studioTestIds.studioId,
+        ),
+    });
+    const settledRead = pendingRead.catch(() => undefined);
+    const pendingPublish = publishStudioEditorAfterPendingRead(
+      queryClient,
+      commandResult,
+      studioEditorFixture,
+      studioTestIds.userId,
+      studioTestIds.studioId,
+    );
+
+    expect(readSignal?.aborted).toBe(false);
+    resolveRead?.(newerRefetch);
+    await settledRead;
+    const selected = await pendingPublish;
+    const revisions = studioEditorPanelsInternals.advanceEditorRevisions(
+      {
+        content: revision1,
+        core: revision1,
+        discard: revision1,
+        taxonomy: revision1,
+      },
+      "core",
+      studioRevisionToken(selected),
+      studioRevisionToken(commandResult),
+    );
+
+    expect(readSignal?.aborted).toBe(false);
+    expect(selected).toEqual(newerRefetch);
+    expect(queryClient.getQueryData(queryKey)).toEqual(newerRefetch);
+    expect(studioCorePanelInternals.editorFormState(selected).name).toBe(
+      newerRefetch.revision.name,
+    );
+    expect(selected.revision.usageRules).toBe(newerRefetch.revision.usageRules);
+    expect(revisions).toEqual({
+      content: revision1,
+      core: studioRevisionToken(newerRefetch),
+      discard: studioRevisionToken(newerRefetch),
+      taxonomy: revision1,
+    });
+  });
+
+  it("preserves operational state changed after a command captured its source projection", () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId);
+    const disabledByAdmin = {
+      ...studioEditorFixture,
+      studioStatus: "disabled",
+    } satisfies StudioEditor;
+    const staleCommandResult = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        name: "Resposta antiga do comando",
+        version: studioEditorFixture.revision.version + 1,
+      },
+    } satisfies StudioEditor;
+    queryClient.setQueryData(queryKey, disabledByAdmin);
+
+    expect(
+      publishStudioEditor(
+        queryClient,
+        staleCommandResult,
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(disabledByAdmin);
+    expect(queryClient.getQueryData(queryKey)).toEqual(disabledByAdmin);
+  });
+
+  it("keeps a higher revision number over an older editor command result", () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId);
+    const current = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.revisionId,
+        number: 2,
+        version: 3,
+      },
+    } satisfies StudioEditor;
+    const staleCommandResult = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.publishedRevisionId,
+        number: 1,
+        version: 8,
+      },
+    } satisfies StudioEditor;
+    queryClient.setQueryData(queryKey, current);
+
+    expect(
+      publishStudioEditor(
+        queryClient,
+        staleCommandResult,
+        studioEditorFixture,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(current);
+    expect(queryClient.getQueryData(queryKey)).toEqual(current);
+  });
+
+  it("accepts a rollback command when the cached projection still matches its causal source", () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId);
+    const draft = {
+      ...studioEditorFixture,
+      draftRevisionId: studioTestIds.revisionId,
+      hasDraft: true,
+      publishedRevisionId: studioTestIds.publishedRevisionId,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.revisionId,
+        number: 2,
+        status: "draft",
+        version: 3,
+      },
+      studioStatus: "changes_pending",
+    } satisfies StudioEditor;
+    const published = {
+      ...studioEditorFixture,
+      draftRevisionId: null,
+      hasDraft: false,
+      publishedRevisionId: studioTestIds.publishedRevisionId,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.publishedRevisionId,
+        number: 1,
+        status: "approved",
+        version: 8,
+      },
+      studioStatus: "published",
+    } satisfies StudioEditor;
+    queryClient.setQueryData(queryKey, draft);
+
+    expect(
+      publishStudioEditor(
+        queryClient,
+        published,
+        draft,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(published);
+    expect(queryClient.getQueryData(queryKey)).toEqual(published);
+  });
+
+  it("allows an authoritative read to roll back to another revision", () => {
+    const current = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.revisionId,
+        number: 2,
+        version: 3,
+      },
+    } satisfies StudioEditor;
+    const authoritativeRollback = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.publishedRevisionId,
+        number: 1,
+        version: 8,
+      },
+    } satisfies StudioEditor;
+
+    expect(
+      preserveNewestStudioEditor(
+        current,
+        authoritativeRollback,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(authoritativeRollback);
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId),
+      current,
+    );
+    expect(
+      publishAuthoritativeStudioEditor(
+        queryClient,
+        authoritativeRollback,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toEqual(authoritativeRollback);
+  });
+
+  it("rejects different revision ids claiming the same revision number", () => {
+    const queryClient = new QueryClient();
+    const queryKey = studioQueryKeys.editor(studioTestIds.userId, studioTestIds.studioId);
+    const current = {
+      ...studioEditorFixture,
+      revision: { ...studioEditorFixture.revision, number: 2, version: 3 },
+    } satisfies StudioEditor;
+    const impossibleCandidate = {
+      ...studioEditorFixture,
+      revision: {
+        ...studioEditorFixture.revision,
+        id: studioTestIds.publishedRevisionId,
+        number: 2,
+        version: 4,
+      },
+    } satisfies StudioEditor;
+
+    expect(() =>
+      preserveNewestStudioEditor(
+        current,
+        impossibleCandidate,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toThrow(StudioScopeChangedError);
+    queryClient.setQueryData(queryKey, current);
+    expect(() =>
+      publishStudioEditor(
+        queryClient,
+        impossibleCandidate,
+        current,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+      ),
+    ).toThrow(StudioScopeChangedError);
+    expect(queryClient.getQueryData(queryKey)).toEqual(current);
   });
 
   it("rejects a late mutation after session cleanup and removes all private studio data", () => {
@@ -304,6 +589,7 @@ describe("studio private query cache", () => {
     expect(() =>
       publishStudioEditor(
         queryClient,
+        studioEditorFixture,
         studioEditorFixture,
         studioTestIds.userId,
         studioTestIds.studioId,
@@ -438,6 +724,45 @@ describe("studio private query cache", () => {
       discard: revision3,
       taxonomy: revision1,
     });
+
+    for (const surface of ["content", "core", "taxonomy"] as const) {
+      expect(
+        studioEditorPanelsInternals.advanceEditorRevisions(
+          {
+            content: revision3,
+            core: revision3,
+            discard: revision3,
+            taxonomy: revision3,
+          },
+          surface,
+          revision2,
+        ),
+      ).toEqual({
+        content: revision3,
+        core: revision3,
+        discard: revision3,
+        taxonomy: revision3,
+      });
+    }
+
+    for (const surface of ["content", "core", "taxonomy"] as const) {
+      const advanced = studioEditorPanelsInternals.advanceEditorRevisions(
+        {
+          content: revision1,
+          core: revision1,
+          discard: revision1,
+          taxonomy: revision1,
+        },
+        surface,
+        revision3,
+        revision2,
+      );
+      expect(advanced.discard).toEqual(revision3);
+      expect(advanced[surface]).toEqual(revision3);
+      for (const sibling of ["content", "core", "taxonomy"] as const) {
+        if (sibling !== surface) expect(advanced[sibling]).toEqual(revision1);
+      }
+    }
   });
 
   it("renders active and historical studio type descriptors instead of UUIDs in conflicts", () => {

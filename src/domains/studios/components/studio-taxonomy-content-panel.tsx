@@ -3,6 +3,7 @@
 import {
   parseStudioYoutubeVideoId,
   studioContentPayloadSchema,
+  studioEditorSchema,
   studioTaxonomyPayloadSchema,
   studioYoutubeVideoInputSchema,
   type StudioCommand,
@@ -29,7 +30,9 @@ import {
 } from "./studio-api";
 import {
   assertStudioEditorBoundary,
-  publishStudioEditor,
+  preserveNewestStudioEditor,
+  publishAuthoritativeStudioEditor,
+  publishStudioEditorAfterPendingRead,
   recomposeStudioClientBoundary,
   studioEditorCanRender,
   studioRevisionToken,
@@ -42,6 +45,7 @@ import styles from "./studio.module.css";
 type FieldErrors = Readonly<Record<string, string>>;
 type TaxonomyCommand = Extract<StudioCommand, { action: "studio.revision.updateTaxonomy" }>;
 type ContentCommand = Extract<StudioCommand, { action: "studio.revision.updateContent" }>;
+type PendingEditorCommand<T> = Readonly<{ command: T; expectedEditor: StudioEditor }>;
 type FaqDraft = StudioFaqInput & { key: string };
 type CommercialConflictKind = "content" | "taxonomy";
 
@@ -515,9 +519,9 @@ export function StudioTaxonomyContentPanel({
   onCommandFinish: () => void;
   onCommandStart: () => void;
   onContentRevisionChange: (revision: StudioRevisionToken) => void;
-  onContentSave: (editor: StudioEditor) => void;
+  onContentSave: (editor: StudioEditor, commandRevision: StudioRevisionToken) => void;
   onTaxonomyRevisionChange: (revision: StudioRevisionToken) => void;
-  onTaxonomySave: (editor: StudioEditor) => void;
+  onTaxonomySave: (editor: StudioEditor, commandRevision: StudioRevisionToken) => void;
   taxonomyRevision: StudioRevisionToken;
   userId: string;
 }>) {
@@ -541,6 +545,13 @@ export function StudioTaxonomyContentPanel({
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
+    structuralSharing: (current, candidate) =>
+      preserveNewestStudioEditor(
+        current === undefined ? undefined : studioEditorSchema.parse(current),
+        studioEditorSchema.parse(candidate),
+        userId,
+        initialEditor.studioId,
+      ),
   });
   const editorIsVerified =
     hydrated &&
@@ -561,8 +572,8 @@ export function StudioTaxonomyContentPanel({
     retry: false,
     staleTime: 0,
   });
-  const pendingTaxonomy = useRef<TaxonomyCommand>(undefined);
-  const pendingContent = useRef<ContentCommand>(undefined);
+  const pendingTaxonomy = useRef<PendingEditorCommand<TaxonomyCommand>>(undefined);
+  const pendingContent = useRef<PendingEditorCommand<ContentCommand>>(undefined);
   const [knownTags, setKnownTags] = useState(() =>
     mergeKnownTaxonomies(
       activeTaxonomyReferences(initialTaxonomies.tags),
@@ -596,18 +607,34 @@ export function StudioTaxonomyContentPanel({
     }
   }, [editorQuery.error, queryClient, taxonomiesQuery.error]);
 
-  async function publish(editor: StudioEditor) {
-    await queryClient.cancelQueries({ queryKey: editorQueryKey });
+  async function publishCommand(editor: StudioEditor, expectedEditor: StudioEditor) {
     try {
-      publishStudioEditor(queryClient, editor, userId, initialEditor.studioId);
+      return await publishStudioEditorAfterPendingRead(
+        queryClient,
+        editor,
+        expectedEditor,
+        userId,
+        initialEditor.studioId,
+      );
     } catch (error) {
       if (error instanceof StudioScopeChangedError) {
         recomposeStudioClientBoundary(queryClient);
-        return false;
+        return undefined;
       }
       throw error;
     }
-    return true;
+  }
+
+  function publishAuthoritative(editor: StudioEditor) {
+    try {
+      return publishAuthoritativeStudioEditor(queryClient, editor, userId, initialEditor.studioId);
+    } catch (error) {
+      if (error instanceof StudioScopeChangedError) {
+        recomposeStudioClientBoundary(queryClient);
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async function recoverConflict(kind: CommercialConflictKind) {
@@ -636,11 +663,12 @@ export function StudioTaxonomyContentPanel({
       setConflict({ failedReads, kind, pending: false });
       return;
     }
-    if (!(await publish(editorResult.value))) return;
+    const published = publishAuthoritative(editorResult.value);
+    if (published === undefined) return;
     if (kind === "taxonomy" && taxonomiesResult.status === "fulfilled") {
       queryClient.setQueryData(studioQueryKeys.taxonomies(userId), taxonomiesResult.value);
     }
-    setConflict({ failedReads: [], kind, pending: false, remote: editorResult.value });
+    setConflict({ failedReads: [], kind, pending: false, remote: published });
   }
 
   const taxonomyMutation = useMutation({
@@ -648,7 +676,7 @@ export function StudioTaxonomyContentPanel({
       if (pendingTaxonomy.current === undefined) {
         throw new Error("A taxonomia não possui solicitação idempotente preparada.");
       }
-      return updateStudioTaxonomy(pendingTaxonomy.current);
+      return updateStudioTaxonomy(pendingTaxonomy.current.command);
     },
     networkMode: "always",
     onError: async (error) => {
@@ -669,15 +697,20 @@ export function StudioTaxonomyContentPanel({
     },
     onSuccess: async (editor) => {
       try {
+        const pending = pendingTaxonomy.current;
+        if (pending === undefined) {
+          throw new Error("A taxonomia perdeu a evidência causal do editor.");
+        }
         pendingTaxonomy.current = undefined;
-        if (!(await publish(editor))) return;
-        setTagIds(taxonomyIds(editor.revision.tags));
-        setAmenityIds(taxonomyIds(editor.revision.amenities));
-        setKnownTags((current) => mergeKnownTaxonomies(current, editor.revision.tags));
-        setKnownAmenities((current) => mergeKnownTaxonomies(current, editor.revision.amenities));
+        const published = await publishCommand(editor, pending.expectedEditor);
+        if (published === undefined) return;
+        setTagIds(taxonomyIds(published.revision.tags));
+        setAmenityIds(taxonomyIds(published.revision.amenities));
+        setKnownTags((current) => mergeKnownTaxonomies(current, published.revision.tags));
+        setKnownAmenities((current) => mergeKnownTaxonomies(current, published.revision.amenities));
         setConflict(undefined);
         setTaxonomyStatus("Tags e comodidades foram salvas na revisão em rascunho.");
-        onTaxonomySave(editor);
+        onTaxonomySave(published, studioRevisionToken(editor));
       } finally {
         onCommandFinish();
       }
@@ -689,7 +722,7 @@ export function StudioTaxonomyContentPanel({
       if (pendingContent.current === undefined) {
         throw new Error("O conteúdo não possui solicitação idempotente preparada.");
       }
-      return updateStudioContent(pendingContent.current);
+      return updateStudioContent(pendingContent.current.command);
     },
     networkMode: "always",
     onError: async (error) => {
@@ -707,14 +740,19 @@ export function StudioTaxonomyContentPanel({
     },
     onSuccess: async (editor) => {
       try {
+        const pending = pendingContent.current;
+        if (pending === undefined) {
+          throw new Error("O conteúdo perdeu a evidência causal do editor.");
+        }
         pendingContent.current = undefined;
-        if (!(await publish(editor))) return;
-        setUsageRules(editor.revision.usageRules);
-        setYoutubeInput(editor.revision.youtubeVideoId ?? "");
-        setFaqs(editorFaqs(editor));
+        const published = await publishCommand(editor, pending.expectedEditor);
+        if (published === undefined) return;
+        setUsageRules(published.revision.usageRules);
+        setYoutubeInput(published.revision.youtubeVideoId ?? "");
+        setFaqs(editorFaqs(published));
         setConflict(undefined);
         setContentStatus("Regras, FAQ e vídeo foram salvos na revisão em rascunho.");
-        onContentSave(editor);
+        onContentSave(published, studioRevisionToken(editor));
       } finally {
         onCommandFinish();
       }
@@ -787,15 +825,18 @@ export function StudioTaxonomyContentPanel({
     }
     setTaxonomyErrors({});
     pendingTaxonomy.current = {
-      action: "studio.revision.updateTaxonomy",
-      expectedScope: userId,
-      idempotencyKey: crypto.randomUUID(),
-      payload: {
-        ...parsed.data,
-        expectedRevisionId: taxonomyRevision.id,
-        expectedRevisionVersion: taxonomyRevision.version,
-        studioId: initialEditor.studioId,
+      command: {
+        action: "studio.revision.updateTaxonomy",
+        expectedScope: userId,
+        idempotencyKey: crypto.randomUUID(),
+        payload: {
+          ...parsed.data,
+          expectedRevisionId: taxonomyRevision.id,
+          expectedRevisionVersion: taxonomyRevision.version,
+          studioId: initialEditor.studioId,
+        },
       },
+      expectedEditor: studioEditorSchema.parse(editorQuery.data),
     };
     onCommandStart();
     taxonomyMutation.mutate();
@@ -821,15 +862,18 @@ export function StudioTaxonomyContentPanel({
     }
     setContentErrors({});
     pendingContent.current = {
-      action: "studio.revision.updateContent",
-      expectedScope: userId,
-      idempotencyKey: crypto.randomUUID(),
-      payload: {
-        ...parsed.data,
-        expectedRevisionId: contentRevision.id,
-        expectedRevisionVersion: contentRevision.version,
-        studioId: initialEditor.studioId,
+      command: {
+        action: "studio.revision.updateContent",
+        expectedScope: userId,
+        idempotencyKey: crypto.randomUUID(),
+        payload: {
+          ...parsed.data,
+          expectedRevisionId: contentRevision.id,
+          expectedRevisionVersion: contentRevision.version,
+          studioId: initialEditor.studioId,
+        },
       },
+      expectedEditor: studioEditorSchema.parse(editorQuery.data),
     };
     onCommandStart();
     contentMutation.mutate();

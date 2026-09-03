@@ -218,6 +218,8 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const [statusImpactConfirmed, setStatusImpactConfirmed] = useState(false);
   const [statusRetryAvailable, setStatusRetryAvailable] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const searchInFlight = useRef(false);
+  const [searchPending, setSearchPending] = useState(false);
   const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
@@ -288,35 +290,56 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       </header>
       {notice === undefined ? null : <Alert>{notice}</Alert>}
       <form
-        aria-busy={!interactive}
+        aria-busy={!interactive || searchPending}
         className={styles.toolbar}
         inert={!interactive}
         method="post"
         noValidate
         onSubmit={async (event) => {
           event.preventDefault();
-          const normalized = draftQuery.trim();
-          const fingerprint =
-            normalized === "" ? "empty" : await backofficeFilterFingerprint(normalized);
-          setActiveFilter({ fingerprint, query: normalized });
+          if (statusMutation.isPending || searchInFlight.current) return;
+          searchInFlight.current = true;
+          setSearchPending(true);
+          pendingStatusCommand.current = undefined;
+          statusMutation.reset();
+          setNotice(undefined);
+          setStatusImpactConfirmed(false);
+          setStatusRetryAvailable(false);
+          setStatusTarget(undefined);
+          try {
+            const normalized = draftQuery.trim();
+            const fingerprint =
+              normalized === "" ? "empty" : await backofficeFilterFingerprint(normalized);
+            setActiveFilter({ fingerprint, query: normalized });
+          } catch {
+            setNotice("Não foi possível preparar a busca com segurança. Tente novamente.");
+          } finally {
+            searchInFlight.current = false;
+            setSearchPending(false);
+          }
         }}
       >
         <fieldset
           className={`${styles.secureFormBoundary} ${styles.toolbarBoundary}`}
-          disabled={!interactive}
+          disabled={!interactive || statusMutation.isPending || searchPending}
         >
           <Field
             description="Prefixo de e-mail ou UUID completo. Nome exige revelação auditada; o filtro não é colocado na URL."
             label="Buscar usuários"
           >
             <Input
-              disabled={!interactive}
+              disabled={!interactive || statusMutation.isPending || searchPending}
               name="query"
               onChange={(event) => setDraftQuery(event.target.value)}
               value={draftQuery}
             />
           </Field>
-          <Button disabled={!interactive} type="submit">
+          <Button
+            disabled={!interactive || statusMutation.isPending || searchPending}
+            loading={searchPending}
+            loadingLabel="Buscando"
+            type="submit"
+          >
             Buscar
           </Button>
         </fieldset>

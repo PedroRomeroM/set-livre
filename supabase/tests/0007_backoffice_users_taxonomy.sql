@@ -24,7 +24,8 @@ create function private.feat031_create_user(
   phone_number text,
   tax_id text,
   request_suffix integer,
-  activate_as_owner boolean default false
+  activate_as_owner boolean default false,
+  complete_identity boolean default true
 )
 returns void
 language plpgsql
@@ -70,15 +71,17 @@ begin
     pg_catalog.now()
   );
 
-  perform private.complete_profile(
-    user_id,
-    0,
-    'individual',
-    display_name,
-    phone_number,
-    tax_id,
-    null
-  );
+  if complete_identity then
+    perform private.complete_profile(
+      user_id,
+      0,
+      'individual',
+      display_name,
+      phone_number,
+      tax_id,
+      null
+    );
+  end if;
 
   if activate_as_owner then
     perform private.activate_owner(
@@ -101,10 +104,10 @@ $function$;
 revoke all on function private.feat031_capture_error(text)
   from public, anon, authenticated, service_role, app_dal;
 revoke all on function private.feat031_create_user(
-  uuid, text, text, text, text, integer, boolean
+  uuid, text, text, text, text, integer, boolean, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(58);
+select plan(60);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -288,7 +291,6 @@ select private.feat031_create_user(
   '39053344705',
   5
 );
-
 insert into auth.sessions (id, user_id, created_at, updated_at, aal)
 values
   (
@@ -409,6 +411,63 @@ select ok(
   'admin abre binding curto vinculado ao session_id Auth'
 );
 
+select private.feat031_create_user(
+  '81000000-0000-4000-8000-000000000006',
+  'qa-eligibility-suspended@setlivre.local',
+  'Suspended FEAT 031',
+  '+5541999993106',
+  '93541134780',
+  6
+);
+select private.feat031_create_user(
+  '81000000-0000-4000-8000-000000000007',
+  'qa-eligibility-incomplete@setlivre.local',
+  'Incomplete FEAT 031',
+  '+5541999993107',
+  '86421975364',
+  7,
+  false,
+  false
+);
+update public.profiles
+set status = 'suspended'
+where id = '81000000-0000-4000-8000-000000000006';
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select private.set_backoffice_user_role(
+        '81000000-0000-4000-8000-000000000001',
+        '82000000-0000-4000-8000-000000000001',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        '81000000-0000-4000-8000-000000000006',
+        1,
+        'backoffice.access.grantReviewer',
+        '87000000-0000-4000-8000-000000000090',
+        '86000000-0000-4000-8000-000000000090'
+      )
+    $command$
+  ),
+  '^42501:backoffice_role_target_ineligible$',
+  'banco recusa concessão de papel para conta suspensa'
+);
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select private.set_backoffice_user_role(
+        '81000000-0000-4000-8000-000000000001',
+        '82000000-0000-4000-8000-000000000001',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        '81000000-0000-4000-8000-000000000007',
+        0,
+        'backoffice.access.grantSupport',
+        '87000000-0000-4000-8000-000000000091',
+        '86000000-0000-4000-8000-000000000091'
+      )
+    $command$
+  ),
+  '^42501:backoffice_role_target_ineligible$',
+  'banco recusa concessão de papel para perfil incompleto'
+);
 update private.backoffice_sessions as session_binding
 set
   opened_at = shifted.observed_at,
@@ -687,7 +746,7 @@ select pg_catalog.set_config(
 reset role;
 select ok(
   pg_catalog.current_setting('set_livre.test.f031_admin_b_access')::jsonb
-    @> '{"account_version":1,"roles":["admin"]}'::jsonb,
+    @> '{"account_version":1,"profile_completed":true,"roles":["admin"]}'::jsonb,
   'somente a leitura server-side de acesso expõe papéis ao admin'
 );
 select matches(

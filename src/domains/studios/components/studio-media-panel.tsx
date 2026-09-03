@@ -689,6 +689,12 @@ function HydratedStudioMediaPanel({
     }
   }
 
+  function queuedUploadIds(excludedId: string) {
+    return attemptsReference.current
+      .filter((attempt) => attempt.phase === "queued" && attempt.id !== excludedId)
+      .map((attempt) => attempt.id);
+  }
+
   function retryUpload(id: string, renew = false) {
     const runtime = uploadRuntimeReference.current.get(id);
     if (renew && runtime !== undefined) resetUploadReservation(runtime);
@@ -697,10 +703,7 @@ function HydratedStudioMediaPanel({
       phase: "queued",
       retry: undefined,
     });
-    const queued = attemptsReference.current
-      .filter((attempt) => attempt.phase === "queued" && attempt.id !== id)
-      .map((attempt) => attempt.id);
-    void processUploadQueue([id, ...queued]);
+    void processUploadQueue([id, ...queuedUploadIds(id)]);
   }
 
   async function verifyUpload(id: string) {
@@ -708,6 +711,7 @@ function HydratedStudioMediaPanel({
     queueRunningReference.current = true;
     setQueueRunning(true);
     const runtime = uploadRuntimeReference.current.get(id);
+    let outcome: UploadQueueOutcome = "blocked";
     try {
       updateAttempt(id, {
         message: "Consultando a galeria canônica antes de qualquer repetição.",
@@ -716,22 +720,22 @@ function HydratedStudioMediaPanel({
       });
       const refreshed = await mediaQuery.refetch();
       if (!refreshed.isSuccess) {
-        await handleUploadError(id, refreshed.error, "consulta");
+        outcome = await handleUploadError(id, refreshed.error, "consulta");
         return;
       }
       const gallery = assertStudioMediaBoundary(refreshed.data, userId, studioId);
       const mediaId = runtime?.preparation?.mediaId;
       if (mediaId !== undefined && gallery.items.some((item) => item.id === mediaId)) {
-        await finishUpload(id, mediaId, gallery);
+        outcome = await finishUpload(id, mediaId, gallery);
         return;
       }
       if (runtime?.finalizeCommand !== undefined) {
         try {
           await finalizeMutation.mutateAsync(runtime.finalizeCommand);
-          await finishUpload(id, runtime.finalizeCommand.payload.mediaId);
+          outcome = await finishUpload(id, runtime.finalizeCommand.payload.mediaId);
           return;
         } catch (error) {
-          await handleUploadError(id, error, "verificação");
+          outcome = await handleUploadError(id, error, "verificação");
           return;
         }
       }
@@ -741,11 +745,16 @@ function HydratedStudioMediaPanel({
         phase: "error",
         retry: "exact",
       });
+      outcome = "continue";
     } catch (error) {
-      await handleUploadError(id, error, "consulta");
+      outcome = await handleUploadError(id, error, "consulta");
     } finally {
       queueRunningReference.current = false;
       setQueueRunning(false);
+      if (outcome === "continue") {
+        const queued = queuedUploadIds(id);
+        if (queued.length > 0) void processUploadQueue(queued);
+      }
     }
   }
 

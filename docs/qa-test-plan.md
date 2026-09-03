@@ -165,8 +165,10 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
 
 - P0 de criação, clone de publicado, isolamento entre donos, troca de sessão no editor e na criação
   ainda não salva e revogação da autoridade de dono durante a criação nos três engines;
-- validação, tokens locais independentes de update/descarte preservados após refetch, estado terminal
-  de criação, retry ambíguo, reconfirmação de descarte sem liberar save stale, bloqueio administrativo
+- validação, tokens locais independentes de update/descarte preservados após refetch, resposta de
+  comando atrasada incapaz de abortar uma leitura autoritativa pendente ou regredir cache, formulário,
+  estado operacional e fences irmãos, estado terminal de criação,
+  retry ambíguo, reconfirmação de descarte sem liberar save stale, bloqueio administrativo,
   arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,
   navegação terminal explícita após descarte e revogação de conta em desktop, mobile, 320 px e altura
   compacta;
@@ -194,8 +196,10 @@ Os cenários `SL-F007-E2E-*` cobrem:
 - troca de sessão oculta editor e conteúdo comercial privados antes da releitura nos três engines;
 - resposta ambígua congela ambos os formulários e repete o comando idempotente intacto nas quatro
   composições de regressão;
-- refetch preserva a versão otimista associada aos valores locais, exige conflito explícito antes do
-  rebase e impede sobrescrita concorrente silenciosa nas quatro composições de regressão;
+- refetch preserva a versão otimista associada aos valores locais, aceita substituição autoritativa de
+  revisão, ponteiros e estado operacional sem abortar a leitura pendente nem permitir que resultado
+  tardio de comando reverta a projeção causal mais nova, exige conflito explícito antes do rebase e
+  impede sobrescrita concorrente silenciosa nas quatro composições de regressão;
 - axe, teclado, toque e alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -224,6 +228,11 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - revalidação de sessão/papel fecha a composição privada anterior; conflitos de conta, papel e
   taxonomia descartam confirmações versionadas e exigem nova leitura nas quatro composições de
   regressão;
+- uma nova busca descarta confirmação, acknowledgment, retry e comando de status associados ao alvo
+  anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa
+  enquanto a anterior ou uma mutação está em voo;
+- o detalhe de acessos oferece concessões somente para conta ativa com perfil completo, explica a
+  restrição e mantém disponíveis as revogações de papéis já concedidos;
 - logout confirmado oculta sincronamente todo o shell privado antes da navegação, inclusive quando a
   resposta da próxima rota permanece suspensa;
 - axe, teclado, toque, contraste e ausência de overflow em desktop, mobile, 320 px e tema escuro.
@@ -233,7 +242,7 @@ QueryCache nem em fixture persistida; o helper cria identidades reais no Supabas
 restrita e remove usuários/taxonomias após cada cenário. `0007_backoffice_users_taxonomy.sql` prova
 grants/RLS, binding curto, polling passivo sem renovação, correção regressiva do
 relógio, expiração, bootstrap one-shot,
-papel/último admin, versão de
+papel/último admin, rejeição direta de concessão a conta suspensa ou perfil incompleto, versão de
 conta, PII redigida, idempotência, taxonomia histórica, limite de catálogo e encerramento de sessões. O
 regressão transversal de tempo força timestamps
 persistidos à frente do relógio observado e comprova a normalização compartilhada nas dez tabelas de
@@ -244,8 +253,8 @@ domínio que mantêm `created_at/updated_at`.
 Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 
 - P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
-  antes/depois da persistência, recusa definitiva com liberação server-side da reserva e isolamento
-  entre donos nos três engines;
+  antes/depois da persistência, retomada dos demais itens enfileirados após verificação segura, recusa
+  definitiva com liberação server-side da reserva e isolamento entre donos nos três engines;
 - regressões em desktop, 390 px, 320 px e altura compacta provam controles acessíveis, dimensões
   reservadas/CLS, hidratação fail-closed, conflito autoritativo de galeria, avanço concorrente logo
   após o preparo com terminalização server-side, resposta perdida, replay da mesma chave idempotente
@@ -305,8 +314,9 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - comparação sem overflow e ação operável a 200% em Chromium, Firefox e WebKit; o cenário de 160 ×
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
-  verifica tanto a caixa quanto o conteúdo rolável depois do foco. O diagnóstico preserva medidas
-  subpixel e lista overflow interno para não ocultar defeitos por arredondamento.
+  verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto em relação à caixa de
+  conteúdo. O diagnóstico preserva medidas fracionárias e lista overflow interno para não ocultar
+  defeitos por arredondamento.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as
