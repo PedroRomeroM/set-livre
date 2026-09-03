@@ -110,11 +110,35 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       .scrollIntoViewIfNeeded();
     await expect(page.getByRole("button", { name: "Confirmar ação", exact: true })).toBeVisible();
 
+    const skipLink = page.getByRole("link", { name: "Ir para o conteúdo" });
+    await skipLink.focus();
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeVisible();
+
     const layout = await page.evaluate(() => {
       const clientWidth = document.documentElement.clientWidth;
+      const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
+        const rectangle = element.getBoundingClientRect();
+        return {
+          className: element.getAttribute("class"),
+          clientWidth: element.clientWidth,
+          left: rectangle.left,
+          right: rectangle.right,
+          scrollWidth: element.scrollWidth,
+          tag: element.tagName,
+          text: element.textContent?.trim().slice(0, 80) ?? "",
+        };
+      });
+      const skipLinkRectangle = document
+        .querySelector<HTMLAnchorElement>('a[href="#conteudo-principal"]')
+        ?.getBoundingClientRect();
       return {
+        bodyClientWidth: document.body.clientWidth,
         bodyFits: document.body.scrollWidth <= window.innerWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        documentClientWidth: clientWidth,
         documentFits: document.documentElement.scrollWidth <= clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
         images: [...document.querySelectorAll("img")].map((image) => ({
           fits: image.getBoundingClientRect().right <= clientWidth,
           frameHeight: image.parentElement?.getBoundingClientRect().height ?? 0,
@@ -124,24 +148,31 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           naturalWidth: image.naturalWidth,
           objectFit: getComputedStyle(image).objectFit,
         })),
-        overflowing: [...document.querySelectorAll("body *")]
-          .map((element) => {
-            const rectangle = element.getBoundingClientRect();
-            return {
-              className: element.getAttribute("class"),
-              left: Math.round(rectangle.left),
-              right: Math.round(rectangle.right),
-              tag: element.tagName,
-              text: element.textContent?.trim().slice(0, 80) ?? "",
-            };
-          })
+        overflowing: measuredElements
           .filter((element) => element.left < 0 || element.right > clientWidth)
+          .map((element) => ({
+            ...element,
+            left: Math.round(element.left * 1000) / 1000,
+            right: Math.round(element.right * 1000) / 1000,
+          }))
           .slice(0, 16),
+        skipLink:
+          skipLinkRectangle === undefined
+            ? null
+            : {
+                fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
+                left: skipLinkRectangle.left,
+                right: skipLinkRectangle.right,
+              },
+        windowInnerWidth: window.innerWidth,
       };
     });
-    expect(layout.bodyFits).toBe(true);
-    expect(layout.documentFits).toBe(true);
+    const layoutEvidence = JSON.stringify(layout, null, 2);
+    expect(layout.bodyFits, layoutEvidence).toBe(true);
+    expect(layout.documentFits, layoutEvidence).toBe(true);
     expect(layout.overflowing).toEqual([]);
+    expect(layout.skipLink).not.toBeNull();
+    expect(layout.skipLink?.fits, layoutEvidence).toBe(true);
     expect(layout.images.length).toBeGreaterThan(0);
     expect(
       layout.images.every(

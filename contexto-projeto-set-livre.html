@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 01/09/2026</p>
+      <p>Resumo executivo vivo · atualizado em 02/09/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -151,7 +151,9 @@
           A regra normal é uma feature por branch. O lote de fundação é uma exceção única, limitada
           e registrada no ADR-017; cada fatia mantém commit, testes e review próprios. Antes do
           merge passam format, lint, tipos, Vitest, banco, documentação, Playwright, build, audit e
-          Knip conforme o risco.
+          Knip conforme o risco. O reflow extremo do backoffice mantém inclusive o link de salto
+          focável contido no viewport, e a evidência conserva dimensões subpixel para não esconder
+          overflow por arredondamento.
         </p>
         <p>
           Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status

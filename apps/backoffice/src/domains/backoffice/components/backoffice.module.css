@@ -7,10 +7,12 @@
   position: fixed;
   z-index: 20;
   inset: 0.5rem auto auto 0.5rem;
+  max-width: calc(100% - 1rem);
   padding: 0.75rem 1rem;
   color: var(--sl-color-canvas);
   background: var(--sl-color-ink);
   border-radius: var(--sl-radius-md);
+  overflow-wrap: anywhere;
   transform: translateY(-150%);
 }
 
