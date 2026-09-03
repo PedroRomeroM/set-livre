@@ -34,7 +34,7 @@ import { z } from "zod";
 
 import { notifyBackofficeSessionChanged } from "./session-events";
 
-const studioCommandRequestTimeoutMs = 10_000;
+const backofficeMutationRequestTimeoutMs = 10_000;
 
 export class BackofficeClientError extends Error {
   readonly code: string;
@@ -181,18 +181,26 @@ async function backofficeRequest<T>(
   return parsed.data.data;
 }
 
+function backofficeMutationRequest<T>(path: string, schema: z.ZodType<T>, options: RequestInit) {
+  return backofficeRequest(path, schema, options, backofficeMutationRequestTimeoutMs);
+}
+
 export function loginBackofficeClient(payload: BackofficeLoginPayload) {
-  return backofficeRequest("/api/auth/login", backofficeSessionSchema, {
+  return backofficeMutationRequest("/api/auth/login", backofficeSessionSchema, {
     body: JSON.stringify(payload),
     method: "POST",
   });
 }
 
 export function logoutBackofficeClient(expectedScope: string) {
-  return backofficeRequest("/api/auth/logout", z.strictObject({ signedOut: z.literal(true) }), {
-    body: JSON.stringify({ expectedScope }),
-    method: "POST",
-  });
+  return backofficeMutationRequest(
+    "/api/auth/logout",
+    z.strictObject({ signedOut: z.literal(true) }),
+    {
+      body: JSON.stringify({ expectedScope }),
+      method: "POST",
+    },
+  );
 }
 
 export function readBackofficeSessionClient() {
@@ -200,7 +208,7 @@ export function readBackofficeSessionClient() {
 }
 
 export function unlockBackofficeRuntimeClient(payload: BackofficeRuntimeUnlockPayload) {
-  return backofficeRequest("/api/auth/unlock", backofficeRuntimeUnlockResultSchema, {
+  return backofficeMutationRequest("/api/auth/unlock", backofficeRuntimeUnlockResultSchema, {
     body: JSON.stringify(payload),
     method: "POST",
   });
@@ -271,15 +279,10 @@ export async function readBackofficeStudioReviewClient(
 export function executeBackofficeStudioCommand(
   command: BackofficeStudioCommand,
 ): Promise<BackofficeStudioCommandResult> {
-  return backofficeRequest(
-    "/api/commands",
-    backofficeStudioCommandResultSchema,
-    {
-      body: JSON.stringify(command),
-      method: "POST",
-    },
-    studioCommandRequestTimeoutMs,
-  );
+  return backofficeMutationRequest("/api/commands", backofficeStudioCommandResultSchema, {
+    body: JSON.stringify(command),
+    method: "POST",
+  });
 }
 
 export function executeBackofficeUserCommand(
@@ -298,7 +301,7 @@ export function executeBackofficeUserCommand(
     }
   >,
 ): Promise<BackofficeUserSummary> {
-  return backofficeRequest("/api/commands", backofficeUserSummarySchema, {
+  return backofficeMutationRequest("/api/commands", backofficeUserSummarySchema, {
     body: JSON.stringify(command),
     method: "POST",
   });
@@ -315,7 +318,7 @@ export function executeBackofficeTaxonomyCommand(
     }
   >,
 ): Promise<BackofficeTaxonomyItem> {
-  return backofficeRequest("/api/commands", backofficeTaxonomyItemSchema, {
+  return backofficeMutationRequest("/api/commands", backofficeTaxonomyItemSchema, {
     body: JSON.stringify(command),
     method: "POST",
   });
@@ -325,7 +328,7 @@ export async function revealBackofficePiiWithoutCaching(
   command: Extract<BackofficeCommand, { action: "backoffice.user.revealPii" }>,
   consume: (pii: BackofficeUserPii) => void,
 ) {
-  const pii = await backofficeRequest("/api/commands", backofficeUserPiiSchema, {
+  const pii = await backofficeMutationRequest("/api/commands", backofficeUserPiiSchema, {
     body: JSON.stringify(command),
     method: "POST",
   });

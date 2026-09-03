@@ -22,6 +22,7 @@ import { BackofficeApiError } from "../../apps/backoffice/src/lib/server/api-rou
 import { runProtectedBackofficeRoute } from "../../apps/backoffice/src/lib/server/protected-api-route";
 import {
   backofficeIdentityActionDiscriminator,
+  enforceBackofficeCommandIdentityRateLimits,
   enforceBackofficeRateLimit,
 } from "../../apps/backoffice/src/lib/server/rate-limit";
 import {
@@ -110,6 +111,52 @@ describe("backoffice command telemetry", () => {
       BackofficeApiError,
     );
     expect(() => enforceBackofficeRateLimit(partition, reject, options)).not.toThrow();
+  });
+
+  it("shares a 20-per-hour ceiling across destructive commands for one identity", () => {
+    const scope = randomUUID();
+    const destructiveActions = [
+      "backoffice.user.suspend",
+      "backoffice.access.revokeSupport",
+      "backoffice.access.revokeReviewer",
+      "backoffice.access.revokeAdmin",
+      "backoffice.taxonomy.archive",
+      "backoffice.studio.disable",
+    ] as const;
+
+    for (let round = 0; round < 3; round += 1) {
+      for (const action of destructiveActions) {
+        expect(() => enforceBackofficeCommandIdentityRateLimits(scope, action)).not.toThrow();
+      }
+    }
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.user.suspend"),
+    ).not.toThrow();
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.access.revokeAdmin"),
+    ).not.toThrow();
+
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.studio.disable"),
+    ).toThrowError(BackofficeApiError);
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.studio.restore"),
+    ).not.toThrow();
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(randomUUID(), "backoffice.studio.disable"),
+    ).not.toThrow();
+  });
+
+  it("retains the per-action burst guard for non-destructive commands", () => {
+    const scope = randomUUID();
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      expect(() =>
+        enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.studio.approve"),
+      ).not.toThrow();
+    }
+    expect(() =>
+      enforceBackofficeCommandIdentityRateLimits(scope, "backoffice.studio.approve"),
+    ).toThrowError(BackofficeApiError);
   });
 
   it("stops rate limit, body parsing and execution when authentication fails", async () => {

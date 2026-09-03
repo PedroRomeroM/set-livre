@@ -18,6 +18,10 @@ import {
   isStaleBackofficeError,
   loginBackofficeClient,
 } from "./backoffice-api";
+import {
+  isBackofficeReauthenticationBoundaryError,
+  useBackofficePrivateBoundary,
+} from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
 import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
@@ -41,9 +45,11 @@ function errorMessage(error: unknown) {
 
 function AccessReauthentication({
   onConfirmed,
+  onSessionBoundary,
   session,
 }: {
   onConfirmed: () => void;
+  onSessionBoundary: () => void;
   session: AuthenticatedSession;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -61,8 +67,18 @@ function AccessReauthentication({
       pendingPassword.current = undefined;
       formRef.current?.reset();
     },
+    onError: (error) => {
+      if (!isBackofficeReauthenticationBoundaryError(error)) return;
+      pendingPassword.current = undefined;
+      formRef.current?.reset();
+      onSessionBoundary();
+    },
     onSuccess: (nextSession) => {
-      if (nextSession.authenticated) onConfirmed();
+      if (nextSession.authenticated) {
+        onConfirmed();
+        return;
+      }
+      onSessionBoundary();
     },
   });
   return (
@@ -102,6 +118,7 @@ export function AccessRoleActions({
 }) {
   const router = useRouter();
   const interactive = useBackofficeHydrated();
+  const recomposeSession = useBackofficePrivateBoundary();
   const [selected, setSelected] = useState<BackofficeAccessTransition>();
   const [needsReauthentication, setNeedsReauthentication] = useState(false);
   const [notice, setNotice] = useState<string>();
@@ -123,13 +140,29 @@ export function AccessRoleActions({
         router.refresh();
         return;
       }
-      if (!isAmbiguousBackofficeError(error)) pendingCommand.current = undefined;
+      const ambiguous = isAmbiguousBackofficeError(error);
+      if (
+        ambiguous &&
+        pendingCommand.current?.action === "backoffice.access.revokeAdmin" &&
+        pendingCommand.current.payload.userId === session.scope
+      ) {
+        recomposeSession();
+        return;
+      }
+      if (!ambiguous) pendingCommand.current = undefined;
       if (error instanceof BackofficeClientError && error.code === "REAUTHENTICATION_REQUIRED") {
         setNeedsReauthentication(true);
       }
     },
     onSuccess: () => {
+      const revokedCurrentAdmin =
+        pendingCommand.current?.action === "backoffice.access.revokeAdmin" &&
+        pendingCommand.current.payload.userId === session.scope;
       pendingCommand.current = undefined;
+      if (revokedCurrentAdmin) {
+        recomposeSession();
+        return;
+      }
       setNeedsReauthentication(false);
       setSelected(undefined);
       setNotice("Acesso atualizado e sessões incompatíveis encerradas.");
@@ -151,6 +184,7 @@ export function AccessRoleActions({
               "Identidade confirmada. Desbloqueie novamente o runtime e revise a alteração.",
             );
           }}
+          onSessionBoundary={recomposeSession}
           session={session}
         />
       ) : null}

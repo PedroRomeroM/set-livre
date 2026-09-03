@@ -51,49 +51,50 @@ function dependencies(overrides = {}) {
   };
 }
 
+function adapterRpc(items = [candidates[0]]) {
+  return vi.fn(async (name, parameters = {}) => {
+    if (name === "begin_studio_media_cleanup_run") {
+      return {
+        data: {
+          claimed: null,
+          deleted: null,
+          errorCode: null,
+          failed: null,
+          functionSlug,
+          runId,
+          status: "running",
+        },
+        error: null,
+      };
+    }
+    if (name === "claim_studio_media_cleanup") {
+      return { data: { claimToken: runId, items }, error: null };
+    }
+    if (name === "complete_studio_media_cleanup") {
+      return { data: null, error: null };
+    }
+    if (name === "complete_studio_media_cleanup_run") {
+      return {
+        data: {
+          claimed: parameters.p_claimed,
+          deleted: parameters.p_deleted,
+          errorCode: parameters.p_error_code,
+          failed: parameters.p_failed,
+          functionSlug,
+          runId,
+          status: parameters.p_status,
+        },
+        error: null,
+      };
+    }
+    throw new Error(`RPC inesperada: ${name}`);
+  });
+}
+
 describe("studio media cleanup edge adapter", () => {
   it("executa claim e complete com o workerId entregue pelo core", async () => {
     const remove = vi.fn(async () => ({ data: [], error: null }));
-    const rpc = vi.fn(async (name) => {
-      if (name === "begin_studio_media_cleanup_run") {
-        return {
-          data: {
-            claimed: null,
-            deleted: null,
-            errorCode: null,
-            failed: null,
-            functionSlug,
-            runId,
-            status: "running",
-          },
-          error: null,
-        };
-      }
-      if (name === "claim_studio_media_cleanup") {
-        return {
-          data: { claimToken: runId, items: [candidates[0]] },
-          error: null,
-        };
-      }
-      if (name === "complete_studio_media_cleanup") {
-        return { data: null, error: null };
-      }
-      if (name === "complete_studio_media_cleanup_run") {
-        return {
-          data: {
-            claimed: 1,
-            deleted: 1,
-            errorCode: null,
-            failed: 0,
-            functionSlug,
-            runId,
-            status: "succeeded",
-          },
-          error: null,
-        };
-      }
-      throw new Error(`RPC inesperada: ${name}`);
-    });
+    const rpc = adapterRpc();
     const createSupabaseClient = vi.fn(() => ({
       rpc,
       storage: { from: vi.fn(() => ({ remove })) },
@@ -129,6 +130,95 @@ describe("studio media cleanup edge adapter", () => {
       p_succeeded: true,
     });
     expect(remove).toHaveBeenCalledWith(candidates[0].paths);
+  });
+
+  it("aborta remoção Storage pendente no deadline da invocação e fecha o ledger", async () => {
+    vi.useFakeTimers();
+    try {
+      let observedSignal;
+      let notifyStorageStarted;
+      const storageStarted = new Promise((resolve) => {
+        notifyStorageStarted = resolve;
+      });
+      const fetchImplementation = vi.fn(
+        (_input, init) =>
+          new Promise((_resolve, reject) => {
+            observedSignal = init?.signal;
+            if (!(observedSignal instanceof AbortSignal)) {
+              reject(new Error("missing storage abort signal"));
+              return;
+            }
+            notifyStorageStarted();
+            const rejectOnAbort = () =>
+              reject(
+                observedSignal.reason ??
+                  new DOMException("cleanup_storage_remove_aborted", "AbortError"),
+              );
+            if (observedSignal.aborted) rejectOnAbort();
+            else observedSignal.addEventListener("abort", rejectOnAbort, { once: true });
+          }),
+      );
+      const rpc = adapterRpc();
+      const createSupabaseClient = vi.fn((_url, _secretKey, options) => ({
+        rpc,
+        storage: {
+          from: vi.fn(() => ({
+            remove: vi.fn(async (paths) => {
+              await options.global.fetch(
+                "https://supabase.example/storage/v1/object/studio-media",
+                {
+                  body: JSON.stringify({ prefixes: paths }),
+                  method: "DELETE",
+                },
+              );
+              return { data: [], error: null };
+            }),
+          })),
+        },
+      }));
+      const secretKey = "sb_secret_adapterTestKey123";
+      const handler = createCleanupRequestHandler({
+        createSupabaseClient,
+        fetchImplementation,
+        readConfiguration: () => ({ secretKey, url: "https://supabase.example" }),
+      });
+
+      const responsePromise = handler(
+        new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+          body: JSON.stringify({ runId }),
+          headers: { apikey: secretKey, "content-type": "application/json" },
+          method: "POST",
+        }),
+      );
+      await storageStarted;
+      expect(observedSignal).toBeInstanceOf(AbortSignal);
+      expect(observedSignal.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const response = await responsePromise;
+      expect(observedSignal.aborted).toBe(true);
+      expect(observedSignal.reason).toMatchObject({
+        message: "cleanup_storage_remove_deadline_exceeded",
+        name: "TimeoutError",
+      });
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        claimed: 1,
+        deleted: 0,
+        errorCode: "cleanup_storage_remove_failed",
+        failed: 1,
+      });
+      expect(rpc).toHaveBeenCalledWith("complete_studio_media_cleanup", {
+        p_claim_token: runId,
+        p_error_code: "storage_remove_failed",
+        p_media_id: candidates[0].mediaId,
+        p_succeeded: false,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

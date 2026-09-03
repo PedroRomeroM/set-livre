@@ -24,6 +24,7 @@ import { StorageApiError, StorageClient } from "@supabase/storage-js";
 import { z } from "zod";
 
 const studioRequestTimeoutMs = 10_000;
+export const studioMediaFinalizeRequestTimeoutMs = 45_000;
 
 export class StudioApiError extends Error {
   readonly code: string;
@@ -52,6 +53,7 @@ async function requestStudio<TData>(
   path: string,
   dataSchema: z.ZodType<TData>,
   init?: RequestInit,
+  timeoutMs = studioRequestTimeoutMs,
 ): Promise<TData> {
   const controller = new AbortController();
   const externalSignal = init?.signal;
@@ -59,7 +61,7 @@ async function requestStudio<TData>(
     externalSignal === undefined || externalSignal === null
       ? controller.signal
       : AbortSignal.any([controller.signal, externalSignal]);
-  const timeout = window.setTimeout(() => controller.abort(), studioRequestTimeoutMs);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   let payload: unknown;
   try {
@@ -226,10 +228,15 @@ export function prepareStudioMediaUpload(
 export function finalizeStudioMediaUpload(
   command: Extract<StudioMediaCommand, { action: "studio.media.upload.finalize" }>,
 ) {
-  return requestStudio("/api/commands", studioMediaGallerySchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudio(
+    "/api/commands",
+    studioMediaGallerySchema,
+    {
+      body: JSON.stringify(command),
+      method: "POST",
+    },
+    studioMediaFinalizeRequestTimeoutMs,
+  );
 }
 
 export function reorderStudioMedia(

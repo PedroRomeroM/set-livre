@@ -20,6 +20,7 @@ import {
   listBackofficeUsersClient,
   revealBackofficePiiWithoutCaching,
 } from "./backoffice-api";
+import { useBackofficePrivateBoundary } from "./backoffice-private-boundary";
 import { backofficeFilterFingerprint, backofficeQueryKeys } from "./query-keys";
 import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 import styles from "./backoffice.module.css";
@@ -96,7 +97,7 @@ function UserPiiReveal({
     <div className={styles.confirmation}>
       <Field label="Motivo auditado">
         <Select
-          disabled={!interactive || retryAvailable}
+          disabled={!interactive || reveal.isPending || retryAvailable}
           onChange={(event) => setReason(event.target.value as BackofficePiiReason)}
           value={reason}
         >
@@ -211,6 +212,7 @@ function UserCard({
 
 export function UserDirectory({ mode, session }: { mode: Mode; session: AuthenticatedSession }) {
   const queryClient = useQueryClient();
+  const recomposeSession = useBackofficePrivateBoundary();
   const interactive = useBackofficeHydrated();
   const [draftQuery, setDraftQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState({ fingerprint: "empty", query: "" });
@@ -260,11 +262,24 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         return;
       }
       const ambiguous = isAmbiguousBackofficeError(error);
+      const command = pendingStatusCommand.current;
+      if (
+        ambiguous &&
+        command?.action === "backoffice.user.suspend" &&
+        command.payload.userId === session.scope
+      ) {
+        recomposeSession();
+        return;
+      }
       setStatusRetryAvailable(ambiguous);
       if (!ambiguous) pendingStatusCommand.current = undefined;
     },
     onSuccess: async (user) => {
       pendingStatusCommand.current = undefined;
+      if (user.id === session.scope && user.status === "suspended") {
+        recomposeSession();
+        return;
+      }
       setStatusImpactConfirmed(false);
       setStatusRetryAvailable(false);
       setStatusTarget(undefined);

@@ -1,3 +1,8 @@
+import {
+  apiSuccessSchema,
+  studioCreateCommandSchema,
+  studioEditorSchema,
+} from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
 import { readFeat002IdentitySession } from "../../helpers/feat-002-authentication";
@@ -216,6 +221,128 @@ test("SL-F006-E2E-003 @p0 dono B não lê nem altera o estúdio do dono A", asyn
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identityB);
     await cleanupFeat006QaIdentity(identityA);
+  }
+});
+
+test("SL-F006-E2E-018 @p0 reload reconcilia criação ambígua com a mesma identidade", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, "018_create_reload_recovery");
+  const submittedCommands: unknown[] = [];
+  let committedStudioId: string | undefined;
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") {
+      return;
+    }
+    const command = studioCreateCommandSchema.safeParse(request.postDataJSON());
+    if (command.success) submittedCommands.push(command.data);
+  });
+  try {
+    await provisionFeat006Owner(page, identity, "018");
+    await fillFeat006Core(page, { name: "Estúdio recuperado após reload" });
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
+        expect(command.action).toBe("studio.create");
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        committedStudioId = apiSuccessSchema(studioEditorSchema).parse(await response.json()).data
+          .studioId;
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    await expect(
+      page.getByText("Não foi possível conectar. Verifique sua internet e tente novamente."),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toBeDisabled();
+
+    const replayResponse = page.waitForResponse((response) => {
+      if (response.request().method() !== "POST") return false;
+      const command = studioCreateCommandSchema.safeParse(response.request().postDataJSON());
+      return (
+        new URL(response.url()).pathname === "/api/commands" &&
+        command.success &&
+        response.status() === 200
+      );
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await replayResponse;
+
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+      "Estúdio recuperado após reload",
+    );
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
+    expect(submittedCommands).toHaveLength(2);
+    expect(submittedCommands[1]).toEqual(submittedCommands[0]);
+    if (committedStudioId === undefined) {
+      throw new Error("A resposta perdida não publicou a identidade do estúdio criado.");
+    }
+    const evidence = await readFeat006StudioEvidence(committedStudioId);
+    expect(evidence.revisions).toHaveLength(1);
+
+    await page.getByRole("button", { name: "Abrir editor criado" }).click();
+    await expect(page).toHaveURL(new RegExp(`/dono/estudios/${committedStudioId}/dados$`, "u"));
+    await expect(page.getByText("Rascunho privado", { exact: true })).toBeVisible();
+    await page.goto("/dono/estudios/novo");
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+    expect(submittedCommands).toHaveLength(2);
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
+test("SL-F006-E2E-019 @p0 rejeição conclusiva libera uma nova tentativa na mesma aba", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  const identity = createFeat006QaIdentity(testInfo, "019_conclusive_create_rejection");
+  try {
+    await provisionFeat006Owner(page, identity, "019");
+    await fillFeat006Core(page, { name: "Estúdio após rejeição conclusiva" });
+    await page.route(
+      "**/api/commands",
+      (route) =>
+        route.fulfill({
+          json: {
+            error: {
+              code: "RATE_LIMITED",
+              message: "Aguarde antes de criar outro estúdio.",
+              requestId: "90909090-0000-4000-8000-000000000019",
+            },
+          },
+          status: 429,
+        }),
+      { times: 1 },
+    );
+
+    const create = page.getByRole("button", { name: "Criar estúdio em rascunho" });
+    await create.click();
+
+    await expect(
+      page.getByText("Aguarde antes de criar outro estúdio.", { exact: true }),
+    ).toBeVisible();
+    await expect(create).toBeEnabled();
+    await expect(
+      page.getByRole("alert", { name: "Criação protegida contra duplicação" }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() =>
+        Object.keys(window.sessionStorage).filter((key) =>
+          key.startsWith("set-livre:studio-create:v1:"),
+        ),
+      ),
+    ).toEqual([]);
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
   }
 });
 

@@ -167,12 +167,10 @@
           <code>Completed</code>, corrige findings aplicáveis, resolve as conversas e repete o ciclo
           até uma declaração explícita de review limpo. Antes do merge, uma revisão holística cobre
           todo o diff contra <code>main</code>; timeout ou ausência de resposta nunca equivalem a
-          aprovação. O CI repete os gates em Windows e Linux limpos; o job Linux possui orçamento de
-          90 minutos depois que o limite de 75 interrompeu uma matriz de 421 casos no cenário 402,
-          antes dos contratos de release. Cenários Playwright sem risco de engine ou composição
-          rodam uma vez no projeto <code>contract-chromium</code>; somente riscos responsivos,
-          visuais ou de engine justificam multiplicação. Os contratos detalhados ficam nas fontes
-          canônicas de <a href="docs/development.md">desenvolvimento</a>,
+          aprovação. O CI repete os gates em Windows e Linux limpos. Cenários Playwright sem risco
+          de engine ou composição rodam uma vez no projeto <code>contract-chromium</code>; somente
+          riscos responsivos, visuais ou de engine justificam multiplicação. Os contratos detalhados
+          ficam nas fontes canônicas de <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a>,
           <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
         </p>

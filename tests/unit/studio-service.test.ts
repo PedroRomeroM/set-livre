@@ -7,7 +7,10 @@ vi.mock("@/lib/server/rate-limit", () => ({
   enforceIdentityRateLimit: mocks.enforceIdentityRateLimit,
 }));
 
-import { createStudioService } from "../../src/domains/studios/server/studio-service";
+import {
+  createStudioService,
+  studioServiceBoundary,
+} from "../../src/domains/studios/server/studio-service";
 import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-test-fixture";
 
 const dependencies = {
@@ -61,6 +64,43 @@ describe("studio service", () => {
       userId: studioTestIds.userId,
     });
     expect(mocks.enforceIdentityRateLimit).toHaveBeenCalledOnce();
+  });
+
+  it("shares the 20-per-hour upload-prepare ceiling by owner identity", () => {
+    studioServiceBoundary.enforceStudioMutationRateLimit(
+      "studio.media.upload.prepare",
+      studioTestIds.userId,
+    );
+    studioServiceBoundary.enforceStudioMutationRateLimit(
+      "studio.media.upload.prepare",
+      studioTestIds.userId,
+    );
+    studioServiceBoundary.enforceStudioMutationRateLimit(
+      "studio.media.upload.finalize",
+      studioTestIds.userId,
+    );
+
+    expect(mocks.enforceIdentityRateLimit).toHaveBeenNthCalledWith(
+      1,
+      "studio.media.upload.prepare",
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
+      { limit: 20, windowMs: 60 * 60_000 },
+    );
+    expect(mocks.enforceIdentityRateLimit).toHaveBeenNthCalledWith(
+      2,
+      "studio.media.upload.prepare",
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
+      { limit: 20, windowMs: 60 * 60_000 },
+    );
+    expect(mocks.enforceIdentityRateLimit.mock.calls[0]?.[1]).toBe(
+      mocks.enforceIdentityRateLimit.mock.calls[1]?.[1],
+    );
+    expect(mocks.enforceIdentityRateLimit).toHaveBeenNthCalledWith(
+      3,
+      "studio.media.upload.finalize",
+      expect.stringMatching(/^[a-f0-9]{64}$/u),
+      { limit: 60, windowMs: 10 * 60_000 },
+    );
   });
 
   it("derives revision content identities and separates both canonical payloads", async () => {

@@ -36,6 +36,13 @@ import {
   updateStudioCore,
 } from "./studio-api";
 import {
+  clearStudioCreationAttempt,
+  consumeResolvedStudioCreation,
+  readStudioCreationRecovery,
+  resolveStudioCreationRecoveryStorage,
+  writeStudioCreationRecovery,
+} from "./studio-creation-recovery";
+import {
   assertStudioEditorBoundary,
   preserveNewestStudioEditor,
   publishStudioEditorAfterPendingRead,
@@ -74,6 +81,10 @@ type StudioCoreConflict = Readonly<{
   kind: StudioCoreConflictKind;
   remote: StudioEditor;
 }>;
+type StudioCreationRecoveryState =
+  | Readonly<{ problem: string; status: "blocked" }>
+  | Readonly<{ status: "checking" | "ready" | "recovering" }>
+  | Readonly<{ status: "resolved"; studioId: string }>;
 
 class StudioCreationEligibilityChangedError extends Error {
   constructor() {
@@ -145,6 +156,15 @@ function parseCoreForm(state: StudioCoreFormState) {
     ...state,
     capacity: Number(state.capacity),
   });
+}
+
+function creationCommandFormState(command: CreateCommand): StudioCoreFormState {
+  return {
+    ...command.payload,
+    addressComplement: command.payload.addressComplement ?? "",
+    capacity: String(command.payload.capacity),
+    postalCode: formatStudioPostalCode(command.payload.postalCode),
+  };
 }
 
 function fieldErrorProp(errors: FieldErrors, field: keyof StudioCoreFormState) {
@@ -458,10 +478,35 @@ function CreateStudioForm({
   });
   const typesQuery = useStudioTypes(initialTypes, userId);
   const pendingCommand = useRef<CreateCommand>(undefined);
-  const [createdStudioId, setCreatedStudioId] = useState<string>();
+  const recoveryInitialized = useRef(false);
+  const [creationRecovery, setCreationRecovery] = useState<StudioCreationRecoveryState>({
+    status: "checking",
+  });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState<StudioCoreFormState>(emptyFormState);
-  const [successMessage, setSuccessMessage] = useState<string>();
+
+  function releaseConclusivelyRejectedCreation() {
+    const command = pendingCommand.current;
+    if (
+      command === undefined ||
+      !clearStudioCreationAttempt(
+        resolveStudioCreationRecoveryStorage(window),
+        userId,
+        command.idempotencyKey,
+      )
+    ) {
+      setCreationRecovery({
+        problem:
+          "A tentativa foi rejeitada, mas sua identidade não pôde ser removida com segurança. Nenhuma nova criação será liberada nesta aba.",
+        status: "blocked",
+      });
+      return false;
+    }
+    pendingCommand.current = undefined;
+    setCreationRecovery({ status: "ready" });
+    return true;
+  }
+
   const mutation = useMutation({
     mutationFn: () => {
       if (pendingCommand.current === undefined) {
@@ -472,25 +517,96 @@ function CreateStudioForm({
     networkMode: "always",
     onError: async (error) => {
       if (isStudioBoundaryChangedError(error)) {
+        setCreationRecovery({ status: "recovering" });
         recomposeStudioClientBoundary(queryClient);
         return;
       }
-      if (isStudioTypeUnavailableError(error)) {
-        setFormState((current) => ({ ...current, studioTypeId: "" }));
-        await typesQuery.refetch();
+      if (isAmbiguousStudioError(error)) {
+        setCreationRecovery({ status: "recovering" });
+        return;
       }
+      if (error instanceof StudioApiError) {
+        if (!releaseConclusivelyRejectedCreation()) return;
+        if (isStudioTypeUnavailableError(error)) {
+          setFormState((current) => ({ ...current, studioTypeId: "" }));
+          await typesQuery.refetch();
+        }
+        return;
+      }
+      setCreationRecovery({
+        problem:
+          "A tentativa anterior não pôde ser reconciliada com segurança. Nenhuma nova criação será liberada nesta aba.",
+        status: "blocked",
+      });
     },
     onSuccess: (editor) => {
-      setCreatedStudioId(editor.studioId);
-      setSuccessMessage("Rascunho criado. Abra o editor canônico para continuar.");
-      pendingCommand.current = undefined;
+      const command = pendingCommand.current;
+      if (command !== undefined) {
+        writeStudioCreationRecovery(resolveStudioCreationRecoveryStorage(window), {
+          command,
+          createdStudioId: editor.studioId,
+          version: 1,
+        });
+      }
+      setCreationRecovery({ status: "resolved", studioId: editor.studioId });
     },
   });
+  const replayStudioCreation = mutation.mutate;
   const authoritativeScopeChanged = accessQuery.error instanceof IdentitySessionScopeChangedError;
   const ownerScopeChanged = accessQuery.error instanceof OwnerPrivateScopeChangedError;
   const eligibilityChanged = accessQuery.error instanceof StudioCreationEligibilityChangedError;
   const boundaryTransitionRequired =
     authoritativeScopeChanged || ownerScopeChanged || eligibilityChanged;
+
+  useEffect(() => {
+    if (accessQuery.fetchStatus !== "idle" || accessQuery.isError || accessQuery.data !== userId) {
+      return;
+    }
+    let active = true;
+    queueMicrotask(() => {
+      if (!active || recoveryInitialized.current) return;
+      recoveryInitialized.current = true;
+      const recovery = readStudioCreationRecovery(
+        resolveStudioCreationRecoveryStorage(window),
+        userId,
+      );
+      if (recovery.state === "empty") {
+        setCreationRecovery({ status: "ready" });
+        return;
+      }
+      if (recovery.state !== "found") {
+        setCreationRecovery({
+          problem:
+            recovery.state === "unavailable"
+              ? "O navegador não disponibilizou o armazenamento da aba necessário para preservar uma criação idempotente."
+              : "Existe uma tentativa anterior, mas sua identidade persistida não pôde ser validada.",
+          status: "blocked",
+        });
+        return;
+      }
+
+      pendingCommand.current = recovery.record.command;
+      setFormState(creationCommandFormState(recovery.record.command));
+      if (recovery.record.createdStudioId !== null) {
+        setCreationRecovery({
+          status: "resolved",
+          studioId: recovery.record.createdStudioId,
+        });
+        return;
+      }
+      setCreationRecovery({ status: "recovering" });
+      replayStudioCreation();
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    accessQuery.data,
+    accessQuery.fetchStatus,
+    accessQuery.isError,
+    replayStudioCreation,
+    userId,
+  ]);
 
   useEffect(() => {
     if (!boundaryTransitionRequired) return;
@@ -506,18 +622,33 @@ function CreateStudioForm({
     event.preventDefault();
     mutation.reset();
     setFieldErrors({});
-    setSuccessMessage(undefined);
     const parsed = parseCoreForm(formState);
     if (!parsed.success) {
       setFieldErrors(firstFieldErrors(parsed.error));
       return;
     }
-    pendingCommand.current = {
+    const command: CreateCommand = {
       action: "studio.create",
       expectedScope: userId,
       idempotencyKey: crypto.randomUUID(),
       payload: parsed.data,
     };
+    if (
+      !writeStudioCreationRecovery(resolveStudioCreationRecoveryStorage(window), {
+        command,
+        createdStudioId: null,
+        version: 1,
+      })
+    ) {
+      setCreationRecovery({
+        problem:
+          "Não foi possível preservar a identidade desta criação na aba. O comando não foi enviado para evitar duplicação.",
+        status: "blocked",
+      });
+      return;
+    }
+    pendingCommand.current = command;
+    setCreationRecovery({ status: "recovering" });
     mutation.mutate();
   }
 
@@ -529,7 +660,7 @@ function CreateStudioForm({
   const formLocked =
     mutation.isPending ||
     hasAmbiguousRequest ||
-    createdStudioId !== undefined ||
+    creationRecovery.status !== "ready" ||
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
 
@@ -565,6 +696,18 @@ function CreateStudioForm({
     );
   }
 
+  if (creationRecovery.status === "checking") {
+    return <Alert>Verificando se esta aba possui uma criação anterior para reconciliar…</Alert>;
+  }
+
+  if (creationRecovery.status === "blocked") {
+    return (
+      <Alert title="Criação protegida contra duplicação" variant="error">
+        {creationRecovery.problem}
+      </Alert>
+    );
+  }
+
   return (
     <div className={styles.editorLayout}>
       <form className={styles.form} noValidate onSubmit={submit}>
@@ -579,21 +722,19 @@ function CreateStudioForm({
           </Alert>
         ) : null}
         <StudioMutationFeedback error={error} onRetry={retry} />
-        {successMessage === undefined ? null : (
+        {creationRecovery.status === "resolved" ? (
           <Alert title="Estúdio salvo" variant="status">
             <Stack space={3}>
-              <span>{successMessage}</span>
-              {createdStudioId === undefined ? null : (
-                <Button
-                  onClick={() => router.push(`/dono/estudios/${createdStudioId}/dados`)}
-                  variant="secondary"
-                >
-                  Abrir editor criado
-                </Button>
-              )}
+              <span>Rascunho criado. Abra o editor canônico para continuar.</span>
+              <Button
+                onClick={() => router.push(`/dono/estudios/${creationRecovery.studioId}/dados`)}
+                variant="secondary"
+              >
+                Abrir editor criado
+              </Button>
             </Stack>
           </Alert>
-        )}
+        ) : null}
         <StudioCoreFields
           disabled={formLocked}
           errors={visibleErrors}
@@ -805,6 +946,14 @@ function EditStudioForm({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState(() => editorFormState(initialEditor));
   const [successMessage, setSuccessMessage] = useState<string>();
+
+  useEffect(() => {
+    consumeResolvedStudioCreation(
+      resolveStudioCreationRecoveryStorage(window),
+      userId,
+      initialEditor.studioId,
+    );
+  }, [initialEditor.studioId, userId]);
 
   useEffect(() => {
     if (

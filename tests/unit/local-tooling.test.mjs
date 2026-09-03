@@ -27,6 +27,7 @@ import {
   runNextBuildWithCacheCleanup,
   runSupabase,
   runWindowsDatabaseTests,
+  startLocalSupabase,
   supabaseLocalNetworkName,
   validateLocalDockerContext,
   waitForSupabaseProjectStartup,
@@ -1996,6 +1997,18 @@ describe("local tooling contracts", () => {
     expect(classifySupabaseProjectStartup([])).toBe("absent");
     expect(classifySupabaseProjectStartup([healthy, starting])).toBe("starting");
     expect(classifySupabaseProjectStartup([healthy])).toBe("ready");
+    expect(classifySupabaseProjectStartup([{ State: { Status: "restarting" } }])).toBe("starting");
+    for (const status of ["created", "paused", "removing", "exited", "dead"]) {
+      expect(classifySupabaseProjectStartup([healthy, { State: { Status: status } }])).toBe(
+        "stopped",
+      );
+    }
+    expect(
+      classifySupabaseProjectStartup([
+        healthy,
+        { State: { Health: { Status: "unhealthy" }, Status: "running" } },
+      ]),
+    ).toBe("stopped");
 
     const states = ["starting", "starting", "ready"];
     const pauses = [];
@@ -2004,9 +2017,10 @@ describe("local tooling contracts", () => {
         pause: (milliseconds) => pauses.push(milliseconds),
         readState: () => states.shift(),
       }),
-    ).toBe(true);
+    ).toBe("ready");
     expect(pauses).toEqual([500, 500]);
-    expect(waitForSupabaseProjectStartup({ readState: () => "absent" })).toBe(false);
+    expect(waitForSupabaseProjectStartup({ readState: () => "absent" })).toBe("absent");
+    expect(waitForSupabaseProjectStartup({ readState: () => "stopped" })).toBe("stopped");
     expect(() =>
       waitForSupabaseProjectStartup({
         maxAttempts: 2,
@@ -2015,6 +2029,35 @@ describe("local tooling contracts", () => {
       }),
     ).toThrow("não ficou saudável");
   });
+
+  it.each(["exited", "dead"])(
+    "stops a %s Supabase project before starting the canonical stack",
+    (status) => {
+      const actions = [];
+      const environment = { DOCKER_HOST: "tcp://127.0.0.1:2375" };
+
+      startLocalSupabase({
+        assertBindings: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("inspect");
+        },
+        ensureNetwork: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("network");
+        },
+        environment,
+        isStackRunning: () => false,
+        readState: () => classifySupabaseProjectStartup([{ State: { Status: status } }]),
+        runStart: () => actions.push("start"),
+        stopStack: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("stop");
+        },
+      });
+
+      expect(actions).toEqual(["stop", "network", "start", "inspect"]);
+    },
+  );
 
   it("stops a running Supabase stack when status or binding validation fails", () => {
     const actions = [];

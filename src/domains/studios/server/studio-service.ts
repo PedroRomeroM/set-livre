@@ -56,10 +56,11 @@ function assertMutableAccount(context: PrivateCommandContext) {
 }
 
 function enforceStudioMutationRateLimit(action: StudioCommand["action"], userId: string) {
-  enforceIdentityRateLimit(action, hashPrivateRateLimitValue(userId), {
-    limit: 60,
-    windowMs: 10 * 60_000,
-  });
+  const profile =
+    action === "studio.media.upload.prepare"
+      ? { limit: 20, windowMs: 60 * 60_000 }
+      : { limit: 60, windowMs: 10 * 60_000 };
+  enforceIdentityRateLimit(action, hashPrivateRateLimitValue(userId), profile);
 }
 
 function handleStudioDatabaseError(error: unknown): never {

@@ -3,6 +3,7 @@
   min-width: 0;
   max-width: 100%;
   min-height: 100svh;
+  overflow-wrap: anywhere;
   background: var(--sl-color-canvas);
 }
 
@@ -39,6 +40,13 @@
     max(1rem, env(safe-area-inset-left));
   color: #f6fff9;
   background: #102d22;
+}
+
+.header,
+.navigation {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .header > *,
@@ -85,6 +93,7 @@
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .navigation {
@@ -178,7 +187,10 @@
 .runtimeUnlockBoundary p,
 .runtimeUnlockBoundary [role="alert"] {
   grid-column: 1 / -1;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .main {
@@ -204,6 +216,7 @@
 .pageStack h3 {
   margin-block: 0;
   line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .pageStack header > p:last-child {

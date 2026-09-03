@@ -6,8 +6,10 @@
 
 .label,
 .legend {
+  min-width: 0;
   color: var(--sl-color-ink-strong);
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .required {

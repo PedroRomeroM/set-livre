@@ -311,6 +311,8 @@ describe("production media cleanup configuration", () => {
     );
     expect(headers.get("apikey")).toBe(secretKey);
     expect(headers.has("authorization")).toBe(false);
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal.aborted).toBe(false);
 
     expect(
       isConfirmedStorageObjectAbsence(
@@ -325,6 +327,72 @@ describe("production media cleanup configuration", () => {
       expect(isConfirmedStorageObjectAbsence(error)).toBe(false);
     }
   });
+
+  it.each(["upload", "remove", "download"])(
+    "actively aborts a stalled canary Storage %s request at its deadline",
+    async (operation) => {
+      vi.useFakeTimers();
+      try {
+        let observedSignal;
+        let notifyRequestStarted;
+        const requestStarted = new Promise((resolve) => {
+          notifyRequestStarted = resolve;
+        });
+        const fetchImplementation = vi.fn(
+          (_input, init) =>
+            new Promise((_resolve, reject) => {
+              observedSignal = init?.signal;
+              if (!(observedSignal instanceof AbortSignal)) {
+                reject(new Error("missing canary Storage abort signal"));
+                return;
+              }
+              notifyRequestStarted();
+              const rejectOnAbort = () =>
+                reject(
+                  observedSignal.reason ??
+                    new DOMException("canary_storage_request_aborted", "AbortError"),
+                );
+              if (observedSignal.aborted) rejectOnAbort();
+              else observedSignal.addEventListener("abort", rejectOnAbort, { once: true });
+            }),
+        );
+        const bucket = createProductionStorageClient({ fetchImplementation, secretKey }).from(
+          "studio-media",
+        );
+        const request =
+          operation === "upload"
+            ? bucket.upload("owners/probe.webp", new Uint8Array([1]), {
+                contentType: "image/webp",
+                upsert: false,
+              })
+            : operation === "remove"
+              ? bucket.remove(["owners/probe.webp"])
+              : bucket.download("owners/probe.webp");
+        const outcome = Promise.resolve(request);
+
+        await requestStarted;
+        expect(observedSignal).toBeInstanceOf(AbortSignal);
+        expect(observedSignal.aborted).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(15_000);
+
+        await expect(outcome).resolves.toMatchObject({
+          data: null,
+          error: {
+            name: "StorageUnknownError",
+            originalError: {
+              message: "O request do canário ao Storage excedeu o prazo.",
+              name: "TimeoutError",
+            },
+          },
+        });
+        expect(observedSignal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("rejects project drift before retrieving or writing a key", async () => {
     const runnerTemp = resolve("C:/runner-temp");
@@ -426,6 +494,19 @@ describe("production media cleanup configuration", () => {
         { activeReleaseSha, candidateSlug },
       ),
     ).toThrow("candidata");
+    expect(() =>
+      selectCleanupFunctionRetention(
+        functionInventory().filter((candidate) => candidate.slug !== activeSlug),
+        { activeReleaseSha, candidateSlug },
+      ),
+    ).toThrow("ativa");
+
+    expect(
+      selectCleanupFunctionRetention(functionInventory(), {
+        activeReleaseSha: candidateSha,
+        candidateSlug,
+      }).retained,
+    ).toContain(candidateSlug);
   });
 
   it("proves the candidate by direct HTTPS, ledger and Storage before pruning", async () => {

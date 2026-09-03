@@ -23,6 +23,7 @@ import {
   readFeat031UserStatus,
   unlockFeat031Backoffice,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
+import { withE2EAdminClient } from "../../helpers/e2e-database-preflight";
 import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 
@@ -61,6 +62,33 @@ function createHeldResponseGate(options: { outcome: "abort" | "fulfill" }) {
     waitUntilReady: () => responseReady,
     wasHandled: () => responseHandled,
   };
+}
+
+function createHeldOfflineNavigationGate() {
+  let releaseNavigation: () => void = () => undefined;
+  const navigationReleased = new Promise<void>((resolve) => {
+    releaseNavigation = () => resolve();
+  });
+
+  return {
+    handle: async (route: Route) => {
+      await navigationReleased;
+      await route.abort("internetdisconnected");
+    },
+    release: () => releaseNavigation(),
+  };
+}
+
+async function holdAuthoritativeNavigation(
+  page: Page,
+  gate: Readonly<{ handle: (route: Route) => Promise<void> }>,
+) {
+  await page.route(
+    (url) =>
+      url.origin === new URL(safeE2EEnvironment.backofficeBaseUrl).origin &&
+      (url.pathname === "/" || url.pathname === "/entrar"),
+    gate.handle,
+  );
 }
 
 async function expectBackofficeLoginClosedWithoutHydration(browser: Browser) {
@@ -174,6 +202,24 @@ async function searchUser(page: Page, query: string, userId: string | undefined)
   return card;
 }
 
+async function expireStrongAuthentication(userId: string | undefined) {
+  if (userId === undefined) {
+    throw new Error("A expiração de autenticação forte exige o operador provisionado.");
+  }
+  await withE2EAdminClient(async (client) => {
+    const result = await client.query(
+      `update private.backoffice_sessions
+       set opened_at = least(opened_at, pg_catalog.clock_timestamp() - interval '6 minutes')
+       where user_id = $1::uuid and closed_at is null
+       returning auth_session_id`,
+      [userId],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error("A sessão administrativa corrente não foi encontrada para expiração forte.");
+    }
+  });
+}
+
 test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos ficam bloqueados", async ({
   page,
 }, testInfo) => {
@@ -214,6 +260,214 @@ test("SL-F031-E2E-001 @p0 support suspende e restaura conta enquanto comandos fi
   } finally {
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [operator] });
+  }
+});
+
+test("SL-F031-E2E-020 @p0 auto-suspensão fecha o shell antes da recomposição", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "020_self_suspension");
+  const heldNavigation = createHeldResponseGate({ outcome: "fulfill" });
+  try {
+    await provisionFeat031Operator(page, support, "support", "031020");
+    await loginFeat031Backoffice(page, support);
+    await holdAuthoritativeNavigation(page, heldNavigation);
+
+    const card = await searchUser(page, support.email, support.userId);
+    await card.getByRole("button", { name: "Revisar suspensão" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
+    const response = page.waitForResponse(
+      (candidate) =>
+        new URL(candidate.url()).pathname === "/api/commands" &&
+        candidate.request().method() === "POST",
+    );
+    await confirmation.getByRole("button", { name: "Confirmar" }).click();
+    expect((await response).status()).toBe(200);
+    await heldNavigation.waitUntilReady();
+
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+    expect(await readFeat031UserStatus(support.userId ?? "")).toMatchObject({
+      account_version: 2,
+      status: "suspended",
+    });
+  } finally {
+    heldNavigation.release();
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-022 @p0 auto-suspensão com resposta perdida fecha o shell", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "022_lost_self_suspension");
+  const lostResponse = createHeldResponseGate({ outcome: "abort" });
+  const heldNavigation = createHeldResponseGate({ outcome: "fulfill" });
+  try {
+    await provisionFeat031Operator(page, support, "support", "031022");
+    await loginFeat031Backoffice(page, support);
+    await page.route("**/api/commands", lostResponse.handle);
+    await holdAuthoritativeNavigation(page, heldNavigation);
+
+    const card = await searchUser(page, support.email, support.userId);
+    await card.getByRole("button", { name: "Revisar suspensão" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
+    await confirmation.getByRole("button", { name: "Confirmar" }).click();
+    await lostResponse.waitUntilReady();
+    lostResponse.release();
+    await heldNavigation.waitUntilReady();
+
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+    expect(await readFeat031UserStatus(support.userId ?? "")).toMatchObject({
+      account_version: 2,
+      status: "suspended",
+    });
+    expect(await readFeat031Audit("backoffice.user_suspended", support.userId ?? "")).toHaveLength(
+      1,
+    );
+  } finally {
+    lostResponse.release();
+    heldNavigation.release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-021 @p0 reautenticação inconclusiva fecha a sessão privada", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const admin = createFeat031Operator(testInfo, "021_ambiguous_reauthentication");
+  const target = await createFeat031DirectIdentity("Reautenticação alvo");
+  const heldNavigation = createHeldResponseGate({ outcome: "fulfill" });
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031021");
+    await loginFeat031Backoffice(page, admin);
+    await expireStrongAuthentication(admin.userId);
+    await page.getByRole("link", { name: "Acessos" }).click();
+    const card = await searchUser(page, target.email, target.userId);
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
+    await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    const reauthentication = page.getByRole("heading", { name: "Confirme sua identidade" });
+    await expect(reauthentication).toBeVisible();
+
+    await page.route("**/api/auth/login", (route) =>
+      route.fulfill({
+        json: {
+          error: {
+            code: "AUTH_SESSION_RECHECK_REQUIRED",
+            message: "Não foi possível confirmar a entrada.",
+            requestId: "10000000-0000-4000-8000-000000000021",
+          },
+        },
+        status: 503,
+      }),
+    );
+    await holdAuthoritativeNavigation(page, heldNavigation);
+
+    await page.getByLabel("Senha atual").fill(admin.password);
+    const response = page.waitForResponse(
+      (candidate) => new URL(candidate.url()).pathname === "/api/auth/login",
+    );
+    await page.getByRole("button", { name: "Confirmar identidade" }).click();
+    expect((await response).status()).toBe(503);
+    await heldNavigation.waitUntilReady();
+
+    await expect(reauthentication).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+  } finally {
+    heldNavigation.release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [target], operators: [admin] });
+  }
+});
+
+test("SL-F031-E2E-023 @p0 expiração autoritativa oculta o shell offline", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "023_offline_expiration");
+  const heldNavigation = createHeldOfflineNavigationGate();
+  try {
+    await provisionFeat031Operator(page, support, "support", "031023");
+    await loginFeat031Backoffice(page, support, { unlockRuntime: false });
+    await page.clock.install({ time: Date.now() });
+    const payload = await page.evaluate(async () => {
+      const response = await fetch("/api/auth/session", { cache: "no-store" });
+      return response.json() as Promise<unknown>;
+    });
+    const parsed = apiSuccessSchema(backofficeSessionSchema).parse(payload).data;
+    if (!parsed.authenticated) throw new Error("A sessão FEAT-031 expirável não está autenticada.");
+    const browserNow = await page.evaluate(() => Date.now());
+    const expiringSession = {
+      ...parsed,
+      expiresAt: new Date(browserNow + 15_000).toISOString(),
+      runtimeUnlockExpiresAt: new Date(browserNow + 10_000).toISOString(),
+    };
+    await page.route("**/api/auth/session", (route) =>
+      route.fulfill({
+        json: {
+          data: expiringSession,
+          requestId: "10000000-0000-4000-8000-000000000023",
+        },
+        status: 200,
+      }),
+    );
+    const revalidation = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === "/api/auth/session",
+    );
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel("set-livre-backoffice-session-v1");
+      channel.postMessage("changed");
+      channel.close();
+    });
+    expect((await revalidation).status()).toBe(200);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Operações desbloqueadas até" }),
+    ).toBeVisible();
+    const sessionEffectsSettled = page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await page.clock.runFor(34);
+    await sessionEffectsSettled;
+    await holdAuthoritativeNavigation(page, heldNavigation);
+    await page.context().setOffline(true);
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
+    await page.clock.runFor(15_001);
+
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(page.getByText(support.email, { exact: true })).toHaveCount(0);
+  } finally {
+    heldNavigation.release();
+    await page
+      .context()
+      .setOffline(false)
+      .catch(() => undefined);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [support] });
   }
 });
 
@@ -445,11 +699,16 @@ test("SL-F031-E2E-002 @p0 somente admin gerencia papéis", async ({ browser, pag
   }
 });
 
-test("SL-F031-E2E-003 @p0 salvaguarda impede remover o último admin", async ({
+test("SL-F031-E2E-003 @p0 salvaguarda protege o último admin e autoriza revogação própria segura", async ({
+  browser,
   page,
 }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const admin = createFeat031Operator(testInfo, "003_last_admin");
+  const keeper = createFeat031Operator(testInfo, "003_keeper_admin");
+  const keeperContext = await browser.newContext({ baseURL: safeE2EEnvironment.publicBaseUrl });
+  const keeperPage = await keeperContext.newPage();
+  const heldNavigation = createHeldResponseGate({ outcome: "fulfill" });
   try {
     await provisionFeat031Operator(page, admin, "admin", "031003");
     await loginFeat031Backoffice(page, admin);
@@ -462,9 +721,70 @@ test("SL-F031-E2E-003 @p0 salvaguarda impede remover o último admin", async ({
       page.getByRole("region", { name: "Ações de acesso" }).getByRole("alert"),
     ).toContainText("salvaguarda");
     expect(await readFeat031Roles(admin.userId ?? "")).toEqual([{ role: "admin" }]);
+
+    await provisionFeat031Operator(keeperPage, keeper, "admin", "031003b");
+    await keeperContext.close();
+    await holdAuthoritativeNavigation(page, heldNavigation);
+    await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    await heldNavigation.waitUntilReady();
+
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+    expect(await readFeat031Roles(admin.userId ?? "")).toEqual([]);
+    expect(await readFeat031Roles(keeper.userId ?? "")).toEqual([{ role: "admin" }]);
+    expect(await readFeat031Audit("backoffice.role_revoked", admin.userId ?? "")).toHaveLength(1);
   } finally {
+    heldNavigation.release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
-    await cleanupFeat031Users({ operators: [admin] });
+    await keeperContext.close().catch(() => undefined);
+    await cleanupFeat031Users({ operators: [admin, keeper] });
+  }
+});
+
+test("SL-F031-E2E-024 @p0 revogação administrativa própria perdida fecha o shell", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const admin = createFeat031Operator(testInfo, "024_lost_self_admin_revoke");
+  const keeper = createFeat031Operator(testInfo, "024_keeper_admin");
+  const keeperContext = await browser.newContext({ baseURL: safeE2EEnvironment.publicBaseUrl });
+  const keeperPage = await keeperContext.newPage();
+  const lostResponse = createHeldResponseGate({ outcome: "abort" });
+  const heldNavigation = createHeldResponseGate({ outcome: "fulfill" });
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031024a");
+    await provisionFeat031Operator(keeperPage, keeper, "admin", "031024b");
+    await keeperContext.close();
+    await loginFeat031Backoffice(page, admin);
+    await page.getByRole("link", { name: "Acessos" }).click();
+    const card = await searchUser(page, admin.email, admin.userId);
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar revogação administrativa" }).click();
+    await page.route("**/api/commands", lostResponse.handle);
+    await holdAuthoritativeNavigation(page, heldNavigation);
+    await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    await lostResponse.waitUntilReady();
+    lostResponse.release();
+    await heldNavigation.waitUntilReady();
+
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+    expect(await readFeat031Roles(admin.userId ?? "")).toEqual([]);
+    expect(await readFeat031Roles(keeper.userId ?? "")).toEqual([{ role: "admin" }]);
+    expect(await readFeat031Audit("backoffice.role_revoked", admin.userId ?? "")).toHaveLength(1);
+  } finally {
+    lostResponse.release();
+    heldNavigation.release();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await keeperContext.close().catch(() => undefined);
+    await cleanupFeat031Users({ operators: [admin, keeper] });
   }
 });
 

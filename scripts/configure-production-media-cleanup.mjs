@@ -34,6 +34,7 @@ const cleanupProbeObject = Buffer.from(
 );
 const cleanupConfigurationLockName = "set-livre-production-media-cleanup";
 const staleCleanupProbeBatchSize = 100;
+const storageRequestDeadlineMs = 15_000;
 
 function isExactObject(value, keys) {
   return (
@@ -135,6 +136,32 @@ export function assertProductionMediaBucket(rows) {
   return bucket;
 }
 
+function createStorageDeadlineFetch(fetchImplementation) {
+  return async (input, init) => {
+    const deadlineController = new AbortController();
+    const deadlineError = new DOMException(
+      "O request do canário ao Storage excedeu o prazo.",
+      "TimeoutError",
+    );
+    const deadline = setTimeout(
+      () => deadlineController.abort(deadlineError),
+      storageRequestDeadlineMs,
+    );
+    const signal = AbortSignal.any([
+      deadlineController.signal,
+      ...(input instanceof Request ? [input.signal] : []),
+      ...(init?.signal ? [init.signal] : []),
+    ]);
+
+    try {
+      if (signal.aborted) throw signal.reason ?? deadlineError;
+      return await fetchImplementation(input, { ...init, signal });
+    } finally {
+      clearTimeout(deadline);
+    }
+  };
+}
+
 export function createProductionStorageClient({ fetchImplementation, secretKey }) {
   if (typeof fetchImplementation !== "function") {
     throw new Error("O cliente HTTP do Storage não está disponível.");
@@ -142,7 +169,7 @@ export function createProductionStorageClient({ fetchImplementation, secretKey }
   return new StorageClient(
     `${productionCoordinates.supabaseUrl}/storage/v1`,
     { apikey: assertDefaultSecretKey(secretKey) },
-    fetchImplementation,
+    createStorageDeadlineFetch(fetchImplementation),
   );
 }
 
@@ -416,6 +443,9 @@ export function selectCleanupFunctionRetention(payload, { activeReleaseSha, cand
 
   if (!slugs.has(candidateSlug)) {
     throw new Error("A versão candidata de cleanup não foi encontrada com cardinalidade única.");
+  }
+  if (activeSlug !== candidateSlug && !slugs.has(activeSlug)) {
+    throw new Error("A versão ativa de cleanup não foi encontrada no inventário de produção.");
   }
 
   const protectedSlugs = new Set([activeSlug, candidateSlug]);

@@ -167,8 +167,9 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   ainda não salva e revogação da autoridade de dono durante a criação nos três engines;
 - validação, tokens locais independentes de update/descarte preservados após refetch, resposta de
   comando atrasada incapaz de abortar uma leitura autoritativa pendente ou regredir cache, formulário,
-  estado operacional e fences irmãos, estado terminal de criação,
-  retry ambíguo, reconfirmação de descarte sem liberar save stale, bloqueio administrativo,
+  estado operacional e fences irmãos, estado terminal de criação, recuperação idempotente após reload,
+  liberação segura de uma nova tentativa após rejeição conclusiva, retry ambíguo, reconfirmação de
+  descarte sem liberar save stale, bloqueio administrativo,
   arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,
   navegação terminal explícita após descarte e revogação de conta em desktop, mobile, 320 px e altura
   compacta;
@@ -221,13 +222,15 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - P0 desabilita JavaScript e prova que login, desbloqueio, busca de usuários e gestão de taxonomias
   permanecem inertes, sem fallback de segredos ou ação sem handler e com instrução explícita de
   recuperação, nos três engines;
-- PII mascarada até revelação justificada e busca/cursor server-side em desktop, 390 px, 320 px e
-  altura compacta;
+- PII mascarada até revelação justificada, com o motivo auditado imutável durante a requisição, e
+  busca/cursor server-side em desktop, 390 px, 320 px e altura compacta;
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
   regressão;
-- revalidação de sessão/papel fecha a composição privada anterior; conflitos de conta, papel e
-  taxonomia descartam confirmações versionadas e exigem nova leitura nas quatro composições de
-  regressão;
+- revalidação de sessão/papel, auto-suspensão confirmada ou com resposta perdida e reautenticação
+  inconclusiva fecham a composição privada anterior; revogar o próprio papel administrativo faz o mesmo
+  tanto no sucesso quanto diante de resposta perdida, sem expor shell stale; a expiração autoritativa
+  também fecha a shell quando a rede está indisponível; conflitos de conta, papel e taxonomia descartam
+  confirmações versionadas e exigem nova leitura nas quatro composições de regressão;
 - uma nova busca descarta confirmação, acknowledgment, retry e comando de status associados ao alvo
   anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa
   enquanto a anterior ou uma mutação está em voo;
@@ -258,7 +261,7 @@ domínio que mantêm `created_at/updated_at`.
 
 Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 
-- P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local, respostas perdidas
+- P0 percorre upload/finalização, capa, ordem, exclusão, MIME forjado, limite local e respostas perdidas
   antes/depois da persistência, reconciliação autoritativa que reutiliza o token já assinado quando a
   confirmação ambígua foi commitada, retomada dos demais itens enfileirados após verificação segura,
   recusa definitiva com liberação server-side da reserva e isolamento entre donos nos três engines;
@@ -268,6 +271,8 @@ Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
   e upload com reserva nova, além da ausência de controles privados sem JavaScript. `SL-F007-E2E-008`
   prova o descarte na própria aba; `SL-F008-CACHE-001` prova que uma releitura não cancelada adota o
   rollback autoritativo `N+1 → N` feito em outra aba sem restaurar uma resposta de comando obsoleta;
+- o teste unitário do cliente comprova que uma finalização válida pode ultrapassar o deadline genérico
+  sem exceder o envelope dedicado de 45 segundos, sem adicionar espera real à matriz Playwright;
 - axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 

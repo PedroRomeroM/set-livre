@@ -533,15 +533,33 @@ export function classifySupabaseProjectStartup(inspections) {
     throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
   }
   if (inspections.length === 0) return "absent";
+  let hasStartingContainer = false;
   for (const inspection of inspections) {
     const status = inspection?.State?.Status;
     const health = inspection?.State?.Health?.Status;
     if (typeof status !== "string" || (health !== undefined && typeof health !== "string")) {
       throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
     }
-    if (status !== "running" || (health !== undefined && health !== "healthy")) return "starting";
+    if (["created", "paused", "removing", "exited", "dead"].includes(status)) {
+      return "stopped";
+    }
+    if (status === "restarting") {
+      hasStartingContainer = true;
+      continue;
+    }
+    if (status !== "running") {
+      throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+    }
+    if (health === "unhealthy") return "stopped";
+    if (health === "starting") {
+      hasStartingContainer = true;
+      continue;
+    }
+    if (health !== undefined && health !== "healthy") {
+      throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+    }
   }
-  return "ready";
+  return hasStartingContainer ? "starting" : "ready";
 }
 
 const supabaseStartupWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -555,18 +573,19 @@ export function waitForSupabaseProjectStartup({
     throw new Error("A espera da stack Supabase local recebeu configuração inválida.");
   }
   let state = readState();
-  if (state === "absent") return false;
+  if (state === "absent" || state === "stopped") return state;
   for (let attempt = 0; state === "starting" && attempt < maxAttempts; attempt += 1) {
     pause(500);
     state = readState();
     if (state === "absent") {
       throw new Error("A stack Supabase local desapareceu durante a inicialização.");
     }
+    if (state === "stopped") return state;
   }
   if (state !== "ready") {
     throw new Error("A stack Supabase local não ficou saudável após o Docker Engine iniciar.");
   }
-  return true;
+  return state;
 }
 
 function supabaseProjectStartupState(environment) {
@@ -1472,24 +1491,33 @@ function stopScopedSupabaseStack(environment = assertLocalDockerDaemon()) {
   assertSupabaseProjectStopped(environment);
 }
 
-function startLocalSupabase() {
-  const environment = assertLocalDockerDaemon();
-  const stackIsRunning = waitForSupabaseProjectStartup({
-    readState: () => supabaseProjectStartupState(environment),
+export function startLocalSupabase({
+  assertBindings = assertSupabaseLoopbackBindings,
+  ensureNetwork = ensureSupabaseLoopbackNetwork,
+  environment = assertLocalDockerDaemon(),
+  isStackRunning = supabaseProjectContainersAreRunning,
+  readState = supabaseProjectStartupState,
+  runStart = () => runSupabase(["start"], { capture: true, network: true }),
+  stopStack = stopScopedSupabaseStack,
+} = {}) {
+  const stackState = waitForSupabaseProjectStartup({
+    readState: () => readState(environment),
   });
-  if (stackIsRunning) {
+  if (stackState === "stopped") {
+    stopStack(environment);
+  } else if (stackState === "ready") {
     try {
-      assertSupabaseLoopbackBindings(environment);
+      assertBindings(environment);
     } catch {
-      stopScopedSupabaseStack(environment);
+      stopStack(environment);
     }
   }
-  ensureSupabaseLoopbackNetwork(environment);
+  ensureNetwork(environment);
   try {
-    runSupabase(["start"], { capture: true, network: true });
-    assertSupabaseLoopbackBindings(environment);
+    runStart();
+    assertBindings(environment);
   } catch (error) {
-    if (supabaseProjectContainersAreRunning(environment)) stopScopedSupabaseStack(environment);
+    if (isStackRunning(environment)) stopStack(environment);
     throw error;
   }
 }

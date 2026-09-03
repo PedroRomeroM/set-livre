@@ -18,12 +18,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BackofficeClientError,
   executeBackofficeStudioCommand,
+  executeBackofficeTaxonomyCommand,
+  executeBackofficeUserCommand,
   isAmbiguousBackofficeError,
   isStaleBackofficeError,
   listBackofficeStudioReviewsClient,
   listBackofficeTaxonomiesClient,
   listBackofficeUsersClient,
+  loginBackofficeClient,
+  logoutBackofficeClient,
   readBackofficeStudioReviewClient,
+  revealBackofficePiiWithoutCaching,
+  unlockBackofficeRuntimeClient,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
 import { useBackofficeHydrated } from "../../apps/backoffice/src/domains/backoffice/components/use-backoffice-hydrated";
 import { backofficeAuthNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/auth-rate-limit-profile";
@@ -139,10 +145,10 @@ describe("backoffice contracts", () => {
     ).toBe(false);
   });
 
-  it("limits the ambiguous deadline to studio commands and preserves their exact key", async () => {
+  it("bounds every auth and administrative mutation while preserving idempotent payloads", async () => {
     vi.useFakeTimers();
     const fetchMock = installAbortAwareFetch();
-    const command = {
+    const studioCommand = {
       action: "backoffice.studio.approve",
       expectedScope: actorId,
       idempotencyKey,
@@ -152,18 +158,52 @@ describe("backoffice contracts", () => {
         studioId: targetId,
       },
     } as const;
+    const userCommand = {
+      action: "backoffice.user.suspend",
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: { expectedAccountVersion: 0, userId: targetId },
+    } as const;
+    const taxonomyCommand = {
+      action: "backoffice.taxonomy.upsert",
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: { kind: "tag", name: "Podcast", slug: "podcast", sortOrder: 1 },
+    } as const;
+    const piiCommand = {
+      action: "backoffice.user.revealPii",
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: { reason: "support_case", userId: targetId },
+    } as const;
 
-    const outcome = executeBackofficeStudioCommand(command).catch((error: unknown) => error);
-    expect(vi.getTimerCount()).toBe(1);
+    const outcomes = [
+      loginBackofficeClient({ email: "admin@example.com", password: "not-persisted" }),
+      logoutBackofficeClient(actorId),
+      unlockBackofficeRuntimeClient({ key: "A".repeat(43) }),
+      executeBackofficeStudioCommand(studioCommand),
+      executeBackofficeUserCommand(userCommand),
+      executeBackofficeTaxonomyCommand(taxonomyCommand),
+      revealBackofficePiiWithoutCaching(piiCommand, () => undefined),
+    ].map((outcome) => outcome.catch((error: unknown) => error));
+    expect(vi.getTimerCount()).toBe(outcomes.length);
     await vi.advanceTimersByTimeAsync(10_000);
 
-    await expect(outcome).resolves.toMatchObject({
-      code: "REQUEST_TIMEOUT",
-      status: 504,
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const request = fetchMock.mock.calls[0]?.[1];
-    expect(JSON.parse(String(request?.body))).toMatchObject({ idempotencyKey });
+    const errors = await Promise.all(outcomes);
+    expect(errors).toHaveLength(7);
+    for (const error of errors) {
+      expect(error).toMatchObject({ code: "REQUEST_TIMEOUT", status: 504 });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(outcomes.length);
+    const idempotencyKeys = fetchMock.mock.calls
+      .map((call) => JSON.parse(String(call[1]?.body)) as Record<string, unknown>)
+      .flatMap((body) => (typeof body.idempotencyKey === "string" ? [body.idempotencyKey] : []));
+    expect(idempotencyKeys).toEqual([
+      idempotencyKey,
+      idempotencyKey,
+      idempotencyKey,
+      idempotencyKey,
+    ]);
     expect(vi.getTimerCount()).toBe(0);
   });
 

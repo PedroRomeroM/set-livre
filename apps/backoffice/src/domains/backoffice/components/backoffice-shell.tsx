@@ -5,7 +5,7 @@ import { Alert, Button, Field } from "@set-livre/ui";
 import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 
 import {
@@ -14,6 +14,11 @@ import {
   readBackofficeSessionClient,
   unlockBackofficeRuntimeClient,
 } from "./backoffice-api";
+import {
+  backofficeSessionExpirationDelay,
+  BackofficePrivateBoundaryProvider,
+  recomposeBackofficePrivateBoundary,
+} from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
 import { backofficeQueryKeys } from "./query-keys";
 import {
@@ -23,7 +28,6 @@ import {
 import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
-
 function runtimeUnlockErrorMessage(error: unknown) {
   return error instanceof BackofficeClientError
     ? error.message
@@ -44,6 +48,8 @@ export function BackofficeShell({
   const queryClient = useQueryClient();
   const intentionalLogout = useRef(false);
   const [logoutTransitionStarted, setLogoutTransitionStarted] = useState(false);
+  const [sessionRecompositionStarted, setSessionRecompositionStarted] = useState(false);
+  const [expiredSessionDeadline, setExpiredSessionDeadline] = useState<string>();
   const pendingRuntimeKey = useRef<string>(undefined);
   const unlockForm = useRef<HTMLFormElement>(null);
   const currentSession = useQuery({
@@ -53,6 +59,7 @@ export function BackofficeShell({
     queryKey: backofficeQueryKeys.session(session.scope),
     refetchInterval: 15_000,
     refetchOnMount: "always",
+    refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
@@ -67,7 +74,50 @@ export function BackofficeShell({
     currentSessionData.scope === session.scope &&
     currentSessionData.email === session.email &&
     currentSessionData.authorizationVersion === session.authorizationVersion;
-  const privateViewUnsafe = currentSessionFailed || !sessionStillMatches;
+  const authoritativeExpiresAt =
+    sessionStillMatches && currentSessionData?.authenticated === true
+      ? currentSessionData.expiresAt
+      : undefined;
+  const sessionValidationExpired =
+    authoritativeExpiresAt !== undefined &&
+    (expiredSessionDeadline === authoritativeExpiresAt ||
+      backofficeSessionExpirationDelay(authoritativeExpiresAt) === 0);
+  const privateViewUnsafe =
+    currentSessionFailed || !sessionStillMatches || sessionValidationExpired;
+
+  const navigateToAuthoritativeSession = useCallback(
+    (destination: "/" | "/entrar") => {
+      router.replace(destination);
+      router.refresh();
+    },
+    [router],
+  );
+
+  const recomposeSession = useCallback(() => {
+    recomposeBackofficePrivateBoundary({
+      clearPrivateState: () => queryClient.clear(),
+      hidePrivateView: () => {
+        flushSync(() => {
+          setSessionRecompositionStarted(true);
+        });
+      },
+      notifySessionChanged: notifyBackofficeSessionChanged,
+      reloadAuthoritativeSession: () => navigateToAuthoritativeSession("/"),
+    });
+  }, [navigateToAuthoritativeSession, queryClient]);
+
+  useEffect(() => {
+    if (authoritativeExpiresAt === undefined) return;
+    const delay = backofficeSessionExpirationDelay(authoritativeExpiresAt);
+    if (delay === 0) return;
+    const expiration = window.setTimeout(() => {
+      flushSync(() => {
+        setSessionRecompositionStarted(true);
+        setExpiredSessionDeadline(authoritativeExpiresAt);
+      });
+    }, delay);
+    return () => window.clearTimeout(expiration);
+  }, [authoritativeExpiresAt]);
 
   useEffect(
     () =>
@@ -78,16 +128,16 @@ export function BackofficeShell({
   );
 
   useEffect(() => {
-    if (!currentSessionFailed && sessionStillMatches) return;
+    if (!currentSessionFailed && sessionStillMatches && !sessionValidationExpired) return;
     if (intentionalLogout.current) return;
     queryClient.clear();
-    router.replace(currentSessionData?.authenticated === true ? "/" : "/entrar");
-    router.refresh();
+    navigateToAuthoritativeSession(currentSessionData?.authenticated === true ? "/" : "/entrar");
   }, [
     currentSessionData?.authenticated,
     currentSessionFailed,
+    navigateToAuthoritativeSession,
     queryClient,
-    router,
+    sessionValidationExpired,
     sessionStillMatches,
   ]);
 
@@ -127,7 +177,7 @@ export function BackofficeShell({
   const runtimeControlsDisabled =
     !isHydrated || !currentSession.isFetchedAfterMount || unlock.isPending;
 
-  if (logoutTransitionStarted || privateViewUnsafe) {
+  if (logoutTransitionStarted || sessionRecompositionStarted || privateViewUnsafe) {
     return (
       <main className={styles.main} id="conteudo-principal">
         <p role="status">Encerrando a visualização privada…</p>
@@ -227,7 +277,9 @@ export function BackofficeShell({
         </p>
       ) : null}
       <main className={styles.main} id="conteudo-principal">
-        {children}
+        <BackofficePrivateBoundaryProvider recompose={recomposeSession}>
+          {children}
+        </BackofficePrivateBoundaryProvider>
       </main>
     </div>
   );

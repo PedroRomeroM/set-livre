@@ -24,6 +24,12 @@ import { z } from "zod";
 import { backofficeDalPool } from "../../../lib/server/dal-pool";
 
 import type { BackofficeAuthContext } from "./auth-context";
+import {
+  decodeBackofficeStudioReviewCursor,
+  decodeBackofficeUserCursor,
+  encodeBackofficeStudioReviewCursor,
+  encodeBackofficeUserCursor,
+} from "./backoffice-cursor";
 
 const timestampSchema = z.coerce.date().transform((value) => value.toISOString());
 const pgSafeIntegerSchema = z
@@ -66,11 +72,6 @@ const userMutationResultSchema = backofficeUserSummarySchema.extend({
 const taxonomyMutationResultSchema = backofficeTaxonomyItemSchema.extend({
   updatedAt: timestampSchema,
 });
-const cursorSchema = z.strictObject({ createdAt: z.iso.datetime(), id: z.uuid() });
-const studioReviewCursorSchema = z.strictObject({
-  sequence: z.number().int().nonnegative().safe(),
-  studioId: z.uuid(),
-});
 const studioReviewQueueRowSchema = z.strictObject({
   disabled_from_status: z.enum(["published", "changes_pending", "paused"]).nullable(),
   has_published: z.boolean(),
@@ -110,42 +111,36 @@ function bindingArguments(auth: BackofficeAuthContext) {
   return [auth.userId, auth.authSessionId, auth.authExpiresAt];
 }
 
-function encodeBackofficeUserCursor(value: z.infer<typeof cursorSchema>) {
-  return Buffer.from(JSON.stringify(cursorSchema.parse(value)), "utf8").toString("base64url");
-}
-
-function decodeBackofficeUserCursor(value: string | null | undefined) {
+function parseBackofficeUserCursor(input: {
+  auth: BackofficeAuthContext;
+  query: string | null;
+  value: string | null | undefined;
+}) {
+  const { value } = input;
   if (value === undefined || value === null) return null;
-  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
-    throw new BackofficeCursorError();
-  }
-  try {
-    const bytes = Buffer.from(value, "base64url");
-    if (bytes.toString("base64url") !== value) throw new Error("non-canonical");
-    return cursorSchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
-  } catch {
-    throw new BackofficeCursorError();
-  }
+  const cursor = decodeBackofficeUserCursor({
+    authSessionId: input.auth.authSessionId,
+    query: input.query,
+    scope: input.auth.userId,
+    value,
+  });
+  if (cursor === undefined) throw new BackofficeCursorError();
+  return cursor;
 }
 
-function encodeBackofficeStudioReviewCursor(value: z.infer<typeof studioReviewCursorSchema>) {
-  return Buffer.from(JSON.stringify(studioReviewCursorSchema.parse(value)), "utf8").toString(
-    "base64url",
-  );
-}
-
-function decodeBackofficeStudioReviewCursor(value: string | null | undefined) {
+function parseBackofficeStudioReviewCursor(input: {
+  auth: BackofficeAuthContext;
+  value: string | null | undefined;
+}) {
+  const { value } = input;
   if (value === undefined || value === null) return null;
-  if (value.length > 512 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
-    throw new BackofficeCursorError();
-  }
-  try {
-    const bytes = Buffer.from(value, "base64url");
-    if (bytes.toString("base64url") !== value) throw new Error("non-canonical");
-    return studioReviewCursorSchema.parse(JSON.parse(bytes.toString("utf8")) as unknown);
-  } catch {
-    throw new BackofficeCursorError();
-  }
+  const cursor = decodeBackofficeStudioReviewCursor({
+    authSessionId: input.auth.authSessionId,
+    scope: input.auth.userId,
+    value,
+  });
+  if (cursor === undefined) throw new BackofficeCursorError();
+  return cursor;
 }
 
 export async function openBackofficeBinding(auth: BackofficeAuthContext) {
@@ -183,7 +178,8 @@ export async function listBackofficeUsers(input: {
   cursor?: string | null | undefined;
   query?: string | undefined;
 }) {
-  const cursor = decodeBackofficeUserCursor(input.cursor);
+  const query = input.query ?? null;
+  const cursor = parseBackofficeUserCursor({ auth: input.auth, query, value: input.cursor });
   const result = await backofficeDalPool().query(
     `select
        listed.*,
@@ -195,13 +191,7 @@ export async function listBackofficeUsers(input: {
        $1::uuid, $2::uuid, $3::timestamptz, $4::text,
        $5::timestamptz, $6::uuid, $7::integer
      ) as listed`,
-    [
-      ...bindingArguments(input.auth),
-      input.query ?? null,
-      cursor?.createdAt ?? null,
-      cursor?.id ?? null,
-      51,
-    ],
+    [...bindingArguments(input.auth), query, cursor?.createdAt ?? null, cursor?.id ?? null, 51],
   );
   const rows = z.array(listedUserRowSchema).max(51).parse(result.rows);
   const visibleRows = rows.slice(0, 50);
@@ -221,8 +211,11 @@ export async function listBackofficeUsers(input: {
       cursorSource === undefined
         ? null
         : encodeBackofficeUserCursor({
+            authSessionId: input.auth.authSessionId,
             createdAt: cursorSource.cursor_created_at,
             id: cursorSource.id,
+            query,
+            scope: input.auth.userId,
           }),
     scope: input.auth.userId,
   });
@@ -404,7 +397,10 @@ export async function listBackofficeStudioReviews(input: {
   auth: BackofficeAuthContext;
   query: BackofficeStudioReviewQueueQuery;
 }) {
-  const cursor = decodeBackofficeStudioReviewCursor(input.query.cursor);
+  const cursor = parseBackofficeStudioReviewCursor({
+    auth: input.auth,
+    value: input.query.cursor,
+  });
   const result = await backofficeDalPool().query(
     `select
        disabled_from_status,
@@ -443,6 +439,8 @@ export async function listBackofficeStudioReviews(input: {
       cursorSource === undefined
         ? null
         : encodeBackofficeStudioReviewCursor({
+            authSessionId: input.auth.authSessionId,
+            scope: input.auth.userId,
             sequence: cursorSource.sort_sequence,
             studioId: cursorSource.studio_id,
           }),

@@ -136,11 +136,12 @@ test("SL-F031-E2E-012 @p1 resposta de PII concluída em aba oculta é descartada
       await responseRelease;
       await route.fulfill({ response });
     });
-    await card
-      .getByRole("combobox", { name: "Motivo auditado" })
-      .selectOption("security_investigation");
+    const reason = card.getByRole("combobox", { name: "Motivo auditado" });
+    await reason.selectOption("security_investigation");
     await card.getByRole("button", { name: "Revelar dados por 60 segundos" }).click();
     await responseHeld;
+    await expect(reason).toBeDisabled();
+    await expect(reason).toHaveValue("security_investigation");
 
     await emulateDocumentVisibility(page, "hidden");
     const delivered = page.waitForResponse(

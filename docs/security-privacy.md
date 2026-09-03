@@ -31,9 +31,11 @@ Os formulários com segredo não podem funcionar antes da hidratação se isso p
 perda silenciosa de entrada quando o React assume o HTML. Cadastro público, login operacional e chave
 local usam estado servidor-fechado, `inert`, método POST e controles nativos desabilitados; a
 ausência de JavaScript mantém a fronteira fechada e mostra recuperação explícita por habilitação e
-reload. A reautenticação de papel só é criada depois de uma ação já hidratada. Rede, timeout ou resposta inválida
-depois de uma possível publicação de sessão são tratados como ambíguos e terminais, com cleanup restrito
-aos cookies canônicos.
+reload. A reautenticação de papel só é criada depois de uma ação já hidratada. Login, logout,
+desbloqueio e mutações administrativas do backoffice encerram no cliente em dez segundos; rede, timeout
+ou resposta inválida depois de uma possível publicação de sessão são tratados como ambíguos e
+terminais, com cleanup restrito aos cookies canônicos. Auto-suspensão e revogação do próprio papel
+administrativo também fecham imediatamente a composição privada quando a resposta é perdida.
 
 ## Autorização e banco
 

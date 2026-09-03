@@ -369,9 +369,12 @@ requisição depois dessa autenticação.
 Depois do discriminador Zod, comandos passam também por bucket de identidade + action derivado do
 scope autenticado; o bucket de rede do túnel não é a única proteção. Leituras propagam cancelamento e a
 assinatura de mídia possui deadline server-side. A expiração publicada de uma preview é contada desde o
-início da assinatura, nunca depois de uma chamada lenta. Somente os comandos de estúdio possuem deadline
-client-side de dez segundos: vencimento é resposta ambígua e conserva payload + `idempotencyKey` exatos;
-login, sessão e comandos administrativos preexistentes não herdam essa política.
+início da assinatura, nunca depois de uma chamada lenta. No aplicativo público, comandos de estúdio usam
+dez segundos por padrão e `studio.media.upload.finalize` usa 45 segundos, pois seu envelope servidor
+inclui espera pela claim e processamento da imagem. No backoffice, login, logout, desbloqueio local e
+todas as mutações administrativas, inclusive revelação de PII, usam deadline client-side de dez
+segundos; leituras continuam canceláveis pelo consumidor sem timer próprio. Vencimento é resposta
+ambígua e conserva payload + `idempotencyKey` exatos quando o comando é idempotente.
 
 Todos os comandos incluem `expectedScope` e `idempotencyKey`. Suspensão e restauração são actions
 distintas e recebem somente `expectedAccountVersion`; o cliente nunca envia um status de destino.

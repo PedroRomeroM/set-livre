@@ -12,6 +12,9 @@ import {
 
 const encoder = new TextEncoder();
 const secretKeyPattern = /^sb_secret_[A-Za-z0-9_-]{12,}$/u;
+const cleanupStorageRemovalDeadlineMs = 10_000;
+
+type CleanupFetch = typeof fetch;
 
 interface CleanupConfiguration {
   secretKey: string;
@@ -43,6 +46,9 @@ interface CleanupClientOptions {
     autoRefreshToken: false;
     persistSession: false;
   };
+  global: {
+    fetch: CleanupFetch;
+  };
 }
 
 type CreateCleanupSupabaseClient = (
@@ -53,6 +59,7 @@ type CreateCleanupSupabaseClient = (
 
 interface CleanupHandlerDependencies {
   createSupabaseClient: CreateCleanupSupabaseClient;
+  fetchImplementation?: CleanupFetch;
   readConfiguration?: () => CleanupConfiguration;
 }
 
@@ -155,6 +162,42 @@ async function secretsMatch(left: string | null, right: string): Promise<boolean
   return difference === 0;
 }
 
+function createStorageRemovalDeadlineFetch(
+  fetchImplementation: CleanupFetch,
+  supabaseUrl: string,
+  invocationSignal: AbortSignal,
+  deadlineSignal: AbortSignal,
+): CleanupFetch {
+  const storageObjectEndpoint = new URL("/storage/v1/object/", supabaseUrl);
+
+  return (input, init) => {
+    const endpoint = new URL(input instanceof Request ? input.url : String(input));
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    if (
+      method !== "DELETE" ||
+      endpoint.origin !== storageObjectEndpoint.origin ||
+      !endpoint.pathname.startsWith(storageObjectEndpoint.pathname)
+    ) {
+      return fetchImplementation(input, init);
+    }
+
+    const signal = AbortSignal.any([
+      invocationSignal,
+      deadlineSignal,
+      ...(input instanceof Request ? [input.signal] : []),
+      ...(init?.signal ? [init.signal] : []),
+    ]);
+    if (signal.aborted) {
+      return Promise.reject(
+        signal.reason ?? new DOMException("cleanup_storage_remove_aborted", "AbortError"),
+      );
+    }
+    return fetchImplementation(input, { ...init, signal });
+  };
+}
+
 function environment(): CleanupConfiguration {
   const runtime = readEdgeRuntime();
   const url = runtime.getEnvironmentVariable("SUPABASE_URL");
@@ -209,6 +252,7 @@ function assertCompleteRunResult(value: unknown, expected: CleanupRunCompletionC
 
 export function createCleanupRequestHandler({
   createSupabaseClient,
+  fetchImplementation = fetch,
   readConfiguration = environment,
 }: CleanupHandlerDependencies): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
@@ -235,9 +279,26 @@ export function createCleanupRequestHandler({
       return failureResponse("invalid_request", 400);
     }
 
+    const storageDeadlineController = new AbortController();
     const client = createSupabaseClient(config.url, config.secretKey, {
       auth: { autoRefreshToken: false, persistSession: false },
+      global: {
+        fetch: createStorageRemovalDeadlineFetch(
+          fetchImplementation,
+          config.url,
+          request.signal,
+          storageDeadlineController.signal,
+        ),
+      },
     });
+    const storageDeadlineError = new DOMException(
+      "cleanup_storage_remove_deadline_exceeded",
+      "TimeoutError",
+    );
+    const storageDeadline = setTimeout(
+      () => storageDeadlineController.abort(storageDeadlineError),
+      cleanupStorageRemovalDeadlineMs,
+    );
     const dependencies: CleanupDependencies = {
       async beginRun(context) {
         const { data, error } = await client.rpc("begin_studio_media_cleanup_run", {
@@ -293,6 +354,8 @@ export function createCleanupRequestHandler({
         return terminalResponse(error.result, 503, error.errorCode);
       }
       return failureResponse("service_unavailable");
+    } finally {
+      clearTimeout(storageDeadline);
     }
   };
 }

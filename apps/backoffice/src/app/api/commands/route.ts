@@ -8,7 +8,7 @@ import {
 } from "@/lib/server/api-route";
 import { runProtectedBackofficeRoute } from "@/lib/server/protected-api-route";
 import {
-  backofficeIdentityActionDiscriminator,
+  enforceBackofficeCommandIdentityRateLimits,
   enforceBackofficeRateLimit,
 } from "@/lib/server/rate-limit";
 
@@ -27,11 +27,7 @@ export async function POST(request: Request) {
         await readLimitedJson(request),
       );
       setAction(command.action);
-      enforceBackofficeRateLimit(
-        "backoffice.commands.identity-action",
-        backofficeIdentityActionDiscriminator(route.session.scope, command.action),
-        { limit: 30, windowMs: 60_000 },
-      );
+      enforceBackofficeCommandIdentityRateLimits(route.session.scope, command.action);
       return executeBackofficeCommand(command, { requestId, route });
     },
   );

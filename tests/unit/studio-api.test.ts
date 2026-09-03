@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createStudio,
+  finalizeStudioMediaUpload,
   isAmbiguousStudioError,
   isStudioBoundaryChangedError,
   readStudioEditor,
   readStudioTaxonomies,
   readStudioTypes,
   StudioApiError,
+  studioMediaFinalizeRequestTimeoutMs,
   updateStudioContent,
   updateStudioTaxonomy,
 } from "../../src/domains/studios/components/studio-api";
@@ -153,5 +155,42 @@ describe("studio browser API", () => {
 
     controller.abort();
     await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
+  });
+
+  it("keeps media finalization alive through the server envelope before timing out", async () => {
+    vi.useFakeTimers();
+    let requestSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined;
+          requestSignal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("finalization deadline", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+    const outcome = finalizeStudioMediaUpload({
+      action: "studio.media.upload.finalize",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: {
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 1,
+        mediaId: "88888888-8888-4888-8888-888888888888",
+        studioId: studioTestIds.studioId,
+      },
+    }).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(requestSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(studioMediaFinalizeRequestTimeoutMs - 10_001);
+    expect(requestSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(outcome).resolves.toMatchObject({ code: "REQUEST_TIMEOUT" });
+    expect(requestSignal?.aborted).toBe(true);
   });
 });
