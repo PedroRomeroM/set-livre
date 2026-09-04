@@ -35,6 +35,8 @@ const cleanupProbeObject = Buffer.from(
 const cleanupConfigurationLockName = "set-livre-production-media-cleanup";
 const staleCleanupProbeBatchSize = 100;
 const storageRequestDeadlineMs = 15_000;
+// Production's last release before immutable cleanup provides the bounded migration boundary.
+const immutableCleanupBootstrapReleaseSha = "a6549f558133a76f559a1c94ded73aca558786e5";
 
 function isExactObject(value, keys) {
   return (
@@ -444,11 +446,15 @@ export function selectCleanupFunctionRetention(payload, { activeReleaseSha, cand
   if (!slugs.has(candidateSlug)) {
     throw new Error("A versão candidata de cleanup não foi encontrada com cardinalidade única.");
   }
-  if (activeSlug !== candidateSlug && !slugs.has(activeSlug)) {
+  const activeVersionExists = slugs.has(activeSlug);
+  const isImmutableCleanupBootstrap =
+    activeReleaseSha === immutableCleanupBootstrapReleaseSha && !activeVersionExists;
+  if (activeSlug !== candidateSlug && !activeVersionExists && !isImmutableCleanupBootstrap) {
     throw new Error("A versão ativa de cleanup não foi encontrada no inventário de produção.");
   }
 
-  const protectedSlugs = new Set([activeSlug, candidateSlug]);
+  const protectedSlugs = new Set([candidateSlug]);
+  if (activeVersionExists) protectedSlugs.add(activeSlug);
   const retainedSet = new Set(
     versions
       .filter((candidate) => protectedSlugs.has(candidate.slug))

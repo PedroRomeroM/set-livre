@@ -7,7 +7,7 @@ import type {
 } from "@set-livre/contracts";
 import { Alert, Button, Field } from "@set-livre/ui";
 import { PasswordInput } from "@set-livre/ui/password-input";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
@@ -23,10 +23,53 @@ import {
   useBackofficePrivateBoundary,
 } from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
+import { backofficeQueryKeys } from "./query-keys";
+import { notifyBackofficeSessionChanged } from "./session-events";
 import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
 type AccessAction = BackofficeAccessCommand["action"];
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
+type BackofficeSessionCache = Pick<QueryClient, "getQueryData" | "setQueryData">;
+
+function matchesBackofficeSessionBoundary(
+  candidate: BackofficeSession | undefined,
+  expected: AuthenticatedSession,
+): candidate is AuthenticatedSession {
+  return (
+    candidate?.authenticated === true &&
+    candidate.scope === expected.scope &&
+    candidate.email === expected.email &&
+    candidate.authorizationVersion === expected.authorizationVersion
+  );
+}
+
+export function reconcileSuccessfulBackofficeReauthentication({
+  currentSession,
+  nextSession,
+  notifySessionChanged,
+  queryClient,
+  recomposeSession,
+}: Readonly<{
+  currentSession: AuthenticatedSession;
+  nextSession: AuthenticatedSession;
+  notifySessionChanged: () => void;
+  queryClient: BackofficeSessionCache;
+  recomposeSession: () => void;
+}>): "published" | "session-boundary" {
+  const sessionKey = backofficeQueryKeys.session(currentSession.scope);
+  const cachedSession = queryClient.getQueryData<BackofficeSession>(sessionKey);
+  if (
+    !matchesBackofficeSessionBoundary(cachedSession, currentSession) ||
+    !matchesBackofficeSessionBoundary(nextSession, currentSession)
+  ) {
+    recomposeSession();
+    return "session-boundary";
+  }
+
+  queryClient.setQueryData<BackofficeSession>(sessionKey, nextSession);
+  notifySessionChanged();
+  return "published";
+}
 
 export type BackofficeAccessTransition = Readonly<{
   action: AccessAction;
@@ -48,7 +91,7 @@ function AccessReauthentication({
   onSessionBoundary,
   session,
 }: {
-  onConfirmed: () => void;
+  onConfirmed: (session: AuthenticatedSession) => void;
   onSessionBoundary: () => void;
   session: AuthenticatedSession;
 }) {
@@ -75,7 +118,7 @@ function AccessReauthentication({
     },
     onSuccess: (nextSession) => {
       if (nextSession.authenticated) {
-        onConfirmed();
+        onConfirmed(nextSession);
         return;
       }
       onSessionBoundary();
@@ -117,6 +160,7 @@ export function AccessRoleActions({
   user: BackofficeUserSummary;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const interactive = useBackofficeHydrated();
   const recomposeSession = useBackofficePrivateBoundary();
   const [selected, setSelected] = useState<BackofficeAccessTransition>();
@@ -176,13 +220,20 @@ export function AccessRoleActions({
       {notice === undefined ? null : <Alert>{notice}</Alert>}
       {needsReauthentication ? (
         <AccessReauthentication
-          onConfirmed={() => {
+          onConfirmed={(nextSession) => {
             pendingCommand.current = undefined;
             setNeedsReauthentication(false);
             setSelected(undefined);
             setNotice(
               "Identidade confirmada. Desbloqueie novamente o runtime e revise a alteração.",
             );
+            reconcileSuccessfulBackofficeReauthentication({
+              currentSession: session,
+              nextSession,
+              notifySessionChanged: notifyBackofficeSessionChanged,
+              queryClient,
+              recomposeSession,
+            });
           }}
           onSessionBoundary={recomposeSession}
           session={session}

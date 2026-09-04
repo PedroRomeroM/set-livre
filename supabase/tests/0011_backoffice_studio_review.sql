@@ -1137,6 +1137,33 @@ select is(
     ),
     private.feat030_capture_error(
       $command$
+        select private.reveal_backoffice_user_pii(
+          'a3000000-0000-4000-8000-000000000002',
+          'a4000000-0000-4000-8000-000000000002',
+          pg_catalog.clock_timestamp() + interval '30 minutes',
+          'a3000000-0000-4000-8000-000000000004',
+          'support_case',
+          'a5000000-0000-4000-8000-000000000090',
+          'a6000000-0000-4000-8000-000000000090'
+        )
+      $command$
+    ),
+    private.feat030_capture_error(
+      $command$
+        select private.set_backoffice_user_status(
+          'a3000000-0000-4000-8000-000000000002',
+          'a4000000-0000-4000-8000-000000000002',
+          pg_catalog.clock_timestamp() + interval '30 minutes',
+          'a3000000-0000-4000-8000-000000000004',
+          1,
+          'backoffice.user.suspend',
+          'a5000000-0000-4000-8000-000000000091',
+          'a6000000-0000-4000-8000-000000000091'
+        )
+      $command$
+    ),
+    private.feat030_capture_error(
+      $command$
         select * from private.list_backoffice_taxonomies(
           'a3000000-0000-4000-8000-000000000002',
           'a4000000-0000-4000-8000-000000000002',
@@ -1145,8 +1172,13 @@ select is(
       $command$
     )
   ],
-  array['42501:backoffice_role_required', '42501:backoffice_role_required'],
-  'reviewer não ganha superfícies de suporte ou administração'
+  array[
+    '42501:backoffice_role_required',
+    '42501:backoffice_role_required',
+    '42501:backoffice_role_required',
+    '42501:backoffice_role_required'
+  ],
+  'reviewer não ganha diretório, PII, status de usuários ou administração'
 );
 
 set local role app_dal;

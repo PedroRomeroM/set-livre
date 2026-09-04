@@ -86,12 +86,10 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(
       page.getByText(feat030ExtremeTextFixture.usageRules, { exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByText(feat030ExtremeTextFixture.faqQuestion, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByText(feat030ExtremeTextFixture.faqAnswer, { exact: true }),
-    ).toBeVisible();
+    const faqQuestion = page.getByText(feat030ExtremeTextFixture.faqQuestion, { exact: true });
+    const faqAnswer = page.getByText(feat030ExtremeTextFixture.faqAnswer, { exact: true });
+    await expect(faqQuestion).toBeVisible();
+    await expect(faqAnswer).toBeVisible();
     await expect(
       page.getByText(feat030ExtremeTextFixture.taxonomyName, { exact: true }),
     ).toHaveCount(2);
@@ -129,6 +127,45 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await skipLink.focus();
     await expect(skipLink).toBeFocused();
     await expect(skipLink).toBeVisible();
+
+    const faqTextLayout = await Promise.all(
+      [faqQuestion, faqAnswer].map((text) =>
+        text.evaluate((element) => {
+          if (!(element instanceof HTMLElement)) {
+            throw new Error("O texto do FAQ não expõe uma caixa HTML mensurável.");
+          }
+          const rectangle = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          const contentLeft =
+            rectangle.left +
+            Number.parseFloat(style.borderLeftWidth) +
+            Number.parseFloat(style.paddingLeft);
+          const contentRight =
+            rectangle.right -
+            Number.parseFloat(style.borderRightWidth) -
+            Number.parseFloat(style.paddingRight);
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          const fragments = [...range.getClientRects()];
+          return {
+            contentLeft,
+            contentRight,
+            fragmentCount: fragments.length,
+            maximumFragmentRight: Math.max(...fragments.map((fragment) => fragment.right)),
+            minimumFragmentLeft: Math.min(...fragments.map((fragment) => fragment.left)),
+            textFits:
+              fragments.length > 0 &&
+              fragments.every(
+                (fragment) => fragment.left >= contentLeft && fragment.right <= contentRight,
+              ),
+          };
+        }),
+      ),
+    );
+    expect(
+      faqTextLayout.every((text) => text.textFits),
+      JSON.stringify(faqTextLayout, null, 2),
+    ).toBe(true);
 
     const layout = await page.evaluate((safeArea) => {
       const clientWidth = document.documentElement.clientWidth;

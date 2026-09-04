@@ -185,6 +185,24 @@ describe("FEAT-030 backoffice review service boundaries", () => {
     },
   );
 
+  it("canonicalizes an uppercase route UUID before the DAL and response boundary", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(signedStorageResponse());
+
+    const detail = await readBackofficeStudioReview({
+      activity: "interactive",
+      auth,
+      createSigningClient: signingClientFactory(),
+      studioId: studioTestIds.studioId.toUpperCase(),
+    });
+
+    expect(dalMocks.getBackofficeStudioReview).toHaveBeenCalledWith({
+      auth,
+      studioId: studioTestIds.studioId,
+      touchActivity: true,
+    });
+    expect(detail.studioId).toBe(studioTestIds.studioId);
+  });
+
   it("cancels the Storage fetch when the incoming request is aborted", async () => {
     const requestController = new AbortController();
     let fetchStarted: (() => void) | undefined;

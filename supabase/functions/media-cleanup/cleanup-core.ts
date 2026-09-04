@@ -336,6 +336,17 @@ async function completeRun(
   return result;
 }
 
+async function completeItem(
+  dependencies: CleanupDependencies,
+  context: CleanupItemCompletionContext,
+): Promise<void> {
+  try {
+    await dependencies.complete(context);
+  } catch {
+    await dependencies.complete(context);
+  }
+}
+
 export async function runStudioMediaCleanup(
   dependencies: CleanupDependencies,
   { batchSize = 25, functionSlug, runId }: CleanupRunOptions,
@@ -406,7 +417,7 @@ export async function runStudioMediaCleanup(
     }
 
     try {
-      await dependencies.complete({
+      await completeItem(dependencies, {
         errorCode: succeeded ? null : "storage_remove_failed",
         functionSlug,
         mediaId: candidate.mediaId,

@@ -141,7 +141,7 @@ function parseBackofficeRouteUuid(value: string) {
   if (!parsed.success) {
     throw new BackofficeApiError(404, "NOT_FOUND", "O registro solicitado não existe mais.");
   }
-  return parsed.data;
+  return parsed.data.toLowerCase();
 }
 
 function signedBackofficeStudioRevision(

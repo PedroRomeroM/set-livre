@@ -511,11 +511,35 @@ describe("studio media cleanup edge core", () => {
     });
   });
 
-  it("classifica falha de complete por item como execução não saudável", async () => {
+  it("reconcilia uma conclusão confirmada cuja primeira resposta foi perdida", async () => {
+    const complete = vi.fn().mockRejectedValueOnce(new Error("response lost")).mockResolvedValue();
+    const completeRun = vi.fn().mockResolvedValue(undefined);
+    const contract = dependencies({ complete, completeRun });
+
+    await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).resolves.toEqual({
+      claimed: 2,
+      deleted: 2,
+      failed: 0,
+    });
+    expect(complete).toHaveBeenCalledTimes(3);
+    expect(complete.mock.calls[1]).toEqual(complete.mock.calls[0]);
+    expect(completeRun).toHaveBeenCalledWith({
+      claimed: 2,
+      deleted: 2,
+      errorCode: null,
+      failed: 0,
+      functionSlug,
+      runId,
+      workerId,
+    });
+  });
+
+  it("classifica falha persistente de complete por item como execução não saudável", async () => {
     const completeRun = vi.fn().mockResolvedValue(undefined);
     const contract = dependencies({
       complete: vi
         .fn()
+        .mockRejectedValueOnce(new Error("ledger item unavailable"))
         .mockRejectedValueOnce(new Error("ledger item unavailable"))
         .mockResolvedValueOnce(undefined),
       completeRun,

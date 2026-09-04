@@ -544,7 +544,10 @@ begin
     or p_auth_expires_at is null
     or p_auth_expires_at <= checked_at
     or p_auth_expires_at > checked_at + interval '65 minutes'
-    or (p_required_role is not null and p_required_role <> 'admin')
+    or (
+      p_required_role is not null
+      and p_required_role <> all (array['support'::text, 'admin'::text])
+    )
     or p_touch_activity is null
   then
     raise exception using errcode = '22023', message = 'invalid_backoffice_session';
@@ -593,7 +596,14 @@ begin
 
   current_roles := private.platform_roles_for_user(p_user_id);
   if pg_catalog.cardinality(current_roles) = 0
-    or (p_required_role is not null and not p_required_role = any(current_roles))
+    or (
+      p_required_role is not null
+      and not p_required_role = any(current_roles)
+      and not (
+        p_required_role = 'support'
+        and 'admin' = any(current_roles)
+      )
+    )
   then
     raise exception using errcode = '42501', message = 'backoffice_role_required';
   end if;
@@ -723,7 +733,7 @@ begin
     p_actor_user_id,
     p_auth_session_id,
     p_auth_expires_at,
-    null,
+    'support',
     false,
     true
   );
@@ -1167,7 +1177,7 @@ begin
     p_actor_user_id,
     p_auth_session_id,
     p_auth_expires_at,
-    null,
+    'support',
     false,
     true
   );
@@ -1387,7 +1397,7 @@ begin
     p_actor_user_id,
     p_auth_session_id,
     p_auth_expires_at,
-    null,
+    'support',
     false,
     true
   );

@@ -202,9 +202,11 @@ export function BackofficeShell({
 
   return (
     <div className={styles.shell}>
-      <a className={styles.skipLink} href="#conteudo-principal">
-        Ir para o conteúdo
-      </a>
+      <nav aria-label="Atalhos de acessibilidade">
+        <a className={styles.skipLink} href="#conteudo-principal">
+          Ir para o conteúdo
+        </a>
+      </nav>
       <header className={styles.header}>
         <div>
           <p className={styles.brand}>Set Livre</p>

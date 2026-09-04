@@ -4,6 +4,7 @@ import {
   type BackofficeSession,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyKind,
+  type BackofficeTaxonomyList,
   type BackofficeTaxonomyStatusCommand,
   type BackofficeTaxonomyUpsertCommand,
 } from "@set-livre/contracts";
@@ -23,6 +24,10 @@ import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 import styles from "./backoffice.module.css";
 
 type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
+type TaxonomyFieldName = "kind" | "name" | "slug" | "sortOrder";
+type TaxonomyFieldErrors = Partial<Record<TaxonomyFieldName, string>>;
+
+const taxonomyFieldNames = ["kind", "name", "slug", "sortOrder"] as const;
 
 const kindLabels: Record<BackofficeTaxonomyKind, string> = {
   amenity: "Comodidades",
@@ -45,9 +50,62 @@ function taxonomyListError(error: unknown) {
     : "Não foi possível carregar as taxonomias agora. Tente novamente.";
 }
 
-function TaxonomyForm({
+export function taxonomyFieldErrors(error: unknown): TaxonomyFieldErrors | undefined {
+  if (!(error instanceof BackofficeClientError) || error.fieldErrors === undefined) {
+    return undefined;
+  }
+  const retainedErrors: TaxonomyFieldErrors = {};
+  for (const field of taxonomyFieldNames) {
+    const message = error.fieldErrors[field];
+    if (message !== undefined) retainedErrors[field] = message;
+  }
+  return Object.keys(retainedErrors).length === 0 ? undefined : retainedErrors;
+}
+
+export function taxonomyStatusNoticeFromRetainedState(
+  commandResult: BackofficeTaxonomyItem,
+  retainedItem: BackofficeTaxonomyItem | undefined,
+) {
+  if (
+    retainedItem === undefined ||
+    retainedItem.id !== commandResult.id ||
+    retainedItem.kind !== commandResult.kind ||
+    retainedItem.version < commandResult.version ||
+    (retainedItem.version === commandResult.version && retainedItem.active !== commandResult.active)
+  ) {
+    return undefined;
+  }
+  if (retainedItem.version > commandResult.version) {
+    return retainedItem.active
+      ? `O estado mais recente de “${retainedItem.name}” foi preservado: ativa para novas seleções.`
+      : `O estado mais recente de “${retainedItem.name}” foi preservado: arquivada, com referências históricas preservadas.`;
+  }
+  return retainedItem.active
+    ? `“${retainedItem.name}” reativada para novas seleções.`
+    : `“${retainedItem.name}” arquivada; referências históricas preservadas.`;
+}
+
+export function taxonomyUpsertNoticeFromRetainedState(
+  commandResult: BackofficeTaxonomyItem,
+  retainedItem: BackofficeTaxonomyItem | undefined,
+) {
+  if (
+    retainedItem === undefined ||
+    retainedItem.id !== commandResult.id ||
+    retainedItem.kind !== commandResult.kind ||
+    retainedItem.version < commandResult.version
+  ) {
+    return undefined;
+  }
+  return retainedItem.version === commandResult.version
+    ? `Taxonomia “${retainedItem.name}” salva na versão ${retainedItem.version}.`
+    : `O estado mais recente de “${retainedItem.name}” foi preservado na versão ${retainedItem.version}.`;
+}
+
+export function TaxonomyForm({
   blocked,
   editing,
+  fieldErrors,
   generation,
   interactive,
   onCancel,
@@ -58,6 +116,7 @@ function TaxonomyForm({
 }: {
   blocked: boolean;
   editing?: BackofficeTaxonomyItem | undefined;
+  fieldErrors: TaxonomyFieldErrors | undefined;
   generation: number;
   interactive: boolean;
   onCancel: () => void;
@@ -100,7 +159,11 @@ function TaxonomyForm({
         className={`${styles.secureFormBoundary} ${styles.taxonomyFormBoundary}`}
         disabled={!interactive}
       >
-        <Field label="Grupo" required>
+        <Field
+          {...(fieldErrors?.kind === undefined ? {} : { error: fieldErrors.kind })}
+          label="Grupo"
+          required
+        >
           <Select
             defaultValue={editing?.kind ?? "studioType"}
             disabled={editing !== undefined || fieldsLocked}
@@ -113,7 +176,11 @@ function TaxonomyForm({
             ))}
           </Select>
         </Field>
-        <Field label="Ordem" required>
+        <Field
+          {...(fieldErrors?.sortOrder === undefined ? {} : { error: fieldErrors.sortOrder })}
+          label="Ordem"
+          required
+        >
           <Input
             defaultValue={editing?.sortOrder ?? 0}
             disabled={fieldsLocked}
@@ -123,7 +190,11 @@ function TaxonomyForm({
             type="number"
           />
         </Field>
-        <Field label="Nome" required>
+        <Field
+          {...(fieldErrors?.name === undefined ? {} : { error: fieldErrors.name })}
+          label="Nome"
+          required
+        >
           <Input
             defaultValue={editing?.name}
             disabled={fieldsLocked}
@@ -134,6 +205,7 @@ function TaxonomyForm({
         </Field>
         <Field
           description="Letras minúsculas, números e hífens; precisa ser único no grupo."
+          {...(fieldErrors?.slug === undefined ? {} : { error: fieldErrors.slug })}
           label="Slug"
           required
         >
@@ -176,14 +248,17 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   const [upsertRetryAvailable, setUpsertRetryAvailable] = useState(false);
   const pendingActivationCommand = useRef<BackofficeTaxonomyStatusCommand>(undefined);
   const pendingUpsertCommand = useRef<BackofficeTaxonomyUpsertCommand>(undefined);
+  const taxonomyQueryKey = backofficeQueryKeys.taxonomies(session.scope);
   const taxonomies = useQuery({
     queryFn: ({ signal }) => listBackofficeTaxonomiesClient(session.scope, signal),
-    queryKey: backofficeQueryKeys.taxonomies(session.scope),
+    queryKey: taxonomyQueryKey,
   });
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: backofficeQueryKeys.taxonomies(session.scope) });
-  const resetTaxonomies = () =>
-    queryClient.resetQueries({ queryKey: backofficeQueryKeys.taxonomies(session.scope) });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: taxonomyQueryKey });
+  const resetTaxonomies = () => queryClient.resetQueries({ queryKey: taxonomyQueryKey });
+  const retainedTaxonomy = (id: string) =>
+    queryClient
+      .getQueryData<BackofficeTaxonomyList>(taxonomyQueryKey)
+      ?.items.find((item) => item.id === id);
   const upsert = useMutation({
     mutationFn: () => {
       if (pendingUpsertCommand.current === undefined) {
@@ -211,8 +286,9 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       setUpsertRetryAvailable(false);
       setEditing(undefined);
       setFormGeneration((current) => current + 1);
-      setNotice(`Taxonomia “${item.name}” salva na versão ${item.version}.`);
+      setNotice(undefined);
       await invalidate();
+      setNotice(taxonomyUpsertNoticeFromRetainedState(item, retainedTaxonomy(item.id)));
     },
   });
   const transition = useMutation({
@@ -240,12 +316,9 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       pendingActivationCommand.current = undefined;
       setActivationRetryAvailable(false);
       setActivationTarget(undefined);
-      setNotice(
-        item.active
-          ? `“${item.name}” reativada para novas seleções.`
-          : `“${item.name}” arquivada; referências históricas preservadas.`,
-      );
+      setNotice(undefined);
       await invalidate();
+      setNotice(taxonomyStatusNoticeFromRetainedState(item, retainedTaxonomy(item.id)));
     },
   });
   const items = taxonomies.data?.items ?? [];
@@ -274,6 +347,7 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
         <TaxonomyForm
           blocked={transition.isPending || activationRetryAvailable}
           editing={editing}
+          fieldErrors={taxonomyFieldErrors(upsert.error)}
           generation={formGeneration}
           interactive={interactive}
           onCancel={() => {

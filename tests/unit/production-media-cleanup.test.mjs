@@ -26,6 +26,7 @@ const runtimeUrl =
   "postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:runtime%23secret@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal";
 const secretKey = "sb_secret_defaultProductionKey123";
 const activeReleaseSha = "a".repeat(40);
+const immutableCleanupBootstrapReleaseSha = "a6549f558133a76f559a1c94ded73aca558786e5";
 const candidateSha = "c".repeat(40);
 const activeSlug = `media-cleanup-${activeReleaseSha}`;
 const candidateSlug = `media-cleanup-${candidateSha}`;
@@ -467,6 +468,29 @@ describe("production media cleanup configuration", () => {
     expect(retention.deleted).not.toContain(activeSlug);
     expect(retention.deleted).not.toContain(candidateSlug);
     expect(retention.deleted).toHaveLength(3);
+  });
+
+  it("permits only the known pre-cleanup release to bootstrap the first immutable Function", () => {
+    const bootstrapInventory = [
+      immutableFunction(candidateSlug, Date.UTC(2026, 8, 4, 12)),
+      legacyMutableFunction(),
+    ];
+    const retention = selectCleanupFunctionRetention(bootstrapInventory, {
+      activeReleaseSha: immutableCleanupBootstrapReleaseSha,
+      candidateSlug,
+    });
+
+    expect(retention).toEqual({
+      activeSlug: `media-cleanup-${immutableCleanupBootstrapReleaseSha}`,
+      deleted: ["media-cleanup"],
+      retained: [candidateSlug],
+    });
+    expect(() =>
+      selectCleanupFunctionRetention(bootstrapInventory, {
+        activeReleaseSha: "8".repeat(40),
+        candidateSlug,
+      }),
+    ).toThrow("ativa");
   });
 
   it("retires one valid mutable legacy surface and rejects ambiguous migration state", () => {

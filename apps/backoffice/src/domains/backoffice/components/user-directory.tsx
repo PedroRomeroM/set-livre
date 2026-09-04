@@ -3,13 +3,19 @@
 import {
   type BackofficePiiReason,
   type BackofficeSession,
+  type BackofficeUserList,
   type BackofficeUserPii,
   type BackofficeUserRevealPiiCommand,
   type BackofficeUserStatusCommand,
   type BackofficeUserSummary,
 } from "@set-livre/contracts";
 import { Alert, Button, ButtonLink, Checkbox, Field, Input, Select } from "@set-livre/ui";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -48,6 +54,29 @@ function readErrorMessage(error: unknown) {
   return error instanceof BackofficeClientError
     ? error.message
     : "Não foi possível carregar os usuários agora. Tente novamente.";
+}
+
+export function userStatusNoticeFromRetainedState(
+  commandResult: BackofficeUserSummary,
+  retainedUser: BackofficeUserSummary | undefined,
+) {
+  if (
+    retainedUser === undefined ||
+    retainedUser.id !== commandResult.id ||
+    retainedUser.accountVersion < commandResult.accountVersion ||
+    (retainedUser.accountVersion === commandResult.accountVersion &&
+      retainedUser.status !== commandResult.status)
+  ) {
+    return undefined;
+  }
+  if (retainedUser.accountVersion > commandResult.accountVersion) {
+    return retainedUser.status === "active"
+      ? "O estado mais recente da conta foi preservado: conta ativa."
+      : "O estado mais recente da conta foi preservado: conta suspensa.";
+  }
+  return retainedUser.status === "active"
+    ? "Usuário restaurado."
+    : "Usuário suspenso e sessões operacionais encerradas.";
 }
 
 function UserPiiReveal({
@@ -232,9 +261,10 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const searchInFlight = useRef(false);
   const [searchPending, setSearchPending] = useState(false);
   const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
+  const usersQueryKey = backofficeQueryKeys.users(session.scope, activeFilter.fingerprint);
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
-    queryKey: backofficeQueryKeys.users(session.scope, activeFilter.fingerprint),
+    queryKey: usersQueryKey,
     queryFn: ({ pageParam, signal }) =>
       listBackofficeUsersClient(
         {
@@ -292,12 +322,13 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       setStatusImpactConfirmed(false);
       setStatusRetryAvailable(false);
       setStatusTarget(undefined);
-      setNotice(
-        user.status === "active"
-          ? "Usuário restaurado."
-          : "Usuário suspenso e sessões operacionais encerradas.",
-      );
+      setNotice(undefined);
       await invalidateUsers();
+      const retainedUser = queryClient
+        .getQueryData<InfiniteData<BackofficeUserList, string | null>>(usersQueryKey)
+        ?.pages.flatMap((page) => page.items)
+        .find((item) => item.id === user.id);
+      setNotice(userStatusNoticeFromRetainedState(user, retainedUser));
     },
   });
   const items = users.data?.pages.flatMap((page) => page.items) ?? [];
