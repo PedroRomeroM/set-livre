@@ -103,6 +103,7 @@
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .definitionList dt {
@@ -225,12 +226,5 @@
 
   .actions > * {
     flex: 1 1 100%;
-  }
-}
-
-@media (max-width: 192px) {
-  .definitionList > div > dt,
-  .definitionList > div > dd {
-    word-break: break-all;
   }
 }
