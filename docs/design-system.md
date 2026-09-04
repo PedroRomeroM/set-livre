@@ -267,9 +267,9 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
 - controles permanecem operáveis por teclado e toque, com alvos mínimos de 44 px;
 - 320 px, altura compacta, tema escuro, axe e reflow a 160 CSS px fazem parte do contrato da
   composição. Perguntas e respostas externas sem oportunidade natural de quebra permanecem contidas
-  em sua lista semântica, cuja fronteira horizontal impede que largura intrínseca residual seja
-  propagada à página; no viewport equivalente a 200%, cada fragmento de texto continua visível dentro
-  da própria caixa.
+  em sua lista semântica: lista e item usam tracks explícitos `minmax(0, 1fr)`, e cada caixa textual
+  ocupa somente a largura disponível. Nenhum clipping substitui o reflow; no viewport equivalente a
+  200%, cada fragmento de texto continua visível dentro da própria caixa.
 
 ## 4. Contratos
 
