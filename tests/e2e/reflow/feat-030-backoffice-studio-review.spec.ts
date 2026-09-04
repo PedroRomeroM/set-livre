@@ -136,28 +136,41 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           }
           const rectangle = element.getBoundingClientRect();
           const style = getComputedStyle(element);
-          const contentLeft =
-            rectangle.left +
-            Number.parseFloat(style.borderLeftWidth) +
-            Number.parseFloat(style.paddingLeft);
-          const contentRight =
-            rectangle.right -
-            Number.parseFloat(style.borderRightWidth) -
-            Number.parseFloat(style.paddingRight);
-          const range = document.createRange();
-          range.selectNodeContents(element);
-          const fragments = [...range.getClientRects()];
+          const section = element.closest("section");
+          const clippingAncestors: Array<{
+            className: string | null;
+            overflowX: string;
+            tag: string;
+          }> = [];
+          let current: HTMLElement | null = element;
+          while (current !== null) {
+            const overflowX = getComputedStyle(current).overflowX;
+            if (overflowX === "clip" || overflowX === "hidden") {
+              clippingAncestors.push({
+                className: current.getAttribute("class"),
+                overflowX,
+                tag: current.tagName,
+              });
+            }
+            if (current === section) break;
+            current = current.parentElement;
+          }
+          const viewportWidth = document.documentElement.clientWidth;
           return {
-            contentLeft,
-            contentRight,
-            fragmentCount: fragments.length,
-            maximumFragmentRight: Math.max(...fragments.map((fragment) => fragment.right)),
-            minimumFragmentLeft: Math.min(...fragments.map((fragment) => fragment.left)),
+            clientWidth: element.clientWidth,
+            clippingAncestors,
+            elementLeft: rectangle.left,
+            elementRight: rectangle.right,
+            overflowWrap: style.overflowWrap,
+            scrollWidth: element.scrollWidth,
             textFits:
-              fragments.length > 0 &&
-              fragments.every(
-                (fragment) => fragment.left >= contentLeft && fragment.right <= contentRight,
-              ),
+              element.clientWidth > 0 &&
+              element.scrollWidth <= element.clientWidth &&
+              rectangle.left >= 0 &&
+              rectangle.right <= viewportWidth &&
+              clippingAncestors.length === 0,
+            viewportWidth,
+            wordBreak: style.wordBreak,
           };
         }),
       ),
@@ -259,6 +272,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     const layoutEvidence = JSON.stringify(layout, null, 2);
     expect(layout.bodyFits, layoutEvidence).toBe(true);
     expect(layout.documentFits, layoutEvidence).toBe(true);
+    expect(layout.internallyOverflowing, layoutEvidence).toEqual([]);
     expect(layout.overflowing).toEqual([]);
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);

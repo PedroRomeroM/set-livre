@@ -328,10 +328,12 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - comparação sem overflow e ação operável a 200% em Chromium, Firefox e WebKit; o cenário de 160 ×
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
-  verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto em relação à caixa de
-  conteúdo. Pergunta e resposta sem oportunidades naturais de quebra também permanecem dentro da
-  lista e da página. O diagnóstico preserva medidas fracionárias e lista overflow interno para não
-  ocultar defeitos por arredondamento.
+  verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto do link em relação à
+  caixa de conteúdo. Pergunta e resposta sem oportunidades naturais de quebra são comprovadas pela
+  largura rolável em relação à largura visível, pelos limites crus da caixa e pela ausência de clipping
+  em sua hierarquia local; a página também exige que a lista global de overflow interno fique vazia.
+  Assim, a evidência mede o layout efetivamente navegável sem depender dos retângulos fragmentados de
+  `Range`, que não são estáveis no WebKit para blocos de texto muito altos.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as
