@@ -65,3 +65,59 @@ test("SL-F031-E2E-016 @p0 logout confirmado oculta o shell antes da navegação"
     await cleanupFeat031Users({ operators: [support] });
   }
 });
+
+test("SL-F031-E2E-025 @p0 resposta perdida do logout fecha o shell e recompõe a sessão", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "025_ambiguous_logout_boundary");
+  let upstreamLogoutStatus: number | undefined;
+  const boundaryEvidenceKey = "sl-f031-025-private-boundary";
+  try {
+    await provisionFeat031Operator(page, support, "support", "031025");
+    await loginFeat031Backoffice(page, support, { unlockRuntime: false });
+    await page.evaluate((evidenceKey) => {
+      window.sessionStorage.removeItem(evidenceKey);
+      const captureClosedBoundary = () => {
+        const privateHeadingVisible = Array.from(document.querySelectorAll("h1")).some(
+          (heading) => heading.textContent?.trim() === "Usuários",
+        );
+        const transitionVisible = Array.from(document.querySelectorAll('[role="status"]')).some(
+          (status) => status.textContent?.includes("Encerrando a visualização privada"),
+        );
+        if (transitionVisible && !privateHeadingVisible && document.querySelector("nav") === null) {
+          window.sessionStorage.setItem(evidenceKey, "closed-before-navigation");
+        }
+      };
+      const observer = new MutationObserver(captureClosedBoundary);
+      observer.observe(document.body, { childList: true, subtree: true });
+      captureClosedBoundary();
+    }, boundaryEvidenceKey);
+    await page.route(
+      "**/api/auth/logout",
+      async (route) => {
+        const upstreamResponse = await route.fetch();
+        upstreamLogoutStatus = upstreamResponse.status();
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
+    await page.getByRole("button", { name: "Sair" }).click();
+    await expect.poll(() => upstreamLogoutStatus).toBe(200);
+    await expect(page).toHaveURL(/\/entrar$/u);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (evidenceKey) => window.sessionStorage.getItem(evidenceKey),
+          boundaryEvidenceKey,
+        ),
+      )
+      .toBe("closed-before-navigation");
+  } finally {
+    await page.unroute("**/api/auth/logout");
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [support] });
+  }
+});

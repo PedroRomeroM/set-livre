@@ -134,6 +134,22 @@ function actionSuccessMessage(action: StudioPublicationAction) {
   }
 }
 
+function publicationSuccessMessage(
+  action: StudioPublicationAction,
+  commandResult: StudioPublication,
+  retainedPublication: StudioPublication,
+) {
+  const commandResultWasRetained =
+    commandResult.publicationVersion === retainedPublication.publicationVersion &&
+    commandResult.currentRevision.id === retainedPublication.currentRevision.id &&
+    commandResult.currentRevision.number === retainedPublication.currentRevision.number &&
+    commandResult.currentRevision.version === retainedPublication.currentRevision.version;
+
+  return commandResultWasRetained
+    ? actionSuccessMessage(action)
+    : `O estado mais recente da publicação foi preservado: ${studioStatusLabels[retainedPublication.studioStatus]}.`;
+}
+
 function publicationAllowsAction(publication: StudioPublication, action: StudioPublicationAction) {
   switch (action) {
     case "studio.pause":
@@ -500,13 +516,14 @@ function HydratedStudioPublicationPanel({
     onSuccess: async (publication) => {
       mutationInFlight.current = false;
       const completedAction = pendingCommand.current?.action;
+      let retainedPublication: StudioPublication | undefined;
       pendingCommand.current = undefined;
       setActiveAction(undefined);
       setConfirmPause(false);
       setRecovery(undefined);
       try {
         await queryClient.cancelQueries({ exact: true, queryKey: publicationQueryKey });
-        publishStudioPublication(queryClient, publication, userId, studioId);
+        retainedPublication = publishStudioPublication(queryClient, publication, userId, studioId);
         await invalidateStudioPublicationDependents(queryClient, userId, studioId);
       } catch (error) {
         if (isStudioPublicationBoundaryChangedError(error)) {
@@ -517,7 +534,9 @@ function HydratedStudioPublicationPanel({
       } finally {
         setAutomaticRefetchLocked(false);
       }
-      if (completedAction !== undefined) announce(actionSuccessMessage(completedAction));
+      if (completedAction !== undefined && retainedPublication !== undefined) {
+        announce(publicationSuccessMessage(completedAction, publication, retainedPublication));
+      }
     },
   });
 

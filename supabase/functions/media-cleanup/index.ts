@@ -162,7 +162,7 @@ async function secretsMatch(left: string | null, right: string): Promise<boolean
   return difference === 0;
 }
 
-function createStorageRemovalDeadlineFetch(
+function createCleanupFetch(
   fetchImplementation: CleanupFetch,
   supabaseUrl: string,
   invocationSignal: AbortSignal,
@@ -175,23 +175,24 @@ function createStorageRemovalDeadlineFetch(
     const method = (
       init?.method ?? (input instanceof Request ? input.method : "GET")
     ).toUpperCase();
-    if (
-      method !== "DELETE" ||
-      endpoint.origin !== storageObjectEndpoint.origin ||
-      !endpoint.pathname.startsWith(storageObjectEndpoint.pathname)
-    ) {
-      return fetchImplementation(input, init);
-    }
+    const isStorageRemoval =
+      method === "DELETE" &&
+      endpoint.origin === storageObjectEndpoint.origin &&
+      endpoint.pathname.startsWith(storageObjectEndpoint.pathname);
 
     const signal = AbortSignal.any([
       invocationSignal,
-      deadlineSignal,
+      ...(isStorageRemoval ? [deadlineSignal] : []),
       ...(input instanceof Request ? [input.signal] : []),
       ...(init?.signal ? [init.signal] : []),
     ]);
     if (signal.aborted) {
       return Promise.reject(
-        signal.reason ?? new DOMException("cleanup_storage_remove_aborted", "AbortError"),
+        signal.reason ??
+          new DOMException(
+            isStorageRemoval ? "cleanup_storage_remove_aborted" : "cleanup_request_aborted",
+            "AbortError",
+          ),
       );
     }
     return fetchImplementation(input, { ...init, signal });
@@ -283,7 +284,7 @@ export function createCleanupRequestHandler({
     const client = createSupabaseClient(config.url, config.secretKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: {
-        fetch: createStorageRemovalDeadlineFetch(
+        fetch: createCleanupFetch(
           fetchImplementation,
           config.url,
           request.signal,

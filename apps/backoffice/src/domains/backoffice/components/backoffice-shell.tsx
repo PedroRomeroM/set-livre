@@ -17,6 +17,7 @@ import {
 import {
   backofficeSessionExpirationDelay,
   BackofficePrivateBoundaryProvider,
+  isBackofficeReauthenticationBoundaryError,
   recomposeBackofficePrivateBoundary,
 } from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
@@ -143,6 +144,10 @@ export function BackofficeShell({
 
   const logout = useMutation({
     mutationFn: () => logoutBackofficeClient(session.scope),
+    onError: (error) => {
+      if (!isBackofficeReauthenticationBoundaryError(error)) return;
+      recomposeSession();
+    },
     onSuccess: () => {
       intentionalLogout.current = true;
       flushSync(() => {

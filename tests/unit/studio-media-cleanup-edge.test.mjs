@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createClient } from "@supabase/supabase-js";
 
 import {
   CleanupRunError,
@@ -219,6 +220,81 @@ describe("studio media cleanup edge adapter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("propaga o cancelamento da invocação por todos os RPCs e pelo Storage", async () => {
+    const invocationController = new AbortController();
+    const observedRequests = [];
+    const fetchImplementation = vi.fn(async (input, init) => {
+      const endpoint = new URL(input instanceof Request ? input.url : String(input));
+      observedRequests.push({ pathname: endpoint.pathname, signal: init?.signal });
+
+      if (endpoint.pathname === "/rest/v1/rpc/begin_studio_media_cleanup_run") {
+        return Response.json({
+          claimed: null,
+          deleted: null,
+          errorCode: null,
+          failed: null,
+          functionSlug,
+          runId,
+          status: "running",
+        });
+      }
+      if (endpoint.pathname === "/rest/v1/rpc/claim_studio_media_cleanup") {
+        return Response.json({ claimToken: runId, items: [candidates[0]] });
+      }
+      if (endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup") {
+        return Response.json(null);
+      }
+      if (endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup_run") {
+        const body = JSON.parse(String(init?.body));
+        return Response.json({
+          claimed: body.p_claimed,
+          deleted: body.p_deleted,
+          errorCode: body.p_error_code,
+          failed: body.p_failed,
+          functionSlug,
+          runId,
+          status: body.p_status,
+        });
+      }
+      if (endpoint.pathname === "/storage/v1/object/studio-media") {
+        return Response.json([]);
+      }
+      throw new Error(`Requisição inesperada: ${endpoint.pathname}`);
+    });
+    const secretKey = "sb_secret_adapterTestKey123";
+    const handler = createCleanupRequestHandler({
+      createSupabaseClient: createClient,
+      fetchImplementation,
+      readConfiguration: () => ({ secretKey, url: "https://supabase.example" }),
+    });
+
+    const response = await handler(
+      new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+        body: JSON.stringify({ runId }),
+        headers: { apikey: secretKey, "content-type": "application/json" },
+        method: "POST",
+        signal: invocationController.signal,
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(observedRequests.map(({ pathname }) => pathname)).toEqual([
+      "/rest/v1/rpc/begin_studio_media_cleanup_run",
+      "/rest/v1/rpc/claim_studio_media_cleanup",
+      "/storage/v1/object/studio-media",
+      "/rest/v1/rpc/complete_studio_media_cleanup",
+      "/rest/v1/rpc/complete_studio_media_cleanup_run",
+    ]);
+    expect(observedRequests.every(({ signal }) => signal instanceof AbortSignal)).toBe(true);
+    expect(observedRequests.every(({ signal }) => signal.aborted === false)).toBe(true);
+
+    const abortReason = new DOMException("cleanup_invocation_aborted", "AbortError");
+    invocationController.abort(abortReason);
+
+    expect(observedRequests.every(({ signal }) => signal.aborted === true)).toBe(true);
+    expect(observedRequests.every(({ signal }) => signal.reason === abortReason)).toBe(true);
   });
 
   it.each([

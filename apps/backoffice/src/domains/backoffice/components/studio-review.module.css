@@ -228,7 +228,7 @@
   }
 }
 
-@media (max-width: 12rem) {
+@media (max-width: 192px) {
   .definitionList > div > dt,
   .definitionList > div > dd {
     word-break: break-all;

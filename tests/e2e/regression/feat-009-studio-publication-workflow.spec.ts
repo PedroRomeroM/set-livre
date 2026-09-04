@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
+
 import {
   apiSuccessSchema,
   studioCommandSchema,
   studioDraftDiscardResultSchema,
   studioPublicationSchema,
+  type StudioPublication,
 } from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
@@ -21,6 +24,14 @@ import {
   seedFeat009RejectedUnpublishedCorrection,
   submitFeat009RevisionThroughUi,
 } from "../../helpers/feat-009-studio-publication-workflow";
+
+function deferredSignal() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
 
 test("SL-F009-E2E-006 @p1 motivo de rejeição orienta correção e preserva publicação estável", async ({
   page,
@@ -530,6 +541,137 @@ test("SL-F009-E2E-014 @p1 releitura autoritativa encerra resposta ambígua sem n
     expect(evidence.requests[0]?.idempotency_key).toBe(commands[0]?.idempotencyKey);
     expect(evidence.status).toBe("pending_review");
   } finally {
+    await closeFeat009PageBeforeCleanup(page);
+    await cleanupFeat009QaIdentity(identity);
+  }
+});
+
+test("SL-F009-E2E-016 @p1 resposta tardia anuncia a publicação mais nova preservada", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  const identity = createFeat009QaIdentity(testInfo, "016_late_pause_feedback");
+  const publicationReadCaptured = deferredSignal();
+  const releasePublicationRead = deferredSignal();
+  const publicationReadDelivered = deferredSignal();
+  const pauseApplied = deferredSignal();
+  const releasePauseResponse = deferredSignal();
+  let pausedPublication: StudioPublication | undefined;
+
+  try {
+    const { editor } = await provisionFeat009Studio(page, identity, "916", { complete: true });
+    if (identity.userId === undefined) {
+      throw new Error("A identidade FEAT-009 não publicou escopo.");
+    }
+    await seedFeat009PublishedStudio(identity.userId, editor.studioId);
+    await openFeat009Publication(page, editor.studioId);
+    const publicationApiPath = `/api/owner/studios/${editor.studioId}/publication`;
+
+    let publicationReadIntercepted = false;
+    await page.route("**/api/owner/studios/*/publication", async (route) => {
+      const request = route.request();
+      if (
+        publicationReadIntercepted ||
+        request.method() !== "GET" ||
+        new URL(request.url()).pathname !== publicationApiPath
+      ) {
+        await route.fallback();
+        return;
+      }
+      publicationReadIntercepted = true;
+      publicationReadCaptured.resolve();
+      await releasePublicationRead.promise;
+      const response = await route.fetch();
+      await route.fulfill({ body: await response.body(), response });
+      publicationReadDelivered.resolve();
+    });
+
+    await page.route("**/api/commands", async (route) => {
+      const command = studioCommandSchema.safeParse(route.request().postDataJSON());
+      if (!command.success || command.data.action !== "studio.pause") {
+        await route.fallback();
+        return;
+      }
+      try {
+        const response = await route.fetch();
+        const body = await response.body();
+        if (response.status() !== 200) {
+          throw new Error(`A pausa concorrente retornou HTTP ${response.status()}.`);
+        }
+        const payload: unknown = JSON.parse(body.toString("utf8"));
+        pausedPublication = apiSuccessSchema(studioPublicationSchema).parse(payload).data;
+        pauseApplied.resolve();
+        await releasePauseResponse.promise;
+        await route.fulfill({ body, response });
+      } finally {
+        pauseApplied.resolve();
+      }
+    });
+
+    await page.getByRole("button", { name: "Pausar estúdio" }).click();
+    const confirmation = page.getByRole("heading", {
+      level: 3,
+      name: "Confirmar pausa do estúdio",
+    });
+    await expect(confirmation).toBeFocused();
+    await page.getByRole("button", { name: "Confirmar pausa" }).evaluate((button) => {
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error("A confirmação de pausa não apontou para um botão HTML.");
+      }
+      window.dispatchEvent(new Event("visibilitychange"));
+      button.click();
+    });
+
+    await Promise.all([publicationReadCaptured.promise, pauseApplied.promise]);
+    if (pausedPublication === undefined) {
+      throw new Error("A pausa concorrente não retornou sua projeção autoritativa.");
+    }
+    const resumeResponse = await page.request.post("/api/commands", {
+      data: {
+        action: "studio.resume",
+        expectedScope: identity.userId,
+        idempotencyKey: randomUUID(),
+        payload: {
+          expectedPublicationVersion: pausedPublication.publicationVersion,
+          studioId: editor.studioId,
+        },
+      },
+      headers: { origin: new URL(page.url()).origin },
+    });
+    expect(resumeResponse.status()).toBe(200);
+    const resumedPublication = apiSuccessSchema(studioPublicationSchema).parse(
+      await resumeResponse.json(),
+    ).data;
+    expect(resumedPublication.studioStatus).toBe("published");
+
+    releasePublicationRead.resolve();
+    await publicationReadDelivered.promise;
+    await expect(
+      page.getByText(`Versão ${resumedPublication.publicationVersion}`, { exact: true }),
+    ).toBeVisible();
+    releasePauseResponse.resolve();
+
+    const retainedStateAnnouncement = page.getByRole("status").filter({
+      hasText: "O estado mais recente da publicação foi preservado: Publicado.",
+    });
+    await expect(retainedStateAnnouncement).toBeVisible();
+    await expect(retainedStateAnnouncement).toBeFocused();
+    await expect(
+      page.getByText(
+        "O estúdio foi pausado e o estado editorial foi registrado. Esta ação não altera reservas existentes.",
+        { exact: true },
+      ),
+    ).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 2, name: "Publicado" })).toBeVisible();
+
+    expect(await readFeat009PublicationEvidence(editor.studioId)).toMatchObject({
+      audit_actions: ["studio.paused", "studio.resumed"],
+      publication_version: resumedPublication.publicationVersion,
+      status: "published",
+    });
+  } finally {
+    releasePublicationRead.resolve();
+    releasePauseResponse.resolve();
     await closeFeat009PageBeforeCleanup(page);
     await cleanupFeat009QaIdentity(identity);
   }
