@@ -106,7 +106,7 @@ export function StudioReviewRevisionPanel({
         {revision.faqs.length === 0 ? (
           <p className={reviewStyles.muted}>Nenhuma pergunta cadastrada.</p>
         ) : (
-          <dl className={reviewStyles.definitionList}>
+          <dl className={`${reviewStyles.definitionList} ${reviewStyles.faqList}`}>
             {revision.faqs.map((faq) => (
               <Fragment key={faq.id}>
                 <dt>{faq.question}</dt>

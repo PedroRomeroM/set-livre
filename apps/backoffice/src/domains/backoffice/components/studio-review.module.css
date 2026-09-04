@@ -116,6 +116,22 @@
   margin: 0;
 }
 
+.faqList {
+  display: block;
+}
+
+.faqList > * {
+  width: 100%;
+}
+
+.faqList dd {
+  margin-top: 0.5rem;
+}
+
+.faqList dd + dt {
+  margin-top: 1rem;
+}
+
 .mediaFigure {
   display: grid;
   width: 100%;
