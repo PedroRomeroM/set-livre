@@ -48,6 +48,7 @@ export function BackofficeShell({
   const router = useRouter();
   const queryClient = useQueryClient();
   const intentionalLogout = useRef(false);
+  const sessionRecompositionInProgress = useRef(false);
   const [logoutTransitionStarted, setLogoutTransitionStarted] = useState(false);
   const [sessionRecompositionStarted, setSessionRecompositionStarted] = useState(false);
   const [expiredSessionDeadline, setExpiredSessionDeadline] = useState<string>();
@@ -94,18 +95,25 @@ export function BackofficeShell({
     [router],
   );
 
-  const recomposeSession = useCallback(() => {
-    recomposeBackofficePrivateBoundary({
-      clearPrivateState: () => queryClient.clear(),
-      hidePrivateView: () => {
-        flushSync(() => {
-          setSessionRecompositionStarted(true);
-        });
-      },
-      notifySessionChanged: notifyBackofficeSessionChanged,
-      reloadAuthoritativeSession: () => navigateToAuthoritativeSession("/"),
-    });
-  }, [navigateToAuthoritativeSession, queryClient]);
+  const recomposeSession = useCallback(
+    (notifyPeers = true) => {
+      if (sessionRecompositionInProgress.current) return;
+      sessionRecompositionInProgress.current = true;
+      recomposeBackofficePrivateBoundary({
+        clearPrivateState: () => queryClient.clear(),
+        hidePrivateView: () => {
+          flushSync(() => {
+            setSessionRecompositionStarted(true);
+          });
+        },
+        notifySessionChanged: () => {
+          if (notifyPeers) notifyBackofficeSessionChanged();
+        },
+        reloadAuthoritativeSession: () => navigateToAuthoritativeSession("/"),
+      });
+    },
+    [navigateToAuthoritativeSession, queryClient],
+  );
 
   useEffect(() => {
     if (authoritativeExpiresAt === undefined) return;
@@ -123,9 +131,10 @@ export function BackofficeShell({
   useEffect(
     () =>
       subscribeToBackofficeSessionChanges(() => {
-        void revalidateSession();
+        if (intentionalLogout.current) return;
+        recomposeSession(false);
       }),
-    [revalidateSession],
+    [recomposeSession],
   );
 
   useEffect(() => {

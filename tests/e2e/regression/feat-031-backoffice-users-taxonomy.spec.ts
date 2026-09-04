@@ -440,11 +440,29 @@ test("SL-F031-E2E-008 @p1 mudança de papel encerra a composição privada anter
 }, testInfo) => {
   test.setTimeout(180_000);
   const admin = createFeat031Operator(testInfo, "008_session_scope");
+  const boundaryEvidenceKey = "sl-f031-008-private-boundary";
   try {
     await provisionFeat031Operator(page, admin, "admin", "031008");
     await loginFeat031Backoffice(page, admin);
     await page.getByRole("link", { name: "Taxonomias" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "Taxonomias" })).toBeVisible();
+    await page.evaluate((evidenceKey) => {
+      window.sessionStorage.removeItem(evidenceKey);
+      const captureClosedBoundary = () => {
+        const privateHeadingVisible = Array.from(document.querySelectorAll("h1")).some(
+          (heading) => heading.textContent?.trim() === "Taxonomias",
+        );
+        const transitionVisible = Array.from(document.querySelectorAll('[role="status"]')).some(
+          (status) => status.textContent?.includes("Encerrando a visualização privada"),
+        );
+        if (transitionVisible && !privateHeadingVisible && document.querySelector("nav") === null) {
+          window.sessionStorage.setItem(evidenceKey, "closed-before-navigation");
+        }
+      };
+      const observer = new MutationObserver(captureClosedBoundary);
+      observer.observe(document.body, { childList: true, subtree: true });
+      captureClosedBoundary();
+    }, boundaryEvidenceKey);
     await setFeat031RolesConcurrently(admin.userId ?? "", ["support"]);
 
     const revalidation = page.waitForResponse(
@@ -458,6 +476,14 @@ test("SL-F031-E2E-008 @p1 mudança de papel encerra a composição privada anter
     expect((await revalidation).status()).toBe(200);
 
     await expect(page).toHaveURL(/\/usuarios$/u);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (evidenceKey) => window.sessionStorage.getItem(evidenceKey),
+          boundaryEvidenceKey,
+        ),
+      )
+      .toBe("closed-before-navigation");
     await expect(page.getByRole("heading", { level: 1, name: "Taxonomias" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Taxonomias" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "Acessos" })).toHaveCount(0);
