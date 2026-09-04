@@ -106,10 +106,6 @@
   word-break: break-all;
 }
 
-.definitionList > div {
-  display: contents;
-}
-
 .definitionList dt {
   color: var(--sl-color-ink-muted);
   font-weight: 650;
@@ -222,14 +218,6 @@
   .mediaGrid,
   .definitionList {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .definitionList > div {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
-    min-width: 0;
-    max-width: 100%;
   }
 
   .definitionList dd + dt {

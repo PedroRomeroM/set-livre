@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { Fragment } from "react";
 
 import reviewStyles from "./studio-review.module.css";
 import {
@@ -107,10 +108,10 @@ export function StudioReviewRevisionPanel({
         ) : (
           <dl className={reviewStyles.definitionList}>
             {revision.faqs.map((faq) => (
-              <div key={faq.id}>
+              <Fragment key={faq.id}>
                 <dt>{faq.question}</dt>
                 <dd>{faq.answer}</dd>
-              </div>
+              </Fragment>
             ))}
           </dl>
         )}
