@@ -106,6 +106,10 @@
   word-break: break-all;
 }
 
+.definitionList > div {
+  display: contents;
+}
+
 .definitionList dt {
   color: var(--sl-color-ink-muted);
   font-weight: 650;
