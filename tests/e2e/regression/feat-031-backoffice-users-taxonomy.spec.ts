@@ -82,9 +82,8 @@ test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e audi
     await expect(card).not.toContainText(target.name);
     await expect(card).not.toContainText(target.email);
     await expect(card).not.toContainText(target.taxId);
-    await card
-      .getByRole("combobox", { name: "Motivo auditado" })
-      .selectOption("identity_verification");
+    const reason = card.getByRole("combobox", { name: "Motivo auditado" });
+    await reason.selectOption("identity_verification");
     await card.getByRole("button", { name: "Revelar dados por 60 segundos" }).click();
     await expect(card.getByText(target.email, { exact: true })).toBeVisible();
     await expect(card.getByText(target.name, { exact: true })).toBeVisible();
@@ -97,6 +96,19 @@ test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e audi
     });
     expect(JSON.stringify(audit)).not.toContain(target.email);
     expect(JSON.stringify(audit)).not.toContain(target.taxId);
+
+    await reason.selectOption("legal_request");
+    await expect(card).not.toContainText(target.email);
+    await expect(card).not.toContainText(target.name);
+    await expect(card).not.toContainText(target.taxId);
+    await card.getByRole("button", { name: "Revelar dados por 60 segundos" }).click();
+    await expect(card.getByText(target.email, { exact: true })).toBeVisible();
+    const renewedAudit = await readFeat031Audit("backoffice.user_pii_revealed", target.userId);
+    expect(renewedAudit).toHaveLength(2);
+    expect(renewedAudit[0]).toMatchObject({
+      actor_role: "support",
+      metadata: { reason: "legal_request" },
+    });
     await card.getByRole("button", { name: "Ocultar agora" }).click();
     await expect(card).not.toContainText(target.email);
     await expect(card).not.toContainText(target.name);

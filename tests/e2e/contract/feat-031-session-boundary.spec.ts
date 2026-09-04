@@ -1,5 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
+import {
+  getFeat002PasswordControl,
+  stageFeat002PasswordForSubmission,
+} from "../../helpers/feat-002-authentication";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 import {
   cleanupFeat031Users,
   createFeat031Operator,
@@ -63,6 +68,85 @@ test("SL-F031-E2E-016 @p0 logout confirmado oculta o shell antes da navegação"
     releaseNavigation();
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-026 @p0 login ambíguo fecha a sessão privada nas outras abas", async ({
+  browser,
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const firstOperator = createFeat031Operator(testInfo, "026_first_operator");
+  const secondOperator = createFeat031Operator(testInfo, "026_second_operator");
+  const safeEnvironment = readSafeE2EEnvironment();
+  const setupContext = await browser.newContext({ baseURL: safeEnvironment.publicBaseUrl });
+  const setupPage = await setupContext.newPage();
+  let staleLoginPage: Page | undefined;
+  let releaseNavigation: () => void = () => undefined;
+  let markNavigationHeld: () => void = () => undefined;
+  let upstreamLoginStatus: number | undefined;
+  const navigationRelease = new Promise<void>((resolve) => {
+    releaseNavigation = resolve;
+  });
+  const navigationHeld = new Promise<void>((resolve) => {
+    markNavigationHeld = resolve;
+  });
+  try {
+    await provisionFeat031Operator(page, firstOperator, "support", "031026a");
+    await provisionFeat031Operator(setupPage, secondOperator, "support", "031026b");
+    await setupContext.close();
+
+    staleLoginPage = await page.context().newPage();
+    const staleLogin = await staleLoginPage.goto(`${safeEnvironment.backofficeBaseUrl}/entrar`);
+    expect(staleLogin?.status()).toBe(200);
+    await expect(
+      staleLoginPage.getByRole("heading", { level: 1, name: "Operação Set Livre" }),
+    ).toBeVisible();
+    await loginFeat031Backoffice(page, firstOperator, { unlockRuntime: false });
+
+    await page.route(
+      (url) =>
+        url.origin === new URL(safeEnvironment.backofficeBaseUrl).origin &&
+        (url.pathname === "/" || url.pathname === "/entrar"),
+      async (route) => {
+        markNavigationHeld();
+        await navigationRelease;
+        await route.continue();
+      },
+    );
+    await staleLoginPage.route(
+      "**/api/auth/login",
+      async (route) => {
+        const response = await route.fetch();
+        upstreamLoginStatus = response.status();
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+
+    const email = staleLoginPage.getByRole("textbox", { name: "E-mail" });
+    const password = getFeat002PasswordControl(staleLoginPage, "Senha");
+    await email.fill(secondOperator.email);
+    await stageFeat002PasswordForSubmission(password, secondOperator.password);
+    await staleLoginPage.getByRole("button", { name: "Entrar no backoffice" }).click();
+    await expect.poll(() => upstreamLoginStatus).toBe(200);
+    await navigationHeld;
+
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+  } finally {
+    releaseNavigation();
+    await setupContext.close().catch(() => undefined);
+    if (staleLoginPage !== undefined) {
+      await staleLoginPage.unrouteAll({ behavior: "ignoreErrors" });
+      await closePageBeforeDatabaseCleanup(staleLoginPage);
+    }
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [firstOperator, secondOperator] });
   }
 });
 

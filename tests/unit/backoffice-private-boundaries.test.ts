@@ -4,6 +4,7 @@ import { BackofficeClientError } from "../../apps/backoffice/src/domains/backoff
 import {
   backofficeSessionExpirationDelay,
   isBackofficeReauthenticationBoundaryError,
+  isBackofficeSessionDeadlineCurrent,
   recomposeBackofficePrivateBoundary,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-private-boundary";
 
@@ -31,6 +32,37 @@ describe("backoffice private boundaries", () => {
     expect(backofficeSessionExpirationDelay("2026-09-03T12:00:15.000Z", now)).toBe(15_000);
     expect(backofficeSessionExpirationDelay("2026-09-03T12:00:00.000Z", now)).toBe(0);
     expect(backofficeSessionExpirationDelay("not-an-authoritative-date", now)).toBe(0);
+  });
+
+  it("expires only the deadline still bound to the cached authoritative session", () => {
+    const expectedSession = {
+      authenticated: true as const,
+      authorizationVersion: 3,
+      email: "operator@example.test",
+      expiresAt: "2026-09-03T12:00:15.000Z",
+      runtimeUnlockExpiresAt: null,
+      scope: "10000000-0000-4000-8000-000000000001",
+      strongAuthenticationExpiresAt: "2026-09-03T12:05:00.000Z",
+    };
+    const renewedSession = {
+      ...expectedSession,
+      expiresAt: "2026-09-03T12:30:00.000Z",
+    };
+
+    expect(
+      isBackofficeSessionDeadlineCurrent(
+        expectedSession,
+        expectedSession,
+        expectedSession.expiresAt,
+      ),
+    ).toBe(true);
+    expect(
+      isBackofficeSessionDeadlineCurrent(
+        renewedSession,
+        expectedSession,
+        expectedSession.expiresAt,
+      ),
+    ).toBe(false);
   });
 
   it("closes, redacts, notifies and reloads the boundary in that order", () => {

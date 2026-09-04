@@ -13,9 +13,10 @@ Acesso:
 - ao menos um papel `support`, `reviewer` ou `admin`, sempre revalidado no banco; cada superfície
   exige ainda sua capacidade explícita;
 - binding por `session_id` Auth com 30 minutos de inatividade e oito horas absolutas;
-- revalidação client-side no mount, a cada 15 segundos, no foco e por evento entre abas; mudança de
-  identidade ou autorização oculta o DOM privado, limpa o QueryCache e recompõe a rota; esse polling
-  passivo valida a sessão sem renovar a janela de inatividade;
+- revalidação client-side no mount, a cada 15 segundos, no foco e por evento entre abas; login
+  concluído ou inconclusivo também publica esse evento. Mudança de identidade ou autorização oculta o
+  DOM privado, limpa o QueryCache e recompõe a rota; esse polling passivo valida a sessão sem renovar a
+  janela de inatividade;
 - autenticação realizada há no máximo cinco minutos para alterar papéis;
 - desbloqueio local de cinco minutos, assinado e vinculado à sessão Auth, antes de qualquer mutação;
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
@@ -97,9 +98,9 @@ nome do dono.
   revelação auditada;
 - paginação keyset de 50 itens por `created_at + id`, com cursor opaco e precisão de microssegundos;
 - e-mail mascarado e nenhuma PII crua — inclusive nome — no read model;
-- revelação explícita por motivo allowlisted, auditada, fora do QueryCache e removida após 60 segundos
-  ou quando a aba fica oculta; resposta que termina enquanto a aba já está oculta é descartada antes de
-  alcançar o estado/renderização;
+- revelação explícita por motivo allowlisted, auditada, fora do QueryCache e removida após 60 segundos,
+  quando a aba fica oculta ou quando o motivo muda; resposta que termina enquanto a aba já está oculta
+  é descartada antes de alcançar o estado/renderização;
 - actions explícitas de suspensão/restauração, sem aceitar status de destino do cliente, e
   `account_version` independente da versão da identidade;
 - suspensão fecha bindings administrativos do alvo e os comandos de produto continuam bloqueados

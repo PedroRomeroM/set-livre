@@ -18,6 +18,7 @@ import {
   backofficeSessionExpirationDelay,
   BackofficePrivateBoundaryProvider,
   isBackofficeReauthenticationBoundaryError,
+  isBackofficeSessionDeadlineCurrent,
   recomposeBackofficePrivateBoundary,
 } from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
@@ -51,7 +52,6 @@ export function BackofficeShell({
   const sessionRecompositionInProgress = useRef(false);
   const [logoutTransitionStarted, setLogoutTransitionStarted] = useState(false);
   const [sessionRecompositionStarted, setSessionRecompositionStarted] = useState(false);
-  const [expiredSessionDeadline, setExpiredSessionDeadline] = useState<string>();
   const pendingRuntimeKey = useRef<string>(undefined);
   const unlockForm = useRef<HTMLFormElement>(null);
   const currentSession = useQuery({
@@ -82,8 +82,7 @@ export function BackofficeShell({
       : undefined;
   const sessionValidationExpired =
     authoritativeExpiresAt !== undefined &&
-    (expiredSessionDeadline === authoritativeExpiresAt ||
-      backofficeSessionExpirationDelay(authoritativeExpiresAt) === 0);
+    backofficeSessionExpirationDelay(authoritativeExpiresAt) === 0;
   const privateViewUnsafe =
     currentSessionFailed || !sessionStillMatches || sessionValidationExpired;
 
@@ -120,13 +119,15 @@ export function BackofficeShell({
     const delay = backofficeSessionExpirationDelay(authoritativeExpiresAt);
     if (delay === 0) return;
     const expiration = window.setTimeout(() => {
-      flushSync(() => {
-        setSessionRecompositionStarted(true);
-        setExpiredSessionDeadline(authoritativeExpiresAt);
-      });
+      const cachedSession = queryClient.getQueryData<BackofficeSession>(
+        backofficeQueryKeys.session(session.scope),
+      );
+      if (!isBackofficeSessionDeadlineCurrent(cachedSession, session, authoritativeExpiresAt))
+        return;
+      recomposeSession();
     }, delay);
     return () => window.clearTimeout(expiration);
-  }, [authoritativeExpiresAt]);
+  }, [authoritativeExpiresAt, queryClient, recomposeSession, session]);
 
   useEffect(
     () =>

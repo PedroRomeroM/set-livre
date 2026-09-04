@@ -222,14 +222,16 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - P0 desabilita JavaScript e prova que login, desbloqueio, busca de usuários e gestão de taxonomias
   permanecem inertes, sem fallback de segredos ou ação sem handler e com instrução explícita de
   recuperação, nos três engines;
-- PII mascarada até revelação justificada, com o motivo auditado imutável durante a requisição, e
-  busca/cursor server-side em desktop, 390 px, 320 px e altura compacta;
+- PII mascarada até revelação justificada, com o motivo auditado imutável durante a requisição e
+  descarte imediato do valor anterior quando o motivo muda, além de busca/cursor server-side em
+  desktop, 390 px, 320 px e altura compacta;
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
   regressão;
-- revalidação de sessão/papel, auto-suspensão confirmada ou com resposta perdida e reautenticação
-  inconclusiva fecham a composição privada anterior; revogar o próprio papel administrativo faz o mesmo
-  tanto no sucesso quanto diante de resposta perdida, sem expor shell stale; a expiração autoritativa
-  também fecha a shell quando a rede está indisponível; conflitos de conta, papel e taxonomia descartam
+- revalidação de sessão/papel, auto-suspensão confirmada ou com resposta perdida, login ambíguo em outra
+  aba e reautenticação inconclusiva fecham a composição privada anterior; revogar o próprio papel
+  administrativo faz o mesmo tanto no sucesso quanto diante de resposta perdida, sem expor shell stale;
+  a expiração autoritativa também fecha a shell quando a rede está indisponível, enquanto um deadline
+  antigo não invalida uma sessão já renovada; conflitos de conta, papel e taxonomia descartam
   confirmações versionadas e exigem nova leitura nas quatro composições de regressão;
 - uma nova busca descarta confirmação, acknowledgment, retry e comando de status associados ao alvo
   anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa

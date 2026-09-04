@@ -98,7 +98,10 @@ function UserPiiReveal({
       <Field label="Motivo auditado">
         <Select
           disabled={!interactive || reveal.isPending || retryAvailable}
-          onChange={(event) => setReason(event.target.value as BackofficePiiReason)}
+          onChange={(event) => {
+            setPii(undefined);
+            setReason(event.target.value as BackofficePiiReason);
+          }}
           value={reason}
         >
           {Object.entries(reasonLabels).map(([value, label]) => (

@@ -119,7 +119,10 @@ jobs:
 
       - name: Full browser suite
         id: browser_suite
-        run: npm run test:e2e
+        run: |
+          npx playwright test --shard=1/3
+          npx playwright test --shard=2/3
+          npx playwright test --shard=3/3
 
       - name: Preserve browser failure evidence
         if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}

@@ -71,8 +71,9 @@ Consulte [development.md](development.md).
 O workflow `.github/workflows/ci.yml` contém três jobs:
 
 1. **Quality, local Supabase and browser gates**: gates estáticos, Vitest, reset e pgTAP local, suíte
-   Playwright completa, build, pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação,
-   falhas e recuperação do instalador, além do smoke standalone Linux x86_64;
+   Playwright completa em três shards sequenciais, build, pacote, `actionlint`, prova dos contratos
+   Nginx/systemd/SSH, ativação, falhas e recuperação do instalador, além do smoke standalone Linux
+   x86_64;
 2. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
 3. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
    de `main`, sempre depois dos dois jobs verdes e quando `PRD_DEPLOY_ENABLED=true`.
@@ -88,8 +89,10 @@ Workflows de pull request não recebem secrets de produção e o checkout remove
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
 Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
 e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
-O job Linux possui orçamento explícito de 90 minutos para acomodar a matriz Playwright completa, build,
-pacote, contratos do host e smoke standalone no mesmo gate.
+Os três shards rodam no mesmo job e um após o outro: cobrem a matriz uma única vez, reiniciam runner e
+servidores entre blocos e não colocam fixtures destrutivas em concorrência. O job Linux possui orçamento
+explícito de 90 minutos para acomodar a matriz completa, build, pacote, contratos do host e smoke
+standalone no mesmo gate.
 Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
 `Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
 review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).

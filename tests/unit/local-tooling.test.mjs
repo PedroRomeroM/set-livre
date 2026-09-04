@@ -1848,6 +1848,10 @@ describe("local tooling contracts", () => {
     expect(browserStart).toBeGreaterThan(-1);
     expect(buildStart).toBeGreaterThan(browserStart);
     expect(browserDelivery).toContain("id: browser_suite");
+    expect(browserDelivery).toContain("npx playwright test --shard=1/3");
+    expect(browserDelivery).toContain("npx playwright test --shard=2/3");
+    expect(browserDelivery).toContain("npx playwright test --shard=3/3");
+    expect(browserDelivery).not.toMatch(/^\s*run: npm run test:e2e\s*$/mu);
     expect(browserDelivery).toContain(
       "if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}",
     );

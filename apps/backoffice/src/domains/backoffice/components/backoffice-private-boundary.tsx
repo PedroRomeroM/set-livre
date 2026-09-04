@@ -1,5 +1,6 @@
 "use client";
 
+import type { BackofficeSession } from "@set-livre/contracts";
 import { createContext, useContext, type ReactNode } from "react";
 
 import { BackofficeClientError, isAmbiguousBackofficeError } from "./backoffice-api";
@@ -18,6 +19,20 @@ export function backofficeSessionExpirationDelay(expiresAt: string, now = Date.n
   const expiration = Date.parse(expiresAt);
   if (!Number.isFinite(expiration)) return 0;
   return Math.max(0, Math.min(expiration - now, maximumBrowserTimeoutMs));
+}
+
+export function isBackofficeSessionDeadlineCurrent(
+  currentSession: BackofficeSession | undefined,
+  expectedSession: Extract<BackofficeSession, { authenticated: true }>,
+  expectedExpiresAt: string,
+) {
+  return (
+    currentSession?.authenticated === true &&
+    currentSession.scope === expectedSession.scope &&
+    currentSession.email === expectedSession.email &&
+    currentSession.authorizationVersion === expectedSession.authorizationVersion &&
+    currentSession.expiresAt === expectedExpiresAt
+  );
 }
 
 export function isBackofficeReauthenticationBoundaryError(error: unknown) {

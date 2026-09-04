@@ -33,8 +33,12 @@ export function BackofficeLoginForm({ signedOut }: Readonly<{ signedOut: boolean
     onError: (error) => {
       if (!isAmbiguousBackofficeError(error)) return;
       queryClient.clear();
-      router.replace("/");
-      router.refresh();
+      try {
+        notifyBackofficeSessionChanged();
+      } finally {
+        router.replace("/");
+        router.refresh();
+      }
     },
     onSettled: () => {
       pendingLogin.current = undefined;
