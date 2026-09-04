@@ -1,5 +1,4 @@
 import Image from "next/image";
-import { Fragment } from "react";
 
 import reviewStyles from "./studio-review.module.css";
 import {
@@ -106,14 +105,14 @@ export function StudioReviewRevisionPanel({
         {revision.faqs.length === 0 ? (
           <p className={reviewStyles.muted}>Nenhuma pergunta cadastrada.</p>
         ) : (
-          <dl className={`${reviewStyles.definitionList} ${reviewStyles.faqList}`}>
+          <ul className={reviewStyles.faqList}>
             {revision.faqs.map((faq) => (
-              <Fragment key={faq.id}>
-                <dt>{faq.question}</dt>
-                <dd>{faq.answer}</dd>
-              </Fragment>
+              <li className={reviewStyles.faqItem} key={faq.id}>
+                <h4 className={reviewStyles.faqQuestion}>{faq.question}</h4>
+                <p className={reviewStyles.faqAnswer}>{faq.answer}</p>
+              </li>
             ))}
-          </dl>
+          </ul>
         )}
       </section>
       <section className={reviewStyles.section}>

@@ -117,19 +117,36 @@
 }
 
 .faqList {
-  display: block;
-}
-
-.faqList > * {
+  display: grid;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.faqList dd {
-  margin-top: 0.5rem;
+.faqItem {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 0.5rem;
 }
 
-.faqList dd + dt {
-  margin-top: 1rem;
+.faqQuestion,
+.faqAnswer {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.faqQuestion {
+  color: var(--sl-color-ink-muted);
+  font-size: 1rem;
+  font-weight: 650;
 }
 
 .mediaFigure {
