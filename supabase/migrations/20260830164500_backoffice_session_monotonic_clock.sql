@@ -150,7 +150,13 @@ begin
     least(
       binding.absolute_expires_at,
       coalesce(canonical_not_after, binding.absolute_expires_at),
-      p_auth_expires_at
+      p_auth_expires_at,
+      (
+        case
+          when p_touch_activity then checked_at
+          else binding.last_seen_at
+        end
+      ) + interval '30 minutes'
     ),
     binding.opened_at + interval '5 minutes';
 end;

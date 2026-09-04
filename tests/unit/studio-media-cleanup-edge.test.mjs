@@ -133,7 +133,7 @@ describe("studio media cleanup edge adapter", () => {
     expect(remove).toHaveBeenCalledWith(candidates[0].paths);
   });
 
-  it("aborta remoção Storage pendente no deadline da invocação e fecha o ledger", async () => {
+  it("aborta remoção Storage pendente no deadline individual e fecha o ledger", async () => {
     vi.useFakeTimers();
     try {
       let observedSignal;
@@ -216,6 +216,97 @@ describe("studio media cleanup edge adapter", () => {
         p_media_id: candidates[0].mediaId,
         p_succeeded: false,
       });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("concede um deadline completo a cada remoção Storage sequencial", async () => {
+    vi.useFakeTimers();
+    try {
+      const observedSignals = [];
+      let notifyFirstStorageStarted;
+      let notifySecondStorageStarted;
+      const firstStorageStarted = new Promise((resolve) => {
+        notifyFirstStorageStarted = resolve;
+      });
+      const secondStorageStarted = new Promise((resolve) => {
+        notifySecondStorageStarted = resolve;
+      });
+      const fetchImplementation = vi.fn(
+        (_input, init) =>
+          new Promise((resolve, reject) => {
+            const signal = init?.signal;
+            if (!(signal instanceof AbortSignal)) {
+              reject(new Error("missing storage abort signal"));
+              return;
+            }
+            observedSignals.push(signal);
+            if (observedSignals.length === 1) notifyFirstStorageStarted();
+            if (observedSignals.length === 2) notifySecondStorageStarted();
+
+            const resolveRemoval = () => {
+              signal.removeEventListener("abort", rejectOnAbort);
+              resolve(Response.json([]));
+            };
+            const removalDuration = setTimeout(resolveRemoval, 6_000);
+            const rejectOnAbort = () => {
+              clearTimeout(removalDuration);
+              reject(
+                signal.reason ?? new DOMException("cleanup_storage_remove_aborted", "AbortError"),
+              );
+            };
+            if (signal.aborted) rejectOnAbort();
+            else signal.addEventListener("abort", rejectOnAbort, { once: true });
+          }),
+      );
+      const rpc = adapterRpc(candidates);
+      const createSupabaseClient = vi.fn((_url, _secretKey, options) => ({
+        rpc,
+        storage: {
+          from: vi.fn(() => ({
+            remove: vi.fn(async (paths) => {
+              await options.global.fetch(
+                "https://supabase.example/storage/v1/object/studio-media",
+                {
+                  body: JSON.stringify({ prefixes: paths }),
+                  method: "DELETE",
+                },
+              );
+              return { data: [], error: null };
+            }),
+          })),
+        },
+      }));
+      const secretKey = "sb_secret_adapterTestKey123";
+      const handler = createCleanupRequestHandler({
+        createSupabaseClient,
+        fetchImplementation,
+        readConfiguration: () => ({ secretKey, url: "https://supabase.example" }),
+      });
+
+      const responsePromise = handler(
+        new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+          body: JSON.stringify({ runId }),
+          headers: { apikey: secretKey, "content-type": "application/json" },
+          method: "POST",
+        }),
+      );
+
+      await firstStorageStarted;
+      await vi.advanceTimersByTimeAsync(6_000);
+      await secondStorageStarted;
+      expect(fetchImplementation).toHaveBeenCalledTimes(2);
+      expect(observedSignals).toHaveLength(2);
+      expect(observedSignals[1].aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ claimed: 2, deleted: 2, failed: 0 });
+      expect(observedSignals.every((signal) => signal.aborted === false)).toBe(true);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

@@ -259,7 +259,7 @@ begin
         pg_catalog.lower(auth_user.email),
         pg_catalog.lower(normalized_query)
       )
-      or profile.id::text = normalized_query
+      or profile.id::text = pg_catalog.lower(normalized_query)
     )
     and (
       p_cursor_created_at is null

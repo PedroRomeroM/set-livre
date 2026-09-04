@@ -166,7 +166,6 @@ function createCleanupFetch(
   fetchImplementation: CleanupFetch,
   supabaseUrl: string,
   invocationSignal: AbortSignal,
-  deadlineSignal: AbortSignal,
 ): CleanupFetch {
   const storageObjectEndpoint = new URL("/storage/v1/object/", supabaseUrl);
 
@@ -180,11 +179,12 @@ function createCleanupFetch(
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname.startsWith(storageObjectEndpoint.pathname);
 
+    const storageDeadlineController = isStorageRemoval ? new AbortController() : null;
     const signal = AbortSignal.any([
       invocationSignal,
-      ...(isStorageRemoval ? [deadlineSignal] : []),
       ...(input instanceof Request ? [input.signal] : []),
       ...(init?.signal ? [init.signal] : []),
+      ...(storageDeadlineController === null ? [] : [storageDeadlineController.signal]),
     ]);
     if (signal.aborted) {
       return Promise.reject(
@@ -195,7 +195,25 @@ function createCleanupFetch(
           ),
       );
     }
-    return fetchImplementation(input, { ...init, signal });
+    if (storageDeadlineController === null) {
+      return fetchImplementation(input, { ...init, signal });
+    }
+
+    const storageDeadlineError = new DOMException(
+      "cleanup_storage_remove_deadline_exceeded",
+      "TimeoutError",
+    );
+    const storageDeadline = setTimeout(
+      () => storageDeadlineController.abort(storageDeadlineError),
+      cleanupStorageRemovalDeadlineMs,
+    );
+    return (async () => {
+      try {
+        return await fetchImplementation(input, { ...init, signal });
+      } finally {
+        clearTimeout(storageDeadline);
+      }
+    })();
   };
 }
 
@@ -280,26 +298,12 @@ export function createCleanupRequestHandler({
       return failureResponse("invalid_request", 400);
     }
 
-    const storageDeadlineController = new AbortController();
     const client = createSupabaseClient(config.url, config.secretKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: {
-        fetch: createCleanupFetch(
-          fetchImplementation,
-          config.url,
-          request.signal,
-          storageDeadlineController.signal,
-        ),
+        fetch: createCleanupFetch(fetchImplementation, config.url, request.signal),
       },
     });
-    const storageDeadlineError = new DOMException(
-      "cleanup_storage_remove_deadline_exceeded",
-      "TimeoutError",
-    );
-    const storageDeadline = setTimeout(
-      () => storageDeadlineController.abort(storageDeadlineError),
-      cleanupStorageRemovalDeadlineMs,
-    );
     const dependencies: CleanupDependencies = {
       async beginRun(context) {
         const { data, error } = await client.rpc("begin_studio_media_cleanup_run", {
@@ -355,8 +359,6 @@ export function createCleanupRequestHandler({
         return terminalResponse(error.result, 503, error.errorCode);
       }
       return failureResponse("service_unavailable");
-    } finally {
-      clearTimeout(storageDeadline);
     }
   };
 }

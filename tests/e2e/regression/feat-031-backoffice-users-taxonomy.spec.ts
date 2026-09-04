@@ -271,6 +271,57 @@ test("SL-F031-E2E-006 @p1 busca e cursor permanecem no servidor sem filtro na UR
   }
 });
 
+test("SL-F031-E2E-027 @p1 repetir o mesmo filtro recupera uma busca que falhou", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "027_search_retry");
+  const target = await createFeat031DirectIdentity("Retry da busca");
+  let filteredReads = 0;
+  let rejectFilteredReads = true;
+  try {
+    await provisionFeat031Operator(page, support, "support", "031027");
+    await loginFeat031Backoffice(page, support);
+    await page.route("**/api/users", async (route) => {
+      const body = route.request().postDataJSON() as { query?: unknown } | null;
+      if (body?.query !== target.email) {
+        await route.continue();
+        return;
+      }
+      filteredReads += 1;
+      if (rejectFilteredReads) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
+    const searchInput = page.getByRole("textbox", { name: "Buscar usuários" });
+    const searchButton = page.getByRole("button", { name: "Buscar" });
+    const directory = page.getByRole("region", { name: "Usuários" });
+    await searchInput.fill(target.email);
+    await searchButton.click();
+    await expect(directory.getByRole("alert")).toContainText(
+      "Não foi possível conectar ao backoffice",
+    );
+    const failedReadCount = filteredReads;
+    expect(failedReadCount).toBeGreaterThanOrEqual(2);
+
+    rejectFilteredReads = false;
+    await searchButton.click();
+    const card = page.getByRole("article").filter({
+      has: page.getByText(`Identificador …${target.userId.slice(-8)}`, { exact: true }),
+    });
+    await expect(card).toBeVisible();
+    await expect(directory.getByRole("alert")).toHaveCount(0);
+    expect(filteredReads).toBe(failedReadCount + 1);
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [target], operators: [support] });
+  }
+});
+
 test("SL-F031-E2E-017 @p1 nova busca descarta confirmação e tentativa de status anteriores", async ({
   page,
 }, testInfo) => {
@@ -585,6 +636,49 @@ test("SL-F031-E2E-010 @p1 conflito de taxonomia descarta o editor obsoleto", asy
   } finally {
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Taxonomy(undefined, slug);
+    await cleanupFeat031Users({ operators: [admin] });
+  }
+});
+
+test("SL-F031-E2E-028 @p1 erro inicial de taxonomias oferece recuperação na página", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const admin = createFeat031Operator(testInfo, "028_taxonomy_retry");
+  let taxonomyReads = 0;
+  let rejectTaxonomyReads = true;
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031028");
+    await loginFeat031Backoffice(page, admin);
+    await page.route("**/api/taxonomies", async (route) => {
+      taxonomyReads += 1;
+      if (rejectTaxonomyReads) {
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.getByRole("link", { name: "Taxonomias" }).click();
+    const manager = page.getByRole("region", { name: "Taxonomias" });
+    const retry = page.getByRole("button", { name: "Tentar carregar taxonomias novamente" });
+    await expect(manager.getByRole("alert")).toContainText(
+      "Não foi possível conectar ao backoffice",
+    );
+    await expect(retry).toBeVisible();
+    await expect(retry).toBeEnabled();
+    const failedReadCount = taxonomyReads;
+    expect(failedReadCount).toBeGreaterThanOrEqual(2);
+
+    rejectTaxonomyReads = false;
+    await retry.click();
+    await expect(page.getByRole("article").first()).toBeVisible();
+    await expect(manager.getByRole("alert")).toHaveCount(0);
+    await expect(retry).toHaveCount(0);
+    expect(taxonomyReads).toBe(failedReadCount + 1);
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [admin] });
   }
 });

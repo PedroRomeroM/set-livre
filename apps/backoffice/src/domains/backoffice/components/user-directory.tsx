@@ -44,6 +44,12 @@ function errorMessage(error: unknown) {
     : "Não foi possível concluir agora. Tente novamente.";
 }
 
+function readErrorMessage(error: unknown) {
+  return error instanceof BackofficeClientError
+    ? error.message
+    : "Não foi possível carregar os usuários agora. Tente novamente.";
+}
+
 function UserPiiReveal({
   interactive,
   session,
@@ -334,6 +340,10 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
             const normalized = draftQuery.trim();
             const fingerprint =
               normalized === "" ? "empty" : await backofficeFilterFingerprint(normalized);
+            if (fingerprint === activeFilter.fingerprint && normalized === activeFilter.query) {
+              if (users.isError) await users.refetch();
+              return;
+            }
             setActiveFilter({ fingerprint, query: normalized });
           } catch {
             setNotice("Não foi possível preparar a busca com segurança. Tente novamente.");
@@ -369,7 +379,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         </fieldset>
       </form>
       {users.isPending ? <p role="status">Carregando usuários…</p> : null}
-      {users.isError ? <Alert variant="error">{errorMessage(users.error)}</Alert> : null}
+      {users.isError ? <Alert variant="error">{readErrorMessage(users.error)}</Alert> : null}
       {!users.isPending && !users.isError && items.length === 0 ? (
         <p className={styles.empty}>Nenhum usuário encontrado.</p>
       ) : null}

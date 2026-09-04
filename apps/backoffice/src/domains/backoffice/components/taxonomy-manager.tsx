@@ -39,6 +39,12 @@ function taxonomyError(error: unknown) {
     : "Não foi possível concluir agora. Tente novamente.";
 }
 
+function taxonomyListError(error: unknown) {
+  return error instanceof BackofficeClientError
+    ? error.message
+    : "Não foi possível carregar as taxonomias agora. Tente novamente.";
+}
+
 function TaxonomyForm({
   blocked,
   editing,
@@ -298,7 +304,22 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
         />
       </section>
       {taxonomies.isPending ? <p role="status">Carregando taxonomias…</p> : null}
-      {taxonomies.isError ? <Alert variant="error">{taxonomyError(taxonomies.error)}</Alert> : null}
+      {taxonomies.isError ? (
+        <Alert title="O catálogo não pôde ser carregado" variant="error">
+          <p>{taxonomyListError(taxonomies.error)}</p>
+          <div className={styles.actions}>
+            <Button
+              disabled={!interactive || taxonomies.isFetching}
+              loading={taxonomies.isFetching}
+              loadingLabel="Tentando novamente"
+              onClick={() => void taxonomies.refetch()}
+              variant="secondary"
+            >
+              Tentar carregar taxonomias novamente
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
       {!taxonomies.isPending && !taxonomies.isError && items.length === 0 ? (
         <p className={styles.empty}>Nenhuma taxonomia cadastrada.</p>
       ) : null}

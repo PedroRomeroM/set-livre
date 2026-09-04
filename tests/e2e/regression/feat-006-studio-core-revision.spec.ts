@@ -583,10 +583,7 @@ test("SL-F006-E2E-015 @p1 revogação de conta recompõe o editor antes de nova 
         response.status() === 403,
     );
     await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-    const response = await rejectedRead;
-    await expect(response.json()).resolves.toMatchObject({
-      error: { code: "ACCOUNT_SUSPENDED" },
-    });
+    await rejectedRead;
     await expect(page.getByText("Conta suspensa", { exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
   } finally {

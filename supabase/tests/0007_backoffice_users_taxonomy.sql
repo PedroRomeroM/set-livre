@@ -107,7 +107,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(60);
+select plan(63);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -399,7 +399,7 @@ select pg_catalog.set_config(
     from private.open_backoffice_session(
       '81000000-0000-4000-8000-000000000001',
       '82000000-0000-4000-8000-000000000001',
-      pg_catalog.clock_timestamp() + interval '30 minutes'
+      pg_catalog.clock_timestamp() + interval '60 minutes'
     ) as session_result
   ),
   true
@@ -407,8 +407,16 @@ select pg_catalog.set_config(
 reset role;
 select ok(
   pg_catalog.current_setting('set_livre.test.f031_admin_session')::jsonb
-    @> '{"scope":"81000000-0000-4000-8000-000000000001","roles":["admin"]}'::jsonb,
-  'admin abre binding curto vinculado ao session_id Auth'
+    @> '{"scope":"81000000-0000-4000-8000-000000000001","roles":["admin"]}'::jsonb
+  and (
+    pg_catalog.current_setting('set_livre.test.f031_admin_session')::jsonb
+      ->> 'expires_at'
+  )::timestamptz = (
+    select session_binding.last_seen_at + interval '30 minutes'
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  'admin abre binding Auth e recebe o prazo ocioso inicial de trinta minutos'
 );
 
 select private.feat031_create_user(
@@ -713,10 +721,17 @@ select pg_catalog.set_config(
   true
 );
 set local role app_dal;
-select * from private.get_backoffice_session(
-  '81000000-0000-4000-8000-000000000001',
-  '82000000-0000-4000-8000-000000000001',
-  pg_catalog.clock_timestamp() + interval '30 minutes'
+select pg_catalog.set_config(
+  'set_livre.test.f031_passive_session',
+  (
+    select pg_catalog.to_jsonb(session_result)::text
+    from private.get_backoffice_session(
+      '81000000-0000-4000-8000-000000000001',
+      '82000000-0000-4000-8000-000000000001',
+      pg_catalog.clock_timestamp() + interval '30 minutes'
+    ) as session_result
+  ),
+  true
 );
 reset role;
 select is(
@@ -727,6 +742,49 @@ select is(
   ),
   pg_catalog.current_setting('set_livre.test.f031_passive_last_seen'),
   'revalidação passiva da sessão não renova o limite de inatividade'
+);
+select ok(
+  (
+    pg_catalog.current_setting('set_livre.test.f031_passive_session')::jsonb
+      ->> 'expires_at'
+  )::timestamptz
+    = pg_catalog.current_setting('set_livre.test.f031_passive_last_seen')::timestamptz
+      + interval '30 minutes',
+  'revalidação passiva publica o prazo ocioso existente'
+);
+
+select pg_catalog.set_config(
+  'set_livre.test.f031_touched_session',
+  (
+    select pg_catalog.to_jsonb(session_context)::text
+    from private.backoffice_session_context(
+      '81000000-0000-4000-8000-000000000001',
+      '82000000-0000-4000-8000-000000000001',
+      pg_catalog.clock_timestamp() + interval '60 minutes',
+      'support',
+      false,
+      true
+    ) as session_context
+  ),
+  true
+);
+select ok(
+  (
+    pg_catalog.current_setting('set_livre.test.f031_touched_session')::jsonb
+      ->> 'expires_at'
+  )::timestamptz
+    = (
+      select session_binding.last_seen_at + interval '30 minutes'
+      from private.backoffice_sessions as session_binding
+      where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001'
+    )
+  and (
+    select session_binding.last_seen_at
+      > pg_catalog.current_setting('set_livre.test.f031_passive_last_seen')::timestamptz
+    from private.backoffice_sessions as session_binding
+    where session_binding.auth_session_id = '82000000-0000-4000-8000-000000000001'
+  ),
+  'leitura interativa publica o prazo ocioso renovado pela atividade'
 );
 
 set local role app_dal;
@@ -854,6 +912,32 @@ select ok(
     from second_page
   ),
   'paginação keyset avança sem repetir usuários'
+);
+select private.feat031_create_user(
+  '81abcdef-0000-4000-8000-000000000008',
+  'uuid-case-feat031@setlivre.local',
+  'UUID Case FEAT 031',
+  '+5541999993108',
+  '00000000000',
+  8,
+  false,
+  false
+);
+select ok(
+  (
+    select pg_catalog.count(*) = 1
+      and pg_catalog.bool_and(id = '81abcdef-0000-4000-8000-000000000008')
+    from private.list_backoffice_users(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81ABCDEF-0000-4000-8000-000000000008',
+      null,
+      null,
+      51
+    )
+  ),
+  'busca por UUID normaliza hexadecimal maiúsculo e retorna somente a conta exata'
 );
 select matches(
   private.feat031_capture_error(

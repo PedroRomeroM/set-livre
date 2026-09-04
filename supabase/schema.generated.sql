@@ -863,7 +863,13 @@ begin
     least(
       binding.absolute_expires_at,
       coalesce(canonical_not_after, binding.absolute_expires_at),
-      p_auth_expires_at
+      p_auth_expires_at,
+      (
+        case
+          when p_touch_activity then checked_at
+          else binding.last_seen_at
+        end
+      ) + interval '30 minutes'
     ),
     binding.opened_at + interval '5 minutes';
 end;
@@ -6324,7 +6330,7 @@ begin
         pg_catalog.lower(auth_user.email),
         pg_catalog.lower(normalized_query)
       )
-      or profile.id::text = normalized_query
+      or profile.id::text = pg_catalog.lower(normalized_query)
     )
     and (
       p_cursor_created_at is null
@@ -6727,7 +6733,8 @@ begin
     least(
       opened_at + interval '8 hours',
       coalesce(canonical_not_after, opened_at + interval '8 hours'),
-      p_auth_expires_at
+      p_auth_expires_at,
+      opened_at + interval '30 minutes'
     ),
     opened_at + interval '5 minutes';
 end;
