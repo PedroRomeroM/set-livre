@@ -68,15 +68,21 @@ Consulte [development.md](development.md).
 
 ## CI e proteção de branch
 
-O workflow `.github/workflows/ci.yml` contém três jobs:
+O workflow `.github/workflows/ci.yml` contém cinco definições de job; a matriz Playwright expande uma
+delas em seis runners:
 
-1. **Quality, local Supabase and browser gates**: gates estáticos, Vitest, reset e pgTAP local, suíte
-   Playwright completa em três shards sequenciais, build, pacote, `actionlint`, prova dos contratos
-   Nginx/systemd/SSH, ativação, falhas e recuperação do instalador, além do smoke standalone Linux
-   x86_64;
-2. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
-3. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
-   de `main`, sempre depois dos dois jobs verdes e quando `PRD_DEPLOY_ENABLED=true`.
+1. **Linux quality and release contracts**: gates estáticos, Vitest, reset e pgTAP local, build,
+   pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação, falhas e recuperação do
+   instalador, além do smoke standalone Linux x86_64;
+2. **Playwright shard N/6**: seis runners Ubuntu simultâneos, cada um com checkout, dependências,
+   Supabase local e servidores próprios, cobrindo em conjunto a matriz Playwright completa uma única
+   vez;
+3. **Quality, local Supabase and browser gates**: agregador protegido que sempre inspeciona os
+   resultados anteriores e só termina verde quando o job Linux e toda a matriz Playwright retornam
+   exatamente `success`;
+4. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
+5. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
+   de `main`, sempre depois dos dois contexts protegidos verdes e quando `PRD_DEPLOY_ENABLED=true`.
 
 `workflow_dispatch` permite repetir manualmente os dois gates sem fabricar commit quando o evento do
 GitHub não cria uma check suite. Por padrão ele não publica produção. O único opt-in de recuperação
@@ -87,15 +93,20 @@ reprova a execução antes dos gates e mantém o job de produção omitido. O ch
 
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
-Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
-e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
-Os três shards rodam no mesmo job e um após o outro: cobrem a matriz uma única vez, reiniciam runner e
-servidores entre blocos e não colocam fixtures destrutivas em concorrência. O job Linux possui orçamento
-explícito de 90 minutos para acomodar a matriz completa, build, pacote, contratos do host e smoke
-standalone no mesmo gate.
-Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
-`Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
-review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
+Quando um shard Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
+e vídeos em um artifact identificado também pelo shard; runs verdes não acumulam evidência redundante.
+Os seis shards rodam simultaneamente em VMs descartáveis distintas. Cada runner recria sua própria stack
+Supabase e conserva `workers: 1`, portanto nenhuma fixture, porta, banco ou servidor destrutivo é
+compartilhado entre shards. `fail-fast: false` deixa os seis chegarem a estado terminal e exporem todas
+as falhas da rodada. O job Linux estrutural também roda em paralelo com a matriz; seus orçamentos são 45
+minutos para contratos Linux, 30 para cada shard e 5 para o agregador.
+
+O context obrigatório `Quality, local Supabase and browser gates` é esse agregador mínimo e usa
+`always()` apenas para observar resultados terminais: `failure`, `cancelled` e `skipped` são rejeitados,
+e somente `success` simultâneo de Linux e da matriz o aprova. `Windows native contracts` permanece o
+segundo context obrigatório da branch protection. O terceiro context, `Codex review contract`, não é um
+job: uma credencial confiável o publica somente depois do ciclo de review limpo descrito em
+[review-deploy-cycle.md](review-deploy-cycle.md).
 
 ## Release e deploy
 

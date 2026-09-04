@@ -385,7 +385,9 @@ describe("local tooling contracts", () => {
       "utf8",
     );
 
-    expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(3);
+    const checkoutDefinitions = workflow.match(/uses: actions\/checkout@/gu) ?? [];
+    expect(checkoutDefinitions).toHaveLength(4);
+    expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(checkoutDefinitions.length);
     expect(webUnit).toContain("User=setlivre-web");
     expect(webUnit).not.toContain("User=setlivre-backoffice");
     expect(webUnit).toContain("ConditionPathExists=/opt/set-livre/current/web/server.js");
@@ -1771,7 +1773,30 @@ describe("local tooling contracts", () => {
     );
   });
 
-  it("budgets the complete Linux gate beyond the measured browser-suite duration", () => {
+  it("budgets the parallel Linux jobs independently", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const linuxStart = workflow.indexOf("  linux:");
+    const browserStart = workflow.indexOf("  browser:", linuxStart);
+    const qualityStart = workflow.indexOf("  quality:");
+    const windowsStart = workflow.indexOf("  windows:", qualityStart);
+    const linuxJob = workflow.slice(linuxStart, browserStart);
+    const browserJob = workflow.slice(browserStart, qualityStart);
+    const qualityJob = workflow.slice(qualityStart, windowsStart);
+
+    expect(linuxStart).toBeGreaterThan(-1);
+    expect(browserStart).toBeGreaterThan(linuxStart);
+    expect(qualityStart).toBeGreaterThan(-1);
+    expect(windowsStart).toBeGreaterThan(qualityStart);
+    expect(linuxJob).toContain("timeout-minutes: 45");
+    expect(browserJob).toContain("timeout-minutes: 30");
+    expect(qualityJob).toContain("timeout-minutes: 5");
+    expect(workflow).not.toContain("timeout-minutes: 90");
+  });
+
+  it("keeps the protected Linux context fail-closed over every prerequisite", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
@@ -1782,8 +1807,14 @@ describe("local tooling contracts", () => {
 
     expect(qualityStart).toBeGreaterThan(-1);
     expect(windowsStart).toBeGreaterThan(qualityStart);
-    expect(qualityJob).toContain("timeout-minutes: 90");
-    expect(qualityJob).not.toContain("timeout-minutes: 45");
+    expect(qualityJob).toContain("name: Quality, local Supabase and browser gates");
+    expect(qualityJob).toContain("if: ${{ always() }}");
+    expect(qualityJob).toContain("      - linux\n      - browser");
+    expect(qualityJob).toContain("BROWSER_RESULT: ${{ needs.browser.result }}");
+    expect(qualityJob).toContain("LINUX_RESULT: ${{ needs.linux.result }}");
+    expect(qualityJob).toContain('[[ "$LINUX_RESULT" == "success" ]]');
+    expect(qualityJob).toContain('[[ "$BROWSER_RESULT" == "success" ]]');
+    expect(qualityJob).not.toContain("actions/checkout");
   });
 
   it("smokes the canonical SSH tunnel and rejects divergent forwarded origins", () => {
@@ -1836,21 +1867,27 @@ describe("local tooling contracts", () => {
     expect(deployJob).not.toContain("ref: ${{ inputs.release_sha }}");
   });
 
-  it("retains Playwright traces and reports only when the browser gate fails", () => {
+  it("runs isolated Playwright shards in parallel and retains only failure evidence", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
     );
-    const browserStart = workflow.indexOf("- name: Full browser suite");
-    const buildStart = workflow.indexOf("- name: Build and package Linux release", browserStart);
-    const browserDelivery = workflow.slice(browserStart, buildStart);
+    const browserStart = workflow.indexOf("  browser:");
+    const qualityStart = workflow.indexOf("  quality:", browserStart);
+    const browserDelivery = workflow.slice(browserStart, qualityStart);
 
     expect(browserStart).toBeGreaterThan(-1);
-    expect(buildStart).toBeGreaterThan(browserStart);
+    expect(qualityStart).toBeGreaterThan(browserStart);
+    expect(browserDelivery).toContain("name: Playwright shard ${{ matrix.shard }}/6");
+    expect(browserDelivery).toContain("fail-fast: false");
+    expect(browserDelivery).toContain("max-parallel: 6");
+    expect(browserDelivery).toContain("shard: [1, 2, 3, 4, 5, 6]");
+    expect(browserDelivery).toContain("- name: Reset isolated local Supabase");
+    expect(browserDelivery).toContain("run: npm run supabase:reset");
     expect(browserDelivery).toContain("id: browser_suite");
-    expect(browserDelivery).toContain("npx playwright test --shard=1/3");
-    expect(browserDelivery).toContain("npx playwright test --shard=2/3");
-    expect(browserDelivery).toContain("npx playwright test --shard=3/3");
+    expect(browserDelivery).toContain("run: npx playwright test --shard=${{ matrix.shard }}/6");
+    expect(browserDelivery.match(/npx playwright test --shard=/gu)).toHaveLength(1);
+    expect(browserDelivery).not.toMatch(/--shard=\d+\/\d+/u);
     expect(browserDelivery).not.toMatch(/^\s*run: npm run test:e2e\s*$/mu);
     expect(browserDelivery).toContain(
       "if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}",
@@ -1863,6 +1900,9 @@ describe("local tooling contracts", () => {
     expect(browserDelivery).toContain("if-no-files-found: error");
     expect(browserDelivery).toContain("include-hidden-files: true");
     expect(browserDelivery).toContain("retention-days: 7");
+    expect(browserDelivery).toContain("-shard-${{ matrix.shard }}");
+    expect(browserDelivery).toContain("- name: Stop isolated local Supabase");
+    expect(browserDelivery).toContain("if: always()");
   });
 
   it("disables ambient curl configuration for every operational invocation", () => {

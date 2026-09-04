@@ -360,3 +360,6 @@ Criação, remoção e consolidação dos planos seguem exclusivamente o
 Saída interrompida, timeout ou serviço indisponível é inconclusivo. Um gate passa somente com execução
 terminal e código zero. Artefatos de falha do Playwright — trace, screenshot e vídeo — são retidos no
 CI por sete dias somente quando a suíte falha; evidência verde não precisa ser acumulada no repositório.
+No CI, os seis shards da matriz completa executam simultaneamente em runners Linux independentes. Cada
+um recria a própria stack Supabase e mantém um único worker; o agregador protegido rejeita shard ou gate
+Linux com resultado diferente de `success`.
