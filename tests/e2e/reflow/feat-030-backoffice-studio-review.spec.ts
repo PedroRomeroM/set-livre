@@ -94,19 +94,20 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       page.getByText(feat030ExtremeTextFixture.taxonomyName, { exact: true }),
     ).toHaveCount(2);
 
-    const faqTextLayout = [];
+    const faqWrapEvidence = [];
     for (const text of [faqQuestion, faqAnswer]) {
       for (const alignment of ["start", "end"] as const) {
         await text.evaluate((element, block) => {
           element.scrollIntoView({ block, inline: "nearest" });
         }, alignment);
+        await expect(text).toBeInViewport();
         await page.evaluate(
           () =>
             new Promise<void>((resolve) => {
               requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
             }),
         );
-        faqTextLayout.push(
+        faqWrapEvidence.push(
           await text.evaluate((element, block) => {
             if (!(element instanceof HTMLElement)) {
               throw new Error("O texto do FAQ não expõe uma caixa HTML mensurável.");
@@ -114,51 +115,6 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             const rectangle = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             const section = element.closest("section");
-            const fragmentTolerance = 1;
-            const visiblePaintedCharactersOutside: Array<{
-              bottom: number;
-              left: number;
-              right: number;
-              top: number;
-            }> = [];
-            let visiblePaintedCharacterCount = 0;
-            let visiblePaintedLeft = Number.POSITIVE_INFINITY;
-            let visiblePaintedRight = Number.NEGATIVE_INFINITY;
-            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-            let textNode = walker.nextNode();
-            while (textNode !== null) {
-              const value = textNode.textContent ?? "";
-              for (let start = 0; start < value.length; start += 1) {
-                const range = document.createRange();
-                range.setStart(textNode, start);
-                range.setEnd(textNode, start + 1);
-                for (const fragment of range.getClientRects()) {
-                  if (
-                    (fragment.width === 0 && fragment.height === 0) ||
-                    fragment.bottom <= 0 ||
-                    fragment.top >= window.innerHeight
-                  ) {
-                    continue;
-                  }
-                  visiblePaintedCharacterCount += 1;
-                  visiblePaintedLeft = Math.min(visiblePaintedLeft, fragment.left);
-                  visiblePaintedRight = Math.max(visiblePaintedRight, fragment.right);
-                  if (
-                    fragment.left < rectangle.left - fragmentTolerance ||
-                    fragment.right > rectangle.right + fragmentTolerance
-                  ) {
-                    visiblePaintedCharactersOutside.push({
-                      bottom: fragment.bottom,
-                      left: fragment.left,
-                      right: fragment.right,
-                      top: fragment.top,
-                    });
-                  }
-                }
-                range.detach();
-              }
-              textNode = walker.nextNode();
-            }
             const clippingAncestors: Array<{
               className: string | null;
               overflowX: string;
@@ -178,27 +134,34 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
               current = current.parentElement;
             }
             const viewportWidth = document.documentElement.clientWidth;
+            const scrollingElement = document.scrollingElement;
+            if (scrollingElement === null) {
+              throw new Error("O documento não expõe o elemento rolável canônico.");
+            }
+            scrollingElement.scrollLeft = viewportWidth;
+            const horizontalOffset = scrollingElement.scrollLeft;
+            scrollingElement.scrollLeft = 0;
             return {
               alignment: block,
+              bodyScrollWidth: document.body.scrollWidth,
               clientWidth: element.clientWidth,
               clippingAncestors,
+              documentScrollWidth: document.documentElement.scrollWidth,
               elementLeft: rectangle.left,
               elementRight: rectangle.right,
+              horizontalOffset,
               overflowWrap: style.overflowWrap,
               scrollWidth: element.scrollWidth,
-              textFits:
+              contractSatisfied:
                 element.clientWidth > 0 &&
-                visiblePaintedCharacterCount > 0 &&
-                visiblePaintedCharactersOutside.length === 0 &&
                 rectangle.left >= 0 &&
                 rectangle.right <= viewportWidth &&
                 (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
-                clippingAncestors.length === 0,
+                clippingAncestors.length === 0 &&
+                document.body.scrollWidth <= viewportWidth &&
+                document.documentElement.scrollWidth <= viewportWidth &&
+                horizontalOffset === 0,
               viewportWidth,
-              visiblePaintedCharacterCount,
-              visiblePaintedCharactersOutside: visiblePaintedCharactersOutside.slice(0, 16),
-              visiblePaintedLeft,
-              visiblePaintedRight,
               wordBreak: style.wordBreak,
             };
           }, alignment),
@@ -206,8 +169,8 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       }
     }
     expect(
-      faqTextLayout.every((text) => text.textFits),
-      JSON.stringify(faqTextLayout, null, 2),
+      faqWrapEvidence.every((text) => text.contractSatisfied),
+      JSON.stringify(faqWrapEvidence, null, 2),
     ).toBe(true);
 
     const approve = page.getByRole("button", { name: "Aprovar e publicar" });
@@ -258,7 +221,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             scrollWidth: element.scrollWidth,
             tag: element.tagName,
             text: textContent.slice(0, 80),
-            verifiedByVisibleTextLayout: verifiedWrappedTexts.includes(textContent),
+            verifiedByWrapContract: verifiedWrappedTexts.includes(textContent),
           };
         });
         const skipLinkElement = document.querySelector<HTMLAnchorElement>(
@@ -306,7 +269,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
               (element) =>
                 element.clientWidth > 0 &&
                 element.scrollWidth > element.clientWidth &&
-                !element.verifiedByVisibleTextLayout,
+                !element.verifiedByWrapContract,
             )
             .slice(0, 16),
           overflowing: measuredElements

@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 03/09/2026</p>
+      <p>Resumo executivo vivo · atualizado em 04/09/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -176,8 +176,9 @@
           dividida entre seis runners Linux simultâneos, cada um com Supabase local isolado e um
           único worker; o context protegido só aprova quando todos os shards e contratos Linux
           terminam em <code>success</code>. No reflow extremo, texto contínuo é posicionado pelas
-          duas extremidades e seus caracteres visíveis são validados sem depender de métricas stale
-          do WebKit. Os contratos detalhados ficam nas fontes canônicas de
+          duas extremidades; a prova combina caixa contida, quebra computada, ausência de clipping e
+          impossibilidade de scroll horizontal, sem depender da geometria stale de
+          <code>Range</code> do WebKit. Os contratos detalhados ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
           <a href="docs/infrastructure.md">infraestrutura</a>,
           <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
