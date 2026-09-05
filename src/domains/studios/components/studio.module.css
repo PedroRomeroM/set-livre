@@ -94,6 +94,11 @@
   background: var(--sl-color-surface-soft);
 }
 
+.safePreview,
+.preview {
+  font-kerning: none;
+}
+
 .videoFrame iframe {
   width: 100%;
   height: 100%;

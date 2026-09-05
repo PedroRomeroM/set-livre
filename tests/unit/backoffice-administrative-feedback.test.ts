@@ -69,7 +69,6 @@ describe("backoffice administrative feedback", () => {
       createElement(TaxonomyForm, {
         blocked: false,
         fieldErrors,
-        generation: 0,
         interactive: true,
         onCancel: vi.fn(),
         onRetry: vi.fn(),

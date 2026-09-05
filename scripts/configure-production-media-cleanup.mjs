@@ -35,6 +35,7 @@ const cleanupProbeObject = Buffer.from(
 const cleanupConfigurationLockName = "set-livre-production-media-cleanup";
 const staleCleanupProbeBatchSize = 100;
 const storageRequestDeadlineMs = 15_000;
+const cleanupInvocationDeadlineMs = 110_000;
 // Production's last release before immutable cleanup provides the bounded migration boundary.
 const immutableCleanupBootstrapReleaseSha = "a6549f558133a76f559a1c94ded73aca558786e5";
 
@@ -157,7 +158,13 @@ function createStorageDeadlineFetch(fetchImplementation) {
 
     try {
       if (signal.aborted) throw signal.reason ?? deadlineError;
-      return await fetchImplementation(input, { ...init, signal });
+      const response = await fetchImplementation(input, { ...init, signal });
+      const body = response.body === null ? null : await response.arrayBuffer();
+      return new Response(body, {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
     } finally {
       clearTimeout(deadline);
     }
@@ -198,36 +205,47 @@ export function assertActiveWebReleaseHealth(payload) {
 async function requestJson(
   fetchImplementation,
   endpoint,
-  { body, headers = {}, label, method = "GET" },
+  { body, headers = {}, label, method = "GET", timeoutMs = 15_000 },
 ) {
-  let response;
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () => controller.abort(new DOMException("cleanup_request_deadline_exceeded", "TimeoutError")),
+    timeoutMs,
+  );
   try {
-    response = await fetchImplementation(endpoint, {
-      body,
-      cache: "no-store",
-      headers: { Accept: "application/json", ...headers },
-      method,
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch (error) {
-    throw new Error(`${label} não respondeu sem redirecionamento.`, {
-      cause: error,
-    });
-  }
-  if (response.status !== 200 || response.redirected === true) {
-    throw new Error(`${label} recusou a operação (${response.status}).`);
-  }
-  if (
-    response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
-    "application/json"
-  ) {
-    throw new Error(`${label} não retornou JSON.`);
-  }
-  try {
-    return await response.json();
-  } catch {
-    throw new Error(`${label} retornou JSON inválido.`);
+    let response;
+    try {
+      response = await fetchImplementation(endpoint, {
+        body,
+        cache: "no-store",
+        headers: { Accept: "application/json", ...headers },
+        method,
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new Error(`${label} não respondeu sem redirecionamento.`, {
+        cause: error,
+      });
+    }
+    if (response.status !== 200 || response.redirected === true) {
+      controller.abort();
+      throw new Error(`${label} recusou a operação (${response.status}).`);
+    }
+    if (
+      response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !==
+      "application/json"
+    ) {
+      controller.abort();
+      throw new Error(`${label} não retornou JSON.`);
+    }
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(`${label} retornou JSON inválido.`);
+    }
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -670,6 +688,7 @@ async function invokeCleanupFunction(fetchImplementation, secretKey, functionSlu
     headers: { apikey: secretKey, "Content-Type": "application/json" },
     label: "A candidata de cleanup",
     method: "POST",
+    timeoutMs: cleanupInvocationDeadlineMs,
   });
   return assertCleanupResult(payload, { requireClaimed: true });
 }

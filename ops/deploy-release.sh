@@ -185,8 +185,8 @@ loaded_systemd_units_are_current() {
 }
 
 stop_media_cleanup_schedule() {
-  systemctl stop set-livre-media-cleanup.timer
-  systemctl stop set-livre-application-start.service
+  systemctl stop set-livre-media-cleanup.timer || return 1
+  systemctl stop set-livre-application-start.service || return 1
   systemctl stop set-livre-media-cleanup.service
 }
 
@@ -588,6 +588,8 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
     stop_media_cleanup_schedule \
       || fail "não foi possível bloquear o cleanup durante a recuperação."
+    systemctl stop set-livre-web.service set-livre-backoffice.service \
+      || fail "não foi possível interromper os aplicativos antes da recuperação."
     read_rollback_marker || fail "não foi possível ler a ativação interrompida."
     if bootstrap_recovery_state_is_present; then
       begin_interrupted_bootstrap_recovery "$recovered_release" \
@@ -597,8 +599,8 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     if [[ -z ${recovered_release} ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
         || fail "não foi possível estabilizar o host sem release anterior."
-    elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
-      || ! run_media_cleanup_once \
+    elif ! run_media_cleanup_once \
+      || ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_health "$recovered_release" \
       || ! wait_for_public_health "$recovered_release"; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
@@ -713,12 +715,13 @@ cleanup_files() {
 rollback_activation() {
   printf 'A nova release falhou em %s; iniciando rollback.\n' \
     "${activation_failure:-interrupção inesperada}" >&2
-  stop_media_cleanup_schedule || true
   journalctl --unit set-livre-web.service --unit set-livre-backoffice.service \
     --unit set-livre-media-cleanup.service \
     --lines 40 --no-pager >&2 || true
 
-  if ! recover_link_from_marker; then
+  if ! stop_media_cleanup_schedule \
+    || ! systemctl stop set-livre-web.service set-livre-backoffice.service \
+    || ! recover_link_from_marker; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
     printf 'deploy: rollback falhou; serviços interrompidos para evitar estado divergente.\n' >&2
     return 1
@@ -728,8 +731,8 @@ rollback_activation() {
     rm -f -- "$ROLLBACK_MARKER"
     return 0
   fi
-  if systemctl restart set-livre-web.service set-livre-backoffice.service \
-    && run_media_cleanup_once \
+  if run_media_cleanup_once \
+    && systemctl restart set-livre-web.service set-livre-backoffice.service \
     && wait_for_health "$recovered_release" \
     && wait_for_public_health "$recovered_release" \
     && start_media_cleanup_schedule; then
@@ -1334,12 +1337,14 @@ write_rollback_marker "$previous_release" || fail "não foi possível preparar a
 activation_started=true
 activation_failure="bloqueio do cleanup durante a ativação"
 stop_media_cleanup_schedule || fail "$activation_failure"
+activation_failure="interrupção dos aplicativos antes da ativação"
+systemctl stop set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
 activation_failure="troca do symlink"
 activate_link "$release_directory" || fail "$activation_failure"
-activation_failure="reinício dos serviços"
-systemctl restart set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
 activation_failure="cleanup inicial de mídia"
 run_media_cleanup_once || fail "$activation_failure"
+activation_failure="reinício dos serviços"
+systemctl restart set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
 activation_failure="readiness interno"
 wait_for_health "$release_sha" || fail "$activation_failure"
 activation_failure="readiness HTTPS público"

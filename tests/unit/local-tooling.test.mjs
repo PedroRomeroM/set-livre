@@ -462,7 +462,7 @@ describe("local tooling contracts", () => {
     expect(applicationStartUnit).not.toContain("RemainAfterExit=yes");
     expect(applicationStartUnit).toContain("WantedBy=multi-user.target");
     expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-services");
-    expect(recoveryUnit).toContain("TimeoutStartSec=12min");
+    expect(recoveryUnit).toContain("TimeoutStartSec=14min");
     expect(recoveryUnit).not.toContain("ConditionPathExists=");
     expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
     expect(recoveryUnit).not.toContain("set-livre-application-start.service");
@@ -497,6 +497,8 @@ describe("local tooling contracts", () => {
     );
 
     expect(service).toContain("User=setlivre-web");
+    expect(service).toContain("TimeoutStartSec=120s");
+    expect(service).toContain("TimeoutStopSec=10s");
     expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
     expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/release.env");
     expect(service).toContain(
@@ -575,7 +577,15 @@ describe("local tooling contracts", () => {
 
     const rollbackMarker = deploy.indexOf('write_rollback_marker "$previous_release"');
     const stopSchedule = deploy.indexOf("stop_media_cleanup_schedule", rollbackMarker);
+    const stopApps = deploy.indexOf(
+      "systemctl stop set-livre-web.service set-livre-backoffice.service",
+      stopSchedule,
+    );
     const activateLink = deploy.indexOf('activate_link "$release_directory"', stopSchedule);
+    const restartApps = deploy.indexOf(
+      "systemctl restart set-livre-web.service set-livre-backoffice.service",
+      activateLink,
+    );
     const initialCleanup = deploy.indexOf("run_media_cleanup_once", activateLink);
     const internalHealth = deploy.indexOf('wait_for_health "$release_sha"', initialCleanup);
     const publicHealth = deploy.indexOf('wait_for_public_health "$release_sha"', internalHealth);
@@ -583,9 +593,11 @@ describe("local tooling contracts", () => {
     const terminalMarkerRemoval = deploy.indexOf('rm -f -- "$ROLLBACK_MARKER"', startSchedule);
     expect(rollbackMarker).toBeGreaterThan(-1);
     expect(stopSchedule).toBeGreaterThan(rollbackMarker);
-    expect(activateLink).toBeGreaterThan(stopSchedule);
+    expect(stopApps).toBeGreaterThan(stopSchedule);
+    expect(activateLink).toBeGreaterThan(stopApps);
     expect(initialCleanup).toBeGreaterThan(activateLink);
-    expect(internalHealth).toBeGreaterThan(initialCleanup);
+    expect(restartApps).toBeGreaterThan(initialCleanup);
+    expect(internalHealth).toBeGreaterThan(restartApps);
     expect(publicHealth).toBeGreaterThan(internalHealth);
     expect(startSchedule).toBeGreaterThan(initialCleanup);
     expect(terminalMarkerRemoval).toBeGreaterThan(startSchedule);
@@ -605,6 +617,12 @@ describe("local tooling contracts", () => {
     expect(stopTimer).toBeGreaterThan(-1);
     expect(stopApplicationGate).toBeGreaterThan(stopTimer);
     expect(stopCleanup).toBeGreaterThan(stopApplicationGate);
+    expect(stopScheduleDefinition).toContain(
+      "systemctl stop set-livre-media-cleanup.timer || return 1",
+    );
+    expect(stopScheduleDefinition).toContain(
+      "systemctl stop set-livre-application-start.service || return 1",
+    );
   });
 
   it("authenticates and consumes a paired bootstrap recovery state", () => {
@@ -1570,8 +1588,22 @@ describe("local tooling contracts", () => {
     const serviceRecoveryStart = deploy.indexOf(
       'if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]',
     );
-    const serviceRecoveryEnd = deploy.indexOf("\nverify_only=false", serviceRecoveryStart);
+    const serviceRecoveryEnd = deploy.indexOf(
+      "\nvalidate_deployment_host_prerequisites\n",
+      serviceRecoveryStart,
+    );
     const serviceRecovery = deploy.slice(serviceRecoveryStart, serviceRecoveryEnd);
+    expect(serviceRecoveryEnd).toBeGreaterThan(serviceRecoveryStart);
+    expect(serviceRecovery.indexOf("systemctl stop set-livre-web.service")).toBeGreaterThan(-1);
+    expect(serviceRecovery.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+      serviceRecovery.indexOf("activate_recovered_link"),
+    );
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeGreaterThan(
+      serviceRecovery.indexOf("activate_recovered_link"),
+    );
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeLessThan(
+      serviceRecovery.indexOf("systemctl restart set-livre-web.service"),
+    );
     expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeLessThan(
       serviceRecovery.indexOf('wait_for_health "$recovered_release"'),
     );
@@ -1585,7 +1617,7 @@ describe("local tooling contracts", () => {
     expect(serviceRecovery).not.toContain("set-livre-deploy.lock");
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      5,
+      6,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
@@ -1600,6 +1632,16 @@ describe("local tooling contracts", () => {
     const rollbackStart = deploy.indexOf("rollback_activation() {");
     const rollbackEnd = deploy.indexOf("\non_exit() {", rollbackStart);
     const rollback = deploy.slice(rollbackStart, rollbackEnd);
+    expect(rollback.indexOf("systemctl stop set-livre-web.service")).toBeGreaterThan(-1);
+    expect(rollback.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+      rollback.indexOf("recover_link_from_marker"),
+    );
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeGreaterThan(
+      rollback.indexOf("recover_link_from_marker"),
+    );
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeLessThan(
+      rollback.indexOf("systemctl restart set-livre-web.service"),
+    );
     expect(rollback.indexOf("run_media_cleanup_once")).toBeLessThan(
       rollback.indexOf('wait_for_health "$recovered_release"'),
     );

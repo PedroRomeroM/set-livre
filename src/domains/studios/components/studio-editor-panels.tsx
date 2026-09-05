@@ -108,7 +108,9 @@ export function StudioEditorPanels({
 
   return (
     <Stack space={6}>
-      <StudioEditorNavigation current="dados" studioId={initialEditor.studioId} />
+      {studioDeleted ? null : (
+        <StudioEditorNavigation current="dados" studioId={initialEditor.studioId} />
+      )}
       <StudioCorePanel
         discardRevision={revisions.discard}
         externalCommandLocked={commandSurface === "commercial"}

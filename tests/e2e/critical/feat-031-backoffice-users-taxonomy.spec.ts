@@ -5,6 +5,7 @@ import {
   type Browser,
   type BrowserContext,
   type Page,
+  type Request,
   type Route,
 } from "@playwright/test";
 
@@ -477,40 +478,82 @@ test("SL-F031-E2E-013 @p0 resposta perdida preserva replay idempotente e bloquei
   test.setTimeout(180_000);
   const operator = createFeat031Operator(testInfo, "013_ambiguous_status");
   const target = await createFeat031DirectIdentity("Status ambíguo", true);
-  const lostResponse = createHeldResponseGate({ outcome: "abort" });
+  const attempts = [
+    {
+      action: "suspensão",
+      status: "suspended",
+      audit: "backoffice.user_suspended",
+      notice: "Usuário suspenso",
+      version: 1,
+      gate: createHeldResponseGate({ outcome: "abort" }),
+    },
+    {
+      action: "restauração",
+      status: "active",
+      audit: "backoffice.user_restored",
+      notice: "Usuário restaurado",
+      version: 2,
+      gate: createHeldResponseGate({ outcome: "abort" }),
+    },
+  ];
   try {
     await provisionFeat031Operator(page, operator, "support", "031013");
     await loginFeat031Backoffice(page, operator);
     const card = await searchUser(page, target.email, target.userId);
-    await card.getByRole("button", { name: "Revisar suspensão" }).click();
-    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
-    await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
+    const searchInput = page.getByRole("textbox", { name: "Buscar usuários" });
+    const searchButton = page.getByRole("button", { name: "Buscar" });
+    const searchForm = page.locator("form").filter({ has: searchInput });
+    for (const attempt of attempts) {
+      const lostResponse = attempt.gate;
+      const commands: unknown[] = [];
+      const captureCommand = (request: Request) => {
+        if (new URL(request.url()).pathname === "/api/commands")
+          commands.push(request.postDataJSON());
+      };
+      page.on("request", captureCommand);
+      await card.getByRole("button", { name: `Revisar ${attempt.action}` }).click();
+      const confirmation = page.getByRole("region", { name: `Confirmar ${attempt.action}` });
+      await confirmation
+        .getByRole("checkbox", { name: "Revisei o impacto desta alteração" })
+        .check();
 
-    await page.route("**/api/commands", lostResponse.handle);
+      await page.route("**/api/commands", lostResponse.handle);
 
-    await confirmation.getByRole("button", { name: "Confirmar" }).click();
-    await lostResponse.waitUntilReady();
-    await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
-    await expect(card.getByRole("button", { name: "Revisar suspensão" })).toBeDisabled();
-    lostResponse.release();
-    await expect(confirmation.getByRole("alert")).toContainText(
-      "O resultado não pôde ser confirmado. Repita a mesma tentativa",
-    );
-    await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
-    await expect(card.getByRole("button", { name: "Revisar suspensão" })).toBeDisabled();
-    const replay = confirmation.getByRole("button", { name: "Repetir mesma tentativa" });
-    await expect(replay).toBeEnabled();
-    expect(lostResponse.wasHandled()).toBe(true);
-    expect(await readFeat031UserStatus(target.userId)).toMatchObject({
-      account_version: 1,
-      status: "suspended",
-    });
+      await confirmation.getByRole("button", { name: "Confirmar" }).click();
+      await lostResponse.waitUntilReady();
+      await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+      await expect(card.getByRole("button", { name: `Revisar ${attempt.action}` })).toBeDisabled();
+      await expect(searchInput).toBeDisabled();
+      await expect(searchButton).toBeDisabled();
+      lostResponse.release();
+      await expect(confirmation.getByRole("alert")).toContainText(
+        "O resultado não pôde ser confirmado. Repita a mesma tentativa",
+      );
+      await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+      await expect(card.getByRole("button", { name: `Revisar ${attempt.action}` })).toBeDisabled();
+      await expect(searchInput).toBeDisabled();
+      await expect(searchButton).toBeDisabled();
+      await searchForm.evaluate((form: HTMLFormElement) => form.requestSubmit());
+      const replay = confirmation.getByRole("button", { name: "Repetir mesma tentativa" });
+      await expect(replay).toBeEnabled();
+      expect(lostResponse.wasHandled()).toBe(true);
+      expect(await readFeat031UserStatus(target.userId)).toMatchObject({
+        account_version: attempt.version,
+        status: attempt.status,
+      });
 
-    await replay.click();
-    await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toBeVisible();
-    expect(await readFeat031Audit("backoffice.user_suspended", target.userId)).toHaveLength(1);
+      await replay.click();
+      await expect(page.getByRole("status").filter({ hasText: attempt.notice })).toBeVisible();
+      expect(await readFeat031Audit(attempt.audit, target.userId)).toHaveLength(1);
+      expect(commands).toHaveLength(2);
+      expect(commands[1]).toEqual(commands[0]);
+      await expect(searchInput).toBeEnabled();
+      await expect(searchButton).toBeEnabled();
+      page.off("request", captureCommand);
+      await page.unroute("**/api/commands", lostResponse.handle);
+    }
   } finally {
-    lostResponse.release();
+    for (const attempt of attempts) attempt.gate.release();
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ direct: [target], operators: [operator] });
@@ -817,6 +860,7 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
   const lostCreateResponse = createHeldResponseGate({ outcome: "abort" });
   const lostEditResponse = createHeldResponseGate({ outcome: "abort" });
   const lostArchiveResponse = createHeldResponseGate({ outcome: "abort" });
+  const commands: unknown[] = [];
   let tagId: string | undefined;
   try {
     await provisionFeat031Operator(page, admin, "admin", "031004");
@@ -825,7 +869,19 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await page.getByRole("combobox", { name: "Grupo" }).selectOption("tag");
     await page.getByRole("textbox", { name: "Nome" }).fill(name);
     await page.getByRole("textbox", { name: "Slug" }).fill(slug);
-    await page.getByRole("spinbutton", { name: "Ordem" }).fill("310");
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/commands")
+        commands.push(request.postDataJSON());
+    });
+    const sortOrder = page.getByRole("spinbutton", { name: "Ordem" });
+    await sortOrder.fill("");
+    await page.getByRole("button", { name: "Criar taxonomia" }).click();
+    await expect(sortOrder).toHaveAttribute("aria-invalid", "true");
+    await expect(sortOrder).toHaveAccessibleDescription(
+      "Informe uma ordem inteira entre 0 e 32767.",
+    );
+    expect(commands).toHaveLength(0);
+    await sortOrder.fill("0");
     await page.route("**/api/commands", lostCreateResponse.handle);
     await page.getByRole("button", { name: "Criar taxonomia" }).click();
     await lostCreateResponse.waitUntilReady();
@@ -839,6 +895,7 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await createReplay.click();
     await expect(page.getByRole("status").filter({ hasText: "salva na versão 0" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue("");
+    expect(commands[0]).toMatchObject({ payload: { sortOrder: 0 } });
     await page.unroute("**/api/commands", lostCreateResponse.handle);
 
     const createdCard = page
@@ -847,6 +904,11 @@ test("SL-F031-E2E-004 @p0 arquivar taxonomia preserva histórico e bloqueia nova
     await createdCard.getByRole("button", { name: "Editar" }).click();
     await page.getByRole("textbox", { name: "Nome" }).fill(editedName);
     await page.getByRole("textbox", { name: "Slug" }).fill(editedSlug);
+    const commandsBeforeInvalidEdit = commands.length;
+    await sortOrder.fill("");
+    await page.getByRole("button", { name: "Salvar edição" }).click();
+    await expect(sortOrder).toHaveAttribute("aria-invalid", "true");
+    expect(commands).toHaveLength(commandsBeforeInvalidEdit);
     await page.getByRole("spinbutton", { name: "Ordem" }).fill("311");
     await page.route("**/api/commands", lostEditResponse.handle);
     await page.getByRole("button", { name: "Salvar edição" }).click();

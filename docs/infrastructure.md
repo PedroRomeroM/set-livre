@@ -165,8 +165,12 @@ SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do
 termina antes da primeira migration e a ativação posterior recalcula os bytes da árvore, relê checksum,
 manifesto, metadados e digest do host dessa mesma raiz root-owned, sem aceitar novos uploads. O link
 `/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
-só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
-HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
+só então o instalador interrompe timer, gate, cleanup e ambos os aplicativos, troca o link, exige
+sucesso do cleanup inicial da candidata e reinicia os serviços para provar readiness interno e
+HTTPS público. Rollback e recovery seguem a mesma ordem: apps parados antes de restaurar o link e
+cleanup da release recuperada aprovado antes de reiniciá-los. Falha ao interromper a cadeia impede
+a troca do link; cleanup falho não permite iniciar a release correspondente. Um marcador root-only
+preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units estáticas, sem vínculo
 direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
 `set-livre-release-recovery.service` termine com sucesso; em seguida, o próprio gate inicia
@@ -185,7 +189,8 @@ ordem, timer, gate e cleanup antes de trocar estado. Isso restaura o ledger ante
 frio. A mesma recovery unit é
 disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
 links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
-depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
+depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de quatorze minutos,
+incluindo espera pelo lock, parada dos serviços, cleanup e tentativas limitadas de health. Ela
 pode iniciar os apps internamente para provar health sem depender do gate e, portanto, sem ciclo de
 units. Uma fase root-only adicional é publicada antes de remover o blocker do bootstrap e permanece até
 o readiness terminal. Se a recuperação recebe `SIGKILL`, seu `ExecStopPost` interrompe os apps e, no
@@ -654,6 +659,34 @@ antes de iniciar o timer, e o rollback só é consumido depois de comprovar que 
 oneshot falhar durante um bootstrap compatível, o symlink da release, o blocker autenticado e os
 marcadores de recovery permanecem íntegros para nova tentativa, com os serviços parados. Não existe
 edição manual do banco como procedimento operacional.
+
+Cada invocação da Function reclama no máximo quatro itens sequenciais. A leitura do corpo de entrada
+tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
+do corpo da resposta, limitado a 64 KiB. O retry de conclusão de item permanece limitado a uma segunda
+tentativa. Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
+run tem deadline próprio de 5s dentro da janela reservada até 100s, inclusive se o chamador desconectar.
+Falhas de remoção/completion continuam contabilizadas e o resultado só é saudável depois da confirmação
+do ledger. Indisponibilidade ou resposta ambígua do próprio ledger permanece fail-closed e usa a
+recuperação de runs abandonados descrita acima, sem fabricar confirmação.
+
+Invocador da release e canário aguardam no máximo 110s, incluindo o JSON da resposta; a oneshot de
+cleanup tem `TimeoutStartSec=120s` e `TimeoutStopSec=10s`. Esses limites preservam margem abaixo dos
+[150s mínimos de wall clock e idle timeout do Supabase](https://supabase.com/docs/guides/functions/limits)
+e da lease de claim de 15 minutos. O configurador mantém 15s para as demais chamadas HTTP e para
+Storage, também incluindo o corpo. O lote menor preserva tempo de finalização sem paralelizar mutações
+ou introduzir scheduler adicional; o timer continua com intervalo de dez minutos.
+O gate `set-livre-application-start.service` permanece sem timeout próprio: para `Type=oneshot`, o
+[systemd desabilita o timeout de startup por padrão](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml#L529-L537),
+sem herdar os 90s usuais do manager. A oneshot de cleanup e a recovery conservam seus limites explícitos.
+
+O teto inicial é de 24 mídias por hora (48 objetos, pois cada item remove original e prévia).
+Uma galeria máxima de 20 fotos exige cinco ciclos: até 50 minutos mais a duração da última execução
+depois da elegibilidade, sem outras entradas ou falhas. Esse limite privilegia o fechamento seguro de
+um lote na baseline de baixo volume, não promete esvaziar a fila numa única invocação. Readiness mede
+sucesso terminal recente e runs falhos/travados, não exige fila vazia; portanto a remoção de uma galeria
+não impede novos ciclos nem a saúde entre lotes. O claim ordena por elegibilidade e ID. Antes de admitir
+volume sustentado acima de 24 mídias elegíveis/h, é necessário medir entradas, idade do backlog e tempo
+de drenagem e rever capacidade; aumentar apenas o timeout não resolve saturação.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a

@@ -173,6 +173,10 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,
   navegação terminal explícita após descarte e revogação de conta em desktop, mobile, 320 px e altura
   compacta;
+- `SL-F006-E2E-020/021` rejeitam respostas com escopo ou estúdio divergentes antes de persistir
+  recovery ou remover painéis, preservam o replay da intenção original e comprovam a reconciliação;
+  o descarte definitivo remove também as abas do estúdio, enquanto descartar somente uma revisão
+  mantém a navegação da publicação existente;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -236,9 +240,13 @@ Os cenários `SL-F031-E2E-*` cobrem:
   a expiração autoritativa também fecha a shell quando a rede está indisponível, enquanto um deadline
   antigo não invalida uma sessão já renovada; conflitos de conta, papel e taxonomia descartam
   confirmações versionadas e exigem nova leitura nas quatro composições de regressão;
-- uma nova busca descarta confirmação, acknowledgment, retry e comando de status associados ao alvo
-  anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa
-  enquanto a anterior ou uma mutação está em voo;
+- uma nova busca descarta somente a confirmação de status ainda não enviada; busca e submit
+  permanecem bloqueados durante mutação pendente ou resultado ambíguo, preservando alvo, payload e
+  chave idempotente até a reconciliação. O fingerprint assíncrono serializa submissões, e a busca
+  normaliza caixa e espaços de forma consistente com SQL e cursor;
+- ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
+  explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
+  diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;
 - listas privadas de usuários e taxonomias rejeitam uma resposta cujo `scope` já pertence a outra
   composição antes que o TanStack Query a aceite no cache; PII revelada valida `scope` e `userId`
   solicitados antes do consumidor efêmero e recompõe a fronteira sem renderizar em qualquer divergência;
@@ -334,8 +342,12 @@ Os cenários `SL-F030-E2E-*` cobrem:
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
   verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto do link em relação à
   caixa de conteúdo. Uma versão autoritativa nova substitui o painel com descrição, regras, taxonomias e
-  FAQ homogêneas sem oportunidades naturais de quebra. A identidade DOM acompanha revisão e versão;
-  depois da estabilização das fontes, todos os elementos continuam sujeitos às provas globais de caixa e
+  FAQ com sequências contínuas de `A`, incluindo pares com kerning em DejaVu Sans. A reprodução Linux
+  deve incluir `fonts-dejavu-core`, instalado explicitamente pelo CI: a imagem Playwright sem esse
+  pacote pode usar WenQuanYi e deixar de reproduzir o defeito. Os cenários existentes do editor
+  principal, comercial e da publicação também exercitam descrição, regras e FAQ nos limites de
+  tamanho. Depois da estabilização das fontes, todos os
+  elementos continuam sujeitos às provas globais de caixa e
   overflow interno, e corpo e documento precisam permanecer sem qualquer largura rolável adicional.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais

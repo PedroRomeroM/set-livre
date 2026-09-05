@@ -199,6 +199,17 @@ test("SL-F007-E2E-008 @p1 descarte restaura conteúdo e remove a galeria da draf
     await expect(
       page.getByText("O rascunho foi descartado; a versão publicada permaneceu intacta."),
     ).toBeVisible();
+    const editorNavigation = page.getByRole("navigation", { name: "Edição do estúdio" });
+    await expect(editorNavigation).toBeVisible();
+    await expect(editorNavigation.getByRole("link", { name: "Fotos" })).toHaveAttribute(
+      "href",
+      `/dono/estudios/${discardResult.studioId}/midia`,
+    );
+    await expect(editorNavigation.getByRole("link", { name: "Publicação" })).toHaveAttribute(
+      "href",
+      `/dono/estudios/${discardResult.studioId}/publicacao`,
+    );
+    await expect(page.getByRole("link", { name: "Abrir novo formulário" })).toHaveCount(0);
     await expect(page.getByText("Versão publicada aprovada", { exact: true })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toBeChecked();
     await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveValue(publishedRules);

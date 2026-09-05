@@ -35,6 +35,7 @@ import { z } from "zod";
 import { notifyBackofficeSessionChanged } from "./session-events";
 
 const backofficeMutationRequestTimeoutMs = 10_000;
+const backofficeReadRequestTimeoutMs = 10_000;
 
 export class BackofficeClientError extends Error {
   readonly code: string;
@@ -95,25 +96,21 @@ async function backofficeRequest<T>(
   path: string,
   schema: z.ZodType<T>,
   options?: RequestInit,
-  timeoutMs?: number,
+  timeoutMs = backofficeReadRequestTimeoutMs,
 ): Promise<T> {
-  const deadlineController = timeoutMs === undefined ? undefined : new AbortController();
+  const deadlineController = new AbortController();
   const externalSignal = options?.signal;
-  const signal = deadlineController
-    ? externalSignal === undefined || externalSignal === null
+  const signal =
+    externalSignal === undefined || externalSignal === null
       ? deadlineController.signal
-      : AbortSignal.any([externalSignal, deadlineController.signal])
-    : externalSignal;
-  const deadline =
-    deadlineController === undefined
-      ? undefined
-      : globalThis.setTimeout(
-          () =>
-            deadlineController.abort(
-              new DOMException("O prazo da solicitação ao backoffice expirou.", "TimeoutError"),
-            ),
-          timeoutMs,
-        );
+      : AbortSignal.any([externalSignal, deadlineController.signal]);
+  const deadline = globalThis.setTimeout(
+    () =>
+      deadlineController.abort(
+        new DOMException("O prazo da solicitação ao backoffice expirou.", "TimeoutError"),
+      ),
+    timeoutMs,
+  );
   let response: Response;
   let payload: unknown;
   try {
@@ -125,18 +122,20 @@ async function backofficeRequest<T>(
         ...(options?.body === undefined ? {} : { "content-type": "application/json" }),
         ...options?.headers,
       },
-      ...(signal === undefined ? {} : { signal }),
+      signal,
     });
     payload = await responsePayload(response);
   } catch (error) {
-    if (deadlineController?.signal.aborted === true) {
+    if (externalSignal?.aborted === true && signal.reason === externalSignal.reason) {
+      throw externalSignal.reason;
+    }
+    if (deadlineController.signal.aborted) {
       throw new BackofficeClientError({
         code: "REQUEST_TIMEOUT",
         message: "A solicitação demorou mais que o esperado. Verifique o estado antes de repetir.",
         status: 504,
       });
     }
-    if (externalSignal?.aborted === true) throw error;
     if (error instanceof BackofficeClientError) throw error;
     throw new BackofficeClientError({
       code: "NETWORK_UNAVAILABLE",
@@ -144,7 +143,7 @@ async function backofficeRequest<T>(
       status: 503,
     });
   } finally {
-    if (deadline !== undefined) globalThis.clearTimeout(deadline);
+    globalThis.clearTimeout(deadline);
   }
   if (!response.ok) {
     const error = apiErrorSchema.safeParse(payload);
@@ -285,7 +284,7 @@ export function executeBackofficeStudioCommand(
   });
 }
 
-export function executeBackofficeUserCommand(
+export async function executeBackofficeUserCommand(
   command: Extract<
     BackofficeCommand,
     {
@@ -301,13 +300,15 @@ export function executeBackofficeUserCommand(
     }
   >,
 ): Promise<BackofficeUserSummary> {
-  return backofficeMutationRequest("/api/commands", backofficeUserSummarySchema, {
+  const user = await backofficeMutationRequest("/api/commands", backofficeUserSummarySchema, {
     body: JSON.stringify(command),
     method: "POST",
   });
+  if (user.id !== command.payload.userId) rejectBackofficePrivateBoundary();
+  return user;
 }
 
-export function executeBackofficeTaxonomyCommand(
+export async function executeBackofficeTaxonomyCommand(
   command: Extract<
     BackofficeCommand,
     {
@@ -318,10 +319,17 @@ export function executeBackofficeTaxonomyCommand(
     }
   >,
 ): Promise<BackofficeTaxonomyItem> {
-  return backofficeMutationRequest("/api/commands", backofficeTaxonomyItemSchema, {
+  const item = await backofficeMutationRequest("/api/commands", backofficeTaxonomyItemSchema, {
     body: JSON.stringify(command),
     method: "POST",
   });
+  if (
+    item.kind !== command.payload.kind ||
+    (command.payload.id !== undefined && item.id !== command.payload.id)
+  ) {
+    rejectBackofficePrivateBoundary();
+  }
+  return item;
 }
 
 export async function revealBackofficePiiWithoutCaching(

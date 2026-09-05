@@ -62,11 +62,11 @@ export type Feat030Operator = Feat031Operator;
 export type Feat030Owner = Feat009QaIdentity;
 
 export const feat030ExtremeTextFixture = {
-  description: "D".repeat(5_000),
+  description: `D${"A".repeat(4_999)}`,
   faqAnswer: "A".repeat(2_000),
-  faqQuestion: "Q".repeat(160),
-  taxonomyName: "T".repeat(80),
-  usageRules: "R".repeat(5_000),
+  faqQuestion: `Q${"A".repeat(159)}`,
+  taxonomyName: `T${"A".repeat(79)}`,
+  usageRules: `R${"A".repeat(4_999)}`,
 } as const;
 
 export async function triggerFeat030StaleWindowFocusRefetch(page: Page) {

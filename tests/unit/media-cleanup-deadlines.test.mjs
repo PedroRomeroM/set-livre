@@ -1,0 +1,280 @@
+import { createClient } from "@supabase/supabase-js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { cleanupBatchSize } from "../../supabase/functions/media-cleanup/cleanup-core.ts";
+import { createCleanupRequestHandler } from "../../supabase/functions/media-cleanup/index.ts";
+import { invokeProductionMediaCleanup } from "../../ops/runtime/invoke-media-cleanup.mjs";
+
+const runId = "87000000-0000-4000-8000-000000000000";
+const functionSlug = `media-cleanup-${"a".repeat(40)}`;
+const secretKey = "sb_secret_deadlineContractKey";
+const items = Array.from({ length: cleanupBatchSize }, (_, index) => {
+  const mediaId = `87000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+  const prefix = `owners/${runId}/studios/${runId}/revisions/${runId}/${mediaId}`;
+  return {
+    attempt: 1,
+    bucket: "studio-media",
+    mediaId,
+    paths: [`${prefix}.jpg`, `${prefix}.preview.webp`],
+  };
+});
+const begin = "begin_studio_media_cleanup_run";
+const claim = "claim_studio_media_cleanup";
+const complete = "complete_studio_media_cleanup";
+const finish = "complete_studio_media_cleanup_run";
+const storage = "studio-media";
+
+function request(options = {}) {
+  return new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+    body: JSON.stringify({ runId }),
+    headers: { apikey: secretKey, "content-type": "application/json" },
+    method: "POST",
+    ...options,
+  });
+}
+
+function slowBody(value, durationMs, status = 200) {
+  let timer;
+  const cancel = vi.fn(() => clearTimeout(timer));
+  const body = new ReadableStream({
+    start(controller) {
+      if (durationMs === null) return;
+      timer = setTimeout(() => {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+        controller.close();
+      }, durationMs);
+    },
+    cancel,
+  });
+  return {
+    cancel,
+    body,
+    response: new Response(body, { headers: { "content-type": "application/json" }, status }),
+  };
+}
+
+function harness(transform = ({ value }) => Response.json(value)) {
+  const calls = [];
+  const firstStorage = Promise.withResolvers();
+  const firstRpc = Promise.withResolvers();
+  const handler = createCleanupRequestHandler({
+    createSupabaseClient: createClient,
+    readConfiguration: () => ({ secretKey, url: "https://supabase.example" }),
+    fetchImplementation: async (input, init) => {
+      const name = new URL(String(input)).pathname.split("/").at(-1);
+      const parameters = JSON.parse(init.body);
+      calls.push({ name, parameters, signal: init.signal, at: performance.now() });
+      let value;
+      if (name === begin) {
+        value = {
+          runId,
+          functionSlug,
+          status: "running",
+          claimed: null,
+          deleted: null,
+          failed: null,
+          errorCode: null,
+        };
+      } else if (name === claim) {
+        value = { claimToken: runId, items };
+      } else if (name === complete) {
+        value = null;
+      } else if (name === finish) {
+        value = {
+          runId,
+          functionSlug,
+          status: parameters.p_status,
+          claimed: parameters.p_claimed,
+          deleted: parameters.p_deleted,
+          failed: parameters.p_failed,
+          errorCode: parameters.p_error_code,
+        };
+      } else if (name === storage) {
+        value = [];
+      } else {
+        throw new Error(`Unexpected cleanup endpoint: ${name}`);
+      }
+      const response = transform({ name, value, parameters, signal: init.signal });
+      if (name === storage) firstStorage.resolve();
+      else firstRpc.resolve();
+      return response;
+    },
+  });
+  return { calls, handler, firstStorage: firstStorage.promise, firstRpc: firstRpc.promise };
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("cleanup HTTP and ledger deadlines", () => {
+  it("finishes four sequential slow removals beyond the old 20s caller timeout", async () => {
+    vi.useFakeTimers();
+    const probe = harness(({ name, value }) =>
+      name === storage ? slowBody(value, 6_000).response : Response.json(value),
+    );
+    const responsePromise = invokeProductionMediaCleanup({
+      environment: {
+        APP_RELEASE_SHA: "a".repeat(40),
+        NEXT_PUBLIC_SUPABASE_URL: "https://oirvvnojgkzdppkdvhej.supabase.co",
+        SUPABASE_SECRET_KEY: secretKey,
+      },
+      fetchImplementation: (url, init) => probe.handler(new Request(url, init)),
+      makeRunId: () => runId,
+    });
+    await probe.firstStorage;
+    await vi.advanceTimersByTimeAsync(24_000);
+    await expect(responsePromise).resolves.toBeUndefined();
+    expect(probe.calls.at(-1).parameters).toMatchObject({
+      p_status: "succeeded",
+      p_claimed: 4,
+      p_deleted: 4,
+      p_failed: 0,
+    });
+    expect(probe.calls.map(({ name }) => name)).toEqual([
+      begin,
+      claim,
+      storage,
+      complete,
+      storage,
+      complete,
+      storage,
+      complete,
+      storage,
+      complete,
+      finish,
+    ]);
+    expect(probe.calls.find(({ name }) => name === claim).parameters.p_limit).toBe(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([200, 503])(
+    "bounds a stalled Storage body after HTTP %s headers and records failure",
+    async (status) => {
+      vi.useFakeTimers();
+      const bodies = [];
+      const probe = harness(({ name, value }) => {
+        if (name !== storage) return Response.json(value);
+        const pending = slowBody(null, null, status);
+        bodies.push(pending);
+        return pending.response;
+      });
+      const responsePromise = probe.handler(request());
+      await probe.firstStorage;
+      await vi.advanceTimersByTimeAsync(40_000);
+      const response = await responsePromise;
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        claimed: 4,
+        deleted: 0,
+        failed: 4,
+        errorCode: "cleanup_storage_remove_failed",
+      });
+      expect(bodies).toHaveLength(4);
+      expect(bodies.every(({ cancel }) => cancel.mock.calls.length === 1)).toBe(true);
+      expect(probe.calls.at(-1).parameters).toMatchObject({
+        p_status: "failed",
+        p_claimed: 4,
+        p_failed: 4,
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([
+    [begin, 5_000, "cleanup_run_begin_failed"],
+    [claim, 5_000, "cleanup_claim_failed"],
+    [complete, 40_000, "cleanup_item_complete_failed"],
+    [finish, 5_000, "cleanup_run_complete_failed"],
+  ])(
+    "bounds stalled %s response bodies without publishing success",
+    async (stage, duration, errorCode) => {
+      vi.useFakeTimers();
+      const probe = harness(({ name, value }) =>
+        name === stage ? slowBody(null, null).response : Response.json(value),
+      );
+      const responsePromise = probe.handler(request());
+      await probe.firstRpc;
+      await vi.advanceTimersByTimeAsync(duration);
+      const response = await responsePromise;
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ errorCode });
+      if (stage === complete) {
+        expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(8);
+        expect(probe.calls.at(-1).parameters).toMatchObject({ p_status: "failed", p_failed: 4 });
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("stops work at 90s and still confirms the failed ledger in its reserved window", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const probe = harness(({ name, value }) => {
+      if (name === storage || name === complete) return slowBody(null, null).response;
+      return slowBody(value, 4_500).response;
+    });
+    const input = slowBody({ runId }, 4_500);
+    const responsePromise = probe.handler(request({ body: input.body, duplex: "half" }));
+    await vi.advanceTimersByTimeAsync(4_500);
+    await probe.firstRpc;
+    await vi.advanceTimersByTimeAsync(90_000);
+    const response = await responsePromise;
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ claimed: 4, deleted: 0, failed: 4 });
+    const completion = probe.calls.at(-1);
+    expect(completion.name).toBe(finish);
+    expect(completion.at).toBe(90_000);
+    expect(completion.signal.aborted).toBe(false);
+    expect(performance.now()).toBe(94_500);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("seals a cancelled invocation without issuing further physical removals", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const probe = harness(({ name, value }) =>
+      name === storage ? slowBody(null, null).response : Response.json(value),
+    );
+    const responsePromise = probe.handler(request({ signal: controller.signal }));
+    await probe.firstStorage;
+    controller.abort();
+    const response = await responsePromise;
+    expect(response.status).toBe(503);
+    expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(1);
+    expect(probe.calls.at(-1)).toMatchObject({
+      name: finish,
+      parameters: { p_status: "failed", p_failed: 4 },
+    });
+    expect(probe.calls.at(-1).signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds the input body before creating a ledger or issuing any request", async () => {
+    vi.useFakeTimers();
+    const input = slowBody(null, null);
+    const probe = harness();
+    const inputRequest = request({ body: input.body, duplex: "half" });
+    const reading = Promise.withResolvers();
+    const getReader = inputRequest.body.getReader.bind(inputRequest.body);
+    vi.spyOn(inputRequest.body, "getReader").mockImplementation(() => {
+      reading.resolve();
+      return getReader();
+    });
+    const responsePromise = probe.handler(inputRequest);
+    await reading.promise;
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await responsePromise;
+    expect(response.status).toBe(400);
+    expect(probe.calls).toEqual([]);
+    expect(input.cancel).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects oversized provider bodies without starting cleanup work", async () => {
+    const probe = harness(() => new Response("x".repeat(64 * 1024 + 1)));
+    const response = await probe.handler(request());
+    expect(response.status).toBe(503);
+    expect(probe.calls.map(({ name }) => name)).toEqual([begin]);
+  });
+});

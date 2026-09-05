@@ -1,4 +1,12 @@
-import { apiSuccessSchema, studioEditorSchema } from "@set-livre/contracts";
+import { randomUUID } from "node:crypto";
+
+import {
+  apiSuccessSchema,
+  studioCreateCommandSchema,
+  studioDraftDiscardCommandSchema,
+  studioDraftDiscardResultSchema,
+  studioEditorSchema,
+} from "@set-livre/contracts";
 import { expect, test, type Page } from "@playwright/test";
 import { z } from "zod";
 
@@ -433,10 +441,14 @@ test("SL-F006-E2E-011 @p1 conflito de descarte exige releitura e nova confirmaç
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     expect((await successResponse).status()).toBe(200);
     await expect(page.getByText("Rascunho descartado", { exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
     const newFormLink = page.getByRole("link", { name: "Abrir novo formulário" });
     await expect(newFormLink).toBeVisible();
     await newFormLink.click();
     await expect(page).toHaveURL(/\/dono\/estudios\/novo$/u);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
     expect(discardCommands).toHaveLength(2);
     expect(discardCommands.map((command) => command.expectedRevisionVersion)).toEqual([1, 2]);
     expect(discardCommands[1]?.idempotencyKey).not.toBe(discardCommands[0]?.idempotencyKey);
@@ -590,6 +602,165 @@ test("SL-F006-E2E-015 @p1 revogação de conta recompõe o editor antes de nova 
     if (profileSuspended && identity.userId !== undefined) {
       await setFeat006ProfileStatus(identity.userId, "active");
     }
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
+test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recovery e reconcilia após reload", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, "020_create_response_scope");
+  const submittedCommands: unknown[] = [];
+  const unrelatedStudioId = randomUUID();
+  let committedStudioId: string | undefined;
+  page.on("request", (request) => {
+    if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") return;
+    const command = studioCreateCommandSchema.safeParse(request.postDataJSON());
+    if (command.success) submittedCommands.push(command.data);
+  });
+  try {
+    await provisionFeat006Owner(page, identity, "020");
+    if (identity.userId === undefined)
+      throw new Error("A criação QA não possui escopo autenticado.");
+    await fillFeat006Core(page);
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        studioCreateCommandSchema.parse(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const payload = apiSuccessSchema(studioEditorSchema).parse(await response.json());
+        committedStudioId = payload.data.studioId;
+        await route.fulfill({
+          response,
+          json: {
+            ...payload,
+            data: { ...payload.data, scope: randomUUID(), studioId: unrelatedStudioId },
+          },
+        });
+      },
+      { times: 1 },
+    );
+
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    await expect(page.getByText("O servidor enviou dados de estúdio inesperados.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
+    expect(submittedCommands).toHaveLength(1);
+    const recovery = await page.evaluate((scope) => {
+      const serialized = window.sessionStorage.getItem(`set-livre:studio-create:v1:${scope}`);
+      return serialized === null ? null : (JSON.parse(serialized) as unknown);
+    }, identity.userId);
+    expect(recovery).toEqual({ command: submittedCommands[0], createdStudioId: null, version: 1 });
+    expect(JSON.stringify(recovery)).not.toContain(unrelatedStudioId);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    expect(submittedCommands).toHaveLength(2);
+    expect(submittedCommands[1]).toEqual(submittedCommands[0]);
+    if (committedStudioId === undefined)
+      throw new Error("A criação QA não publicou a identidade canônica.");
+    expect((await readFeat006StudioEvidence(committedStudioId)).revisions).toHaveLength(1);
+    const resolvedRecovery = await page.evaluate((scope) => {
+      const serialized = window.sessionStorage.getItem(`set-livre:studio-create:v1:${scope}`);
+      return serialized === null ? null : (JSON.parse(serialized) as unknown);
+    }, identity.userId);
+    expect(resolvedRecovery).toEqual({
+      command: submittedCommands[0],
+      createdStudioId: committedStudioId,
+      version: 1,
+    });
+    await page.getByRole("button", { name: "Abrir editor criado" }).click();
+    await expect(page).toHaveURL(new RegExp(`/dono/estudios/${committedStudioId}/dados$`, "u"));
+    await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toBeVisible();
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
+test("SL-F006-E2E-021 @p1 descarte rejeita escopo e estúdio divergentes antes de remover painéis", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, "021_discard_response_boundary");
+  const submittedCommands: unknown[] = [];
+  let corruptedResponses = 0;
+  try {
+    await provisionFeat006Owner(page, identity, "021");
+    await fillFeat006Core(page);
+    const editor = await createFeat006StudioThroughUi(page);
+    page.on("request", (request) => {
+      if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands")
+        return;
+      const command = studioDraftDiscardCommandSchema.safeParse(request.postDataJSON());
+      if (command.success) submittedCommands.push(command.data);
+    });
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        studioDraftDiscardCommandSchema.parse(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const payload = apiSuccessSchema(studioDraftDiscardResultSchema).parse(
+          await response.json(),
+        );
+        expect(payload.data).toMatchObject({
+          scope: identity.userId,
+          studioDeleted: true,
+          studioId: editor.studioId,
+        });
+        const wrongBoundary =
+          corruptedResponses === 0 ? { scope: randomUUID() } : { studioId: randomUUID() };
+        corruptedResponses += 1;
+        await route.fulfill({
+          response,
+          json: { ...payload, data: { ...payload.data, ...wrongBoundary } },
+        });
+      },
+      { times: 2 },
+    );
+
+    await page.getByRole("button", { name: "Descartar rascunho" }).click();
+    await page.getByRole("button", { name: "Confirmar descarte" }).click();
+    for (const attempt of [1, 2]) {
+      await expect(page.getByText("O servidor enviou dados de estúdio inesperados.")).toBeVisible();
+      expect(corruptedResponses).toBe(attempt);
+      await expect(page.getByText("Rascunho descartado", { exact: true })).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+        feat006DefaultCore.name,
+      );
+      await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
+      await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toBeDisabled();
+      const replay = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname === "/api/commands" &&
+          studioDraftDiscardCommandSchema.safeParse(response.request().postDataJSON()).success,
+      );
+      await page.getByRole("button", { name: "Repetir a mesma solicitação com segurança" }).click();
+      expect((await replay).status()).toBe(200);
+    }
+    await expect(page.getByText("Rascunho descartado", { exact: true })).toBeVisible();
+    expect(submittedCommands).toHaveLength(3);
+    expect(submittedCommands[1]).toEqual(submittedCommands[0]);
+    expect(submittedCommands[2]).toEqual(submittedCommands[0]);
+    await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Abrir novo formulário" })).toHaveAttribute(
+      "href",
+      "/dono/estudios/novo",
+    );
+    await page.getByRole("link", { name: "Abrir novo formulário" }).click();
+    await expect(page).toHaveURL(/\/dono\/estudios\/novo$/u);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+  } finally {
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identity);
   }

@@ -1101,6 +1101,30 @@ if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" 
 fi
 state="${SET_LIVRE_TEST_STATE:?}"
 printf '%s\n' "$*" >> "$state/systemctl.log"
+if [[ "$*" == 'stop set-livre-web.service set-livre-backoffice.service' ]]; then
+  if [[ ${phase} == stop-apps && ! -e "$state/stop-apps-once" ]]; then
+    touch "$state/stop-apps-once"
+    exit 1
+  fi
+  touch "$state/apps-stopped"
+  rm -f -- "$state/cleanup-ready"
+fi
+if [[ "$*" == 'start set-livre-media-cleanup.service' ]]; then
+  if [[ ! -e "$state/apps-stopped" ]]; then
+    touch "$state/cleanup-with-apps-running"
+    exit 1
+  fi
+  release="$(basename -- "$(readlink --canonicalize-existing /opt/set-livre/current)")"
+  printf 'cleanup-start %s\n' "$release" >> "$state/activation.log"
+fi
+if [[ "$*" == 'restart set-livre-web.service set-livre-backoffice.service' ]]; then
+  release="$(basename -- "$(readlink --canonicalize-existing /opt/set-livre/current)")"
+  if [[ ! -e "$state/apps-stopped" || ! -f "$state/cleanup-ready" \
+    || $(< "$state/cleanup-ready") != "$release" ]]; then
+    touch "$state/apps-before-cleanup"
+    exit 1
+  fi
+fi
 if [[ ${1:-} == "stop" && " $* " == *" set-livre-media-cleanup.timer "* ]]; then
   rm -f -- "$state/media-cleanup-timer-active"
 fi
@@ -1119,7 +1143,8 @@ if [[ ${1:-} == "restart" && ${phase} == "services" && ! -e "$state/services-onc
   exit 1
 fi
 if [[ ${1:-} == "start" && ${2:-} == "set-livre-media-cleanup.service" \
-  && ${phase} == "media-cleanup" && ! -e "$state/media-cleanup-once" ]]; then
+  && (${phase} == "media-cleanup-always" \
+    || (${phase} == "media-cleanup" && ! -e "$state/media-cleanup-once")) ]]; then
   touch "$state/media-cleanup-once"
   exit 1
 fi
@@ -1135,6 +1160,14 @@ if [[ ${1:-} == "restart" \
   touch "$sigkill_marker"
   kill -KILL "$PPID"
   /usr/bin/sleep 0.1
+fi
+if [[ "$*" == 'start set-livre-media-cleanup.service' ]]; then
+  printf '%s\n' "$release" > "$state/cleanup-ready"
+  printf 'cleanup-succeeded %s\n' "$release" >> "$state/activation.log"
+fi
+if [[ "$*" == 'restart set-livre-web.service set-livre-backoffice.service' ]]; then
+  rm -f -- "$state/apps-stopped" "$state/cleanup-ready"
+  printf 'apps-start %s\n' "$release" >> "$state/activation.log"
 fi
 SYSTEMCTL
 
@@ -1207,6 +1240,10 @@ cat > "$fake_bin/mv" <<'MOVE'
 set -Eeuo pipefail
 state="${SET_LIVRE_TEST_STATE:?}"
 destination="${!#}"
+if [[ ${destination} == "/opt/set-livre/current" && ! -e "$state/apps-stopped" ]]; then
+  touch "$state/link-with-apps-running"
+  exit 1
+fi
 if [[ ${SET_LIVRE_TEST_PHASE:-} == "symlink" \
   && ${destination} == "/opt/set-livre/current" \
   && ! -e "$state/symlink-once" ]]; then
@@ -1664,6 +1701,14 @@ assert_current_release() {
     || fail "marcador de rollback permaneceu depois de estado terminal."
 }
 
+assert_cleanup_activation_order() {
+  local violation
+  for violation in cleanup-with-apps-running apps-before-cleanup link-with-apps-running; do
+    [[ ! -e "$test_state/$violation" ]] \
+      || fail "ordem insegura de ativação detectada: ${violation}."
+  done
+}
+
 recover_services_successfully() {
   local expected="$1"
   rm -f -- \
@@ -1675,6 +1720,7 @@ recover_services_successfully() {
     SET_LIVRE_TEST_STATE="$test_state" \
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
   assert_current_release "$expected"
+  assert_cleanup_activation_order
   grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
     "$test_state/systemctl.log" >/dev/null \
     || fail "recuperação terminal não reativou o timer de cleanup."
@@ -1696,6 +1742,7 @@ run_expected_failure() {
   if invoke_candidate "$candidate_sha" "$phase"; then
     fail "falha injetada em ${phase} foi aceita como sucesso."
   fi
+  assert_cleanup_activation_order
   if [[ -z ${expected_current} ]]; then
     ! privileged_path_exists /opt/set-livre/current \
       || fail "primeira ativação falha deixou release ativa."
@@ -1711,6 +1758,9 @@ run_expected_failure() {
 }
 
 initial_failure_sha="$(printf '0%.0s' {1..40})"
+run_expected_failure "$initial_failure_sha" media-cleanup ""
+! grep --quiet '^apps-start ' "$test_state/activation.log" \
+  || fail "primeira ativação iniciou apps apesar do cleanup falho."
 run_expected_failure "$initial_failure_sha" services ""
 
 stale_staging_sha="$(printf 'd%.0s' {1..40})"
@@ -1750,6 +1800,7 @@ grep --fixed-strings 'contrato atual dos ambientes divergiu da release staged' \
   || fail "reuso com contrato de runtime divergente falhou por motivo inesperado."
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
+assert_cleanup_activation_order
 cmp --silent -- "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
   /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs \
   || fail "release ativa não contém o invocador de cleanup revisado."
@@ -1867,6 +1918,19 @@ run_expected_failure "$(printf '3%.0s' {1..40})" services "$release_sha"
 run_expected_failure "$(printf '4%.0s' {1..40})" internal-health "$release_sha"
 run_expected_failure "$(printf '5%.0s' {1..40})" public-health "$release_sha"
 run_expected_failure "$(printf 'f%.0s' {1..40})" media-cleanup "$release_sha"
+! grep --quiet "^apps-start $(printf 'f%.0s' {1..40})$" "$test_state/activation.log" \
+  || fail "candidata iniciou apps apesar do cleanup falho."
+grep --quiet "^apps-start ${release_sha}$" "$test_state/activation.log" \
+  || fail "rollback não reiniciou a release anterior após cleanup bem-sucedido."
+run_expected_failure "$(printf 'f%.0s' {1..40})" media-cleanup-always "$release_sha" retained
+! grep --quiet '^apps-start ' "$test_state/activation.log" \
+  || fail "cleanup falho na candidata e no rollback permitiu iniciar apps."
+[[ -e "$test_state/apps-stopped" ]] \
+  || fail "cleanup falho no rollback não manteve apps parados."
+recover_services_successfully "$release_sha"
+run_expected_failure "$(printf 'f%.0s' {1..40})" stop-apps "$release_sha"
+! grep --quiet "^cleanup-start $(printf 'f%.0s' {1..40})$" "$test_state/activation.log" \
+  || fail "falha ao parar apps permitiu trocar o link e executar cleanup da candidata."
 rollback_public_sha="$(printf 'e%.0s' {1..40})"
 run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha" retained
 [[ -e "$test_state/rollback-public-health-observed" ]] \

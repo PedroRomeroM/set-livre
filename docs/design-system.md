@@ -271,6 +271,13 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   ocupa somente a largura disponível. Nenhum clipping substitui o reflow; no viewport equivalente a
   200%, cada fragmento de texto continua visível dentro da própria caixa.
 
+As superfícies de leitura de conteúdo do estúdio (`preview`/`safePreview` do editor, `previewCard`
+da publicação e `revisionPanel` editorial) usam `font-kerning: none`. O espaçamento nominal da fonte
+mantém texto contínuo dentro da caixa também em WebKit com DejaVu Sans, cuja composição com kerning
+acumulava overflow em respostas longas. A escolha tipográfica é restrita a essas superfícies, sem
+detecção de navegador, fonte remota adicional, clipping ou alteração do conteúdo. O restante da
+interface conserva o kerning padrão. Grids, quebra de palavras e provas de overflow continuam ativos.
+
 ## 4. Contratos
 
 ### 4.1 Botões

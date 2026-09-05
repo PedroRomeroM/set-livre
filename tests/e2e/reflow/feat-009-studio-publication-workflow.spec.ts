@@ -1,9 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { saveFeat006StudioThroughUi } from "../../helpers/feat-006-studio-core-revision";
 import {
   cleanupFeat009QaIdentity,
   closeFeat009PageBeforeCleanup,
   createFeat009QaIdentity,
+  openFeat009Publication,
   provisionFeat009Studio,
   submitFeat009RevisionThroughUi,
 } from "../../helpers/feat-009-studio-publication-workflow";
@@ -48,7 +50,14 @@ test("SL-F009-E2E-008 @p2 publicação permanece operável em reflow de 200%", a
   expect(page.viewportSize()).toEqual({ height: 360, width: 160 });
   const identity = createFeat009QaIdentity(testInfo, "008_reflow");
   try {
-    await provisionFeat009Studio(page, identity, "908", { complete: true });
+    const fixture = await provisionFeat009Studio(page, identity, "908", { complete: true });
+    await page.goto(`/dono/estudios/${fixture.editor.studioId}/dados`);
+    const description = page.getByRole("textbox", { name: "Descrição" });
+    await expect(description).toBeEnabled();
+    await description.fill("A".repeat(5_000));
+    const saved = await saveFeat006StudioThroughUi(page);
+    expect(saved.response.status()).toBe(200);
+    await openFeat009Publication(page, fixture.editor.studioId);
     await expectFeat009Reflow(page);
     await expect(page.getByRole("button", { name: "Enviar revisão completa" })).toBeVisible();
 

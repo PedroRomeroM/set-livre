@@ -15,6 +15,56 @@ const environment = Object.freeze({
 });
 
 describe("production media cleanup runtime", () => {
+  it.each(["headers", "body"])(
+    "aborts stalled response %s at 110s without retry",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        const started = Promise.withResolvers();
+        let signal;
+        const fetchImplementation = vi.fn((_url, init) => {
+          signal = init.signal;
+          started.resolve();
+          if (stage === "headers") {
+            return new Promise((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          }
+          return Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  signal.addEventListener("abort", () => controller.error(signal.reason), {
+                    once: true,
+                  });
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        });
+        const invocation = invokeProductionMediaCleanup({
+          environment,
+          fetchImplementation,
+          makeRunId: () => runId,
+        });
+        const outcome = expect(invocation).rejects.toThrow(
+          stage === "headers" ? "request-failed" : "invalid-response",
+        );
+        await started.promise;
+        await vi.advanceTimersByTimeAsync(109_999);
+        expect(signal.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await outcome;
+        expect(signal.aborted).toBe(true);
+        expect(fetchImplementation).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("posts one strict lowercase run to the immutable function with only the apikey secret", async () => {
     const fetchImplementation = vi.fn(async () =>
       Response.json({ claimed: 2, deleted: 2, failed: 0 }),

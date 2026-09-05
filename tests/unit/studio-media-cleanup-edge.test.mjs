@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 
 import {
+  cleanupBatchSize,
   CleanupRunError,
   parseCleanupFunctionSlug,
   parseCleanupRunRequest,
@@ -122,7 +123,7 @@ describe("studio media cleanup edge adapter", () => {
     });
     expect(rpc).toHaveBeenCalledWith("claim_studio_media_cleanup", {
       p_claim_token: runId,
-      p_limit: 25,
+      p_limit: 4,
     });
     expect(rpc).toHaveBeenCalledWith("complete_studio_media_cleanup", {
       p_claim_token: runId,
@@ -313,7 +314,7 @@ describe("studio media cleanup edge adapter", () => {
     }
   });
 
-  it("propaga o cancelamento da invocação por todos os RPCs e pelo Storage", async () => {
+  it("cancela trabalho da invocação sem cancelar o fechamento reservado do ledger", async () => {
     const invocationController = new AbortController();
     const observedRequests = [];
     const fetchImplementation = vi.fn(async (input, init) => {
@@ -384,8 +385,11 @@ describe("studio media cleanup edge adapter", () => {
     const abortReason = new DOMException("cleanup_invocation_aborted", "AbortError");
     invocationController.abort(abortReason);
 
-    expect(observedRequests.every(({ signal }) => signal.aborted === true)).toBe(true);
-    expect(observedRequests.every(({ signal }) => signal.reason === abortReason)).toBe(true);
+    expect(observedRequests.slice(0, -1).every(({ signal }) => signal.aborted === true)).toBe(true);
+    expect(observedRequests.slice(0, -1).every(({ signal }) => signal.reason === abortReason)).toBe(
+      true,
+    );
+    expect(observedRequests.at(-1).signal.aborted).toBe(false);
   });
 
   it.each([
@@ -426,6 +430,31 @@ describe("studio media cleanup edge adapter", () => {
 });
 
 describe("studio media cleanup edge core", () => {
+  it("limita lote e cardinalidade reclamada antes de qualquer remoção", async () => {
+    expect(cleanupBatchSize).toBe(4);
+    for (const batchSize of [0, 5, 25, 100, Number.NaN]) {
+      const contract = dependencies();
+      await expect(
+        runStudioMediaCleanup(contract, { batchSize, functionSlug, runId }),
+      ).rejects.toThrow();
+      expect(contract.beginRun).not.toHaveBeenCalled();
+    }
+    const contract = dependencies({
+      claim: vi.fn().mockResolvedValue({
+        claimToken: runId,
+        items: [...candidates, ...candidates, candidates[0]],
+      }),
+    });
+    await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).rejects.toMatchObject({
+      errorCode: "cleanup_claim_payload_invalid",
+      result: { claimed: 5, deleted: 0, failed: 5 },
+    });
+    expect(contract.remove).not.toHaveBeenCalled();
+    expect(contract.complete).not.toHaveBeenCalled();
+    expect(contract.completeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ claimed: 5, failed: 5 }),
+    );
+  });
   it("extrai somente o slug imutável exato da URL canônica", () => {
     expect(parseCleanupFunctionSlug(`https://supabase.example/functions/v1/${functionSlug}`)).toBe(
       functionSlug,

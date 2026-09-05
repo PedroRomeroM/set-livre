@@ -11,6 +11,7 @@ vi.mock("../../apps/backoffice/src/lib/server/dal-pool", () => ({
 }));
 
 import { listBackofficeUsers } from "../../apps/backoffice/src/domains/backoffice/server/backoffice-dal";
+import { backofficeFilterFingerprint } from "../../apps/backoffice/src/domains/backoffice/components/query-keys";
 
 const auth = {
   authExpiresAt: "2026-09-03T20:00:00.000Z",
@@ -50,8 +51,12 @@ describe("backoffice user list cursor", () => {
       .mockResolvedValueOnce({ rows: Array.from({ length: 51 }, (_, index) => userRow(index)) })
       .mockResolvedValueOnce({ rows: [userRow(51)] });
 
-    const firstPage = await listBackofficeUsers({ auth, query: "ana" });
+    const firstPage = await listBackofficeUsers({ auth, query: "  AnA  " });
     expect(firstPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/u);
+    expect(mocks.query.mock.calls[0]?.[1]?.[3]).toBe("ana");
+    expect(await backofficeFilterFingerprint("  AnA  ")).toBe(
+      await backofficeFilterFingerprint("ana"),
+    );
 
     await listBackofficeUsers({ auth, cursor: firstPage.nextCursor, query: "ana" });
     expect(mocks.query).toHaveBeenNthCalledWith(2, expect.stringContaining("$5::timestamptz"), [
@@ -64,6 +69,18 @@ describe("backoffice user list cursor", () => {
       51,
     ]);
   });
+
+  it.each([undefined, "", "   "])(
+    "canonicalizes the empty filter %j for SQL and cursor reuse",
+    async (query) => {
+      mocks.query
+        .mockResolvedValueOnce({ rows: Array.from({ length: 51 }, (_, index) => userRow(index)) })
+        .mockResolvedValueOnce({ rows: [] });
+      const firstPage = await listBackofficeUsers({ auth, query });
+      await listBackofficeUsers({ auth, cursor: firstPage.nextCursor });
+      expect(mocks.query.mock.calls.map((call) => call[1]?.[3])).toEqual([null, null]);
+    },
+  );
 
   it("rejects transplanting an issued cursor to another filter before querying", async () => {
     mocks.query.mockResolvedValueOnce({

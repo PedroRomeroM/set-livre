@@ -115,6 +115,26 @@ async function requestStudio<TData>(
   return parsed.data.data;
 }
 
+function requestStudioCommand<TData extends Readonly<{ scope: string; studioId: string }>>(
+  command: StudioCommand,
+  dataSchema: z.ZodType<TData>,
+  timeoutMs = studioRequestTimeoutMs,
+): Promise<TData> {
+  const expectedScope = command.expectedScope;
+  const expectedStudioId =
+    command.action === "studio.create" ? undefined : command.payload.studioId;
+  return requestStudio(
+    "/api/commands",
+    dataSchema.refine(
+      (result) =>
+        result.scope === expectedScope &&
+        (expectedStudioId === undefined || result.studioId === expectedStudioId),
+    ),
+    { body: JSON.stringify(command), method: "POST" },
+    timeoutMs,
+  );
+}
+
 export function readStudioEditor(studioId: string, signal?: AbortSignal): Promise<StudioEditor> {
   return requestStudio(
     `/api/owner/studios/${encodeURIComponent(studioId)}`,
@@ -140,46 +160,38 @@ export function readStudioTaxonomies(signal?: AbortSignal): Promise<StudioTaxono
 }
 
 export function createStudio(command: Extract<StudioCommand, { action: "studio.create" }>) {
-  return requestStudio("/api/commands", studioEditorSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioEditorSchema);
 }
 
 export function updateStudioCore(
   command: Extract<StudioCommand, { action: "studio.revision.updateCore" }>,
 ) {
-  return requestStudio("/api/commands", studioEditorSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioEditorSchema);
 }
 
 export function updateStudioTaxonomy(
   command: Extract<StudioCommand, { action: "studio.revision.updateTaxonomy" }>,
 ) {
-  return requestStudio("/api/commands", studioEditorSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioEditorSchema);
 }
 
 export function updateStudioContent(
   command: Extract<StudioCommand, { action: "studio.revision.updateContent" }>,
 ) {
-  return requestStudio("/api/commands", studioEditorSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioEditorSchema);
 }
 
 export function discardStudioDraft(
   command: Extract<StudioCommand, { action: "studio.draft.discard" }>,
 ): Promise<StudioDraftDiscardResult> {
-  return requestStudio("/api/commands", studioDraftDiscardResultSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(
+    command,
+    studioDraftDiscardResultSchema.refine(
+      (result) =>
+        result.studioDeleted ||
+        (result.editor.scope === result.scope && result.editor.studioId === result.studioId),
+    ),
+  );
 }
 
 export function readStudioMedia(
@@ -210,31 +222,21 @@ type StudioPublicationCommand = Extract<
 >;
 
 export function changeStudioPublication(command: StudioPublicationCommand) {
-  return requestStudio("/api/commands", studioPublicationSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioPublicationSchema);
 }
 
 export function prepareStudioMediaUpload(
   command: Extract<StudioMediaCommand, { action: "studio.media.upload.prepare" }>,
 ): Promise<StudioMediaUploadPreparation> {
-  return requestStudio("/api/commands", studioMediaUploadPreparationSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioMediaUploadPreparationSchema);
 }
 
 export function finalizeStudioMediaUpload(
   command: Extract<StudioMediaCommand, { action: "studio.media.upload.finalize" }>,
 ) {
-  return requestStudio(
-    "/api/commands",
+  return requestStudioCommand(
+    command,
     studioMediaGallerySchema,
-    {
-      body: JSON.stringify(command),
-      method: "POST",
-    },
     studioMediaFinalizeRequestTimeoutMs,
   );
 }
@@ -242,28 +244,19 @@ export function finalizeStudioMediaUpload(
 export function reorderStudioMedia(
   command: Extract<StudioMediaCommand, { action: "studio.media.reorder" }>,
 ) {
-  return requestStudio("/api/commands", studioMediaGallerySchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioMediaGallerySchema);
 }
 
 export function setStudioMediaCover(
   command: Extract<StudioMediaCommand, { action: "studio.media.cover.set" }>,
 ) {
-  return requestStudio("/api/commands", studioMediaGallerySchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioMediaGallerySchema);
 }
 
 export function deleteStudioMedia(
   command: Extract<StudioMediaCommand, { action: "studio.media.delete" }>,
 ) {
-  return requestStudio("/api/commands", studioMediaGallerySchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  return requestStudioCommand(command, studioMediaGallerySchema);
 }
 
 function mediaUploadEnvironment() {

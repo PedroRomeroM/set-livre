@@ -10,6 +10,8 @@ import {
   backofficeUserListSchema,
   backofficeUserSummarySchema,
   platformRolesSchema,
+  type BackofficeTaxonomyStatusCommand,
+  type BackofficeTaxonomyUpsertCommand,
 } from "@set-livre/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -27,6 +29,7 @@ import {
   listBackofficeUsersClient,
   loginBackofficeClient,
   logoutBackofficeClient,
+  readBackofficeSessionClient,
   readBackofficeStudioReviewClient,
   revealBackofficePiiWithoutCaching,
   unlockBackofficeRuntimeClient,
@@ -57,6 +60,13 @@ function installAbortAwareFetch() {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function successResponse(data: unknown) {
+  return new Response(JSON.stringify({ data, requestId: idempotencyKey }), {
+    headers: { "content-type": "application/json" },
+    status: 200,
+  });
 }
 
 afterEach(() => {
@@ -207,7 +217,49 @@ describe("backoffice contracts", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("does not impose the command deadline on cancellable studio reads", async () => {
+  it.each(["headers", "body"] as const)("bounds all private reads through %s", async (phase) => {
+    vi.useFakeTimers();
+    const fetchMock = installAbortAwareFetch();
+    if (phase === "body") {
+      fetchMock.mockImplementation((_input, init) =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener(
+                  "abort",
+                  () => controller.error(init.signal?.reason),
+                  { once: true },
+                );
+              },
+            }),
+          ),
+        ),
+      );
+    }
+    const outcomes = [
+      readBackofficeSessionClient(),
+      listBackofficeUsersClient({ expectedScope: actorId, query: {} }),
+      listBackofficeTaxonomiesClient(actorId),
+      listBackofficeStudioReviewsClient({ expectedScope: actorId, query: {} }),
+      readBackofficeStudioReviewClient({
+        activity: "passive",
+        expectedScope: actorId,
+        studioId: targetId,
+      }),
+    ].map((outcome) => outcome.catch((error: unknown) => error));
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(fetchMock.mock.calls.every((call) => call[1]?.signal?.aborted === false)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    for (const error of await Promise.all(outcomes)) {
+      expect(error).toMatchObject({ code: "REQUEST_TIMEOUT", status: 504 });
+    }
+    expect(fetchMock.mock.calls.every((call) => call[1]?.signal?.aborted === true)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("preserves caller cancellation and passive activity on deadline-bound reads", async () => {
     vi.useFakeTimers();
     const fetchMock = installAbortAwareFetch();
     const requestController = new AbortController();
@@ -216,13 +268,169 @@ describe("backoffice contracts", () => {
       { activity: "passive", expectedScope: actorId, studioId: targetId },
       requestController.signal,
     ).catch((error: unknown) => error);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
     const request = fetchMock.mock.calls[0]?.[1];
     expect(new Headers(request?.headers).get(backofficeStudioReadActivityHeader)).toBe("passive");
 
-    requestController.abort(new DOMException("Leitura substituída.", "AbortError"));
-    await expect(outcome).resolves.toMatchObject({ name: "AbortError" });
+    const reason = new DOMException("Leitura substituída.", "AbortError");
+    requestController.abort(reason);
+    await expect(outcome).resolves.toBe(reason);
+    expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("preserves cancellation during body consumption instead of reporting an invalid response", async () => {
+    vi.useFakeTimers();
+    const requestController = new AbortController();
+    const reason = new DOMException("Leitura substituída.", "AbortError");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener(
+                  "abort",
+                  () => controller.error(init.signal?.reason),
+                  { once: true },
+                );
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const outcome = listBackofficeUsersClient(
+      { expectedScope: actorId, query: {} },
+      requestController.signal,
+    ).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1);
+    requestController.abort(reason);
+    await expect(outcome).resolves.toBe(reason);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears a completed read deadline and honors an already-cancelled caller", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(successResponse({ items: [], scope: actorId })),
+    );
+    await expect(listBackofficeTaxonomiesClient(actorId)).resolves.toEqual({
+      items: [],
+      scope: actorId,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    const fetchMock = installAbortAwareFetch();
+    const reason = new DOMException("Leitura cancelada.", "AbortError");
+    await expect(listBackofficeTaxonomiesClient(actorId, AbortSignal.abort(reason))).rejects.toBe(
+      reason,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    "backoffice.user.suspend",
+    "backoffice.user.restore",
+    "backoffice.access.grantAdmin",
+    "backoffice.access.grantReviewer",
+    "backoffice.access.grantSupport",
+    "backoffice.access.revokeAdmin",
+    "backoffice.access.revokeReviewer",
+    "backoffice.access.revokeSupport",
+  ] as const)("binds %s results to the requested user before accepting success", async (action) => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const user = {
+      accountVersion: 1,
+      createdAt: "2026-09-04T10:00:00.000Z",
+      emailMasked: "t***@example.test",
+      id: targetId,
+      status: "active",
+    };
+    const command = {
+      action,
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: { userId: targetId, expectedAccountVersion: 0 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(successResponse({ ...user, id: actorId }))
+        .mockResolvedValueOnce(successResponse(user)),
+    );
+
+    const mismatch = await executeBackofficeUserCommand(command).catch((error: unknown) => error);
+    expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+    await expect(executeBackofficeUserCommand(command)).resolves.toEqual(user);
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+  });
+
+  it.each(["create", "update", "archive", "reactivate"] as const)(
+    "binds taxonomy %s results to the requested kind and existing id",
+    async (action) => {
+      const dispatchEvent = vi.fn();
+      vi.stubGlobal("window", { dispatchEvent });
+      vi.stubGlobal("BroadcastChannel", undefined);
+      const command: BackofficeTaxonomyStatusCommand | BackofficeTaxonomyUpsertCommand =
+        action === "create" || action === "update"
+          ? {
+              action: "backoffice.taxonomy.upsert",
+              expectedScope: actorId,
+              idempotencyKey,
+              payload: {
+                kind: "tag",
+                name: "Podcast",
+                slug: "podcast",
+                sortOrder: 1,
+                ...(action === "update" ? { id: targetId, expectedVersion: 1 } : {}),
+              },
+            }
+          : {
+              action:
+                action === "archive"
+                  ? "backoffice.taxonomy.archive"
+                  : "backoffice.taxonomy.reactivate",
+              expectedScope: actorId,
+              idempotencyKey,
+              payload: { kind: "tag", id: targetId, expectedVersion: 1 },
+            };
+      const item = {
+        active: action !== "archive",
+        id: targetId,
+        kind: "tag",
+        name: "Podcast",
+        slug: "podcast",
+        sortOrder: 1,
+        updatedAt: "2026-09-04T10:00:00.000Z",
+        usageCount: 0,
+        version: 2,
+      };
+      const mismatches = [
+        { ...item, kind: "amenity" },
+        ...(action === "create" ? [] : [{ ...item, id: actorId }]),
+      ];
+      for (const response of mismatches) {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(successResponse(response)));
+        const mismatch = await executeBackofficeTaxonomyCommand(command).catch(
+          (error: unknown) => error,
+        );
+        expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+        expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
+      }
+      expect(dispatchEvent).toHaveBeenCalledTimes(mismatches.length);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(successResponse(item)));
+      await expect(executeBackofficeTaxonomyCommand(command)).resolves.toEqual(item);
+      expect(dispatchEvent).toHaveBeenCalledTimes(mismatches.length);
+    },
+  );
 
   it("rejects late private reads before another scope or record reaches the cache", async () => {
     const dispatchEvent = vi.fn();

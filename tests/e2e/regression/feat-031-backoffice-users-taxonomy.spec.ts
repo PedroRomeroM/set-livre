@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import {
   cleanupFeat031Users,
@@ -198,9 +198,13 @@ test("SL-F031-E2E-006 @p1 busca e cursor permanecem no servidor sem filtro na UR
         });
       }
     });
-    await page.getByRole("textbox", { name: "Buscar usuários" }).fill(bulk.query);
+    await page
+      .getByRole("textbox", { name: "Buscar usuários" })
+      .fill(`  ${bulk.query.toUpperCase()}  `);
     await page.getByRole("button", { name: "Buscar" }).click();
     await expect(page.getByRole("article")).toHaveCount(50);
+    await page.getByRole("textbox", { name: "Buscar usuários" }).fill(bulk.query);
+    await page.getByRole("button", { name: "Buscar" }).click();
     const loadMore = page.getByRole("button", { name: "Carregar mais" });
     await loadMore.scrollIntoViewIfNeeded();
     const hitEvidence = await loadMore.evaluate((button) => {
@@ -322,14 +326,13 @@ test("SL-F031-E2E-027 @p1 repetir o mesmo filtro recupera uma busca que falhou",
   }
 });
 
-test("SL-F031-E2E-017 @p1 nova busca descarta confirmação e tentativa de status anteriores", async ({
+test("SL-F031-E2E-017 @p1 nova busca descarta confirmação de status ainda não enviada", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
   const support = createFeat031Operator(testInfo, "017_search_status_boundary");
   const firstTarget = await createFeat031DirectIdentity("Busca status anterior");
   const nextTarget = await createFeat031DirectIdentity("Busca status atual");
-  const abortCommand = async (route: Route) => route.abort("failed");
   try {
     await provisionFeat031Operator(page, support, "support", "031017");
     await loginFeat031Backoffice(page, support);
@@ -339,12 +342,6 @@ test("SL-F031-E2E-017 @p1 nova busca descarta confirmação e tentativa de statu
     await firstConfirmation
       .getByRole("checkbox", { name: "Revisei o impacto desta alteração" })
       .check();
-    await page.route("**/api/commands", abortCommand);
-    await firstConfirmation.getByRole("button", { name: "Confirmar" }).click();
-    await expect(firstConfirmation.getByRole("alert")).toContainText(
-      "O resultado não pôde ser confirmado. Repita a mesma tentativa",
-    );
-    await page.unroute("**/api/commands", abortCommand);
 
     const releaseFingerprint = await holdNextBackofficeFingerprint(page);
     const searchForm = page.locator("form").filter({

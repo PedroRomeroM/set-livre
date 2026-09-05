@@ -358,7 +358,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         noValidate
         onSubmit={async (event) => {
           event.preventDefault();
-          if (statusMutation.isPending || searchInFlight.current) return;
+          if (statusMutation.isPending || statusRetryAvailable || searchInFlight.current) return;
           searchInFlight.current = true;
           setSearchPending(true);
           pendingStatusCommand.current = undefined;
@@ -368,7 +368,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           setStatusRetryAvailable(false);
           setStatusTarget(undefined);
           try {
-            const normalized = draftQuery.trim();
+            const normalized = draftQuery.trim().toLocaleLowerCase("pt-BR");
             const fingerprint =
               normalized === "" ? "empty" : await backofficeFilterFingerprint(normalized);
             if (fingerprint === activeFilter.fingerprint && normalized === activeFilter.query) {
@@ -386,21 +386,27 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       >
         <fieldset
           className={`${styles.secureFormBoundary} ${styles.toolbarBoundary}`}
-          disabled={!interactive || statusMutation.isPending || searchPending}
+          disabled={
+            !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
+          }
         >
           <Field
             description="Prefixo de e-mail ou UUID completo. Nome exige revelação auditada; o filtro não é colocado na URL."
             label="Buscar usuários"
           >
             <Input
-              disabled={!interactive || statusMutation.isPending || searchPending}
+              disabled={
+                !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
+              }
               name="query"
               onChange={(event) => setDraftQuery(event.target.value)}
               value={draftQuery}
             />
           </Field>
           <Button
-            disabled={!interactive || statusMutation.isPending || searchPending}
+            disabled={
+              !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
+            }
             loading={searchPending}
             loadingLabel="Buscando"
             type="submit"

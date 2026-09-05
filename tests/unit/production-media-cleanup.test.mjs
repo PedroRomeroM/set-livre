@@ -221,6 +221,101 @@ function createProductionHarness({
 }
 
 describe("production media cleanup configuration", () => {
+  it.each([24_000, null])(
+    "bounds the candidate invocation body with its 110s budget (%s)",
+    async (duration) => {
+      vi.useFakeTimers();
+      try {
+        const contract = createProductionHarness();
+        const started = Promise.withResolvers();
+        let signal;
+        const fetchImplementation = async (input, init) => {
+          const response = await contract.fetchImplementation(input, init);
+          if (!String(input).includes("/functions/v1/")) return response;
+          signal = init.signal;
+          const payload = await response.text();
+          const body = new ReadableStream({
+            start(controller) {
+              const abort = () => controller.error(signal.reason);
+              signal.addEventListener("abort", abort, { once: true });
+              if (duration !== null)
+                setTimeout(() => {
+                  signal.removeEventListener("abort", abort);
+                  controller.enqueue(new TextEncoder().encode(payload));
+                  controller.close();
+                }, duration);
+            },
+          });
+          started.resolve();
+          return new Response(body, { headers: { "content-type": "application/json" } });
+        };
+        const invocation = configureProductionMediaCleanup(environment(), {
+          createClient: () => contract.client,
+          createStorageClient: () => contract.storage,
+          fetchImplementation,
+        });
+        const outcome =
+          duration === null
+            ? expect(invocation).rejects.toThrow("A candidata de cleanup retornou JSON inválido")
+            : expect(invocation).resolves.toMatchObject({ candidateSlug });
+        await started.promise;
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect(signal.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync((duration ?? 110_000) - 20_001);
+        await outcome;
+        expect(signal.aborted).toBe(duration === null);
+        expect(contract.aborts).toHaveLength(duration === null ? 1 : 0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["upload", "remove", "download"])(
+    "keeps the canary Storage %s deadline active while reading a body",
+    async (operation) => {
+      vi.useFakeTimers();
+      try {
+        const started = Promise.withResolvers();
+        let signal;
+        const client = createProductionStorageClient({
+          secretKey,
+          fetchImplementation: async (_input, init) => {
+            signal = init.signal;
+            const body = new ReadableStream({
+              start(controller) {
+                signal.addEventListener("abort", () => controller.error(signal.reason), {
+                  once: true,
+                });
+              },
+            });
+            started.resolve();
+            return new Response(body, { headers: { "content-type": "application/json" } });
+          },
+        });
+        const bucket = client.from("studio-media");
+        const invocation = Promise.resolve(
+          operation === "upload"
+            ? bucket.upload("owners/probe.webp", new Uint8Array([1]), { upsert: false })
+            : operation === "remove"
+              ? bucket.remove(["owners/probe.webp"])
+              : bucket.download("owners/probe.webp"),
+        );
+        await started.promise;
+        await vi.advanceTimersByTimeAsync(15_000);
+        await expect(invocation).resolves.toMatchObject({
+          data: null,
+          error: { name: "StorageUnknownError" },
+        });
+        expect(signal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("deploys and checks the canonical TypeScript source without scheduler or extension rename", () => {
     const workflow = readFileSync(resolve(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
     const packageConfiguration = JSON.parse(

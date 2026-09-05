@@ -178,7 +178,7 @@ export async function listBackofficeUsers(input: {
   cursor?: string | null | undefined;
   query?: string | undefined;
 }) {
-  const query = input.query ?? null;
+  const query = input.query?.trim().toLocaleLowerCase("pt-BR") || null;
   const cursor = parseBackofficeUserCursor({ auth: input.auth, query, value: input.cursor });
   const result = await backofficeDalPool().query(
     `select

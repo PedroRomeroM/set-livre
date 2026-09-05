@@ -37,6 +37,10 @@
   max-width: 100%;
 }
 
+.revisionPanel {
+  font-kerning: none;
+}
+
 .queueHeader,
 .sectionHeader,
 .actions {

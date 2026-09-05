@@ -13,6 +13,11 @@ import {
 const encoder = new TextEncoder();
 const secretKeyPattern = /^sb_secret_[A-Za-z0-9_-]{12,}$/u;
 const cleanupStorageRemovalDeadlineMs = 10_000;
+const cleanupRpcDeadlineMs = 5_000;
+const cleanupRequestBodyDeadlineMs = 5_000;
+const cleanupWorkDeadlineMs = 90_000;
+const cleanupInvocationDeadlineMs = 100_000;
+const cleanupResponseMaximumBytes = 64 * 1024;
 
 type CleanupFetch = typeof fetch;
 
@@ -162,14 +167,54 @@ async function secretsMatch(left: string | null, right: string): Promise<boolean
   return difference === 0;
 }
 
+async function readCleanupBody(
+  message: Request | Response,
+  signal: AbortSignal,
+  maximumBytes: number,
+): Promise<Uint8Array<ArrayBuffer>> {
+  signal.throwIfAborted();
+  const reader = message.body?.getReader();
+  if (reader === undefined) return new Uint8Array();
+  const cancel = () => {
+    void reader.cancel(signal.reason).catch(() => undefined);
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximumBytes) {
+        cancel();
+        throw new Error("cleanup_body_too_large");
+      }
+      chunks.push(value);
+    }
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
+
 function createCleanupFetch(
   fetchImplementation: CleanupFetch,
   supabaseUrl: string,
   invocationSignal: AbortSignal,
+  invocationStartedAt: number,
 ): CleanupFetch {
   const storageObjectEndpoint = new URL("/storage/v1/object/", supabaseUrl);
 
-  return (input, init) => {
+  return async (input, init) => {
     const endpoint = new URL(input instanceof Request ? input.url : String(input));
     const method = (
       init?.method ?? (input instanceof Request ? input.method : "GET")
@@ -179,41 +224,57 @@ function createCleanupFetch(
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname.startsWith(storageObjectEndpoint.pathname);
 
-    const storageDeadlineController = isStorageRemoval ? new AbortController() : null;
+    const isRunCompletion =
+      method === "POST" &&
+      endpoint.origin === storageObjectEndpoint.origin &&
+      endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup_run";
+    // Four items: 10s removal + two 5s completion attempts each. Stop work at 90s;
+    // the final ledger RPC gets its own 5s deadline within the remaining 10s.
+    const remainingMs =
+      invocationStartedAt +
+      (isRunCompletion ? cleanupInvocationDeadlineMs : cleanupWorkDeadlineMs) -
+      performance.now();
+    if (remainingMs <= 0) {
+      throw new Error("cleanup_invocation_deadline_exceeded");
+    }
+    const deadlineController = new AbortController();
     const signal = AbortSignal.any([
-      invocationSignal,
+      // A disconnected caller stops physical work, but not bounded ledger finalization.
+      ...(isRunCompletion ? [] : [invocationSignal]),
       ...(input instanceof Request ? [input.signal] : []),
       ...(init?.signal ? [init.signal] : []),
-      ...(storageDeadlineController === null ? [] : [storageDeadlineController.signal]),
+      deadlineController.signal,
     ]);
-    if (signal.aborted) {
-      return Promise.reject(
-        signal.reason ??
-          new DOMException(
-            isStorageRemoval ? "cleanup_storage_remove_aborted" : "cleanup_request_aborted",
-            "AbortError",
-          ),
-      );
-    }
-    if (storageDeadlineController === null) {
-      return fetchImplementation(input, { ...init, signal });
-    }
-
-    const storageDeadlineError = new DOMException(
-      "cleanup_storage_remove_deadline_exceeded",
+    signal.throwIfAborted();
+    const deadlineError = new DOMException(
+      isStorageRemoval
+        ? "cleanup_storage_remove_deadline_exceeded"
+        : "cleanup_rpc_deadline_exceeded",
       "TimeoutError",
     );
-    const storageDeadline = setTimeout(
-      () => storageDeadlineController.abort(storageDeadlineError),
-      cleanupStorageRemovalDeadlineMs,
+    const deadline = setTimeout(
+      () => deadlineController.abort(deadlineError),
+      Math.min(
+        remainingMs,
+        isStorageRemoval ? cleanupStorageRemovalDeadlineMs : cleanupRpcDeadlineMs,
+      ),
     );
-    return (async () => {
-      try {
-        return await fetchImplementation(input, { ...init, signal });
-      } finally {
-        clearTimeout(storageDeadline);
-      }
-    })();
+    try {
+      const response = await fetchImplementation(input, {
+        ...init,
+        redirect: "error",
+        signal,
+      });
+      // The SDK parses the buffered response only after the entire HTTP body is bounded.
+      const body = await readCleanupBody(response, signal, cleanupResponseMaximumBytes);
+      return new Response(response.body === null ? null : body, {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
+    } finally {
+      clearTimeout(deadline);
+    }
   };
 }
 
@@ -238,11 +299,25 @@ function environment(): CleanupConfiguration {
 }
 
 async function parseRunRequest(request: Request): Promise<string> {
-  const rawBody = await request.text();
-  return parseCleanupRunRequest({
-    contentType: request.headers.get("content-type"),
-    rawBody,
-  });
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () =>
+      controller.abort(new DOMException("cleanup_request_body_deadline_exceeded", "TimeoutError")),
+    cleanupRequestBodyDeadlineMs,
+  );
+  try {
+    const body = await readCleanupBody(
+      request,
+      AbortSignal.any([request.signal, controller.signal]),
+      256,
+    );
+    return parseCleanupRunRequest({
+      contentType: request.headers.get("content-type"),
+      rawBody: new TextDecoder().decode(body),
+    });
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
 function assertCompleteRunResult(value: unknown, expected: CleanupRunCompletionContext): void {
@@ -275,6 +350,7 @@ export function createCleanupRequestHandler({
   readConfiguration = environment,
 }: CleanupHandlerDependencies): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
+    const invocationStartedAt = performance.now();
     if (request.method !== "POST") {
       return failureResponse("method_not_allowed", 405);
     }
@@ -301,7 +377,12 @@ export function createCleanupRequestHandler({
     const client = createSupabaseClient(config.url, config.secretKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: {
-        fetch: createCleanupFetch(fetchImplementation, config.url, request.signal),
+        fetch: createCleanupFetch(
+          fetchImplementation,
+          config.url,
+          request.signal,
+          invocationStartedAt,
+        ),
       },
     });
     const dependencies: CleanupDependencies = {

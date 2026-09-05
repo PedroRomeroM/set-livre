@@ -22,6 +22,13 @@ Acesso:
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
 - nenhum service role no browser.
 
+Leituras e mutações HTTP no browser têm deadline de dez segundos, incluindo o consumo do corpo.
+O deadline é combinado com o sinal de cancelamento do chamador: substituição de query preserva o
+cancelamento original, enquanto expiração retorna erro recuperável, sem deixar loading indefinido.
+Resultados privados são validados antes do sucesso: comandos de conta/acesso exigem o UUID do alvo;
+taxonomias exigem o grupo solicitado e, em edição/arquivamento/reativação, também o UUID do item.
+Resposta de outro alvo ou grupo falha fechada e solicita recomposição da sessão privada.
+
 `support` opera usuários. `reviewer` revisa candidatas editoriais. `admin` substitui deliberadamente
 ambos e também administra acessos, taxonomias e moderação de estúdios. As capacidades não são
 hierárquicas por acidente: a função privada recebe o papel exigido em cada chamada. `finance` continua
@@ -97,6 +104,8 @@ nome do dono.
   na URL, logs ou histórico; nome bruto nunca participa desse filtro para não criar um oráculo fora da
   revelação auditada;
 - paginação keyset de 50 itens por `created_at + id`, com cursor opaco e precisão de microssegundos;
+- busca, fingerprint do cache, parâmetros SQL e binding do cursor usam o mesmo filtro sem espaços
+  externos e em minúsculas (`pt-BR`); filtro vazio equivale à ausência de filtro;
 - e-mail mascarado e nenhuma PII crua — inclusive nome — no read model;
 - revelação explícita por motivo allowlisted, auditada, fora do QueryCache e removida após 60 segundos,
   quando a aba fica oculta ou quando o motivo muda; resposta que termina enquanto a aba já está oculta
@@ -105,6 +114,10 @@ nome do dono.
   `account_version` independente da versão da identidade;
 - suspensão fecha bindings administrativos do alvo e os comandos de produto continuam bloqueados
   pela verificação canônica de `profiles.status`.
+
+Enquanto uma suspensão/restauração estiver em voo ou com resultado ambíguo, a busca permanece
+bloqueada, inclusive no handler de submit, preservando alvo, payload e chave para replay. Nova busca
+só descarta uma confirmação ainda não enviada ou uma tentativa já conclusiva.
 
 ## 5. Acessos e taxonomias
 
@@ -144,7 +157,9 @@ uso, e arquivamento remove o item de novas seleções sem apagar referências hi
 combinado aceita no máximo 500 itens; criação toma lock transacional e falha antes do item 501,
 enquanto atualizações continuam disponíveis no limite. Conflito de versão fecha o editor/impacto
 obsoleto e relê o catálogo antes de uma nova decisão. Arquivamento e reativação são actions distintas;
-o payload não aceita `active` e a função privada deriva o destino da action validada.
+o payload não aceita `active` e a função privada deriva o destino da action validada. Ordem exige
+inteiro entre 0 e 32767; entrada vazia é rejeitada junto ao campo antes de qualquer comando, sem
+conversão implícita para zero. Zero explícito permanece válido.
 
 O primeiro admin é criado uma única vez por `private.bootstrap_first_platform_admin(...)`, sob lock e
 somente para perfil ativo/concluído enquanto nenhum papel existir. A função não é concedida à DAL; o

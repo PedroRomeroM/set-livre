@@ -10,6 +10,7 @@ const previewPathPattern = new RegExp(
   "u",
 );
 const safeErrorCodePattern = /^[a-z0-9_]{2,80}$/u;
+export const cleanupBatchSize = 4;
 
 export interface CleanupResult {
   claimed: number;
@@ -294,11 +295,12 @@ function parseCandidate(candidate: unknown): CleanupCandidate {
   };
 }
 
-function parseCleanupClaim(value: unknown, workerId: string): CleanupClaim {
+function parseCleanupClaim(value: unknown, workerId: string, batchSize: number): CleanupClaim {
   if (
     !isExactObject(value, ["claimToken", "items"]) ||
     value.claimToken !== workerId ||
-    !Array.isArray(value.items)
+    !Array.isArray(value.items) ||
+    value.items.length > batchSize
   ) {
     throw new Error("A fila de cleanup retornou um payload inválido.");
   }
@@ -349,10 +351,10 @@ async function completeItem(
 
 export async function runStudioMediaCleanup(
   dependencies: CleanupDependencies,
-  { batchSize = 25, functionSlug, runId }: CleanupRunOptions,
+  { batchSize = cleanupBatchSize, functionSlug, runId }: CleanupRunOptions,
 ): Promise<CleanupResult> {
-  if (!isPositiveInteger(batchSize) || batchSize > 100) {
-    throw new Error("O lote de cleanup precisa estar entre 1 e 100.");
+  if (!isPositiveInteger(batchSize) || batchSize > cleanupBatchSize) {
+    throw new Error(`O lote de cleanup precisa estar entre 1 e ${cleanupBatchSize}.`);
   }
   if (!uuidPattern.test(runId)) {
     throw new Error("A execução de cleanup precisa de um UUID.");
@@ -390,7 +392,7 @@ export async function runStudioMediaCleanup(
 
   let claim: CleanupClaim;
   try {
-    claim = parseCleanupClaim(rawClaim, workerId);
+    claim = parseCleanupClaim(rawClaim, workerId, batchSize);
   } catch {
     const claimed = claimedCardinality(rawClaim);
     return completeRun(

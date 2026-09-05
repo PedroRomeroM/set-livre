@@ -261,7 +261,9 @@ jobs:
         run: npm run supabase:reset
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: |
+          npx playwright install --with-deps chromium firefox webkit
+          sudo apt-get install --yes --no-install-recommends fonts-dejavu-core
 
       - name: Full browser suite shard
         id: browser_suite

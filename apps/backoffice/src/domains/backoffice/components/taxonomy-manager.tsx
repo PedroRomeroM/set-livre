@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  backofficeTaxonomySortOrderSchema,
   type BackofficeSession,
   type BackofficeTaxonomyItem,
   type BackofficeTaxonomyKind,
@@ -106,7 +107,6 @@ export function TaxonomyForm({
   blocked,
   editing,
   fieldErrors,
-  generation,
   interactive,
   onCancel,
   onRetry,
@@ -117,7 +117,6 @@ export function TaxonomyForm({
   blocked: boolean;
   editing?: BackofficeTaxonomyItem | undefined;
   fieldErrors: TaxonomyFieldErrors | undefined;
-  generation: number;
   interactive: boolean;
   onCancel: () => void;
   onRetry: () => void;
@@ -130,6 +129,8 @@ export function TaxonomyForm({
   pending: boolean;
   retrying: boolean;
 }) {
+  const [sortOrderError, setSortOrderError] = useState<string>();
+  const currentSortOrderError = sortOrderError ?? fieldErrors?.sortOrder;
   const fieldsLocked = !interactive || blocked || pending || retrying;
   const submitLocked = !interactive || blocked;
   return (
@@ -137,7 +138,6 @@ export function TaxonomyForm({
       aria-busy={!interactive || pending}
       className={styles.taxonomyForm}
       inert={!interactive}
-      key={`${editing?.id ?? "new"}:${generation}`}
       method="post"
       noValidate
       onSubmit={(event) => {
@@ -147,11 +147,20 @@ export function TaxonomyForm({
           return;
         }
         const data = new FormData(event.currentTarget);
+        const rawSortOrder = String(data.get("sortOrder") ?? "").trim();
+        const sortOrder = backofficeTaxonomySortOrderSchema.safeParse(
+          rawSortOrder === "" ? undefined : Number(rawSortOrder),
+        );
+        if (!sortOrder.success) {
+          setSortOrderError("Informe uma ordem inteira entre 0 e 32767.");
+          return;
+        }
+        setSortOrderError(undefined);
         onSubmit({
           kind: editing?.kind ?? (String(data.get("kind")) as BackofficeTaxonomyKind),
           name: String(data.get("name") ?? ""),
           slug: String(data.get("slug") ?? ""),
-          sortOrder: Number(data.get("sortOrder")),
+          sortOrder: sortOrder.data,
         });
       }}
     >
@@ -177,7 +186,7 @@ export function TaxonomyForm({
           </Select>
         </Field>
         <Field
-          {...(fieldErrors?.sortOrder === undefined ? {} : { error: fieldErrors.sortOrder })}
+          {...(currentSortOrderError === undefined ? {} : { error: currentSortOrderError })}
           label="Ordem"
           required
         >
@@ -187,6 +196,7 @@ export function TaxonomyForm({
             max={32767}
             min={0}
             name="sortOrder"
+            onChange={() => setSortOrderError(undefined)}
             type="number"
           />
         </Field>
@@ -348,8 +358,8 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
           blocked={transition.isPending || activationRetryAvailable}
           editing={editing}
           fieldErrors={taxonomyFieldErrors(upsert.error)}
-          generation={formGeneration}
           interactive={interactive}
+          key={`${editing?.id ?? "new"}:${formGeneration}`}
           onCancel={() => {
             pendingUpsertCommand.current = undefined;
             setUpsertRetryAvailable(false);

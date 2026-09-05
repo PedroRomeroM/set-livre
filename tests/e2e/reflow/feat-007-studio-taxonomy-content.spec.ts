@@ -51,6 +51,9 @@ test("SL-F007-E2E-007 @p2 editor comercial preserva reflow em 200%", async ({ pa
     await expectFeat007Reflow(page);
     await page.getByRole("button", { name: "Adicionar pergunta" }).click();
     await expect(page.getByRole("textbox", { name: "Pergunta 1" })).toBeVisible();
+    await page.getByRole("textbox", { name: "Pergunta 1", exact: true }).fill("A".repeat(160));
+    await page.getByRole("textbox", { name: "Resposta 1", exact: true }).fill("A".repeat(2_000));
+    await page.getByRole("textbox", { name: "Regras de uso" }).fill("A".repeat(5_000));
     await expectFeat007Reflow(page);
   } finally {
     await closeFeat006PageBeforeCleanup(page);

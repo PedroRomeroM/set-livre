@@ -18,7 +18,8 @@ Environment=NODE_ENV=production
 EnvironmentFile=/opt/set-livre/current/.runtime/web.env
 EnvironmentFile=/opt/set-livre/current/.runtime/release.env
 ExecStart=/opt/node/bin/node /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs
-TimeoutStartSec=30s
+TimeoutStartSec=120s
+TimeoutStopSec=10s
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

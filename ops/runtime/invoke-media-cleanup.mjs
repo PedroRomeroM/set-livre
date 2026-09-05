@@ -6,7 +6,8 @@ const productionSupabaseOrigin = "https://oirvvnojgkzdppkdvhej.supabase.co";
 const releaseShaPattern = /^[0-9a-f]{40}$/u;
 const secretKeyPattern = /^sb_secret_[A-Za-z0-9_-]{12,}$/u;
 const responseKeys = Object.freeze(["claimed", "deleted", "failed"]);
-const requestTimeoutMilliseconds = 20_000;
+// The Function stops work at 90s and reserves ledger finalization through 100s.
+const requestTimeoutMilliseconds = 110_000;
 
 function fail(code) {
   throw new Error(code);
@@ -68,38 +69,51 @@ export async function invokeProductionMediaCleanup({
     fail("invalid-run-id");
   }
 
-  let response;
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () => controller.abort(new DOMException("cleanup_request_deadline_exceeded", "TimeoutError")),
+    requestTimeoutMilliseconds,
+  );
   try {
-    response = await fetchImplementation(
-      `${productionSupabaseOrigin}/functions/v1/media-cleanup-${releaseSha}`,
-      {
-        body: JSON.stringify({ runId }),
-        headers: {
-          apikey: secretKey,
-          "content-type": "application/json",
+    let response;
+    try {
+      response = await fetchImplementation(
+        `${productionSupabaseOrigin}/functions/v1/media-cleanup-${releaseSha}`,
+        {
+          body: JSON.stringify({ runId }),
+          headers: {
+            apikey: secretKey,
+            "content-type": "application/json",
+          },
+          method: "POST",
+          redirect: "manual",
+          signal: controller.signal,
         },
-        method: "POST",
-        redirect: "manual",
-        signal: AbortSignal.timeout(requestTimeoutMilliseconds),
-      },
-    );
-  } catch {
-    fail("request-failed");
-  }
+      );
+    } catch {
+      fail("request-failed");
+    }
 
-  if (response.status !== 200) fail("unexpected-status");
-  const contentType = response.headers.get("content-type");
-  if (contentType === null || !/^application\/json(?:\s*;[^\r\n]*)?$/iu.test(contentType)) {
-    fail("invalid-response-content-type");
-  }
+    if (response.status !== 200) {
+      controller.abort();
+      fail("unexpected-status");
+    }
+    const contentType = response.headers.get("content-type");
+    if (contentType === null || !/^application\/json(?:\s*;[^\r\n]*)?$/iu.test(contentType)) {
+      controller.abort();
+      fail("invalid-response-content-type");
+    }
 
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    fail("invalid-response");
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      fail("invalid-response");
+    }
+    requireExactSuccessPayload(payload);
+  } finally {
+    clearTimeout(deadline);
   }
-  requireExactSuccessPayload(payload);
 }
 
 const executedPath = process.argv[1];
