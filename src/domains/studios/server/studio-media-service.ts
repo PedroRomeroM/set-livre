@@ -12,6 +12,7 @@ import { ApiRouteError } from "@/lib/server/api-route";
 
 import {
   confirmStudioMediaUploadToken,
+  confirmStudioMediaFinalizeResult,
   deleteStudioMedia,
   finalizeStudioMediaUpload,
   prepareStudioMediaUpload,
@@ -36,6 +37,10 @@ import {
   type StudioMediaStorage,
 } from "./studio-media-storage";
 import { studioServiceBoundary } from "./studio-service";
+import {
+  assertStudioCommandResultIdentity,
+  type StudioCommandResult,
+} from "./studio-command-result";
 
 type MediaCommand = Extract<StudioCommand, StudioMediaCommand>;
 
@@ -117,8 +122,10 @@ async function rejectUndeliveredUploadToken(
 
 async function signCommandGallery(
   storage: StudioMediaStorage,
-  gallery: Parameters<StudioMediaStorage["signGalleryPreviews"]>[0],
+  gallery: StudioCommandResult<Parameters<StudioMediaStorage["signGalleryPreviews"]>[0]>,
+  command: MediaCommand,
 ) {
+  assertStudioCommandResultIdentity(gallery, command);
   const controller = new AbortController();
   const timeoutError = new StudioMediaStorageError("preview");
   const abortOutcome = new Promise<never>((_resolve, reject) => {
@@ -133,10 +140,13 @@ async function signCommandGallery(
     studioMediaPreviewSigningDeadlineMs,
   );
   try {
-    return await Promise.race([
-      storage.signGalleryPreviews(gallery, controller.signal),
-      abortOutcome,
-    ]);
+    return {
+      ...gallery,
+      result: await Promise.race([
+        storage.signGalleryPreviews(gallery.result, controller.signal),
+        abortOutcome,
+      ]),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -243,12 +253,14 @@ export async function executeStudioMediaCommand(
   try {
     switch (command.action) {
       case "studio.media.upload.prepare": {
-        const preparation = await prepareStudioMediaUpload({
+        const attempt = await prepareStudioMediaUpload({
           ...command.payload,
           idempotencyKey: command.idempotencyKey,
           requestId: context.requestId,
           userId: context.session.userId,
         });
+        assertStudioCommandResultIdentity(attempt, command);
+        const preparation = attempt.result;
         if (Date.parse(preparation.expiresAt) <= Date.now()) {
           await rejectUndeliveredUploadToken(preparation, context);
           throw new ApiRouteError(
@@ -270,10 +282,11 @@ export async function executeStudioMediaCommand(
           await confirmStudioMediaUploadToken(mediaUploadTokenBoundary(preparation, context));
         } catch (error) {
           const settlement = await rejectUndeliveredUploadToken(preparation, context);
-          if (settlement.state === "issued") return { ...preparation, signedToken };
+          if (settlement.state === "issued")
+            return { ...attempt, result: { ...preparation, signedToken } };
           throw error;
         }
-        return { ...preparation, signedToken };
+        return { ...attempt, result: { ...preparation, signedToken } };
       }
       case "studio.media.upload.finalize": {
         const input = {
@@ -348,7 +361,17 @@ export async function executeStudioMediaCommand(
             throw error;
           }
         });
-        return signCommandGallery(storage, gallery);
+        return signCommandGallery(
+          storage,
+          await confirmStudioMediaFinalizeResult(
+            {
+              userId: context.session.userId,
+              idempotencyKey: command.idempotencyKey,
+            },
+            gallery,
+          ),
+          command,
+        );
       }
       case "studio.media.reorder": {
         const result = await signCommandGallery(
@@ -359,6 +382,7 @@ export async function executeStudioMediaCommand(
             requestId: context.requestId,
             userId: context.session.userId,
           }),
+          command,
         );
         return result;
       }
@@ -371,6 +395,7 @@ export async function executeStudioMediaCommand(
             requestId: context.requestId,
             userId: context.session.userId,
           }),
+          command,
         );
         return result;
       }
@@ -383,6 +408,7 @@ export async function executeStudioMediaCommand(
             requestId: context.requestId,
             userId: context.session.userId,
           }),
+          command,
         );
         return result;
       }

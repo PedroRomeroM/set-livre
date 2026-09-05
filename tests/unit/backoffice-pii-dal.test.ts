@@ -40,25 +40,32 @@ const pii = {
 describe("backoffice PII audited-attempt DAL", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("preserves the SQL attempt identity independently of HTTP correlation", async () => {
-    mocks.query.mockResolvedValueOnce({ rows: [{ result: pii }] });
-    const result = await revealBackofficeUserPii({ auth, command, requestId });
-    expect(result.action).toBe(command.action);
-    expect(result.idempotencyKey).toBe(command.idempotencyKey);
-    expect(result.reason).toBe(command.payload.reason);
-    expect(mocks.query).toHaveBeenCalledWith(
-      expect.stringContaining("private.reveal_backoffice_user_pii("),
-      [
-        auth.userId,
-        auth.authSessionId,
-        auth.authExpiresAt,
-        command.payload.userId,
-        command.payload.reason,
-        command.idempotencyKey,
+  it.each([command.idempotencyKey, command.idempotencyKey.toUpperCase()])(
+    "preserves the canonical SQL identity for submitted key %s",
+    async (idempotencyKey) => {
+      mocks.query.mockResolvedValueOnce({ rows: [{ result: pii }] });
+      const result = await revealBackofficeUserPii({
+        auth,
+        command: { ...command, idempotencyKey },
         requestId,
-      ],
-    );
-  });
+      });
+      expect(result.action).toBe(command.action);
+      expect(result.idempotencyKey).toBe(command.idempotencyKey);
+      expect(result.reason).toBe(command.payload.reason);
+      expect(mocks.query).toHaveBeenCalledWith(
+        expect.stringContaining("private.reveal_backoffice_user_pii("),
+        [
+          auth.userId,
+          auth.authSessionId,
+          auth.authExpiresAt,
+          command.payload.userId,
+          command.payload.reason,
+          idempotencyKey,
+          requestId,
+        ],
+      );
+    },
+  );
 
   it.each([
     { action: undefined },

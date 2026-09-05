@@ -491,51 +491,139 @@ test("SL-F009-E2E-013 @p1 taxonomia arquivada após a leitura falha fechada e re
   }
 });
 
-test("SL-F009-E2E-014 @p1 releitura autoritativa encerra resposta ambígua sem novo comando", async ({
+test("SL-F009-E2E-014 @p1 leituras antes e depois do commit preservam a tentativa até replay exato", async ({
   page,
 }, testInfo) => {
   test.setTimeout(260_000);
   const identity = createFeat009QaIdentity(testInfo, "014_ambiguous_authoritative_read");
-  let responseLost = false;
+  const releaseSubmission = deferredSignal();
+  const submissionFinished = deferredSignal();
+  let submissionIntercepted = false;
+  let stopping = false;
+  let committedPublication: StudioPublication | undefined;
   try {
     const { editor } = await provisionFeat009Studio(page, identity, "914", { complete: true });
+    const beforeSubmission = await readFeat009PublicationEvidence(editor.studioId);
     const commands = observeFeat009Commands(page);
+    const reads: StudioPublication[] = [];
+    await page.route(`**/api/owner/studios/${editor.studioId}/publication`, async (route) => {
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      reads.push(apiSuccessSchema(studioPublicationSchema).parse(await response.json()).data);
+      await route.fulfill({ response });
+    });
     await page.route("**/api/commands", async (route) => {
       const parsed = studioCommandSchema.safeParse(route.request().postDataJSON());
-      if (!responseLost && parsed.success && parsed.data.action === "studio.revision.submit") {
-        responseLost = true;
-        const response = await route.fetch();
-        expect(response.status()).toBe(200);
-        await route.abort("failed");
+      if (
+        !submissionIntercepted &&
+        parsed.success &&
+        parsed.data.action === "studio.revision.submit"
+      ) {
+        submissionIntercepted = true;
+        try {
+          // Hold transport, not a SQL transaction: the real DAL statement_timeout is 2s.
+          // The browser's real 10s deadline expires before the real POST is forwarded.
+          await releaseSubmission.promise;
+          if (stopping) {
+            await route.abort("failed");
+            return;
+          }
+          const response = await route.fetch();
+          expect(response.status()).toBe(200);
+          const result = apiSuccessSchema(studioCommandResultSchema(studioPublicationSchema)).parse(
+            await response.json(),
+          ).data;
+          expect(result).toMatchObject({
+            action: parsed.data.action,
+            idempotencyKey: parsed.data.idempotencyKey,
+          });
+          committedPublication = result.result;
+          // Apply to the real database, but never deliver the committed response to the browser.
+          await route.abort("failed");
+        } finally {
+          submissionFinished.resolve();
+        }
         return;
       }
       await route.fallback();
     });
 
     await page.getByRole("button", { name: "Enviar revisão completa" }).click();
-    await expect(page.getByText("A resposta não confirmou a ação", { exact: true })).toBeVisible();
+    await expect(page.getByText("A resposta não confirmou a ação", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(
+      page.getByText(
+        "A solicitação demorou mais que o esperado. Verifique o estado antes de repetir.",
+      ),
+    ).toBeVisible();
     await expect.poll(() => commands.length).toBe(1);
 
     await page.getByRole("button", { name: "Verificar estado atual" }).click();
     const recovery = page.getByLabel("Recuperação segura da publicação", { exact: true });
-    const acceptAuthoritativeState = recovery.getByRole("button", {
-      name: "Usar estado autoritativo",
+    const retryExact = recovery.getByRole("button", { name: "Repetir exatamente a mesma ação" });
+    const completed = page.getByRole("status").filter({
+      hasText: "A revisão foi enviada uma vez e agora permanece imutável durante a análise.",
     });
-    await expect(acceptAuthoritativeState).toBeVisible();
+    await expect(retryExact).toBeVisible();
     await expect(recovery).toBeFocused();
+    await expect(page.getByRole("button", { name: "Usar estado autoritativo" })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Rascunho", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Enviar revisão completa" })).toBeDisabled();
+    await expect(completed).toHaveCount(0);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toMatchObject({
+      currentRevision: { status: "draft" },
+      publicationVersion: beforeSubmission.publication_version,
+      studioStatus: "draft",
+    });
+    expect(await readFeat009PublicationEvidence(editor.studioId)).toEqual(beforeSubmission);
     expect(commands).toHaveLength(1);
 
-    await acceptAuthoritativeState.click();
+    releaseSubmission.resolve();
+    await submissionFinished.promise;
+    expect(committedPublication?.studioStatus).toBe("pending_review");
+    const afterCommit = await readFeat009PublicationEvidence(editor.studioId);
+    await recovery.getByRole("button", { name: "Verificar novamente" }).click();
+    await expect(retryExact).toBeVisible();
+    await expect(recovery).toBeFocused();
     await expect(page.getByRole("heading", { level: 2, name: "Em revisão" })).toBeVisible();
-    const announcement = page.getByRole("status").filter({
-      hasText: "O estado autoritativo foi carregado sem enviar um novo comando.",
+    await expect(page.getByRole("button", { name: "Usar estado autoritativo" })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /Enviar revisão completa|Pausar estúdio|Retomar estúdio/u }),
+    ).toHaveCount(0);
+    await expect(completed).toHaveCount(0);
+    expect(reads).toHaveLength(2);
+    expect(reads[1]).toMatchObject({
+      currentRevision: { status: "pending" },
+      publicationVersion: committedPublication?.publicationVersion,
+      studioStatus: "pending_review",
     });
-    await expect(announcement).toBeVisible();
-    await expect(announcement).toBeFocused();
-    await expect(recovery).toHaveCount(0);
     expect(commands).toHaveLength(1);
+    expect(await readFeat009PublicationEvidence(editor.studioId)).toEqual(afterCommit);
+
+    const replayResponse = page.waitForResponse((response) => {
+      if (
+        response.request().method() !== "POST" ||
+        new URL(response.url()).pathname !== "/api/commands"
+      )
+        return false;
+      const command = studioCommandSchema.safeParse(response.request().postDataJSON());
+      return command.success && command.data.action === "studio.revision.submit";
+    });
+    await retryExact.click();
+    expect((await replayResponse).status()).toBe(200);
+    await expect(completed).toBeVisible();
+    await expect(completed).toBeFocused();
+    await expect(recovery).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 2, name: "Em revisão" })).toBeVisible();
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
 
     const evidence = await readFeat009PublicationEvidence(editor.studioId);
+    expect(evidence).toEqual(afterCommit);
     expect(evidence.reviews).toHaveLength(1);
     expect(evidence.outbox).toHaveLength(1);
     expect(evidence.requests).toHaveLength(1);
@@ -544,6 +632,9 @@ test("SL-F009-E2E-014 @p1 releitura autoritativa encerra resposta ambígua sem n
     expect(evidence.requests[0]?.idempotency_key).toBe(commands[0]?.idempotencyKey);
     expect(evidence.status).toBe("pending_review");
   } finally {
+    stopping = true;
+    releaseSubmission.resolve();
+    await page.unrouteAll({ behavior: "wait" });
     await closeFeat009PageBeforeCleanup(page);
     await cleanupFeat009QaIdentity(identity);
   }

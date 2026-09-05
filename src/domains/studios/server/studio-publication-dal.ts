@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import { commandDalPool } from "@/lib/server/dal-pool";
 
+import { parseStudioCommandResult, type StudioCommandResult } from "./studio-command-result";
+
 const commandIdentitySchema = z.strictObject({
   idempotencyKey: z.uuid(),
   requestId: z.uuid(),
@@ -28,12 +30,12 @@ const publicationBoundarySchema = z.strictObject({
 });
 
 const publicationMutationStatement = {
-  pause_studio: `select private.pause_studio(
+  pause_studio: `select private.bind_studio_command_result($1::uuid, $4::uuid, private.pause_studio(
     $1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::uuid
-  ) as result`,
-  resume_studio: `select private.resume_studio(
+  )) as result`,
+  resume_studio: `select private.bind_studio_command_result($1::uuid, $4::uuid, private.resume_studio(
     $1::uuid, $2::uuid, $3::bigint, $4::uuid, $5::uuid
-  ) as result`,
+  )) as result`,
 } as const;
 
 function exactlyOneResult<T>(rows: readonly unknown[], schema: z.ZodType<T>): T {
@@ -74,7 +76,7 @@ export async function submitStudioRevision(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioPublicationRecord> {
+}): Promise<StudioCommandResult<StudioPublicationRecord>> {
   const command = parseCommandIdentity(input);
   const revision = revisionBoundarySchema.parse({
     expectedRevisionId: input.expectedRevisionId,
@@ -82,9 +84,9 @@ export async function submitStudioRevision(input: {
     studioId: input.studioId,
   });
   const result = await commandDalPool().query(
-    `select private.submit_studio_revision(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.submit_studio_revision(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid
-     ) as result`,
+     )) as result`,
     [
       command.userId,
       revision.studioId,
@@ -94,7 +96,10 @@ export async function submitStudioRevision(input: {
       command.requestId,
     ],
   );
-  return exactlyOneResult(result.rows, studioPublicationRecordSchema);
+  return parseStudioCommandResult(result.rows, studioPublicationRecordSchema, {
+    ...command,
+    action: "studio.revision.submit",
+  });
 }
 
 async function mutateStudioPublication(input: {
@@ -104,7 +109,7 @@ async function mutateStudioPublication(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioPublicationRecord> {
+}): Promise<StudioCommandResult<StudioPublicationRecord>> {
   const command = parseCommandIdentity(input);
   const publication = publicationBoundarySchema.parse({
     expectedPublicationVersion: input.expectedPublicationVersion,
@@ -117,7 +122,10 @@ async function mutateStudioPublication(input: {
     command.idempotencyKey,
     command.requestId,
   ]);
-  return exactlyOneResult(result.rows, studioPublicationRecordSchema);
+  return parseStudioCommandResult(result.rows, studioPublicationRecordSchema, {
+    ...command,
+    action: input.functionName === "pause_studio" ? "studio.pause" : "studio.resume",
+  });
 }
 
 export function pauseStudio(

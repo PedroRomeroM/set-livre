@@ -20,6 +20,12 @@ import {
 } from "../../src/domains/studios/server/studio-dal";
 import { studioCoreFixture, studioEditorFixture, studioTestIds } from "./studio-test-fixture";
 
+const createResult = {
+  action: "studio.create",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: studioEditorFixture,
+} as const;
+
 describe("studio DAL", () => {
   beforeAll(() => {
     process.env.DATABASE_URL_APP_DAL =
@@ -28,7 +34,7 @@ describe("studio DAL", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.query.mockResolvedValue({ rows: [{ result: studioEditorFixture }] });
+    mocks.query.mockReset().mockResolvedValue({ rows: [{ result: createResult }] });
   });
 
   it("passes only normalized scalar values to the create facade", async () => {
@@ -39,7 +45,11 @@ describe("studio DAL", () => {
         requestId: studioTestIds.requestId,
         userId: studioTestIds.userId,
       }),
-    ).resolves.toEqual(studioEditorFixture);
+    ).resolves.toEqual(createResult);
+
+    expect(mocks.query.mock.calls[0]?.[0]).toContain(
+      "private.bind_studio_command_result($1::uuid, $2::uuid, private.create_studio",
+    );
 
     expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("private.create_studio"), [
       studioTestIds.userId,
@@ -59,16 +69,39 @@ describe("studio DAL", () => {
     ]);
   });
 
-  it("binds optimistic identity before core values on update and discard", async () => {
-    await updateStudioRevisionCore({
+  it("matches an uppercase submitted key to the lowercase ledger without rewriting SQL arguments", async () => {
+    const persistedKey = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+    const input = {
       core: studioCoreFixture,
-      expectedRevisionId: studioTestIds.revisionId,
-      expectedRevisionVersion: 3,
-      idempotencyKey: studioTestIds.idempotencyKey,
+      idempotencyKey: persistedKey.toUpperCase(),
       requestId: studioTestIds.requestId,
-      studioId: studioTestIds.studioId,
       userId: studioTestIds.userId,
+    };
+    const confirmed = { ...createResult, idempotencyKey: persistedKey };
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: confirmed }] });
+    await expect(createStudioDraft(input)).resolves.toEqual(confirmed);
+    expect(mocks.query.mock.calls[0]?.[1]?.[1]).toBe(input.idempotencyKey);
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: createResult }] });
+    await expect(createStudioDraft(input)).rejects.toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+      status: 503,
     });
+  });
+
+  it("binds optimistic identity before core values on update and discard", async () => {
+    const updateResult = { ...createResult, action: "studio.revision.updateCore" };
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: updateResult }] });
+    await expect(
+      updateStudioRevisionCore({
+        core: studioCoreFixture,
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 3,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        requestId: studioTestIds.requestId,
+        studioId: studioTestIds.studioId,
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual(updateResult);
     expect(mocks.query.mock.calls[0]?.[1]?.slice(0, 6)).toEqual([
       studioTestIds.userId,
       studioTestIds.studioId,
@@ -82,20 +115,34 @@ describe("studio DAL", () => {
       rows: [
         {
           result: {
-            scope: studioTestIds.userId,
-            studioDeleted: true,
-            studioId: studioTestIds.studioId,
+            action: "studio.draft.discard",
+            idempotencyKey: studioTestIds.idempotencyKey,
+            result: {
+              scope: studioTestIds.userId,
+              studioDeleted: true,
+              studioId: studioTestIds.studioId,
+            },
           },
         },
       ],
     });
-    await discardStudioDraft({
-      expectedRevisionId: studioTestIds.revisionId,
-      expectedRevisionVersion: 3,
+    await expect(
+      discardStudioDraft({
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 3,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        requestId: studioTestIds.requestId,
+        studioId: studioTestIds.studioId,
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual({
+      action: "studio.draft.discard",
       idempotencyKey: studioTestIds.idempotencyKey,
-      requestId: studioTestIds.requestId,
-      studioId: studioTestIds.studioId,
-      userId: studioTestIds.userId,
+      result: {
+        scope: studioTestIds.userId,
+        studioDeleted: true,
+        studioId: studioTestIds.studioId,
+      },
     });
     expect(mocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining("private.discard_studio_draft"),
@@ -122,7 +169,14 @@ describe("studio DAL", () => {
     ).rejects.toThrow("cardinalidade inesperada");
 
     mocks.query.mockResolvedValueOnce({
-      rows: [{ result: { ...studioEditorFixture, ownerTaxId: "52998224725" } }],
+      rows: [
+        {
+          result: {
+            ...createResult,
+            result: { ...studioEditorFixture, ownerTaxId: "52998224725" },
+          },
+        },
+      ],
     });
     await expect(
       createStudioDraft({
@@ -135,18 +189,22 @@ describe("studio DAL", () => {
   });
 
   it("binds taxonomy sets and serializes ordered FAQ only at the JSONB boundary", async () => {
-    await updateStudioRevisionTaxonomy({
-      expectedRevisionId: studioTestIds.revisionId,
-      expectedRevisionVersion: 3,
-      idempotencyKey: studioTestIds.idempotencyKey,
-      requestId: studioTestIds.requestId,
-      studioId: studioTestIds.studioId,
-      taxonomy: {
-        amenityIds: [studioTestIds.amenityId],
-        tagIds: [studioTestIds.tagId],
-      },
-      userId: studioTestIds.userId,
-    });
+    const taxonomyResult = { ...createResult, action: "studio.revision.updateTaxonomy" };
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: taxonomyResult }] });
+    await expect(
+      updateStudioRevisionTaxonomy({
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 3,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        requestId: studioTestIds.requestId,
+        studioId: studioTestIds.studioId,
+        taxonomy: {
+          amenityIds: [studioTestIds.amenityId],
+          tagIds: [studioTestIds.tagId],
+        },
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual(taxonomyResult);
     expect(mocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining("private.update_studio_revision_taxonomy"),
       [
@@ -162,15 +220,19 @@ describe("studio DAL", () => {
     );
 
     const faqs = [{ answer: "Resposta.", question: "Pergunta?" }];
-    await updateStudioRevisionContent({
-      content: { faqs, usageRules: "Regras seguras.", youtubeVideoId: "dQw4w9WgXcQ" },
-      expectedRevisionId: studioTestIds.revisionId,
-      expectedRevisionVersion: 4,
-      idempotencyKey: studioTestIds.idempotencyKey,
-      requestId: studioTestIds.requestId,
-      studioId: studioTestIds.studioId,
-      userId: studioTestIds.userId,
-    });
+    const contentResult = { ...createResult, action: "studio.revision.updateContent" };
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: contentResult }] });
+    await expect(
+      updateStudioRevisionContent({
+        content: { faqs, usageRules: "Regras seguras.", youtubeVideoId: "dQw4w9WgXcQ" },
+        expectedRevisionId: studioTestIds.revisionId,
+        expectedRevisionVersion: 4,
+        idempotencyKey: studioTestIds.idempotencyKey,
+        requestId: studioTestIds.requestId,
+        studioId: studioTestIds.studioId,
+        userId: studioTestIds.userId,
+      }),
+    ).resolves.toEqual(contentResult);
     expect(mocks.query).toHaveBeenLastCalledWith(
       expect.stringContaining("private.update_studio_revision_content"),
       [
@@ -186,4 +248,39 @@ describe("studio DAL", () => {
       ],
     );
   });
+  it.each([
+    { name: "missing identity", result: studioEditorFixture, failure: { name: "ZodError" } },
+    {
+      name: "sibling attempt by the same owner",
+      result: { ...createResult, idempotencyKey: "33333333-3333-4333-8333-333333333334" },
+      failure: { code: "SERVICE_UNAVAILABLE", status: 503 },
+    },
+    {
+      name: "different action",
+      result: { ...createResult, action: "studio.revision.updateCore" },
+      failure: { code: "SERVICE_UNAVAILABLE", status: 503 },
+    },
+    {
+      name: "different owner",
+      result: {
+        ...createResult,
+        result: { ...studioEditorFixture, scope: studioTestIds.otherUserId },
+      },
+      failure: { message: "A confirmação retornou outro escopo." },
+    },
+  ])(
+    "rejects $name rather than rebinding a valid DTO to the request",
+    async ({ result, failure }) => {
+      mocks.query.mockResolvedValueOnce({ rows: [{ result }] });
+      await expect(
+        createStudioDraft({
+          core: studioCoreFixture,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          requestId: studioTestIds.requestId,
+          userId: studioTestIds.userId,
+        }),
+      ).rejects.toMatchObject(failure);
+      expect(mocks.query).toHaveBeenCalledOnce();
+    },
+  );
 });

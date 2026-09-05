@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260905163830_renew_media_cleanup_replay_leases`, criada depois de
-`20260905144332_bind_backoffice_command_attempts`; uma feature nova nunca é inserida antes de uma
+`20260905190840_bind_studio_command_results`, criada depois de
+`20260905163830_renew_media_cleanup_replay_leases`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -838,7 +838,8 @@ Na FEAT-006, a allowlist acrescenta `studio.created`, `studio.revision_updated` 
 tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não
 deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice
 parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna
-privada para replay e não entra em log operacional, DTO ou metadata; conteúdo e endereço do estúdio,
+privada para replay e não entra em log operacional, DTO de leitura ou metadata; o envelope de comando
+devolve somente a chave da própria tentativa validada. Conteúdo e endereço do estúdio,
 payload, requisito bruto, provider e referência externa também não entram na metadata.
 
 ### 4.34 Idempotência e jobs
@@ -849,6 +850,25 @@ resultado JSON exato, IDs e versão resultante ou o tombstone de exclusão. Não
 ou endereço. Cada fachada trava a chave lógica, revalida a autoridade corrente antes do replay e
 reconstrói o resultado: hash divergente falha fechado como resultado stale, nunca retorna o estado
 atual como se fosse a resposta original.
+
+`private.bind_studio_command_result(uuid, uuid, jsonb)` vincula o resultado bruto à linha dessa
+mesma PK e retorna somente `{ action, idempotencyKey, result }`. Action e chave vêm do ledger,
+nunca do JSON recebido. A allowlist contém as 13 actions persistidas atuais; somente
+`studio.media.prepare/finalize` viram `studio.media.upload.prepare/finalize` no envelope. As outras
+11 mantêm seus nomes. O hash canônico de `result` deve ser igual ao `result_hash` persistido;
+`result_payload`, quando presente para mídia, também precisa estar íntegro e ser igual ao resultado.
+Nulos, linha ausente, action desconhecida ou divergência falham sem devolver dado, com
+`XX000:studio_command_result_mismatch`. Esse erro interno preserva a incerteza da tentativa no
+serviço; não autoriza tratá-la como conflito definitivo ou trocar a chave após possível commit.
+
+A função é `VOLATILE` para enxergar a gravação da fachada mutante recebida como terceiro argumento
+no mesmo `SELECT`; falha do binding aborta também essa mutação. Na finalização de mídia, a releitura
+pode ocorrer após o commit, sobre o ledger imutável da tentativa. O binding acontece antes de
+assinar upload/previews, sem alterar hashes, payloads ou funções mutantes existentes. Seu único
+grant runtime é `EXECUTE` para `app_dal`, registrado na allowlist consumida pelo readiness; mantém
+owner `postgres` e `security definer` com `search_path = ''`. O servidor passa o usuário da sessão
+autoritativa já validada; o helper não substitui a autorização da fachada nem oferece leitura ao
+browser ou a `service_role`.
 
 Os três comandos editoriais reutilizam esse ledger conforme o
 [workflow da FEAT-009](#4101-workflow-editorial-da-feat-009); não criam tabela, versão nem payload

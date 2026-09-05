@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   assertMutableAccount: vi.fn(),
+  confirmStudioMediaFinalizeResult: vi.fn(),
   confirmStudioMediaUploadToken: vi.fn(),
   createUploadToken: vi.fn(),
   deleteStudioMedia: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("../../src/domains/studios/server/studio-service", () => ({
 vi.mock("../../src/domains/studios/server/studio-media-dal", () => {
   class StudioMediaFinalizeClaimBusyError extends Error {}
   return {
+    confirmStudioMediaFinalizeResult: mocks.confirmStudioMediaFinalizeResult,
     confirmStudioMediaUploadToken: mocks.confirmStudioMediaUploadToken,
     deleteStudioMedia: mocks.deleteStudioMedia,
     finalizeStudioMediaUpload: mocks.finalizeStudioMediaUpload,
@@ -146,6 +148,21 @@ const gallery = {
   })),
   previewExpiresAt: "2026-08-31T12:05:00.000Z",
 };
+const prepareResult = {
+  action: "studio.media.upload.prepare",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: preparation,
+} as const;
+const finalizeResult = {
+  action: "studio.media.upload.finalize",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: galleryRecord,
+} as const;
+const galleryMutationResults = {
+  "studio.media.reorder": { ...finalizeResult, action: "studio.media.reorder" },
+  "studio.media.cover.set": { ...finalizeResult, action: "studio.media.cover.set" },
+  "studio.media.delete": { ...finalizeResult, action: "studio.media.delete" },
+} as const;
 const context = {
   requestId: studioTestIds.requestId,
   session: {
@@ -193,6 +210,7 @@ const galleryMutationCommands = [
 describe("studio media service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.confirmStudioMediaFinalizeResult.mockReset().mockResolvedValue(finalizeResult);
     mocks.confirmStudioMediaUploadToken.mockResolvedValue({
       issuedAt: "2026-09-01T03:55:00.000Z",
       mediaId,
@@ -205,7 +223,7 @@ describe("studio media service", () => {
     mocks.createUploadToken.mockResolvedValue("signed-upload-token");
     mocks.download.mockResolvedValue(new Blob([new Uint8Array(512)]));
     mocks.finalizeStudioMediaUpload.mockResolvedValue(galleryRecord);
-    mocks.prepareStudioMediaUpload.mockResolvedValue(preparation);
+    mocks.prepareStudioMediaUpload.mockResolvedValue(prepareResult);
     mocks.rejectUnsignedStudioMediaUpload.mockResolvedValue({
       mediaId,
       rejectedAt: "2026-09-01T03:55:01.000Z",
@@ -264,8 +282,8 @@ describe("studio media service", () => {
     } as const;
 
     await expect(executeStudioMediaCommand(command, context)).resolves.toEqual({
-      ...preparation,
-      signedToken: "signed-upload-token",
+      ...prepareResult,
+      result: { ...preparation, signedToken: "signed-upload-token" },
     });
     expect(mocks.prepareStudioMediaUpload).toHaveBeenCalledWith({
       ...command.payload,
@@ -284,6 +302,58 @@ describe("studio media service", () => {
     expect(mocks.rejectUnsignedStudioMediaUpload).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { name: "missing identity", attempt: preparation },
+    {
+      name: "same-owner same-target sibling key",
+      attempt: { ...prepareResult, idempotencyKey: "33333333-3333-4333-8333-333333333334" },
+    },
+    { name: "different action", attempt: { ...prepareResult, action: "studio.media.delete" } },
+    {
+      name: "expired sibling attempt for another studio of the same owner",
+      attempt: {
+        ...prepareResult,
+        idempotencyKey: "33333333-3333-4333-8333-333333333334",
+        result: {
+          ...preparation,
+          expiresAt: "2000-01-01T00:00:00.000Z",
+          studioId: studioTestIds.otherStudioId,
+          path: `owners/${studioTestIds.userId}/studios/${studioTestIds.otherStudioId}/revisions/${studioTestIds.revisionId}/${mediaId}.jpg`,
+        },
+      },
+    },
+  ])(
+    "rejects prepare $name before issuing, settling or compensating a token",
+    async ({ attempt }) => {
+      mocks.prepareStudioMediaUpload.mockResolvedValueOnce(attempt);
+      await expect(
+        executeStudioMediaCommand(
+          {
+            action: "studio.media.upload.prepare",
+            expectedScope: studioTestIds.userId,
+            idempotencyKey: studioTestIds.idempotencyKey,
+            payload: {
+              ...boundary,
+              declaredByteSize: 512,
+              declaredChecksumSha256: null,
+              declaredMimeType: "image/jpeg",
+            },
+          },
+          context,
+        ),
+      ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+      expect(mocks.prepareStudioMediaUpload).toHaveBeenCalledOnce();
+      expect(mocks.createUploadToken).not.toHaveBeenCalled();
+      expect(mocks.confirmStudioMediaUploadToken).not.toHaveBeenCalled();
+      expect(mocks.rejectUnsignedStudioMediaUpload).not.toHaveBeenCalled();
+      expect(mocks.download).not.toHaveBeenCalled();
+      expect(mocks.uploadPreview).not.toHaveBeenCalled();
+      expect(mocks.signGalleryPreviews).not.toHaveBeenCalled();
+      expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
+      expect(mocks.rejectStudioMediaUpload).not.toHaveBeenCalled();
+    },
+  );
+
   it("verifies the stored bytes before finalizing and returns only signed browser data", async () => {
     const command = {
       action: "studio.media.upload.finalize",
@@ -292,7 +362,8 @@ describe("studio media service", () => {
       payload: { ...boundary, mediaId },
     } as const;
 
-    await expect(executeStudioMediaCommand(command, context)).resolves.toEqual(gallery);
+    const result = await executeStudioMediaCommand(command, context);
+    expect(result).toEqual({ ...finalizeResult, result: gallery });
     expect(mocks.download).toHaveBeenCalledWith(mediaPath, expect.any(AbortSignal));
     const processingSignal = mocks.download.mock.calls[0]?.[1];
     expect(mocks.verifyStudioMediaImage).toHaveBeenCalledWith(
@@ -321,7 +392,15 @@ describe("studio media service", () => {
       mocks.uploadPreview.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.signGalleryPreviews).toHaveBeenCalledWith(galleryRecord, expect.any(AbortSignal));
-    expect(JSON.stringify(gallery)).not.toContain(mediaPath);
+    expect(mocks.confirmStudioMediaFinalizeResult).toHaveBeenCalledExactlyOnceWith(
+      {
+        userId: studioTestIds.userId,
+        idempotencyKey: studioTestIds.idempotencyKey,
+      },
+      galleryRecord,
+    );
+    expect(JSON.stringify(result)).not.toContain(mediaPath);
+    expect(JSON.stringify(result)).not.toContain(previewPath);
   });
 
   it("replays a completed finalize before touching Storage or decoding bytes", async () => {
@@ -338,7 +417,10 @@ describe("studio media service", () => {
       payload: { ...boundary, mediaId },
     } as const;
 
-    await expect(executeStudioMediaCommand(command, context)).resolves.toEqual(gallery);
+    await expect(executeStudioMediaCommand(command, context)).resolves.toEqual({
+      ...finalizeResult,
+      result: gallery,
+    });
     expect(mocks.withStudioMediaFinalizeClaim).toHaveBeenCalledWith(
       expect.objectContaining({
         idempotencyKey: studioTestIds.idempotencyKey,
@@ -352,6 +434,13 @@ describe("studio media service", () => {
     expect(mocks.uploadPreview).not.toHaveBeenCalled();
     expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
     expect(mocks.signGalleryPreviews).toHaveBeenCalledWith(galleryRecord, expect.any(AbortSignal));
+    expect(mocks.confirmStudioMediaFinalizeResult).toHaveBeenCalledExactlyOnceWith(
+      {
+        userId: studioTestIds.userId,
+        idempotencyKey: studioTestIds.idempotencyKey,
+      },
+      galleryRecord,
+    );
   });
 
   it("replays a terminal rejection without reopening Storage work", async () => {
@@ -380,7 +469,7 @@ describe("studio media service", () => {
     expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
   });
 
-  it("signs only after the finalize claim scope has completed its release", async () => {
+  it("confirms identity after lease release and only then signs the finalized gallery", async () => {
     let claimScopeCompleted = false;
     mocks.withStudioMediaFinalizeClaim.mockImplementationOnce(
       async (
@@ -402,8 +491,14 @@ describe("studio media service", () => {
         return result;
       },
     );
+    mocks.confirmStudioMediaFinalizeResult.mockImplementationOnce(async () => {
+      expect(claimScopeCompleted).toBe(true);
+      expect(mocks.signGalleryPreviews).not.toHaveBeenCalled();
+      return finalizeResult;
+    });
     mocks.signGalleryPreviews.mockImplementationOnce(async () => {
       expect(claimScopeCompleted).toBe(true);
+      expect(mocks.confirmStudioMediaFinalizeResult).toHaveBeenCalledOnce();
       return gallery;
     });
 
@@ -417,7 +512,7 @@ describe("studio media service", () => {
         },
         context,
       ),
-    ).resolves.toEqual(gallery);
+    ).resolves.toEqual({ ...finalizeResult, result: gallery });
   });
 
   it("fails recoverably without touching Storage when another finalize owns the claim", async () => {
@@ -663,7 +758,10 @@ describe("studio media service", () => {
         },
         context,
       ),
-    ).resolves.toEqual({ ...preparation, signedToken: "signed-upload-token" });
+    ).resolves.toEqual({
+      ...prepareResult,
+      result: { ...preparation, signedToken: "signed-upload-token" },
+    });
     expect(mocks.createUploadToken).toHaveBeenCalledOnce();
     expect(mocks.confirmStudioMediaUploadToken).toHaveBeenCalledOnce();
     expect(mocks.rejectUnsignedStudioMediaUpload).toHaveBeenCalledOnce();
@@ -671,8 +769,8 @@ describe("studio media service", () => {
 
   it("terminalizes an expired replay before asking Storage for another token", async () => {
     mocks.prepareStudioMediaUpload.mockResolvedValueOnce({
-      ...preparation,
-      expiresAt: "2000-01-01T00:00:00.000Z",
+      ...prepareResult,
+      result: { ...preparation, expiresAt: "2000-01-01T00:00:00.000Z" },
     });
 
     await expect(
@@ -736,15 +834,103 @@ describe("studio media service", () => {
         : command.action === "studio.media.cover.set"
           ? mocks.setStudioMediaCover
           : mocks.deleteStudioMedia;
-    mutationResult.mockResolvedValueOnce(galleryRecord);
+    const attempt = galleryMutationResults[command.action];
+    mutationResult.mockResolvedValueOnce(attempt);
 
-    await expect(executeStudioMediaCommand(command, context)).resolves.toEqual(gallery);
+    await expect(executeStudioMediaCommand(command, context)).resolves.toEqual({
+      ...attempt,
+      result: gallery,
+    });
     expect(mocks.signGalleryPreviews).toHaveBeenCalledWith(galleryRecord, expect.any(AbortSignal));
+  });
+
+  describe.each([
+    ...galleryMutationCommands,
+    {
+      action: "studio.media.upload.finalize",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: studioTestIds.idempotencyKey,
+      payload: { ...boundary, mediaId },
+    } as const,
+  ])("$action signing identity fence", (command) => {
+    const confirmed =
+      command.action === "studio.media.upload.finalize"
+        ? finalizeResult
+        : galleryMutationResults[command.action];
+    it.each([
+      { name: "missing identity", attempt: galleryRecord },
+      {
+        name: "same-owner same-target sibling key",
+        attempt: { ...confirmed, idempotencyKey: "33333333-3333-4333-8333-333333333334" },
+      },
+      { name: "different action", attempt: { ...confirmed, action: "studio.create" } },
+    ])("rejects $name before provider signing", async ({ attempt }) => {
+      const mutation =
+        command.action === "studio.media.upload.finalize"
+          ? mocks.confirmStudioMediaFinalizeResult
+          : command.action === "studio.media.reorder"
+            ? mocks.reorderStudioMedia
+            : command.action === "studio.media.cover.set"
+              ? mocks.setStudioMediaCover
+              : mocks.deleteStudioMedia;
+      mutation.mockResolvedValueOnce(attempt);
+      if (command.action === "studio.media.upload.finalize")
+        mocks.withStudioMediaFinalizeClaim.mockImplementationOnce(
+          (
+            _input: unknown,
+            work: (claim: { result: typeof galleryRecord; state: "replay" }) => Promise<unknown>,
+          ) => work({ result: galleryRecord, state: "replay" }),
+        );
+      await expect(executeStudioMediaCommand(command, context)).rejects.toMatchObject({
+        code: "SERVICE_UNAVAILABLE",
+        status: 503,
+      });
+      expect(mutation).toHaveBeenCalledOnce();
+      expect(mocks.signGalleryPreviews).not.toHaveBeenCalled();
+      expect(mocks.createUploadToken).not.toHaveBeenCalled();
+      expect(mocks.download).not.toHaveBeenCalled();
+      expect(mocks.uploadPreview).not.toHaveBeenCalled();
+      expect(mocks.verifyStudioMediaImage).not.toHaveBeenCalled();
+      expect(mocks.finalizeStudioMediaUpload).not.toHaveBeenCalled();
+      expect(mocks.rejectStudioMediaUpload).not.toHaveBeenCalled();
+      expect(mocks.rejectUnsignedStudioMediaUpload).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not confirm or sign a finalize result when lease release fails", async () => {
+    mocks.withStudioMediaFinalizeClaim.mockImplementationOnce(
+      async (
+        _input: unknown,
+        work: (claim: {
+          candidate: typeof candidate;
+          claimToken: string;
+          leaseExpiresAt: string;
+          state: "acquired";
+        }) => Promise<unknown>,
+      ) => {
+        await work({ candidate, claimToken, leaseExpiresAt: leaseExpiresAt(), state: "acquired" });
+        throw new StudioMediaFinalizeClaimBusyError();
+      },
+    );
+    await expect(
+      executeStudioMediaCommand(
+        {
+          action: "studio.media.upload.finalize",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: { ...boundary, mediaId },
+        },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE", status: 503 });
+    expect(mocks.finalizeStudioMediaUpload).toHaveBeenCalledOnce();
+    expect(mocks.confirmStudioMediaFinalizeResult).not.toHaveBeenCalled();
+    expect(mocks.signGalleryPreviews).not.toHaveBeenCalled();
   });
 
   it("aborts command preview signing when the Storage adapter ignores its deadline", async () => {
     vi.useFakeTimers();
-    mocks.reorderStudioMedia.mockResolvedValueOnce(galleryRecord);
+    mocks.reorderStudioMedia.mockResolvedValueOnce(galleryMutationResults["studio.media.reorder"]);
     mocks.signGalleryPreviews.mockImplementationOnce(() => new Promise(() => undefined));
     const operation = executeStudioMediaCommand(
       {

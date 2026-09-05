@@ -65,14 +65,19 @@ function queryClient() {
 }
 
 describe("FEAT-030 studio review client state", () => {
-  it("rejects another studio attempt even when action, target and version match", () => {
-    expect(() =>
-      assertStudioCommandResultMatchesAttempt(command, {
-        ...commandResult,
-        idempotencyKey: "a1000000-0000-4000-8000-000000000099",
-      }),
-    ).toThrow("não corresponde à tentativa enviada");
-  });
+  it.each([command.idempotencyKey, command.idempotencyKey.toUpperCase()])(
+    "matches a canonical ledger key without accepting a different attempt (%s)",
+    (idempotencyKey) => {
+      const submitted = { ...command, idempotencyKey };
+      expect(assertStudioCommandResultMatchesAttempt(submitted, commandResult)).toBe(commandResult);
+      expect(() =>
+        assertStudioCommandResultMatchesAttempt(submitted, {
+          ...commandResult,
+          idempotencyKey: "a1000000-0000-4000-8000-000000000099",
+        }),
+      ).toThrow("não corresponde à tentativa enviada");
+    },
+  );
 
   it("binds the acknowledgement copy to the decision action, not to the mixed studio state", () => {
     expect(actionAcknowledgement("backoffice.studio.approve")).toBe(

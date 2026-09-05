@@ -1,5 +1,5 @@
 import { apiSuccessSchema, myProfileResultSchema } from "@set-livre/contracts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
 import {
   assertFeat003PrivateValuesAbsentFromDom,
@@ -237,6 +237,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   const releaseLogoutRequest = createDeferredSignal();
   let profileCommandRequests = 0;
   let logoutRequests = 0;
+  let logoutVerificationRequest: Request | undefined;
 
   try {
     await registerAndConfirmFeat003Identity(page, identity, "individual");
@@ -480,6 +481,14 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       if (address.pathname === "/api/auth/logout" && request.method() === "POST") {
         logoutRequests += 1;
       }
+      if (
+        request.method() === "GET" &&
+        request.isNavigationRequest() &&
+        request.resourceType() === "document" &&
+        `${address.pathname}${address.search}` === "/entrar?saida=verificar"
+      ) {
+        logoutVerificationRequest = request;
+      }
     });
     await page.route(
       "**/api/auth/logout",
@@ -516,7 +525,50 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       { timeout: 15_000, waitUntil: "commit" },
     );
     releaseLogoutRequest.resolve();
-    await ambiguousLogoutNavigation;
+    try {
+      await ambiguousLogoutNavigation;
+    } catch (error) {
+      // Observe the failed navigation; never recover it or turn a timeout into approval.
+      // Request emission/HAR -1 alone cannot distinguish server delay from a stalled renderer.
+      const network = {
+        requested: logoutVerificationRequest !== undefined,
+        responseStatus: logoutVerificationRequest?.existingResponse()?.status() ?? null,
+        failed:
+          logoutVerificationRequest === undefined
+            ? null
+            : logoutVerificationRequest.failure() !== null,
+        timing: logoutVerificationRequest?.timing() ?? null,
+      };
+      const rendererPing = new Promise<boolean>((resolve) => {
+        const deadline = setTimeout(() => resolve(false), 1_000);
+        void page
+          .evaluate(() => 1)
+          .then(
+            (value) => {
+              clearTimeout(deadline);
+              resolve(value === 1);
+            },
+            () => {
+              clearTimeout(deadline);
+              resolve(false);
+            },
+          );
+      });
+      const [rendererRespondedWithin1s, livenessStatus] = await Promise.all([
+        rendererPing,
+        page.request.get("/api/health/live", { timeout: 3_000 }).then(
+          (response) => response.status(),
+          () => null,
+        ),
+      ]);
+      await testInfo.attach("logout-navigation-diagnostic", {
+        body: Buffer.from(
+          JSON.stringify({ logoutRequests, network, rendererRespondedWithin1s, livenessStatus }),
+        ),
+        contentType: "application/json",
+      });
+      throw error;
+    }
     await expect(page.getByText("A sessão ainda está ativa", { exact: true })).toBeVisible();
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
     await page.evaluate(() => {

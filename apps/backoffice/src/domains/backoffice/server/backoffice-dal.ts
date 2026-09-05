@@ -291,7 +291,7 @@ export async function setBackofficeUserStatus(input: {
         (value) =>
           value.scope === input.auth.userId &&
           value.action === input.command.action &&
-          value.idempotencyKey === input.command.idempotencyKey &&
+          value.idempotencyKey === input.command.idempotencyKey.toLowerCase() &&
           value.id === input.command.payload.userId,
         "A confirmação não corresponde à tentativa persistida solicitada.",
       ),
@@ -355,7 +355,7 @@ export async function setBackofficeUserRole(input: {
         (value) =>
           value.scope === input.auth.userId &&
           value.action === input.command.action &&
-          value.idempotencyKey === input.command.idempotencyKey &&
+          value.idempotencyKey === input.command.idempotencyKey.toLowerCase() &&
           value.id === input.command.payload.userId,
         "A confirmação não corresponde à tentativa persistida solicitada.",
       ),
@@ -394,7 +394,7 @@ export async function upsertBackofficeTaxonomy(input: {
         (value) =>
           value.scope === input.auth.userId &&
           value.action === input.command.action &&
-          value.idempotencyKey === input.command.idempotencyKey &&
+          value.idempotencyKey === input.command.idempotencyKey.toLowerCase() &&
           value.kind === input.command.payload.kind &&
           (input.command.payload.id === undefined || value.id === input.command.payload.id),
         "A confirmação não corresponde à tentativa persistida solicitada.",
@@ -432,7 +432,7 @@ export async function transitionBackofficeTaxonomy(input: {
         (value) =>
           value.scope === input.auth.userId &&
           value.action === input.command.action &&
-          value.idempotencyKey === input.command.idempotencyKey &&
+          value.idempotencyKey === input.command.idempotencyKey.toLowerCase() &&
           value.kind === input.command.payload.kind &&
           value.id === input.command.payload.id,
         "A confirmação não corresponde à tentativa persistida solicitada.",

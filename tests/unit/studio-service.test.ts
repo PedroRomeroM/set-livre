@@ -38,27 +38,47 @@ const createCommand = {
   idempotencyKey: studioTestIds.idempotencyKey,
   payload: studioCoreFixture,
 } as const;
+const createResult = {
+  action: "studio.create",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: studioEditorFixture,
+} as const;
 
 describe("studio service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dependencies.createStudioDraft.mockResolvedValue(studioEditorFixture);
-    dependencies.updateStudioRevisionCore.mockResolvedValue(studioEditorFixture);
-    dependencies.updateStudioRevisionContent.mockResolvedValue(studioEditorFixture);
-    dependencies.updateStudioRevisionTaxonomy.mockResolvedValue(studioEditorFixture);
+    dependencies.createStudioDraft.mockResolvedValue(createResult);
+    dependencies.updateStudioRevisionCore.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateCore",
+    });
+    dependencies.updateStudioRevisionContent.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateContent",
+    });
+    dependencies.updateStudioRevisionTaxonomy.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateTaxonomy",
+    });
     dependencies.discardStudioDraft.mockResolvedValue({
-      scope: studioTestIds.userId,
-      studioDeleted: true,
-      studioId: studioTestIds.studioId,
+      action: "studio.draft.discard",
+      idempotencyKey: studioTestIds.idempotencyKey,
+      result: {
+        scope: studioTestIds.userId,
+        studioDeleted: true,
+        studioId: studioTestIds.studioId,
+      },
     });
   });
 
   it.each([studioTestIds.idempotencyKey, "33333333-3333-4333-8333-333333333334"])(
-    "passes creation key %s to the DAL, returns only the DTO and derives identities from context",
+    "passes creation key %s to the DAL and preserves its confirmed envelope",
     async (idempotencyKey) => {
+      const confirmed = { ...createResult, idempotencyKey };
+      dependencies.createStudioDraft.mockResolvedValueOnce(confirmed);
       await expect(
         createStudioService(dependencies).create({ ...createCommand, idempotencyKey }, context),
-      ).resolves.toEqual(studioEditorFixture);
+      ).resolves.toBe(confirmed);
       expect(dependencies.createStudioDraft).toHaveBeenCalledWith({
         core: studioCoreFixture,
         idempotencyKey,
@@ -113,19 +133,21 @@ describe("studio service", () => {
       studioId: studioTestIds.studioId,
     };
     const service = createStudioService(dependencies);
-    await service.updateTaxonomy(
-      {
-        action: "studio.revision.updateTaxonomy",
-        expectedScope: studioTestIds.userId,
-        idempotencyKey: studioTestIds.idempotencyKey,
-        payload: {
-          ...boundary,
-          amenityIds: [studioTestIds.amenityId],
-          tagIds: [studioTestIds.tagId],
+    await expect(
+      service.updateTaxonomy(
+        {
+          action: "studio.revision.updateTaxonomy",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: {
+            ...boundary,
+            amenityIds: [studioTestIds.amenityId],
+            tagIds: [studioTestIds.tagId],
+          },
         },
-      },
-      context,
-    );
+        context,
+      ),
+    ).resolves.toEqual({ ...createResult, action: "studio.revision.updateTaxonomy" });
     expect(dependencies.updateStudioRevisionTaxonomy).toHaveBeenCalledWith({
       ...boundary,
       idempotencyKey: studioTestIds.idempotencyKey,
@@ -142,15 +164,17 @@ describe("studio service", () => {
       usageRules: "Regras seguras.",
       youtubeVideoId: null,
     };
-    await service.updateContent(
-      {
-        action: "studio.revision.updateContent",
-        expectedScope: studioTestIds.userId,
-        idempotencyKey: studioTestIds.idempotencyKey,
-        payload: { ...boundary, ...content },
-      },
-      context,
-    );
+    await expect(
+      service.updateContent(
+        {
+          action: "studio.revision.updateContent",
+          expectedScope: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+          payload: { ...boundary, ...content },
+        },
+        context,
+      ),
+    ).resolves.toEqual({ ...createResult, action: "studio.revision.updateContent" });
     expect(dependencies.updateStudioRevisionContent).toHaveBeenCalledWith({
       ...boundary,
       content,

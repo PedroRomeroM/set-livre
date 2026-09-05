@@ -1324,6 +1324,81 @@ COMMENT ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "u
 
 
 
+CREATE OR REPLACE FUNCTION "private"."bind_studio_command_result"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_result" "jsonb") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  persisted record;
+  bound_action text;
+begin
+  if p_user_id is null
+    or p_idempotency_key is null
+    or pg_catalog.jsonb_typeof(p_result) is distinct from 'object'
+  then
+    raise exception using errcode = 'XX000', message = 'studio_command_result_mismatch';
+  end if;
+
+  -- VOLATILE sees the ledger written by the nested command in this same SELECT.
+  select request.action, request.idempotency_key, request.result_hash, request.result_payload
+  into persisted
+  from private.studio_command_requests as request
+  where request.owner_user_id = p_user_id
+    and request.idempotency_key = p_idempotency_key;
+
+  if not found then
+    raise exception using errcode = 'XX000', message = 'studio_command_result_mismatch';
+  end if;
+
+  bound_action := case
+    when persisted.action = 'studio.media.prepare' then 'studio.media.upload.prepare'
+    when persisted.action = 'studio.media.finalize' then 'studio.media.upload.finalize'
+    when persisted.action = any (array[
+      'studio.create',
+      'studio.revision.updateCore',
+      'studio.revision.updateTaxonomy',
+      'studio.revision.updateContent',
+      'studio.draft.discard',
+      'studio.media.reorder',
+      'studio.media.cover.set',
+      'studio.media.delete',
+      'studio.revision.submit',
+      'studio.pause',
+      'studio.resume'
+    ]) then persisted.action
+    else null
+  end;
+
+  if bound_action is null
+    or private.studio_result_hash(p_result) is distinct from persisted.result_hash
+    or (
+      persisted.result_payload is not null
+      and (
+        persisted.result_payload is distinct from p_result
+        or private.studio_result_hash(persisted.result_payload)
+          is distinct from persisted.result_hash
+      )
+    )
+  then
+    raise exception using errcode = 'XX000', message = 'studio_command_result_mismatch';
+  end if;
+
+  return pg_catalog.jsonb_build_object(
+    'action', bound_action,
+    'idempotencyKey', persisted.idempotency_key,
+    'result', p_result
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."bind_studio_command_result"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_result" "jsonb") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."bind_studio_command_result"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_result" "jsonb") IS 'Binds a raw command result to the persisted owner/key ledger before signing. Server-validated session only; not a read-model or command dispatcher.';
+
+
+
 CREATE OR REPLACE FUNCTION "private"."bootstrap_first_platform_admin"("p_user_id" "uuid", "p_request_id" "uuid", "p_idempotency_key" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -14482,6 +14557,11 @@ REVOKE ALL ON FUNCTION "private"."backoffice_user_summary_json"("p_user_id" "uui
 
 REVOKE ALL ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."begin_studio_media_finalize_claim"("p_user_id" "uuid", "p_studio_id" "uuid", "p_expected_revision_id" "uuid", "p_expected_revision_version" bigint, "p_idempotency_key" "uuid", "p_request_id" "uuid", "p_media_id" "uuid") TO "app_dal";
+
+
+
+REVOKE ALL ON FUNCTION "private"."bind_studio_command_result"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_result" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "private"."bind_studio_command_result"("p_user_id" "uuid", "p_idempotency_key" "uuid", "p_result" "jsonb") TO "app_dal";
 
 
 

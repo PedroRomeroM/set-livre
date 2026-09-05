@@ -189,7 +189,7 @@ export function matchesBackofficePiiAttempt(
     pii.scope === command.expectedScope &&
     pii.userId === command.payload.userId &&
     pii.action === command.action &&
-    pii.idempotencyKey === command.idempotencyKey &&
+    pii.idempotencyKey === command.idempotencyKey.toLowerCase() &&
     pii.reason === command.payload.reason
   );
 }
@@ -723,7 +723,7 @@ export function matchesBackofficeStudioAttempt(
   return (
     result.scope === command.expectedScope &&
     result.action === command.action &&
-    result.idempotencyKey === command.idempotencyKey &&
+    result.idempotencyKey === command.idempotencyKey.toLowerCase() &&
     result.studioId === command.payload.studioId &&
     result.publicationVersion === command.payload.expectedPublicationVersion + 1 &&
     ((command.action !== "backoffice.studio.approve" &&

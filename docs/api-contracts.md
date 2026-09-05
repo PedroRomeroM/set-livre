@@ -218,15 +218,26 @@ assinadas pelo servidor, deduplicadas por path e validadas novamente contra owne
 paths de Storage nunca entram no DTO. Submit grava revisão pendente, evento, intenção de e-mail,
 ledger idempotente e auditoria na mesma transação. Pausa/retomada preservam os ponteiros e não criam
 novo review. Falha ou timeout ao assinar a prévia depois da transação retorna `503` ambíguo: a UI
-mantém a mesma chave para retry exato ou relê o GET, nunca inventa sucesso nem dispara nova intenção.
+mantém a mesma chave para replay exato. GET informa o estado, mas não encerra a tentativa ambígua nem
+libera uma nova intenção; a recuperação segue `query-cache-invalidation.md`.
 
 Taxonomia recebe listas únicas de no máximo 20 UUIDs por grupo e o banco aceita somente registros
 ativos. Conteúdo recebe plain text aparado, até 20 FAQs ordenadas e `youtubeVideoId` nulo ou com 11
 caracteres allowlisted; URLs são interpretadas apenas na fronteira do browser e nunca persistidas.
 
 Todo sucesso de comando `studio.*` usa `data: {action, idempotencyKey, result}` no envelope HTTP
-canônico. O handler ecoa ação e chave validadas somente depois de o serviço concluir; `result` contém
-o DTO autoritativo já definido para a operação. O browser valida o envelope estrito, ação, chave,
+canônico. A função privada `bind_studio_command_result` confere o hash do resultado bruto contra a
+linha do ledger do dono/chave, inclusive seu payload persistido quando presente, e deriva dessa linha
+a ação e a chave retornadas. A vinculação ocorre no mesmo statement dos comandos; a finalização de
+mídia confirma seu resultado persistido depois de liberar a lease e antes de assinar prévias.
+O DAL valida identidade e escopo; serviços preservam o envelope e enriquecem somente `result` com
+as URLs/tokens autorizados. A preparação confere a tentativa antes de assinar ou compensar qualquer
+reserva. O handler valida e encaminha essa identidade, sem reetiquetar um resultado com os valores do
+pedido. UUIDs de idempotência aceitam letras maiúsculas na entrada, mas a confirmação persistida usa
+a representação minúscula canônica do PostgreSQL; a correlação normaliza somente a chave esperada,
+sem mudar a tentativa nem reescrever a identidade retornada. O mesmo vale para os comandos do
+backoffice. Falha de vinculação é erro interno ambíguo, nunca conflito definitivo inventado.
+O browser valida o envelope estrito, ação, chave,
 escopo e, quando o alvo já existe, ID do estúdio antes de devolver somente o DTO à UI. Campo
 ausente/divergente é `RESPONSE_INVALID` ambíguo: não anuncia sucesso, não resolve recovery e não libera
 upload para Storage; preserva o mesmo comando para recuperação. Assim, resposta de outra tentativa

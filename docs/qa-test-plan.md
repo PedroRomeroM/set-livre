@@ -180,7 +180,9 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
 - `SL-F006-E2E-020/021/022` rejeitam respostas com escopo, estúdio ou tentativa divergentes antes de persistir
   recovery ou remover painéis, preservam o replay da intenção original e comprovam a reconciliação;
   a criação também recebe uma resposta real de outra tentativa do mesmo dono, com o mesmo conteúdo,
-  e só resolve a recuperação depois de conferir a chave original no replay;
+  e só resolve a recuperação depois de conferir a chave original no replay. O cenário 022 envia UUID
+  com letras maiúsculas e exige correlação com a chave minúscula persistida, preservando o comando
+  original na recuperação sem confundir uma chave realmente diferente;
   o descarte definitivo remove também as abas do estúdio, enquanto descartar somente uma revisão
   mantém a navegação da publicação existente;
 - `SL-F006-E2E-023/024` esgotam a quota da aba somente após a criação real: preservam a intenção
@@ -357,8 +359,12 @@ Os cenários `SL-F009-E2E-*` exercitam a matriz permanente desta feature:
 - regressões em desktop, 390 px, 320 px e altura compacta cobrem rejeição orientada à correção,
   conflito com releitura e foco, JavaScript desabilitado fail-closed, recomposição SSR quando o mesmo
   fence retorna projeção derivada divergente, taxonomia arquivada entre leitura e submit sem efeito
-  parcial, releitura autoritativa após resposta ambígua sem um segundo POST e descarte integral da
-  correção criada após a primeira rejeição;
+  parcial e descarte integral da correção criada após a primeira rejeição;
+- `SL-F009-E2E-014` retém o envio na fronteira de transporte até o timeout real do navegador, lê o
+  estado pré-commit e só então aplica o POST real perdendo sua resposta. Não simula SQL por 10s:
+  o `statement_timeout` real de 2s permanece intacto. GETs reais antes e depois do commit não liberam
+  novas intenções nem oferecem aceite da ambiguidade; só o replay explícito com ação, payload e chave
+  originais confirma a tentativa, com uma única submissão, outbox, request e auditoria no banco;
 - `SL-F009-E2E-017` recusa chave e ação divergentes em respostas estruturalmente válidas, não anuncia
   conclusão, preserva o replay exato e comprova uma única submissão, outbox e auditoria no banco;
 - axe, teclado, foco, toque, 320 px e tema escuro executam em quatro composições;

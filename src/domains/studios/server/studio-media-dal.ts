@@ -15,6 +15,8 @@ import { z } from "zod";
 
 import { commandDalPool } from "@/lib/server/dal-pool";
 
+import { parseStudioCommandResult, type StudioCommandResult } from "./studio-command-result";
+
 const commandIdentitySchema = z.strictObject({
   idempotencyKey: z.uuid(),
   requestId: z.uuid(),
@@ -138,15 +140,15 @@ export async function prepareStudioMediaUpload(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioMediaUploadPreparationRecord> {
+}): Promise<StudioCommandResult<StudioMediaUploadPreparationRecord>> {
   const command = parseCommandIdentity(input);
   const revision = parseRevisionIdentity(input);
   const declaredMimeType = studioMediaMimeTypeSchema.parse(input.declaredMimeType);
   const result = await commandDalPool().query(
-    `select private.prepare_studio_media_upload(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.prepare_studio_media_upload(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
        $7::text, $8::bigint, $9::text
-     ) as result`,
+     )) as result`,
     [
       command.userId,
       revision.studioId,
@@ -159,7 +161,10 @@ export async function prepareStudioMediaUpload(input: {
       input.declaredChecksumSha256,
     ],
   );
-  return exactlyOneResult(result.rows, studioMediaUploadPreparationRecordSchema);
+  return parseStudioCommandResult(result.rows, studioMediaUploadPreparationRecordSchema, {
+    ...command,
+    action: "studio.media.upload.prepare",
+  });
 }
 
 export async function confirmStudioMediaUploadToken(input: {
@@ -345,7 +350,7 @@ async function mutateStudioMedia(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioMediaGalleryRecord> {
+}): Promise<StudioCommandResult<StudioMediaGalleryRecord>> {
   const command = parseCommandIdentity(input);
   const revision = parseRevisionIdentity(input);
   const values: readonly unknown[] = [
@@ -362,12 +367,20 @@ async function mutateStudioMedia(input: {
       : z.uuid().parse(input.mediaId);
   const argumentType = input.functionName === "reorder_studio_media" ? "uuid[]" : "uuid";
   const result = await commandDalPool().query(
-    `select private.${input.functionName}(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.${input.functionName}(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid, $7::${argumentType}
-     ) as result`,
+     )) as result`,
     [...values, argument],
   );
-  return exactlyOneResult(result.rows, studioMediaGalleryRecordSchema);
+  const action = {
+    delete_studio_media: "studio.media.delete",
+    reorder_studio_media: "studio.media.reorder",
+    set_studio_media_cover: "studio.media.cover.set",
+  } as const;
+  return parseStudioCommandResult(result.rows, studioMediaGalleryRecordSchema, {
+    ...command,
+    action: action[input.functionName],
+  });
 }
 
 export function reorderStudioMedia(
@@ -392,4 +405,23 @@ export function deleteStudioMedia(
   },
 ) {
   return mutateStudioMedia({ ...input, functionName: "delete_studio_media" });
+}
+
+export async function confirmStudioMediaFinalizeResult(
+  input: { userId: string; idempotencyKey: string },
+  gallery: StudioMediaGalleryRecord,
+): Promise<StudioCommandResult<StudioMediaGalleryRecord>> {
+  const identity = z.strictObject({ userId: z.uuid(), idempotencyKey: z.uuid() }).parse(input);
+  const result = await commandDalPool().query(
+    "select private.bind_studio_command_result($1::uuid, $2::uuid, $3::jsonb) as result",
+    [
+      identity.userId,
+      identity.idempotencyKey,
+      JSON.stringify(studioMediaGalleryRecordSchema.parse(gallery)),
+    ],
+  );
+  return parseStudioCommandResult(result.rows, studioMediaGalleryRecordSchema, {
+    ...identity,
+    action: "studio.media.upload.finalize",
+  });
 }

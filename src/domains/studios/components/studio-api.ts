@@ -128,7 +128,7 @@ async function requestStudioCommand<TData extends Readonly<{ scope: string; stud
     studioCommandResultSchema(dataSchema).refine(
       (response) =>
         response.action === action &&
-        response.idempotencyKey === idempotencyKey &&
+        response.idempotencyKey === idempotencyKey.toLowerCase() &&
         response.result.scope === expectedScope &&
         (expectedStudioId === undefined || response.result.studioId === expectedStudioId),
     ),

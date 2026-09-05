@@ -14,6 +14,7 @@ import {
 } from "./studio-service";
 import { executeStudioMediaCommand } from "./studio-media-service";
 import { executeStudioPublicationCommand } from "./studio-publication-service";
+import { assertStudioCommandResultIdentity } from "./studio-command-result";
 
 function assertExpectedScope(context: PrivateCommandContext, expectedScope: string) {
   if (context.session.userId !== expectedScope) {
@@ -28,7 +29,7 @@ function assertExpectedScope(context: PrivateCommandContext, expectedScope: stri
 export async function executeStudioCommand(command: StudioCommand, context: PrivateCommandContext) {
   assertExpectedScope(context, command.expectedScope);
   const result = await executeStudioCommandResult(command, context);
-  return { action: command.action, idempotencyKey: command.idempotencyKey, result };
+  return assertStudioCommandResultIdentity(result, command);
 }
 
 async function executeStudioCommandResult(command: StudioCommand, context: PrivateCommandContext) {

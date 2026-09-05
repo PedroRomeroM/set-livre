@@ -16,6 +16,8 @@ import { z } from "zod";
 
 import { commandDalPool } from "@/lib/server/dal-pool";
 
+import { parseStudioCommandResult, type StudioCommandResult } from "./studio-command-result";
+
 const commandIdentitySchema = z.strictObject({
   idempotencyKey: z.uuid(),
   requestId: z.uuid(),
@@ -28,19 +30,12 @@ const revisionIdentitySchema = z.strictObject({
   studioId: z.uuid(),
 });
 
-function exactlyOneResult<T>(rows: readonly unknown[], schema: z.ZodType<T>): T {
-  if (rows.length !== 1) {
-    throw new Error("O DAL de estúdio recebeu uma cardinalidade inesperada.");
-  }
-  return z.strictObject({ result: schema }).parse(rows[0]).result;
-}
-
 export async function createStudioDraft(input: {
   core: StudioCorePayload;
   idempotencyKey: string;
   requestId: string;
   userId: string;
-}): Promise<StudioEditor> {
+}): Promise<StudioCommandResult<StudioEditor>> {
   const identity = commandIdentitySchema.parse({
     idempotencyKey: input.idempotencyKey,
     requestId: input.requestId,
@@ -48,11 +43,11 @@ export async function createStudioDraft(input: {
   });
   const core = studioCorePayloadSchema.parse(input.core);
   const result = await commandDalPool().query(
-    `select private.create_studio(
+    `select private.bind_studio_command_result($1::uuid, $2::uuid, private.create_studio(
        $1::uuid, $2::uuid, $3::uuid, $4::text, $5::text, $6::text,
        $7::text, $8::text, $9::text, $10::text, $11::text, $12::text,
        $13::integer, $14::uuid
-     ) as result`,
+     )) as result`,
     [
       identity.userId,
       identity.idempotencyKey,
@@ -70,7 +65,10 @@ export async function createStudioDraft(input: {
       core.studioTypeId,
     ],
   );
-  return exactlyOneResult(result.rows, studioEditorSchema);
+  return parseStudioCommandResult(result.rows, studioEditorSchema, {
+    ...identity,
+    action: "studio.create",
+  });
 }
 
 export async function updateStudioRevisionCore(input: {
@@ -81,7 +79,7 @@ export async function updateStudioRevisionCore(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioEditor> {
+}): Promise<StudioCommandResult<StudioEditor>> {
   const identity = commandIdentitySchema.parse({
     idempotencyKey: input.idempotencyKey,
     requestId: input.requestId,
@@ -94,11 +92,11 @@ export async function updateStudioRevisionCore(input: {
   });
   const core = studioCorePayloadSchema.parse(input.core);
   const result = await commandDalPool().query(
-    `select private.update_studio_revision_core(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.update_studio_revision_core(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
        $7::text, $8::text, $9::text, $10::text, $11::text, $12::text,
        $13::text, $14::text, $15::text, $16::integer, $17::uuid
-     ) as result`,
+     )) as result`,
     [
       identity.userId,
       revision.studioId,
@@ -119,7 +117,10 @@ export async function updateStudioRevisionCore(input: {
       core.studioTypeId,
     ],
   );
-  return exactlyOneResult(result.rows, studioEditorSchema);
+  return parseStudioCommandResult(result.rows, studioEditorSchema, {
+    ...identity,
+    action: "studio.revision.updateCore",
+  });
 }
 
 export async function discardStudioDraft(input: {
@@ -129,7 +130,7 @@ export async function discardStudioDraft(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioDraftDiscardResult> {
+}): Promise<StudioCommandResult<StudioDraftDiscardResult>> {
   const identity = commandIdentitySchema.parse({
     idempotencyKey: input.idempotencyKey,
     requestId: input.requestId,
@@ -141,9 +142,9 @@ export async function discardStudioDraft(input: {
     studioId: input.studioId,
   });
   const result = await commandDalPool().query(
-    `select private.discard_studio_draft(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.discard_studio_draft(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid
-     ) as result`,
+     )) as result`,
     [
       identity.userId,
       revision.studioId,
@@ -153,7 +154,10 @@ export async function discardStudioDraft(input: {
       identity.requestId,
     ],
   );
-  return exactlyOneResult(result.rows, studioDraftDiscardResultSchema);
+  return parseStudioCommandResult(result.rows, studioDraftDiscardResultSchema, {
+    ...identity,
+    action: "studio.draft.discard",
+  });
 }
 
 export async function updateStudioRevisionTaxonomy(input: {
@@ -164,7 +168,7 @@ export async function updateStudioRevisionTaxonomy(input: {
   studioId: string;
   taxonomy: StudioTaxonomyPayload;
   userId: string;
-}): Promise<StudioEditor> {
+}): Promise<StudioCommandResult<StudioEditor>> {
   const identity = commandIdentitySchema.parse({
     idempotencyKey: input.idempotencyKey,
     requestId: input.requestId,
@@ -177,10 +181,10 @@ export async function updateStudioRevisionTaxonomy(input: {
   });
   const taxonomy = studioTaxonomyPayloadSchema.parse(input.taxonomy);
   const result = await commandDalPool().query(
-    `select private.update_studio_revision_taxonomy(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.update_studio_revision_taxonomy(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
        $7::uuid[], $8::uuid[]
-     ) as result`,
+     )) as result`,
     [
       identity.userId,
       revision.studioId,
@@ -192,7 +196,10 @@ export async function updateStudioRevisionTaxonomy(input: {
       taxonomy.amenityIds,
     ],
   );
-  return exactlyOneResult(result.rows, studioEditorSchema);
+  return parseStudioCommandResult(result.rows, studioEditorSchema, {
+    ...identity,
+    action: "studio.revision.updateTaxonomy",
+  });
 }
 
 export async function updateStudioRevisionContent(input: {
@@ -203,7 +210,7 @@ export async function updateStudioRevisionContent(input: {
   requestId: string;
   studioId: string;
   userId: string;
-}): Promise<StudioEditor> {
+}): Promise<StudioCommandResult<StudioEditor>> {
   const identity = commandIdentitySchema.parse({
     idempotencyKey: input.idempotencyKey,
     requestId: input.requestId,
@@ -216,10 +223,10 @@ export async function updateStudioRevisionContent(input: {
   });
   const content = studioContentPayloadSchema.parse(input.content);
   const result = await commandDalPool().query(
-    `select private.update_studio_revision_content(
+    `select private.bind_studio_command_result($1::uuid, $5::uuid, private.update_studio_revision_content(
        $1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid, $6::uuid,
        $7::text, $8::text, $9::jsonb
-     ) as result`,
+     )) as result`,
     [
       identity.userId,
       revision.studioId,
@@ -232,5 +239,8 @@ export async function updateStudioRevisionContent(input: {
       JSON.stringify(content.faqs),
     ],
   );
-  return exactlyOneResult(result.rows, studioEditorSchema);
+  return parseStudioCommandResult(result.rows, studioEditorSchema, {
+    ...identity,
+    action: "studio.revision.updateContent",
+  });
 }

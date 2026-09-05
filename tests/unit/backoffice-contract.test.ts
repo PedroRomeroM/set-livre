@@ -46,7 +46,7 @@ import {
 
 const actorId = "10000000-0000-4000-8000-000000000001";
 const targetId = "10000000-0000-4000-8000-000000000002";
-const idempotencyKey = "10000000-0000-4000-8000-000000000003";
+const idempotencyKey = "abcdefab-cdef-4abc-8def-abcdefabcdef";
 const revisionId = "10000000-0000-4000-8000-000000000004";
 
 function installAbortAwareFetch() {
@@ -381,13 +381,14 @@ describe("backoffice contracts", () => {
       const command = {
         action,
         expectedScope: actorId,
-        idempotencyKey,
+        idempotencyKey: idempotencyKey.toUpperCase(),
         payload: { userId: targetId, expectedAccountVersion: 1 },
       };
       const isRevocation = action.startsWith("backoffice.access.revoke");
       const mismatches = [
         { ...user, id: actorId },
         { ...user, idempotencyKey: revisionId },
+        { ...user, idempotencyKey: idempotencyKey.toUpperCase() },
         { ...user, idempotencyKey: undefined },
         { ...user, action: undefined },
         {
@@ -454,7 +455,7 @@ describe("backoffice contracts", () => {
           ? {
               action: "backoffice.taxonomy.upsert",
               expectedScope: actorId,
-              idempotencyKey,
+              idempotencyKey: idempotencyKey.toUpperCase(),
               payload: {
                 kind: "tag",
                 name: " Podcast ",
@@ -469,7 +470,7 @@ describe("backoffice contracts", () => {
                   ? "backoffice.taxonomy.archive"
                   : "backoffice.taxonomy.reactivate",
               expectedScope: actorId,
-              idempotencyKey,
+              idempotencyKey: idempotencyKey.toUpperCase(),
               payload: { kind: "tag", id: targetId, expectedVersion: 1 },
             };
       const item = {
@@ -486,6 +487,7 @@ describe("backoffice contracts", () => {
       const mismatches = [
         { ...item, kind: "amenity" },
         { ...item, idempotencyKey: revisionId },
+        { ...item, idempotencyKey: idempotencyKey.toUpperCase() },
         { ...item, idempotencyKey: undefined },
         { ...item, action: undefined },
         {
@@ -733,6 +735,7 @@ describe("backoffice contracts", () => {
 
   it.each([
     { label: "another key", patch: { idempotencyKey: revisionId } },
+    { label: "noncanonical returned key", patch: { idempotencyKey: idempotencyKey.toUpperCase() } },
     { label: "another audited reason", patch: { reason: "legal_request" } },
     { label: "another action", patch: { action: "backoffice.user.restore" } },
     { label: "missing action", patch: { action: undefined } },
@@ -742,7 +745,7 @@ describe("backoffice contracts", () => {
     const command = {
       action: "backoffice.user.revealPii",
       expectedScope: actorId,
-      idempotencyKey,
+      idempotencyKey: idempotencyKey.toUpperCase(),
       payload: { reason: "support_case", userId: targetId },
     } as const;
     const pii = {
@@ -775,9 +778,11 @@ describe("backoffice contracts", () => {
     const result = await revealBackofficePiiWithoutCaching(command, consume);
     expect(result).toEqual({ revealed: true });
     expect(consume).toHaveBeenCalledOnce();
+    expect(consume).toHaveBeenCalledWith(pii);
     expect(consume.mock.calls[0]?.[0] === undefined).toBe(false);
     expect(backofficeUserPiiSchema.safeParse(consume.mock.calls[0]?.[0]).success).toBe(true);
     expect(fetchMock.mock.calls[0]?.[1].body).toBe(fetchMock.mock.calls[1]?.[1].body);
+    expect(fetchMock.mock.calls[0]?.[1].body).toBe(JSON.stringify(command));
   });
 
   it("accepts only the operational roles delivered by FEAT-031 and FEAT-030", () => {

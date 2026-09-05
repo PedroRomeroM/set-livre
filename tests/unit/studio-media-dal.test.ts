@@ -12,6 +12,7 @@ vi.mock("../../src/lib/server/dal-pool", () => ({
 }));
 
 import {
+  confirmStudioMediaFinalizeResult,
   confirmStudioMediaUploadToken,
   deleteStudioMedia,
   finalizeStudioMediaUpload,
@@ -84,11 +85,21 @@ const gallery = {
   scope: studioTestIds.userId,
   studioId: studioTestIds.studioId,
 };
+const prepareResult = {
+  action: "studio.media.upload.prepare",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: preparation,
+} as const;
+const finalizeResult = {
+  action: "studio.media.upload.finalize",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: gallery,
+} as const;
 
 describe("studio media DAL", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.query.mockResolvedValue({ rows: [{ result: gallery }] });
+    mocks.query.mockReset().mockResolvedValue({ rows: [{ result: gallery }] });
   });
 
   afterEach(() => {
@@ -109,7 +120,7 @@ describe("studio media DAL", () => {
   });
 
   it("projects strict identities from the complete prepare envelope", async () => {
-    mocks.query.mockResolvedValueOnce({ rows: [{ result: preparation }] });
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: prepareResult }] });
 
     await expect(
       prepareStudioMediaUpload({
@@ -119,7 +130,11 @@ describe("studio media DAL", () => {
         declaredChecksumSha256: null,
         declaredMimeType: "image/png",
       }),
-    ).resolves.toEqual(preparation);
+    ).resolves.toEqual(prepareResult);
+
+    expect(mocks.query.mock.calls[0]?.[0]).toContain(
+      "private.bind_studio_command_result($1::uuid, $5::uuid, private.prepare_studio_media_upload",
+    );
 
     expect(mocks.query).toHaveBeenCalledWith(
       expect.stringContaining("private.prepare_studio_media_upload"),
@@ -250,13 +265,22 @@ describe("studio media DAL", () => {
   });
 
   it("projects strict identities for every gallery mutation", async () => {
+    const reorderResult = { ...finalizeResult, action: "studio.media.reorder" };
+    const coverResult = { ...finalizeResult, action: "studio.media.cover.set" };
+    const deleteResult = { ...finalizeResult, action: "studio.media.delete" };
+    mocks.query
+      .mockResolvedValueOnce({ rows: [{ result: reorderResult }] })
+      .mockResolvedValueOnce({ rows: [{ result: coverResult }] })
+      .mockResolvedValueOnce({ rows: [{ result: deleteResult }] });
     await expect(
       reorderStudioMedia({ ...command, ...revision, orderedMediaIds: [mediaId] }),
-    ).resolves.toEqual(gallery);
+    ).resolves.toEqual(reorderResult);
     await expect(setStudioMediaCover({ ...command, ...revision, mediaId })).resolves.toEqual(
-      gallery,
+      coverResult,
     );
-    await expect(deleteStudioMedia({ ...command, ...revision, mediaId })).resolves.toEqual(gallery);
+    await expect(deleteStudioMedia({ ...command, ...revision, mediaId })).resolves.toEqual(
+      deleteResult,
+    );
 
     expect(mocks.query).toHaveBeenCalledTimes(3);
     expect(mocks.query.mock.calls.map(([sql]) => sql)).toEqual([
@@ -264,6 +288,92 @@ describe("studio media DAL", () => {
       expect.stringContaining("private.set_studio_media_cover"),
       expect.stringContaining("private.delete_studio_media"),
     ]);
+    for (const [sql, values] of mocks.query.mock.calls) {
+      expect(sql).toContain("private.bind_studio_command_result($1::uuid, $5::uuid,");
+      expect(values.slice(0, 6)).toEqual([
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        studioTestIds.revisionId,
+        3,
+        studioTestIds.idempotencyKey,
+        studioTestIds.requestId,
+      ]);
+    }
+  });
+
+  it("confirms the finalized gallery against the attempt ledger without echoing its identity", async () => {
+    mocks.query.mockResolvedValueOnce({ rows: [{ result: finalizeResult }] });
+    await expect(
+      confirmStudioMediaFinalizeResult(
+        {
+          userId: studioTestIds.userId,
+          idempotencyKey: studioTestIds.idempotencyKey,
+        },
+        gallery,
+      ),
+    ).resolves.toEqual(finalizeResult);
+    expect(mocks.query).toHaveBeenCalledExactlyOnceWith(
+      "select private.bind_studio_command_result($1::uuid, $2::uuid, $3::jsonb) as result",
+      [studioTestIds.userId, studioTestIds.idempotencyKey, expect.any(String)],
+    );
+    expect(JSON.parse(mocks.query.mock.calls[0]?.[1]?.[2])).toEqual(gallery);
+  });
+
+  describe.each([
+    {
+      name: "prepare",
+      attempt: prepareResult,
+      execute: () =>
+        prepareStudioMediaUpload({
+          ...command,
+          ...revision,
+          declaredByteSize: 68,
+          declaredChecksumSha256: null,
+          declaredMimeType: "image/png",
+        }),
+    },
+    {
+      name: "reorder",
+      attempt: { ...finalizeResult, action: "studio.media.reorder" },
+      execute: () => reorderStudioMedia({ ...command, ...revision, orderedMediaIds: [mediaId] }),
+    },
+    {
+      name: "cover",
+      attempt: { ...finalizeResult, action: "studio.media.cover.set" },
+      execute: () => setStudioMediaCover({ ...command, ...revision, mediaId }),
+    },
+    {
+      name: "delete",
+      attempt: { ...finalizeResult, action: "studio.media.delete" },
+      execute: () => deleteStudioMedia({ ...command, ...revision, mediaId }),
+    },
+    {
+      name: "finalize confirmation",
+      attempt: finalizeResult,
+      execute: () =>
+        confirmStudioMediaFinalizeResult(
+          { userId: studioTestIds.userId, idempotencyKey: studioTestIds.idempotencyKey },
+          gallery,
+        ),
+    },
+  ])("$name attempt binding", ({ attempt, execute }) => {
+    it.each([
+      { name: "missing identity", response: attempt.result, failure: { name: "ZodError" } },
+      {
+        name: "same-owner same-target sibling key",
+        response: { ...attempt, idempotencyKey: "33333333-3333-4333-8333-333333333334" },
+        failure: { code: "SERVICE_UNAVAILABLE", status: 503 },
+      },
+      {
+        name: "wrong action",
+        response: { ...attempt, action: "studio.revision.updateCore" },
+        failure: { code: "SERVICE_UNAVAILABLE", status: 503 },
+      },
+    ])("rejects $name even when the terminal DTO is valid", async ({ response, failure }) => {
+      mocks.query.mockResolvedValueOnce({ rows: [{ result: response }] });
+      await expect(execute()).rejects.toMatchObject(failure);
+      expect(mocks.query).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps external work outside a checked-out pool session and releases its lease", async () => {

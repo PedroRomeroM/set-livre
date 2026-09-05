@@ -38,6 +38,7 @@ vi.mock("../../src/domains/studios/server/studio-media-storage", () => {
 
 import { GET as readPublicationRoute } from "../../src/app/api/owner/studios/[studioId]/publication/route";
 import type { PrivateCommandContext } from "../../src/domains/commands/server/private-command-context";
+import type { StudioCommandResult } from "../../src/domains/studios/server/studio-command-result";
 import {
   pauseStudio,
   readOwnerStudioPublicationRecord,
@@ -286,6 +287,13 @@ function serviceDependencies(): StudioPublicationServiceDependencies {
   };
 }
 
+function commandResult(
+  action: "studio.revision.submit" | "studio.pause" | "studio.resume",
+  result: StudioPublicationRecord,
+): StudioCommandResult<StudioPublicationRecord> {
+  return { action, idempotencyKey: studioTestIds.idempotencyKey, result };
+}
+
 function publicationRequest(signal?: AbortSignal) {
   return new Request(
     `http://127.0.0.1:3000/api/owner/studios/${studioTestIds.studioId}/publication`,
@@ -334,6 +342,16 @@ describe("studio publication server boundary", () => {
       studioId: studioTestIds.studioId,
       userId: studioTestIds.userId,
     });
+    mocks.query
+      .mockResolvedValueOnce({
+        rows: [{ result: commandResult("studio.revision.submit", draftPublicationRecord()) }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ result: commandResult("studio.pause", pausedPublicationRecord()) }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ result: commandResult("studio.resume", publishedPublicationRecord()) }],
+      });
     await submitStudioRevision({
       ...common,
       expectedRevisionId: studioTestIds.revisionId,
@@ -347,9 +365,12 @@ describe("studio publication server boundary", () => {
     );
     expect(statements).toHaveLength(4);
     expect(statements[0]).toContain("select private.get_owner_studio_publication(");
-    expect(statements[1]).toContain("select private.submit_studio_revision(");
-    expect(statements[2]).toContain("select private.pause_studio(");
-    expect(statements[3]).toContain("select private.resume_studio(");
+    expect(statements[1]).toContain("private.submit_studio_revision(");
+    expect(statements[2]).toContain("private.pause_studio(");
+    expect(statements[3]).toContain("private.resume_studio(");
+    for (const statement of statements.slice(1)) {
+      expect(statement).toContain("select private.bind_studio_command_result(");
+    }
     for (const statement of statements) {
       expect(statement).not.toMatch(/\b(?:auth|public|storage)\./u);
     }
@@ -440,10 +461,12 @@ describe("studio publication server boundary", () => {
     { drift: { studioId: studioTestIds.otherStudioId }, label: "studio identity" },
   ])("rejects $label drift in command results before signing covers", async ({ drift }) => {
     const dependencies = serviceDependencies();
-    vi.mocked(dependencies.resumeStudio).mockResolvedValue({
-      ...publishedPublicationRecord(),
-      ...drift,
-    });
+    vi.mocked(dependencies.resumeStudio).mockResolvedValue(
+      commandResult("studio.resume", {
+        ...publishedPublicationRecord(),
+        ...drift,
+      }),
+    );
     const service = createStudioPublicationService(dependencies);
 
     await expect(
@@ -497,8 +520,11 @@ describe("studio publication server boundary", () => {
     const dependencies = serviceDependencies();
     vi.mocked(dependencies.pauseStudio).mockImplementation(
       () =>
-        new Promise<StudioPublicationRecord>((resolve) => {
-          setTimeout(() => resolve(pausedPublicationRecord()), 2_500);
+        new Promise<StudioCommandResult<StudioPublicationRecord>>((resolve) => {
+          setTimeout(
+            () => resolve(commandResult("studio.pause", pausedPublicationRecord())),
+            2_500,
+          );
         }),
     );
     const service = createStudioPublicationService(dependencies);
@@ -527,7 +553,11 @@ describe("studio publication server boundary", () => {
     await vi.advanceTimersByTimeAsync(2_001);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(499);
-    await expect(operation).resolves.toMatchObject({ studioStatus: "paused" });
+    await expect(operation).resolves.toMatchObject({
+      action: "studio.pause",
+      idempotencyKey: studioTestIds.idempotencyKey,
+      result: { studioStatus: "paused" },
+    });
     expect(mocks.signGalleryPreviews).not.toHaveBeenCalled();
   });
 

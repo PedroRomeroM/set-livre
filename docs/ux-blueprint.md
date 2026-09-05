@@ -309,7 +309,10 @@ Publicação do estúdio:
   Pausa exige confirmação com impacto explícito e devolve foco ao controle de origem quando cancelada;
 - conflito nunca repete a transição: relê o estado, move foco para a recuperação segura e exige aceite
   explícito. Resposta ambígua mantém somente a tentativa idempotente original para verificar ou repetir
-  exatamente o mesmo comando; anúncio de sucesso ou estado aceito recebe foco programático;
+  exatamente o mesmo comando. Mesmo após uma leitura bem-sucedida, a ambiguidade não oferece
+  `Usar estado autoritativo` nem libera novas ações: permite verificar novamente ou repetir a
+  tentativa original até confirmar seu resultado. O aceite de estado fica restrito ao conflito
+  conclusivo; anúncio de sucesso ou estado aceito recebe foco programático;
 - a composição usa uma coluna em mobile/320 px, alvos de 44 px, dimensões reservadas para capas,
   contraste nos dois temas e reflow operável em zoom de 200%.
 

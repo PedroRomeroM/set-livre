@@ -50,12 +50,13 @@ const taxonomy = {
 const scenarios = [
   {
     name: "status",
-    invoke: (binding = auth) =>
+    invoke: (binding = auth, key = idempotencyKey) =>
       setBackofficeUserStatus({
         auth: binding,
         requestId,
         command: {
           ...attempt,
+          idempotencyKey: key,
           action: "backoffice.user.suspend",
           payload: { expectedAccountVersion: 0, userId: targetId },
         },
@@ -64,12 +65,13 @@ const scenarios = [
   },
   {
     name: "access role",
-    invoke: (binding = auth) =>
+    invoke: (binding = auth, key = idempotencyKey) =>
       setBackofficeUserRole({
         auth: binding,
         requestId,
         command: {
           ...attempt,
+          idempotencyKey: key,
           action: "backoffice.access.grantSupport",
           payload: { expectedAccountVersion: 0, userId: targetId },
         },
@@ -78,12 +80,13 @@ const scenarios = [
   },
   {
     name: "taxonomy upsert",
-    invoke: (binding = auth) =>
+    invoke: (binding = auth, key = idempotencyKey) =>
       upsertBackofficeTaxonomy({
         auth: binding,
         requestId,
         command: {
           ...attempt,
+          idempotencyKey: key,
           action: "backoffice.taxonomy.upsert",
           payload: {
             kind: "tag",
@@ -99,12 +102,13 @@ const scenarios = [
   },
   {
     name: "taxonomy transition",
-    invoke: (binding = auth) =>
+    invoke: (binding = auth, key = idempotencyKey) =>
       transitionBackofficeTaxonomy({
         auth: binding,
         requestId,
         command: {
           ...attempt,
+          idempotencyKey: key,
           action: "backoffice.taxonomy.archive",
           payload: { kind: "tag", id: targetId, expectedVersion: 0 },
         },
@@ -113,12 +117,13 @@ const scenarios = [
   },
   {
     name: "studio rejection",
-    invoke: (binding = auth) =>
+    invoke: (binding = auth, key = idempotencyKey) =>
       executeBackofficeStudioCommand({
         auth: binding,
         requestId,
         command: {
           ...attempt,
+          idempotencyKey: key,
           action: "backoffice.studio.reject",
           payload: {
             studioId: targetId,
@@ -150,12 +155,16 @@ describe.each(scenarios)("ledger attempt validation: $name", ({ invoke, result }
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("preserves the SQL echo on fresh success and exact replay", async () => {
-    mocks.query.mockResolvedValue({ rows: [{ result }] });
-    expect(await invoke()).toEqual(result);
-    expect(await invoke()).toEqual(result);
-    expect(mocks.query.mock.calls[1]).toEqual(mocks.query.mock.calls[0]);
-  });
+  it.each([idempotencyKey, idempotencyKey.toUpperCase()])(
+    "preserves the lowercase ledger identity and replay bytes for key %s",
+    async (key) => {
+      mocks.query.mockResolvedValue({ rows: [{ result }] });
+      expect(await invoke(auth, key)).toEqual(result);
+      expect(await invoke(auth, key)).toEqual(result);
+      expect(mocks.query.mock.calls[1]).toEqual(mocks.query.mock.calls[0]);
+      expect(mocks.query.mock.calls[0]?.[1]).toContain(key);
+    },
+  );
 
   it.each(["action", "idempotencyKey", "scope"])(
     "rejects missing %s rather than manufacturing it",
@@ -168,10 +177,17 @@ describe.each(scenarios)("ledger attempt validation: $name", ({ invoke, result }
     },
   );
 
-  it("rejects a structurally valid response for another attempt", async () => {
-    mocks.query.mockResolvedValue({ rows: [{ result: { ...result, idempotencyKey: otherId } }] });
-    await expect(invoke()).rejects.toMatchObject({ name: "ZodError" });
-  });
+  it.each([idempotencyKey, idempotencyKey.toUpperCase()])(
+    "rejects a different persisted attempt for submitted key %s",
+    async (key) => {
+      for (const invalidKey of [otherId, idempotencyKey.toUpperCase()]) {
+        mocks.query.mockResolvedValue({
+          rows: [{ result: { ...result, idempotencyKey: invalidKey } }],
+        });
+        await expect(invoke(auth, key)).rejects.toMatchObject({ name: "ZodError" });
+      }
+    },
+  );
 
   it("uses the authenticated actor rather than the client scope as authority", async () => {
     mocks.query.mockResolvedValue({ rows: [{ result }] });

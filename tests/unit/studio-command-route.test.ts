@@ -57,20 +57,37 @@ const revision = {
   studioId: studioTestIds.studioId,
 };
 const mediaId = "88888888-8888-4888-8888-888888888888";
+const publicationKey = "33333333-3333-4333-8333-333333333334";
+const prepareKey = "33333333-3333-4333-8333-333333333335";
+const createResult = {
+  action: "studio.create",
+  idempotencyKey: studioTestIds.idempotencyKey,
+  result: studioEditorFixture,
+} as const;
 const commandCases = [
   {
     command: { ...commandIdentity, action: "studio.create", payload: studioCoreFixture },
-    result: studioEditorFixture,
+    response: createResult,
     service: mocks.createStudio,
   },
   {
-    command: { ...commandIdentity, action: "studio.revision.submit", payload: revision },
-    result: createStudioPublicationFixture(),
+    command: {
+      ...commandIdentity,
+      idempotencyKey: publicationKey,
+      action: "studio.revision.submit",
+      payload: revision,
+    },
+    response: {
+      action: "studio.revision.submit",
+      idempotencyKey: publicationKey,
+      result: createStudioPublicationFixture(),
+    },
     service: mocks.executeStudioPublicationCommand,
   },
   {
     command: {
       ...commandIdentity,
+      idempotencyKey: prepareKey,
       action: "studio.media.upload.prepare",
       payload: {
         ...revision,
@@ -79,22 +96,26 @@ const commandCases = [
         declaredMimeType: "image/jpeg",
       },
     },
-    result: studioMediaUploadPreparationSchema.parse({
-      bucket: "studio-media",
-      expiresAt: "2026-09-05T20:05:00.000Z",
-      mediaId,
-      path: `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.jpg`,
-      revisionId: studioTestIds.revisionId,
-      revisionVersion: 1,
-      scope: studioTestIds.userId,
-      signedToken: "qa-unit-signed-token",
-      studioId: studioTestIds.studioId,
-    }),
+    response: {
+      action: "studio.media.upload.prepare",
+      idempotencyKey: prepareKey,
+      result: studioMediaUploadPreparationSchema.parse({
+        bucket: "studio-media",
+        expiresAt: "2026-09-05T20:05:00.000Z",
+        mediaId,
+        path: `owners/${studioTestIds.userId}/studios/${studioTestIds.studioId}/revisions/${studioTestIds.revisionId}/${mediaId}.jpg`,
+        revisionId: studioTestIds.revisionId,
+        revisionVersion: 1,
+        scope: studioTestIds.userId,
+        signedToken: "qa-unit-signed-token",
+        studioId: studioTestIds.studioId,
+      }),
+    },
     service: mocks.executeStudioMediaCommand,
   },
 ] satisfies readonly {
   command: StudioCommand;
-  result: unknown;
+  response: { action: StudioCommand["action"]; idempotencyKey: string; result: unknown };
   service: ReturnType<typeof vi.fn>;
 }[];
 
@@ -128,20 +149,33 @@ describe("studio command route", () => {
         userId: studioTestIds.userId,
       },
     });
-    mocks.createStudio.mockResolvedValue(studioEditorFixture);
+    mocks.createStudio.mockResolvedValue(createResult);
     mocks.createTrustedStudioMediaStorage.mockReturnValue({
       createUploadToken: vi.fn(),
       download: vi.fn(),
       signGalleryPreviews: vi.fn(),
       uploadPreview: vi.fn(),
     });
-    mocks.updateStudioCore.mockResolvedValue(studioEditorFixture);
-    mocks.updateStudioContent.mockResolvedValue(studioEditorFixture);
-    mocks.updateStudioTaxonomy.mockResolvedValue(studioEditorFixture);
+    mocks.updateStudioCore.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateCore",
+    });
+    mocks.updateStudioContent.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateContent",
+    });
+    mocks.updateStudioTaxonomy.mockResolvedValue({
+      ...createResult,
+      action: "studio.revision.updateTaxonomy",
+    });
     mocks.discardStudio.mockResolvedValue({
-      scope: studioTestIds.userId,
-      studioDeleted: true,
-      studioId: studioTestIds.studioId,
+      action: "studio.draft.discard",
+      idempotencyKey: studioTestIds.idempotencyKey,
+      result: {
+        scope: studioTestIds.userId,
+        studioDeleted: true,
+        studioId: studioTestIds.studioId,
+      },
     });
     const { resetIdentityRateLimitForTests } = await import("../../src/lib/server/rate-limit");
     resetIdentityRateLimitForTests();
@@ -202,14 +236,38 @@ describe("studio command route", () => {
     expect(telemetry).not.toContain(studioCoreFixture.street);
   });
 
-  it.each(
-    commandCases.map((entry) => ({
-      ...entry,
-      command: { ...entry.command, idempotencyKey: crypto.randomUUID() },
-    })),
-  )(
-    "echoes $command.action and key $command.idempotencyKey only after plain DTO service success",
-    async ({ command, result, service }) => {
+  it("preserves the lowercase ledger key for uppercase create and exact replay", async () => {
+    const persistedKey = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+    const command = {
+      action: "studio.create",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: persistedKey.toUpperCase(),
+      payload: studioCoreFixture,
+    };
+    const confirmed = { ...createResult, idempotencyKey: persistedKey };
+    mocks.createStudio.mockResolvedValue(confirmed);
+    const { POST } = await import("../../src/app/api/commands/route");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await POST(commandRequest(command));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        data: confirmed,
+        requestId: studioTestIds.requestId,
+      });
+    }
+    expect(mocks.createStudio).toHaveBeenCalledTimes(2);
+    expect(mocks.createStudio.mock.calls.map(([sent]) => sent)).toEqual([command, command]);
+    mocks.createStudio.mockResolvedValueOnce(createResult);
+    const mismatch = await POST(commandRequest(command));
+    expect(mismatch.status).toBe(503);
+    const payload: unknown = await mismatch.json();
+    expect(apiErrorSchema.parse(payload).error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(payload).not.toHaveProperty("data");
+  });
+
+  it.each(commandCases)(
+    "preserves $command.action and key $command.idempotencyKey only after confirmed service success",
+    async ({ command, response: confirmed, service }) => {
       let resolveService: ((value: unknown) => void) | undefined;
       service.mockImplementationOnce(
         () =>
@@ -235,67 +293,121 @@ describe("studio command route", () => {
       );
       if (resolveService === undefined)
         throw new Error("O serviço precisa iniciar antes da resposta.");
-      resolveService(result);
+      resolveService(confirmed);
 
       const response = await responsePromise;
       expect(response.status).toBe(200);
       expect(response.headers.get("x-studio-session")).toBe("refreshed");
       await expect(response.json()).resolves.toEqual({
-        data: { action: command.action, idempotencyKey: command.idempotencyKey, result },
+        data: confirmed,
         requestId: studioTestIds.requestId,
       });
     },
   );
 
-  describe.each(commandCases)("$command.action service failure", ({ command, service, result }) => {
-    it.each([
-      {
-        name: "known conflict",
-        failure: new ApiRouteError(409, "CONFLICT", "Atualize antes de continuar."),
-        code: "CONFLICT",
-        status: 409,
-      },
-      {
-        name: "unknown failure",
-        failure: Object.assign(new Error("qa-private@example.test qa-unit-signed-token"), {
-          result,
-        }),
-        code: "SERVICE_UNAVAILABLE",
-        status: 503,
-      },
-    ])("returns no result or success identity for $name", async ({ failure, code, status }) => {
-      service.mockRejectedValueOnce(failure);
-      const { POST } = await import("../../src/app/api/commands/route");
+  describe.each(commandCases)(
+    "$command.action service failure",
+    ({ command, service, response: confirmed }) => {
+      it.each([
+        {
+          name: "known conflict",
+          failure: new ApiRouteError(409, "CONFLICT", "Atualize antes de continuar."),
+          code: "CONFLICT",
+          status: 409,
+        },
+        {
+          name: "unknown failure",
+          failure: Object.assign(new Error("qa-private@example.test qa-unit-signed-token"), {
+            result: confirmed.result,
+          }),
+          code: "SERVICE_UNAVAILABLE",
+          status: 503,
+        },
+      ])("returns no result or success identity for $name", async ({ failure, code, status }) => {
+        service.mockRejectedValueOnce(failure);
+        const { POST } = await import("../../src/app/api/commands/route");
 
-      const response = await POST(commandRequest(command));
-      const payload: unknown = await response.json();
+        const response = await POST(commandRequest(command));
+        const payload: unknown = await response.json();
 
-      expect(service).toHaveBeenCalledOnce();
-      expect(response.status).toBe(status);
-      expect(response.headers.get("x-studio-session")).toBe("refreshed");
-      expect(apiErrorSchema.parse(payload)).toMatchObject({
-        error: { code, requestId: studioTestIds.requestId },
+        expect(service).toHaveBeenCalledOnce();
+        expect(response.status).toBe(status);
+        expect(response.headers.get("x-studio-session")).toBe("refreshed");
+        expect(apiErrorSchema.parse(payload)).toMatchObject({
+          error: { code, requestId: studioTestIds.requestId },
+        });
+        expect(payload).not.toHaveProperty("data");
+        expect(payload).not.toHaveProperty("result");
+        expect(payload).not.toHaveProperty("action");
+        expect(payload).not.toHaveProperty("idempotencyKey");
+        const serialized = JSON.stringify(payload);
+        const telemetry = vi
+          .mocked(process.stdout.write)
+          .mock.calls.map(([chunk]) => String(chunk))
+          .join("");
+        for (const privateValue of [
+          "qa-private@example.test",
+          "qa-unit-signed-token",
+          studioTestIds.idempotencyKey,
+          command.idempotencyKey,
+          studioCoreFixture.street,
+        ]) {
+          expect(serialized).not.toContain(privateValue);
+          expect(telemetry).not.toContain(privateValue);
+        }
       });
-      expect(payload).not.toHaveProperty("data");
-      expect(payload).not.toHaveProperty("result");
-      expect(payload).not.toHaveProperty("action");
-      expect(payload).not.toHaveProperty("idempotencyKey");
-      const serialized = JSON.stringify(payload);
-      const telemetry = vi
-        .mocked(process.stdout.write)
-        .mock.calls.map(([chunk]) => String(chunk))
-        .join("");
-      for (const privateValue of [
-        "qa-private@example.test",
-        "qa-unit-signed-token",
-        studioTestIds.idempotencyKey,
-        studioCoreFixture.street,
-      ]) {
-        expect(serialized).not.toContain(privateValue);
-        expect(telemetry).not.toContain(privateValue);
-      }
-    });
-  });
+    },
+  );
+
+  describe.each(commandCases)(
+    "$command.action terminal identity",
+    ({ command, response: confirmed, service }) => {
+      it.each([
+        { name: "bare valid DTO", response: confirmed.result },
+        { name: "missing key", response: { action: confirmed.action, result: confirmed.result } },
+        {
+          name: "missing action",
+          response: { idempotencyKey: confirmed.idempotencyKey, result: confirmed.result },
+        },
+        {
+          name: "same-owner same-target sibling key",
+          response: { ...confirmed, idempotencyKey: "33333333-3333-4333-8333-333333333339" },
+        },
+        { name: "wrong action", response: { ...confirmed, action: "studio.revision.updateCore" } },
+      ])(
+        "rejects $name rather than echoing the request identity",
+        async ({ response: untrusted }) => {
+          service.mockResolvedValueOnce(untrusted);
+          const { POST } = await import("../../src/app/api/commands/route");
+          const response = await POST(commandRequest(command));
+          const payload: unknown = await response.json();
+          expect(service).toHaveBeenCalledOnce();
+          expect(response.status).toBe(503);
+          expect(response.headers.get("x-studio-session")).toBe("refreshed");
+          expect(apiErrorSchema.parse(payload)).toMatchObject({
+            error: { code: "SERVICE_UNAVAILABLE", requestId: studioTestIds.requestId },
+          });
+          expect(payload).not.toHaveProperty("data");
+          expect(payload).not.toHaveProperty("result");
+          expect(payload).not.toHaveProperty("action");
+          expect(payload).not.toHaveProperty("idempotencyKey");
+          const telemetry = vi
+            .mocked(process.stdout.write)
+            .mock.calls.map(([chunk]) => String(chunk))
+            .join("");
+          for (const privateValue of [
+            confirmed.idempotencyKey,
+            "33333333-3333-4333-8333-333333333339",
+            "qa-unit-signed-token",
+            studioCoreFixture.street,
+          ]) {
+            expect(JSON.stringify(payload)).not.toContain(privateValue);
+            expect(telemetry).not.toContain(privateValue);
+          }
+        },
+      );
+    },
+  );
 
   it("accepts a valid maximum studio core encoded with multibyte characters", async () => {
     const command = {

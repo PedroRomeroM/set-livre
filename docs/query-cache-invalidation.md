@@ -169,7 +169,9 @@ Medir; não usar Infinity em dado operacional.
   autoritativo; isso cobre taxonomia arquivada depois da última leitura sem classificar o 422 como retry
   do comando. Se o checklist mudar sob os mesmos fences, a arbitragem já descrita recompõe a rota SSR em
   vez de oferecer aceite de projeção mista. Resposta ambígua conserva ação, payload e chave idempotente
-  para verificação ou repetição exata, sem liberar outra transição;
+  até o replay exato confirmar um resultado terminal, sem liberar outra transição. GETs antes ou depois
+  do commit apenas atualizam a leitura: não confirmam a tentativa nem descartam o comando. O aceite
+  `Usar estado autoritativo` pertence exclusivamente à recuperação de conflito conclusivo;
 - no backoffice, login/reautenticação mantêm e-mail/senha somente em refs efêmeras e chamam
   `mutate()` sem variables; qualquer desfecho limpa os inputs. Login ambíguo limpa o QueryClient e
   recompõe `/` para que a sessão server-side decida o estado. Reautenticação conclusiva publica a

@@ -423,7 +423,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(113);
+select plan(117);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -829,18 +829,27 @@ select pg_catalog.set_config(
 );
 
 select pg_catalog.set_config(
-  'set_livre.test.f008_prepare_1',
-  private.prepare_studio_media_upload(
+  'set_livre.test.f008_prepare_binding',
+  private.bind_studio_command_result(
     '81000000-0000-4000-8000-000000000001',
-    pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
-    pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
-    1,
     '85000000-0000-4000-8000-000000000001',
-    '86000000-0000-4000-8000-000000000001',
-    'image/jpeg',
-    100,
-    pg_catalog.repeat('a', 64)
+    private.prepare_studio_media_upload(
+      '81000000-0000-4000-8000-000000000001',
+      pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+      pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+      1,
+      '85000000-0000-4000-8000-000000000001',
+      '86000000-0000-4000-8000-000000000001',
+      'image/jpeg',
+      100,
+      pg_catalog.repeat('a', 64)
+    )
   )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.f008_prepare_1',
+  (pg_catalog.current_setting('set_livre.test.f008_prepare_binding')::jsonb -> 'result')::text,
   true
 );
 select pg_catalog.set_config(
@@ -928,6 +937,80 @@ select ok(
   pg_catalog.current_setting('set_livre.test.f008_prepare_replay_equal')::boolean,
   'replay de prepare retorna exatamente o JSON originalmente persistido'
 );
+select is(
+  private.bind_studio_command_result(
+    '81000000-0000-4000-8000-000000000001',
+    '85000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_prepare_1')::jsonb
+  ),
+  pg_catalog.jsonb_build_object(
+    'action', 'studio.media.upload.prepare',
+    'idempotencyKey', '85000000-0000-4000-8000-000000000001',
+    'result', pg_catalog.current_setting('set_livre.test.f008_prepare_1')::jsonb
+  ),
+  'binding de prepare deriva o alias público do ledger e preserva payload bruto no replay'
+);
+
+savepoint sibling_prepare_binding;
+set local role app_dal;
+select pg_catalog.set_config(
+  'set_livre.test.f008_sibling_prepare',
+  private.prepare_studio_media_upload(
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+    pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+    1,
+    '85000000-0000-4000-8000-000000000098',
+    '86000000-0000-4000-8000-000000000098',
+    'image/jpeg', 100, pg_catalog.repeat('a', 64)
+  )::text,
+  true
+);
+reset role;
+select ok(
+  (
+    pg_catalog.current_setting('set_livre.test.f008_sibling_prepare')::jsonb
+      - array['mediaId', 'path', 'expiresAt']::text[]
+  ) = (
+    pg_catalog.current_setting('set_livre.test.f008_prepare_1')::jsonb
+      - array['mediaId', 'path', 'expiresAt']::text[]
+  )
+    and pg_catalog.current_setting('set_livre.test.f008_sibling_prepare')::jsonb ->> 'mediaId'
+      <> pg_catalog.current_setting('set_livre.test.f008_media_1')
+    and pg_catalog.current_setting('set_livre.test.f008_sibling_prepare')::jsonb ->> 'path'
+      <> pg_catalog.current_setting('set_livre.test.f008_prepare_1')::jsonb ->> 'path'
+    and private.feat008_capture_error($command$
+      select private.bind_studio_command_result(
+        '81000000-0000-4000-8000-000000000001',
+        '85000000-0000-4000-8000-000000000001',
+        pg_catalog.current_setting('set_livre.test.f008_sibling_prepare')::jsonb
+      )
+    $command$) = 'XX000:studio_command_result_mismatch',
+  'preparação real irmã do mesmo dono/alvo/versão não substitui outro mediaId/path pela mesma chave'
+);
+rollback to savepoint sibling_prepare_binding;
+release savepoint sibling_prepare_binding;
+
+savepoint corrupt_prepare_payload;
+alter table private.studio_command_requests drop constraint studio_command_requests_media_result_check;
+update private.studio_command_requests
+set result_payload = result_payload || '{"path":"qa-corrupted-path.jpg"}'::jsonb
+where owner_user_id = '81000000-0000-4000-8000-000000000001'
+  and idempotency_key = '85000000-0000-4000-8000-000000000001';
+select matches(
+  private.feat008_capture_error($command$
+    select private.bind_studio_command_result(
+      '81000000-0000-4000-8000-000000000001',
+      '85000000-0000-4000-8000-000000000001',
+      pg_catalog.current_setting('set_livre.test.f008_prepare_1')::jsonb
+    )
+  $command$),
+  '^XX000:studio_command_result_mismatch$',
+  'payload persistido adulterado bloqueia binding mesmo quando o raw ainda coincide com result_hash'
+);
+rollback to savepoint corrupt_prepare_payload;
+release savepoint corrupt_prepare_payload;
+
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_candidate_1')::jsonb ->> 'mediaId'
       = pg_catalog.current_setting('set_livre.test.f008_media_1')
@@ -1327,6 +1410,20 @@ select pg_catalog.set_config(
 )
 from claim;
 reset role;
+
+select is(
+  private.bind_studio_command_result(
+    '81000000-0000-4000-8000-000000000001',
+    '85000000-0000-4000-8000-000000000002',
+    pg_catalog.current_setting('set_livre.test.f008_finalize_1')::jsonb
+  ),
+  pg_catalog.jsonb_build_object(
+    'action', 'studio.media.upload.finalize',
+    'idempotencyKey', '85000000-0000-4000-8000-000000000002',
+    'result', pg_catalog.current_setting('set_livre.test.f008_finalize_1')::jsonb
+  ),
+  'finalize deriva alias/chave do ledger terminal sem trocar o resultado pela galeria posterior'
+);
 
 select ok(
   pg_catalog.current_setting('set_livre.test.f008_finalize_1')::jsonb ->> 'revisionVersion'

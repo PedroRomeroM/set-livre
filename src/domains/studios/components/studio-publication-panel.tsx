@@ -581,18 +581,15 @@ function HydratedStudioPublicationPanel({
   }
 
   async function acceptAuthoritativeRecovery() {
-    if (recovery?.phase !== "ready") return;
+    if (recovery?.kind !== "conflict" || recovery.phase !== "ready") return;
     await invalidateStudioPublicationDependents(queryClient, userId, studioId);
-    pendingCommand.current = undefined;
     publicationMutation.reset();
     setActiveAction(undefined);
     setConfirmPause(false);
     setRecovery(undefined);
     setAutomaticRefetchLocked(false);
     announce(
-      recovery.kind === "conflict"
-        ? "O estado autoritativo foi carregado. Faça uma nova ação somente se ainda for necessária."
-        : "O estado autoritativo foi carregado sem enviar um novo comando.",
+      "O estado autoritativo foi carregado. Faça uma nova ação somente se ainda for necessária.",
     );
   }
 
@@ -742,7 +739,9 @@ function HydratedStudioPublicationPanel({
                     ? recovery.kind === "ambiguous"
                       ? "A releitura falhou. Os controles continuam bloqueados e o mesmo comando idempotente permanece disponível para retry."
                       : "A releitura falhou. Os controles continuam bloqueados e o comando conflitante não será repetido."
-                    : "A leitura autoritativa terminou. Confirme o estado lido antes de iniciar outra ação."}
+                    : recovery.kind === "ambiguous"
+                      ? "A leitura mostra o estado atual, mas não confirma o resultado desta tentativa. Repita exatamente a mesma ação para concluir a verificação."
+                      : "A leitura autoritativa terminou. Confirme o estado lido antes de iniciar outra ação."}
               </span>
               {recovery.phase === "error" ? (
                 <Button onClick={() => void retryRecoveryRead()} variant="secondary">
@@ -750,12 +749,18 @@ function HydratedStudioPublicationPanel({
                 </Button>
               ) : recovery.phase === "ready" ? (
                 <div className={styles.compactActions}>
-                  <Button onClick={() => void acceptAuthoritativeRecovery()} variant="secondary">
-                    Usar estado autoritativo
-                  </Button>
                   {recovery.kind === "ambiguous" ? (
-                    <Button onClick={retryExactCommand}>Repetir exatamente a mesma ação</Button>
-                  ) : null}
+                    <>
+                      <Button onClick={() => void retryRecoveryRead()} variant="secondary">
+                        Verificar novamente
+                      </Button>
+                      <Button onClick={retryExactCommand}>Repetir exatamente a mesma ação</Button>
+                    </>
+                  ) : (
+                    <Button onClick={() => void acceptAuthoritativeRecovery()} variant="secondary">
+                      Usar estado autoritativo
+                    </Button>
+                  )}
                 </div>
               ) : null}
             </Stack>

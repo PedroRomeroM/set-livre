@@ -337,7 +337,7 @@ export async function executeBackofficeUserCommand(
     rejectBackofficePrivateBoundary();
   if (
     action !== command.action ||
-    idempotencyKey !== command.idempotencyKey ||
+    idempotencyKey !== command.idempotencyKey.toLowerCase() ||
     user.accountVersion !== command.payload.expectedAccountVersion + 1 ||
     (command.action === "backoffice.user.suspend" && user.status !== "suspended") ||
     ((command.action === "backoffice.user.restore" ||
@@ -388,7 +388,7 @@ export async function executeBackofficeTaxonomyCommand(
       : undefined;
   if (
     action !== command.action ||
-    idempotencyKey !== command.idempotencyKey ||
+    idempotencyKey !== command.idempotencyKey.toLowerCase() ||
     item.version !==
       (command.payload.expectedVersion === undefined ? 0 : command.payload.expectedVersion + 1) ||
     (command.action === "backoffice.taxonomy.archive" && item.active) ||

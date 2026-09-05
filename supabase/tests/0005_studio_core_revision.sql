@@ -90,7 +90,7 @@ revoke all on function private.feat006_capture_error(text)
 revoke all on function private.feat006_create_owner(uuid, text, text, integer)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(47);
+select plan(57);
 
 select private.feat006_create_owner(
   '61000000-0000-4000-8000-000000000001',
@@ -188,8 +188,10 @@ grant app_dal to postgres with inherit false, set true;
 set local role app_dal;
 
 select pg_catalog.set_config(
-  'set_livre.test.create_response',
-  (
+  'set_livre.test.create_binding',
+  private.bind_studio_command_result(
+    '61000000-0000-4000-8000-000000000001',
+    '65000000-0000-4000-8000-000000000001',
     private.create_studio(
       '61000000-0000-4000-8000-000000000001',
       '65000000-0000-4000-8000-000000000001',
@@ -205,8 +207,13 @@ select pg_catalog.set_config(
       '80010000',
       12,
       '60000000-0000-4000-8000-000000000001'
-    )::text
-  ),
+    )
+  )::text,
+  true
+);
+select pg_catalog.set_config(
+  'set_livre.test.create_response',
+  (pg_catalog.current_setting('set_livre.test.create_binding')::jsonb -> 'result')::text,
   true
 );
 select pg_catalog.set_config(
@@ -228,22 +235,26 @@ select pg_catalog.set_config(
 select pg_catalog.set_config(
   'set_livre.test.create_replay_equal',
   (
-    private.create_studio(
+    private.bind_studio_command_result(
       '61000000-0000-4000-8000-000000000001',
       '65000000-0000-4000-8000-000000000001',
-      '66000000-0000-4000-8000-000000000002',
-      'Estúdio Aurora',
-      'Estúdio completo para ensaios fotográficos e gravações audiovisuais.',
-      'Rua das Flores',
-      '100',
-      'Sala 2',
-      'Centro',
-      'Curitiba',
-      'PR',
-      '80010000',
-      12,
-      '60000000-0000-4000-8000-000000000001'
-    )::text = pg_catalog.current_setting('set_livre.test.create_response')
+      private.create_studio(
+        '61000000-0000-4000-8000-000000000001',
+        '65000000-0000-4000-8000-000000000001',
+        '66000000-0000-4000-8000-000000000002',
+        'Estúdio Aurora',
+        'Estúdio completo para ensaios fotográficos e gravações audiovisuais.',
+        'Rua das Flores',
+        '100',
+        'Sala 2',
+        'Centro',
+        'Curitiba',
+        'PR',
+        '80010000',
+        12,
+        '60000000-0000-4000-8000-000000000001'
+      )
+    )::text = pg_catalog.current_setting('set_livre.test.create_binding')
   )::text,
   true
 );
@@ -254,6 +265,161 @@ select ok(
   pg_catalog.current_setting('set_livre.test.create_replay_equal')::boolean,
   'replay de criação retorna exatamente o resultado originalmente registrado'
 );
+
+select is(
+  pg_catalog.current_setting('set_livre.test.create_binding')::jsonb,
+  pg_catalog.jsonb_build_object(
+    'action', 'studio.create',
+    'idempotencyKey', '65000000-0000-4000-8000-000000000001',
+    'result', pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+  ),
+  'binder VOLATILE vê o ledger criado no mesmo SELECT e preserva o resultado bruto no replay'
+);
+
+select ok(
+  (
+    select routine.prosecdef and routine.provolatile = 'v'
+      and routine.proconfig = array['search_path=""']::text[]
+      and pg_catalog.pg_get_userbyid(routine.proowner) = 'postgres'
+      and pg_catalog.has_function_privilege('app_dal', routine.oid, 'EXECUTE')
+      and not exists (
+        select 1
+        from pg_catalog.aclexplode(routine.proacl) as privilege
+        where privilege.privilege_type <> 'EXECUTE'
+          or privilege.is_grantable
+          or privilege.grantee not in (
+            routine.proowner,
+            (select oid from pg_catalog.pg_roles where rolname = 'app_dal')
+          )
+      )
+      and not exists (
+        select 1
+        from (values ('anon'), ('authenticated'), ('service_role')) as role(name)
+        where pg_catalog.has_function_privilege(role.name, routine.oid, 'EXECUTE')
+      )
+    from pg_catalog.pg_proc as routine
+    where routine.oid = 'private.bind_studio_command_result(uuid,uuid,jsonb)'::regprocedure
+  ),
+  'binder é privado, definer postgres, VOLATILE e só concede EXECUTE sem grant option a app_dal'
+);
+
+select ok(
+  not exists (
+    select 1
+    from (values
+      (null::uuid, '65000000-0000-4000-8000-000000000001'::uuid, '{}'::jsonb),
+      ('61000000-0000-4000-8000-000000000001', null, '{}'::jsonb),
+      ('61000000-0000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000001', null),
+      ('61000000-0000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000001', 'null'::jsonb),
+      ('61000000-0000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000001', '[]'::jsonb)
+    ) as invalid(owner_id, key, result)
+    where private.feat006_capture_error(pg_catalog.format(
+      'select private.bind_studio_command_result(%L::uuid, %L::uuid, %L::jsonb)',
+      invalid.owner_id, invalid.key, invalid.result
+    )) <> 'XX000:studio_command_result_mismatch'
+  ),
+  'nulos SQL/JSON e resultado não objeto falham como incerteza interna, não conflito definitivo'
+);
+
+select ok(
+  not exists (
+    select 1
+    from (values
+      ('61000000-0000-4000-8000-000000000002'::uuid, '65000000-0000-4000-8000-000000000001'::uuid),
+      ('61000000-0000-4000-8000-000000000001', '65000000-0000-4000-8000-000000000098')
+    ) as other(owner_id, key)
+    where private.feat006_capture_error(pg_catalog.format(
+      'select private.bind_studio_command_result(%L::uuid, %L::uuid, %L::jsonb)',
+      other.owner_id, other.key, pg_catalog.current_setting('set_livre.test.create_response')
+    )) <> 'XX000:studio_command_result_mismatch'
+  ),
+  'resultado real não pode ser vinculado a outro dono nem a chave ausente'
+);
+
+select matches(
+  private.feat006_capture_error($command$
+    select private.bind_studio_command_result(
+      '61000000-0000-4000-8000-000000000001',
+      '65000000-0000-4000-8000-000000000001',
+      pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+        || '{"action":"studio.pause","idempotencyKey":"65000000-0000-4000-8000-000000000098"}'::jsonb
+    )
+  $command$),
+  '^XX000:studio_command_result_mismatch$',
+  'action/chave injetadas no JSON não reetiquetam o resultado cujo hash é persistido'
+);
+
+select matches(
+  private.feat006_capture_error($command$
+    select private.bind_studio_command_result(
+      '61000000-0000-4000-8000-000000000001',
+      '65000000-0000-4000-8000-000000000098',
+      private.create_studio(
+        '61000000-0000-4000-8000-000000000001',
+        '65000000-0000-4000-8000-000000000097',
+        '66000000-0000-4000-8000-000000000097',
+        'Estúdio QA rollback do binding',
+        'Criação que deve ser revertida integralmente quando seu binding diverge.',
+        'Rua QA', '1', null, 'Centro', 'Curitiba', 'PR', '80010000', 2,
+        '60000000-0000-4000-8000-000000000001'
+      )
+    )
+  $command$),
+  '^XX000:studio_command_result_mismatch$',
+  'binder rejeita uma chave diferente da mutação aninhada na mesma instrução'
+);
+select ok(
+  not exists (
+    select 1 from private.studio_command_requests
+    where owner_user_id = '61000000-0000-4000-8000-000000000001'
+      and idempotency_key = '65000000-0000-4000-8000-000000000097'
+  ) and not exists (
+    select 1 from audit.events
+    where actor_user_id = '61000000-0000-4000-8000-000000000001'
+      and idempotency_key = '65000000-0000-4000-8000-000000000097'
+  ) and (select pg_catalog.count(*) = 1 from public.studios
+    where owner_user_id = '61000000-0000-4000-8000-000000000001'),
+  'falha do binding reverte estúdio, ledger e auditoria, sem mutação parcial'
+);
+
+savepoint corrupt_bound_result_hash;
+update private.studio_command_requests
+set result_hash = pg_catalog.repeat('f', 64)
+where owner_user_id = '61000000-0000-4000-8000-000000000001'
+  and idempotency_key = '65000000-0000-4000-8000-000000000001';
+select matches(
+  private.feat006_capture_error($command$
+    select private.bind_studio_command_result(
+      '61000000-0000-4000-8000-000000000001',
+      '65000000-0000-4000-8000-000000000001',
+      pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+    )
+  $command$),
+  '^XX000:studio_command_result_mismatch$',
+  'hash persistido divergente bloqueia a resposta bruta mesmo sem result_payload'
+);
+rollback to savepoint corrupt_bound_result_hash;
+release savepoint corrupt_bound_result_hash;
+
+savepoint unknown_bound_action;
+alter table private.studio_command_requests drop constraint studio_command_requests_action_check;
+update private.studio_command_requests
+set action = 'studio.unknown'
+where owner_user_id = '61000000-0000-4000-8000-000000000001'
+  and idempotency_key = '65000000-0000-4000-8000-000000000001';
+select matches(
+  private.feat006_capture_error($command$
+    select private.bind_studio_command_result(
+      '61000000-0000-4000-8000-000000000001',
+      '65000000-0000-4000-8000-000000000001',
+      pg_catalog.current_setting('set_livre.test.create_response')::jsonb
+    )
+  $command$),
+  '^XX000:studio_command_result_mismatch$',
+  'action fora do mapa explícito falha mesmo com resultado e hash íntegros'
+);
+rollback to savepoint unknown_bound_action;
+release savepoint unknown_bound_action;
 
 select ok(
   exists (
@@ -1044,9 +1210,18 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260829103831'),
+  private.check_readiness('20260905190840'),
   'readiness aceita a migration e a allowlist canônica atualizadas'
 );
+
+savepoint missing_binder_grant;
+revoke execute on function private.bind_studio_command_result(uuid, uuid, jsonb) from app_dal;
+select ok(
+  not private.check_readiness('20260905190840'),
+  'readiness detecta ausência do EXECUTE do binder na allowlist canônica'
+);
+rollback to savepoint missing_binder_grant;
+release savepoint missing_binder_grant;
 
 select is(
   (

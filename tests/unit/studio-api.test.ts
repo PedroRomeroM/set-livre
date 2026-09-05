@@ -102,6 +102,38 @@ describe("studio browser API", () => {
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
   });
 
+  it("accepts the lowercase ledger key while preserving uppercase create and replay bytes", async () => {
+    const persistedKey = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+    const command = {
+      action: "studio.create",
+      expectedScope: studioTestIds.userId,
+      idempotencyKey: persistedKey.toUpperCase(),
+      payload: studioCoreFixture,
+    } satisfies Parameters<typeof createStudio>[0];
+    const confirmed = {
+      action: "studio.create",
+      idempotencyKey: persistedKey,
+      result: studioEditorFixture,
+    };
+    const fetchMock = vi
+      .fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(Response.json({ data: confirmed, requestId: responseRequestId }))
+      .mockResolvedValueOnce(Response.json({ data: confirmed, requestId: responseRequestId }))
+      .mockResolvedValueOnce(
+        Response.json({
+          data: { ...confirmed, idempotencyKey: studioTestIds.idempotencyKey },
+          requestId: responseRequestId,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("window", { clearTimeout, setTimeout });
+    await expect(createStudio(command)).resolves.toEqual(studioEditorFixture);
+    await expect(createStudio(command)).resolves.toEqual(studioEditorFixture);
+    await expect(createStudio(command)).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [, init] of fetchMock.mock.calls) expect(init?.body).toBe(JSON.stringify(command));
+  });
+
   it("serializes taxonomy and content commands without translating their payload", async () => {
     const fetchMock = vi
       .fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()

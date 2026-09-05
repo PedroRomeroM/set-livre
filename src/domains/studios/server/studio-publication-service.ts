@@ -14,6 +14,10 @@ import {
 } from "./studio-publication-read-model";
 import { StudioMediaStorageError, type StudioMediaStorage } from "./studio-media-storage";
 import { studioServiceBoundary } from "./studio-service";
+import {
+  assertStudioCommandResultIdentity,
+  type StudioCommandResult,
+} from "./studio-command-result";
 
 type StudioPublicationCommand = Extract<
   StudioCommand,
@@ -50,16 +54,24 @@ function publicationStorage(context: PrivateCommandContext) {
   return context.studioMediaStorage;
 }
 
-function signStudioPublicationCommandResult(
-  record: StudioPublicationRecord,
+async function signStudioPublicationCommandResult(
+  record: StudioCommandResult<StudioPublicationRecord>,
   command: StudioPublicationCommand,
   context: PrivateCommandContext,
   storage: StudioMediaStorage,
 ) {
-  return signStudioPublicationCovers(
-    assertStudioPublicationBoundary(record, context.session.userId, command.payload.studioId),
-    storage,
-  );
+  assertStudioCommandResultIdentity(record, command);
+  return {
+    ...record,
+    result: await signStudioPublicationCovers(
+      assertStudioPublicationBoundary(
+        record.result,
+        context.session.userId,
+        command.payload.studioId,
+      ),
+      storage,
+    ),
+  };
 }
 
 function handleStudioPublicationError(error: unknown): never {

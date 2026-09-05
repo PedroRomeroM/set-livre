@@ -826,19 +826,31 @@ async function expectCreationResponseBoundary(
     if (identity.userId === undefined)
       throw new Error("A criação QA não possui escopo autenticado.");
     await fillFeat006Core(page);
+    if (scenario === "022") {
+      const uppercaseKey = `ABCDEF01${randomUUID().slice(8).toUpperCase()}`;
+      await page.evaluate((key) => {
+        Object.defineProperty(window.crypto, "randomUUID", {
+          configurable: true,
+          value: () => key,
+        });
+      }, uppercaseKey);
+    }
     await page.route(
       "**/api/commands",
       async (route) => {
         const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
         const response = await route.fetch();
+        if (scenario === "022")
+          expect(await readFeat006OwnedStudioCount(command.expectedScope)).toBe(1);
         expect(response.status()).toBe(200);
         const payload = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
           await response.json(),
         );
         committedStudioId = payload.data.result.studioId;
         expect(payload.data.action).toBe(command.action);
-        expect(payload.data.idempotencyKey).toBe(command.idempotencyKey);
+        expect(payload.data.idempotencyKey).toBe(command.idempotencyKey.toLowerCase());
         if (scenario === "022") {
+          expect(command.idempotencyKey).toMatch(/^ABCDEF01-/u);
           const unrelatedResponse = await route.fetch({
             postData: JSON.stringify({ ...command, idempotencyKey: randomUUID() }),
           });
@@ -847,7 +859,7 @@ async function expectCreationResponseBoundary(
             await unrelatedResponse.json(),
           );
           expect(unrelated.data.result.scope).toBe(identity.userId);
-          expect(unrelated.data.idempotencyKey).not.toBe(command.idempotencyKey);
+          expect(unrelated.data.idempotencyKey).not.toBe(command.idempotencyKey.toLowerCase());
           unrelatedStudioId = unrelated.data.result.studioId;
           expect(unrelatedStudioId).not.toBe(committedStudioId);
           await route.fulfill({ response: unrelatedResponse });
