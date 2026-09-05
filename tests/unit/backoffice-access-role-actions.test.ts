@@ -2,7 +2,10 @@ import type { BackofficeSession } from "@set-livre/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { reconcileSuccessfulBackofficeReauthentication } from "../../apps/backoffice/src/domains/backoffice/components/access-role-actions";
+import {
+  isBackofficeAccessRefreshVerified,
+  reconcileSuccessfulBackofficeReauthentication,
+} from "../../apps/backoffice/src/domains/backoffice/components/access-role-actions";
 import { backofficeQueryKeys } from "../../apps/backoffice/src/domains/backoffice/components/query-keys";
 import {
   notifyBackofficePeerSessionsChanged,
@@ -31,6 +34,34 @@ afterEach(() => {
 });
 
 describe("backoffice access reauthentication session", () => {
+  it.each(["applied", "conflict"] as const)(
+    "requires the authoritative target version after a %s role result",
+    (outcome) => {
+      const user = {
+        accountVersion: 2,
+        createdAt: "2026-09-05T10:00:00.000Z",
+        emailMasked: "t***@example.test",
+        id: "20000000-0000-4000-8000-000000000002",
+        status: "active" as const,
+      };
+      const expected = { minimumAccountVersion: 3, outcome, userId: user.id };
+      expect(isBackofficeAccessRefreshVerified(expected, user)).toBe(false);
+      expect(isBackofficeAccessRefreshVerified(expected, { ...user, accountVersion: 3 })).toBe(
+        true,
+      );
+      expect(isBackofficeAccessRefreshVerified(expected, { ...user, accountVersion: 4 })).toBe(
+        true,
+      );
+      expect(
+        isBackofficeAccessRefreshVerified(expected, {
+          ...user,
+          accountVersion: 3,
+          id: currentSession.scope,
+        }),
+      ).toBe(false);
+    },
+  );
+
   it("publishes the exact successful session before notifying peer tabs", () => {
     const queryClient = new QueryClient();
     const sessionKey = backofficeQueryKeys.session(currentSession.scope);

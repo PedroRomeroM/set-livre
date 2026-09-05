@@ -276,7 +276,11 @@ da publicação e `revisionPanel` editorial) usam `font-kerning: none`. O espaç
 mantém texto contínuo dentro da caixa também em WebKit com DejaVu Sans, cuja composição com kerning
 acumulava overflow em respostas longas. A escolha tipográfica é restrita a essas superfícies, sem
 detecção de navegador, fonte remota adicional, clipping ou alteração do conteúdo. O restante da
-interface conserva o kerning padrão. Grids, quebra de palavras e provas de overflow continuam ativos.
+interface conserva o kerning padrão, exceto a primitive `Textarea`, que também usa espaçamento nominal:
+no Chromium Linux/DejaVu, recalcular 5.000 caracteres contínuos em uma caixa estreita com kerning
+bloqueava a interação por segundos. O controle continua nativo, com o conteúdo integral, edição,
+quebra de linhas e scroll interno preservados. Grids e provas de overflow continuam ativos; os testes
+não aumentam prazos nem reduzem o tamanho do texto para acomodar a renderização.
 
 ## 4. Contratos
 

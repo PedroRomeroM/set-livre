@@ -35,6 +35,31 @@ export function isBackofficeSessionDeadlineCurrent(
   );
 }
 
+export async function verifyBackofficeSessionDeadline(
+  expectedSession: Extract<BackofficeSession, { authenticated: true }>,
+  readSession: () => Promise<BackofficeSession | undefined>,
+  activityGeneration: () => number,
+) {
+  for (;;) {
+    // Um refetch cancelado pode resolver com o cache anterior. Só a geração
+    // posterior à última atividade pode decidir se o prazo realmente venceu.
+    const generation = activityGeneration();
+    let session: BackofficeSession | undefined;
+    try {
+      session = await readSession();
+    } catch {
+      if (generation !== activityGeneration()) continue;
+      return false;
+    }
+    if (generation !== activityGeneration()) continue;
+    return (
+      session?.authenticated === true &&
+      isBackofficeSessionDeadlineCurrent(session, expectedSession, session.expiresAt) &&
+      backofficeSessionExpirationDelay(session.expiresAt) > 0
+    );
+  }
+}
+
 export function isBackofficeReauthenticationBoundaryError(error: unknown) {
   return (
     (error instanceof BackofficeClientError && error.code === "AUTH_SESSION_RECHECK_REQUIRED") ||

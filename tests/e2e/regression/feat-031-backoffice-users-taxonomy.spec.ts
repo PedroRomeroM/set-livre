@@ -599,6 +599,79 @@ test("SL-F031-E2E-009 @p1 conflitos de conta e papel exigem nova revisão", asyn
   }
 });
 
+test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera leitura sem repetir comando", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const admin = createFeat031Operator(testInfo, "030_access_refresh");
+  const target = await createFeat031DirectIdentity("Verificação dos acessos");
+  let markRefreshHeld: () => void = () => undefined;
+  let releaseRefresh: () => void = () => undefined;
+  const heldRefresh = new Promise<void>((resolve) => {
+    markRefreshHeld = resolve;
+  });
+  const refreshRelease = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let holdRefresh = true;
+  let commandRequests = 0;
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031030");
+    await loginFeat031Backoffice(page, admin);
+    await page.getByRole("link", { name: "Acessos" }).click();
+    const card = await searchUser(page, target.email, target.userId);
+    await card.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
+    await page.clock.install({ time: Date.now() });
+    await page.route("**/acessos/**", async (route) => {
+      if (route.request().headers()["rsc"] !== "1" || !holdRefresh) {
+        await route.continue();
+        return;
+      }
+      markRefreshHeld();
+      await refreshRelease;
+      await route.abort("failed");
+    });
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/commands") commandRequests += 1;
+    });
+    const activitySessionRead = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/auth/session" && response.status() === 200,
+    );
+    await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    await heldRefresh;
+    await (await activitySessionRead).finished();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Verificando o estado atual" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Estado atual", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Revisar concessão de suporte" })).toBeDisabled();
+    await expect(
+      page.getByText("Acesso atualizado e sessões incompatíveis encerradas.", { exact: true }),
+    ).toHaveCount(0);
+
+    await page.clock.runFor(10_001);
+    const accessDetail = page.getByRole("region", { name: /^Acessos da conta /u });
+    await expect(accessDetail.getByRole("alert")).toContainText(
+      "Não foi possível verificar o estado atual",
+    );
+    holdRefresh = false;
+    await page.getByRole("button", { name: "Tentar verificar acessos novamente" }).click();
+    await expect(page.getByRole("button", { name: "Revisar revogação de suporte" })).toBeEnabled();
+    await expect(page.getByRole("heading", { name: "Estado atual", exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Acesso atualizado e sessões incompatíveis encerradas.", { exact: true }),
+    ).toBeVisible();
+    expect(commandRequests).toBe(1);
+    expect(await readFeat031Roles(target.userId)).toEqual([{ role: "support" }]);
+  } finally {
+    releaseRefresh();
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ direct: [target], operators: [admin] });
+  }
+});
+
 test("SL-F031-E2E-010 @p1 conflito de taxonomia descarta o editor obsoleto", async ({
   page,
 }, testInfo) => {

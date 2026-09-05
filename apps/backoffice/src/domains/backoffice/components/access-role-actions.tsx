@@ -9,7 +9,7 @@ import { Alert, Button, Field } from "@set-livre/ui";
 import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   BackofficeClientError,
@@ -76,6 +76,19 @@ export type BackofficeAccessTransition = Readonly<{
   buttonLabel: string;
   confirmation: string;
 }>;
+
+type AccessRefreshExpectation = Readonly<{
+  minimumAccountVersion: number;
+  outcome: "applied" | "conflict";
+  userId: string;
+}>;
+
+export function isBackofficeAccessRefreshVerified(
+  expected: AccessRefreshExpectation,
+  user: BackofficeUserSummary,
+) {
+  return user.id === expected.userId && user.accountVersion >= expected.minimumAccountVersion;
+}
 
 function errorMessage(error: unknown) {
   if (isAmbiguousBackofficeError(error)) {
@@ -151,10 +164,12 @@ function AccessReauthentication({
 }
 
 export function AccessRoleActions({
+  children,
   session,
   transitions,
   user,
 }: {
+  children: ReactNode;
   session: AuthenticatedSession;
   transitions: readonly BackofficeAccessTransition[];
   user: BackofficeUserSummary;
@@ -166,6 +181,30 @@ export function AccessRoleActions({
   const [selected, setSelected] = useState<BackofficeAccessTransition>();
   const [needsReauthentication, setNeedsReauthentication] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const [refreshExpectation, setRefreshExpectation] = useState<AccessRefreshExpectation>();
+  const [refreshAttempt, setRefreshAttempt] = useState(0);
+  const [refreshTimedOut, setRefreshTimedOut] = useState(false);
+  const refreshPending =
+    refreshExpectation !== undefined &&
+    !isBackofficeAccessRefreshVerified(refreshExpectation, user);
+  const verifiedNotice =
+    refreshExpectation === undefined || refreshPending
+      ? undefined
+      : refreshExpectation.outcome === "conflict"
+        ? "Os acessos mudaram. O estado atual foi recarregado para uma nova revisão."
+        : user.accountVersion === refreshExpectation.minimumAccountVersion
+          ? "Acesso atualizado e sessões incompatíveis encerradas."
+          : "O estado mais recente dos acessos foi carregado. Revise as alterações antes de agir.";
+  const refreshAccess = () => {
+    setRefreshTimedOut(false);
+    setRefreshAttempt((attempt) => attempt + 1);
+    router.refresh();
+  };
+  useEffect(() => {
+    if (!refreshPending) return;
+    const deadline = window.setTimeout(() => setRefreshTimedOut(true), 10_000);
+    return () => window.clearTimeout(deadline);
+  }, [refreshAttempt, refreshPending]);
   const pendingCommand = useRef<BackofficeAccessCommand>(undefined);
   const mutation = useMutation({
     mutationFn: () => {
@@ -177,11 +216,17 @@ export function AccessRoleActions({
     networkMode: "always",
     onError: (error) => {
       if (isStaleBackofficeError(error)) {
+        setRefreshExpectation({
+          minimumAccountVersion:
+            (pendingCommand.current?.payload.expectedAccountVersion ?? user.accountVersion) + 1,
+          outcome: "conflict",
+          userId: user.id,
+        });
         pendingCommand.current = undefined;
         setNeedsReauthentication(false);
         setSelected(undefined);
-        setNotice("Os acessos mudaram. O estado atual foi recarregado para uma nova revisão.");
-        router.refresh();
+        setNotice(undefined);
+        refreshAccess();
         return;
       }
       const ambiguous = isAmbiguousBackofficeError(error);
@@ -198,7 +243,7 @@ export function AccessRoleActions({
         setNeedsReauthentication(true);
       }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       const revokedCurrentAdmin =
         pendingCommand.current?.action === "backoffice.access.revokeAdmin" &&
         pendingCommand.current.payload.userId === session.scope;
@@ -209,15 +254,23 @@ export function AccessRoleActions({
       }
       setNeedsReauthentication(false);
       setSelected(undefined);
-      setNotice("Acesso atualizado e sessões incompatíveis encerradas.");
-      router.refresh();
+      setNotice(undefined);
+      setRefreshExpectation({
+        minimumAccountVersion: result.accountVersion,
+        outcome: "applied",
+        userId: result.id,
+      });
+      refreshAccess();
     },
   });
   const retryAvailable = mutation.isError && isAmbiguousBackofficeError(mutation.error);
 
-  return (
-    <section aria-label="Ações de acesso" className={styles.pageStack}>
-      {notice === undefined ? null : <Alert>{notice}</Alert>}
+  const actions = (
+    <section
+      aria-label={transitions.length === 0 ? undefined : "Ações de acesso"}
+      className={styles.pageStack}
+    >
+      {(notice ?? verifiedNotice) === undefined ? null : <Alert>{notice ?? verifiedNotice}</Alert>}
       {needsReauthentication ? (
         <AccessReauthentication
           onConfirmed={(nextSession) => {
@@ -242,12 +295,14 @@ export function AccessRoleActions({
       <div className={styles.actions}>
         {transitions.map((transition) => (
           <Button
-            disabled={!interactive || mutation.isPending || retryAvailable}
+            disabled={!interactive || mutation.isPending || retryAvailable || refreshPending}
             key={transition.action}
             onClick={() => {
+              if (refreshPending) return;
               pendingCommand.current = undefined;
               mutation.reset();
               setNotice(undefined);
+              setRefreshExpectation(undefined);
               setSelected(transition);
             }}
             variant="secondary"
@@ -299,5 +354,30 @@ export function AccessRoleActions({
         </section>
       )}
     </section>
+  );
+
+  return (
+    <>
+      {refreshPending ? (
+        <Alert variant={refreshTimedOut ? "error" : "status"}>
+          <p>
+            {refreshExpectation?.outcome === "applied"
+              ? "A alteração foi aplicada. "
+              : "Os acessos mudaram. "}
+            {refreshTimedOut
+              ? "Não foi possível verificar o estado atual. Tente uma nova leitura antes de agir."
+              : "Verificando o estado atual antes de liberar novas ações…"}
+          </p>
+          {refreshTimedOut ? (
+            <Button onClick={refreshAccess} variant="secondary">
+              Tentar verificar acessos novamente
+            </Button>
+          ) : null}
+        </Alert>
+      ) : (
+        children
+      )}
+      {actions}
+    </>
   );
 }

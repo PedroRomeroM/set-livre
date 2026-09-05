@@ -35,6 +35,7 @@ import {
   unlockBackofficeRuntimeClient,
 } from "../../apps/backoffice/src/domains/backoffice/components/backoffice-api";
 import { useBackofficeHydrated } from "../../apps/backoffice/src/domains/backoffice/components/use-backoffice-hydrated";
+import { subscribeToBackofficeActivity } from "../../apps/backoffice/src/domains/backoffice/components/session-events";
 import { backofficeAuthNetworkRateLimitOptions } from "../../apps/backoffice/src/lib/server/auth-rate-limit-profile";
 import {
   backofficeStudioReviewDetailFixture,
@@ -387,8 +388,8 @@ describe("backoffice contracts", () => {
               idempotencyKey,
               payload: {
                 kind: "tag",
-                name: "Podcast",
-                slug: "podcast",
+                name: action === "create" ? " Podcast " : "Podcast",
+                slug: action === "create" ? " podcast " : "podcast",
                 sortOrder: 1,
                 ...(action === "update" ? { id: targetId, expectedVersion: 1 } : {}),
               },
@@ -415,7 +416,14 @@ describe("backoffice contracts", () => {
       };
       const mismatches = [
         { ...item, kind: "amenity" },
-        ...(action === "create" ? [] : [{ ...item, id: actorId }]),
+        ...(action === "create"
+          ? [
+              { ...item, name: "Outra taxonomia" },
+              { ...item, slug: "outro-slug" },
+              { ...item, sortOrder: 2 },
+              { ...item, active: false },
+            ]
+          : [{ ...item, id: actorId }]),
       ];
       for (const response of mismatches) {
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue(successResponse(response)));
@@ -431,6 +439,65 @@ describe("backoffice contracts", () => {
       expect(dispatchEvent).toHaveBeenCalledTimes(mismatches.length);
     },
   );
+
+  it("publishes operational activity after reads and commands, but never from passive polling", async () => {
+    const activity = vi.fn();
+    const unsubscribe = subscribeToBackofficeActivity(activity);
+    const detail = backofficeStudioReviewDetailFixture();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      fetchMock.mockResolvedValueOnce(
+        successResponse({ items: [], nextCursor: null, scope: actorId }),
+      );
+      await listBackofficeUsersClient({ expectedScope: actorId, query: {} });
+      expect(activity).toHaveBeenCalledTimes(1);
+
+      fetchMock.mockResolvedValueOnce(successResponse({ items: [], scope: actorId }));
+      await listBackofficeTaxonomiesClient(actorId);
+      expect(activity).toHaveBeenCalledTimes(2);
+
+      fetchMock.mockResolvedValueOnce(successResponse(detail));
+      await readBackofficeStudioReviewClient({
+        activity: "interactive",
+        expectedScope: detail.scope,
+        studioId: detail.studioId,
+      });
+      expect(activity).toHaveBeenCalledTimes(3);
+
+      fetchMock.mockResolvedValueOnce(
+        successResponse({
+          accountVersion: 1,
+          createdAt: "2026-09-04T10:00:00.000Z",
+          emailMasked: "t***@example.test",
+          id: targetId,
+          status: "active",
+        }),
+      );
+      await executeBackofficeUserCommand({
+        action: "backoffice.access.grantSupport",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { expectedAccountVersion: 0, userId: targetId },
+      });
+      expect(activity).toHaveBeenCalledTimes(4);
+
+      fetchMock.mockResolvedValueOnce(successResponse(detail));
+      await readBackofficeStudioReviewClient({
+        activity: "passive",
+        expectedScope: detail.scope,
+        studioId: detail.studioId,
+      });
+      fetchMock.mockResolvedValueOnce(successResponse({ authenticated: false }));
+      await readBackofficeSessionClient();
+      expect(activity).toHaveBeenCalledTimes(4);
+    } finally {
+      unsubscribe();
+    }
+    fetchMock.mockResolvedValueOnce(successResponse({ items: [], scope: actorId }));
+    await listBackofficeTaxonomiesClient(actorId);
+    expect(activity).toHaveBeenCalledTimes(4);
+  });
 
   it("rejects late private reads before another scope or record reaches the cache", async () => {
     const dispatchEvent = vi.fn();

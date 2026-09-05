@@ -31,7 +31,7 @@ import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 const safeE2EEnvironment = readSafeE2EEnvironment();
 type BrowserCookies = Awaited<ReturnType<BrowserContext["cookies"]>>;
 
-function createHeldResponseGate(options: { outcome: "abort" | "fulfill" }) {
+function createHeldResponseGate(options: { allMatching?: boolean; outcome: "abort" | "fulfill" }) {
   let releaseResponse: () => void = () => undefined;
   let reportResponseReady: () => void = () => undefined;
   let responseHandled = false;
@@ -44,7 +44,7 @@ function createHeldResponseGate(options: { outcome: "abort" | "fulfill" }) {
 
   return {
     handle: async (route: Route) => {
-      if (responseHandled) {
+      if (responseHandled && !options.allMatching) {
         await route.continue();
         return;
       }
@@ -627,7 +627,7 @@ test("SL-F031-E2E-011 @p0 runtime bloqueado rejeita mutação até desbloqueio l
   test.setTimeout(180_000);
   const support = createFeat031Operator(testInfo, "011_runtime_unlock");
   const target = await createFeat031DirectIdentity("Interlock alvo");
-  const sessionResponse = createHeldResponseGate({ outcome: "fulfill" });
+  const sessionResponse = createHeldResponseGate({ allMatching: true, outcome: "fulfill" });
   try {
     await provisionFeat031Operator(page, support, "support", "031011");
     await page.route(

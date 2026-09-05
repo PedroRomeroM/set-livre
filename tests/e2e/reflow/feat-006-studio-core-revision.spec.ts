@@ -56,6 +56,7 @@ test("SL-F006-E2E-007 @p2 criação e editor preservam reflow em 200%", async ({
     await expectFeat006Reflow(page);
     await createFeat006StudioThroughUi(page);
     await expect(page.getByText("Rascunho privado", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Descrição" })).toHaveValue("A".repeat(5_000));
     await expectFeat006Reflow(page);
   } finally {
     await closeFeat006PageBeforeCleanup(page);

@@ -10,6 +10,7 @@ import {
   backofficeStudioReviewQueueSchema,
   backofficeStudioReadActivityHeader,
   backofficeTaxonomyItemSchema,
+  backofficeTaxonomyUpsertCommandSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
@@ -32,7 +33,10 @@ import {
 } from "@set-livre/contracts";
 import { z } from "zod";
 
-import { notifyBackofficeSessionChanged } from "./session-events";
+import {
+  notifyBackofficeActivityCompleted,
+  notifyBackofficeSessionChanged,
+} from "./session-events";
 
 const backofficeMutationRequestTimeoutMs = 10_000;
 const backofficeReadRequestTimeoutMs = 10_000;
@@ -202,8 +206,10 @@ export function logoutBackofficeClient(expectedScope: string) {
   );
 }
 
-export function readBackofficeSessionClient() {
-  return backofficeRequest("/api/auth/session", backofficeSessionSchema);
+export function readBackofficeSessionClient(signal?: AbortSignal) {
+  return backofficeRequest("/api/auth/session", backofficeSessionSchema, {
+    ...(signal === undefined ? {} : { signal }),
+  });
 }
 
 export function unlockBackofficeRuntimeClient(payload: BackofficeRuntimeUnlockPayload) {
@@ -223,6 +229,7 @@ export async function listBackofficeUsersClient(
     ...(signal === undefined ? {} : { signal }),
   });
   if (users.scope !== input.expectedScope) rejectBackofficePrivateBoundary();
+  notifyBackofficeActivityCompleted();
   return users;
 }
 
@@ -234,6 +241,7 @@ export async function listBackofficeTaxonomiesClient(
     ...(signal === undefined ? {} : { signal }),
   });
   if (taxonomies.scope !== expectedScope) rejectBackofficePrivateBoundary();
+  notifyBackofficeActivityCompleted();
   return taxonomies;
 }
 
@@ -250,6 +258,7 @@ export async function listBackofficeStudioReviewsClient(
     ...(signal === undefined ? {} : { signal }),
   });
   if (queue.scope !== input.expectedScope) rejectBackofficePrivateBoundary();
+  notifyBackofficeActivityCompleted();
   return queue;
 }
 
@@ -272,16 +281,23 @@ export async function readBackofficeStudioReviewClient(
   if (detail.scope !== input.expectedScope || detail.studioId !== input.studioId) {
     rejectBackofficePrivateBoundary();
   }
+  if (input.activity === "interactive") notifyBackofficeActivityCompleted();
   return detail;
 }
 
-export function executeBackofficeStudioCommand(
+export async function executeBackofficeStudioCommand(
   command: BackofficeStudioCommand,
 ): Promise<BackofficeStudioCommandResult> {
-  return backofficeMutationRequest("/api/commands", backofficeStudioCommandResultSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  const result = await backofficeMutationRequest(
+    "/api/commands",
+    backofficeStudioCommandResultSchema,
+    {
+      body: JSON.stringify(command),
+      method: "POST",
+    },
+  );
+  notifyBackofficeActivityCompleted();
+  return result;
 }
 
 export async function executeBackofficeUserCommand(
@@ -305,6 +321,7 @@ export async function executeBackofficeUserCommand(
     method: "POST",
   });
   if (user.id !== command.payload.userId) rejectBackofficePrivateBoundary();
+  notifyBackofficeActivityCompleted();
   return user;
 }
 
@@ -329,6 +346,18 @@ export async function executeBackofficeTaxonomyCommand(
   ) {
     rejectBackofficePrivateBoundary();
   }
+  if (command.action === "backoffice.taxonomy.upsert" && command.payload.id === undefined) {
+    const submitted = backofficeTaxonomyUpsertCommandSchema.parse(command).payload;
+    if (
+      item.name !== submitted.name ||
+      item.slug !== submitted.slug ||
+      item.sortOrder !== submitted.sortOrder ||
+      !item.active
+    ) {
+      rejectBackofficePrivateBoundary();
+    }
+  }
+  notifyBackofficeActivityCompleted();
   return item;
 }
 
@@ -343,6 +372,7 @@ export async function revealBackofficePiiWithoutCaching(
   if (pii.scope !== command.expectedScope || pii.userId !== command.payload.userId) {
     rejectBackofficePrivateBoundary();
   }
+  notifyBackofficeActivityCompleted();
   consume(pii);
   return { revealed: true as const };
 }

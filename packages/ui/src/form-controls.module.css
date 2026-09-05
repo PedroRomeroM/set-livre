@@ -55,6 +55,7 @@
 
 .textarea {
   min-height: 9rem;
+  font-kerning: none;
   line-height: 1.55;
   resize: vertical;
 }

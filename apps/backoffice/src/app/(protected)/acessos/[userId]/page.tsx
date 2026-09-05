@@ -114,32 +114,31 @@ export default async function BackofficeAccessDetailPage({
           versão {user.accountVersion}.
         </p>
       </header>
-      <article className={styles.card}>
-        <h2>Estado atual</h2>
-        <dl className={styles.definitionList}>
-          <dt>Suporte</dt>
-          <dd>{access.roles.includes("support") ? "Concedido" : "Não concedido"}</dd>
-          <dt>Administração</dt>
-          <dd>{access.roles.includes("admin") ? "Concedido" : "Não concedido"}</dd>
-          <dt>Revisão editorial</dt>
-          <dd>{access.roles.includes("reviewer") ? "Concedido" : "Não concedido"}</dd>
-          <dt>Conta</dt>
-          <dd>{user.status === "active" ? "Ativa" : "Suspensa"}</dd>
-          <dt>Perfil</dt>
-          <dd>{access.profile_completed ? "Completo" : "Incompleto"}</dd>
-        </dl>
-      </article>
-      {restriction === undefined ? null : (
-        <Alert title="Novas concessões indisponíveis" variant="status">
-          {restriction}{" "}
-          {access.roles.length === 0
-            ? "Não há acessos concedidos para revogar."
-            : "Os acessos já concedidos ainda podem ser revogados."}
-        </Alert>
-      )}
-      {transitions.length === 0 ? null : (
-        <AccessRoleActions session={browserSession} transitions={transitions} user={user} />
-      )}
+      <AccessRoleActions session={browserSession} transitions={transitions} user={user}>
+        <article className={styles.card}>
+          <h2>Estado atual</h2>
+          <dl className={styles.definitionList}>
+            <dt>Suporte</dt>
+            <dd>{access.roles.includes("support") ? "Concedido" : "Não concedido"}</dd>
+            <dt>Administração</dt>
+            <dd>{access.roles.includes("admin") ? "Concedido" : "Não concedido"}</dd>
+            <dt>Revisão editorial</dt>
+            <dd>{access.roles.includes("reviewer") ? "Concedido" : "Não concedido"}</dd>
+            <dt>Conta</dt>
+            <dd>{user.status === "active" ? "Ativa" : "Suspensa"}</dd>
+            <dt>Perfil</dt>
+            <dd>{access.profile_completed ? "Completo" : "Incompleto"}</dd>
+          </dl>
+        </article>
+        {restriction === undefined ? null : (
+          <Alert title="Novas concessões indisponíveis" variant="status">
+            {restriction}{" "}
+            {access.roles.length === 0
+              ? "Não há acessos concedidos para revogar."
+              : "Os acessos já concedidos ainda podem ser revogados."}
+          </Alert>
+        )}
+      </AccessRoleActions>
       <div>
         <ButtonLink href="/acessos" variant="ghost">
           Voltar à busca de acessos

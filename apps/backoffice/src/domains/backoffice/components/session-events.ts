@@ -3,6 +3,18 @@
 const backofficeSessionChannel = "set-livre-backoffice-session-v1";
 const backofficeSessionEvent = "set-livre:backoffice-session-changed";
 let peerSessionChannel: BroadcastChannel | undefined;
+const activityListeners = new Set<() => void>();
+
+export function notifyBackofficeActivityCompleted() {
+  for (const listener of activityListeners) listener();
+}
+
+export function subscribeToBackofficeActivity(listener: () => void) {
+  activityListeners.add(listener);
+  return () => {
+    activityListeners.delete(listener);
+  };
+}
 
 function getPeerSessionChannel() {
   if (typeof BroadcastChannel === "undefined") return undefined;

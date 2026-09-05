@@ -17,6 +17,13 @@ Acesso:
   concluído ou inconclusivo também publica esse evento. Mudança de identidade ou autorização oculta o
   DOM privado, limpa o QueryCache e recompõe a rota; esse polling passivo valida a sessão sem renovar a
   janela de inatividade;
+- respostas de atividade operacional solicitam imediatamente uma nova leitura passiva da sessão;
+  no vencimento do prazo em cache, a shell oculta e torna inerte a composição enquanto verifica o
+  prazo autoritativo, sem descartar formulários ou navegar se a atividade já renovou a sessão.
+  Uma leitura substituída por atividade mais recente não decide expiração: a verificação aguarda
+  a geração atual, inclusive quando o refetch anterior é cancelado. A consulta também executa
+  offline para concluir em erro limitado, sem ficar pausada indefinidamente no QueryCache.
+  Falha de verificação, expiração real ou mudança de identidade/autorização fecha a fronteira;
 - autenticação realizada há no máximo cinco minutos para alterar papéis;
 - desbloqueio local de cinco minutos, assinado e vinculado à sessão Auth, antes de qualquer mutação;
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
@@ -27,6 +34,8 @@ O deadline é combinado com o sinal de cancelamento do chamador: substituição 
 cancelamento original, enquanto expiração retorna erro recuperável, sem deixar loading indefinido.
 Resultados privados são validados antes do sucesso: comandos de conta/acesso exigem o UUID do alvo;
 taxonomias exigem o grupo solicitado e, em edição/arquivamento/reativação, também o UUID do item.
+Criação exige ainda nome e slug normalizados pelo contrato, ordem enviada e estado inicial ativo;
+um item do mesmo grupo com valores divergentes não confirma a tentativa idempotente.
 Resposta de outro alvo ou grupo falha fechada e solicita recomposição da sessão privada.
 
 `support` opera usuários. `reviewer` revisa candidatas editoriais. `admin` substitui deliberadamente
@@ -130,6 +139,13 @@ papéis. Os botões de transição permanecem desabilitados no HTML inicial e s�
 da hidratação, evitando perda silenciosa de um clique antecipado. A salvaguarda impede suspender ou
 remover o último administrador ativo. Remover o último papel de uma conta encerra suas sessões de
 backoffice.
+
+Depois de uma alteração de papel confirmada ou de conflito de versão, o detalhe oculta o estado
+anterior e bloqueia novas ações até receber pelo RSC o mesmo alvo numa versão autoritativa que cubra
+o resultado. Sucesso só é anunciado junto dessa composição verificada; uma versão posterior é
+apresentada como o estado mais recente, sem atribuir-lhe o resultado antigo. Após dez segundos sem
+confirmação da leitura, a superfície oferece nova tentativa de verificação, sem reenviar o comando
+já aplicado. Os papéis continuam no Server Component, passados como composição, não como DTO.
 
 O binding curto mantém `last_seen_at` e `closed_at` monotônicos em relação à abertura. A fronteira do
 banco normaliza correções regressivas do relógio de parede, e a validação usa o maior valor entre o
@@ -241,6 +257,11 @@ Audit é append-only para operadores. Export controlado.
 - busca/cursor ficam no servidor e fora da URL;
 - troca de sessão/papel elimina imediatamente a composição privada após a revalidação;
 - polling passivo não mantém uma sessão inativa viva;
+- atividade próxima do prazo em cache republica a validade da sessão; a verificação no vencimento
+  não encerra uma binding renovada nem mantém expiração real ou falha de leitura aberta;
+- criação de taxonomia rejeita respostas válidas de outro conteúdo do mesmo grupo;
+- atualização de acesso aguarda a versão RSC verificada, com recuperação de leitura sem repetir
+  a mutação (`SL-F031-E2E-030`);
 - correção regressiva do relógio preserva atividade/encerramento monotônicos sem violar constraints;
 - conflitos de conta, papel, taxonomia e revisão exigem novo read model e nova confirmação;
 - aprovação/rejeição concorrentes produzem uma única decisão; rejeição preserva publicação e cria a
