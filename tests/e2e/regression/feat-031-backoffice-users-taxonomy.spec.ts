@@ -630,7 +630,6 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
     const card = await searchUser(page, target.email, target.userId);
     await card.getByRole("link", { name: "Gerenciar acesso" }).click();
     await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
-    await page.clock.install({ time: Date.now() });
     await page.route("**/acessos/**", async (route) => {
       if (route.request().headers()["rsc"] !== "1" || !holdRefresh) {
         await route.continue();
@@ -643,13 +642,9 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
     page.on("request", (request) => {
       if (new URL(request.url()).pathname === "/api/commands") commandRequests += 1;
     });
-    const activitySessionRead = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === "/api/auth/session" && response.status() === 200,
-    );
+    const confirmationStartedAt = performance.now();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
     await heldRefresh;
-    await (await activitySessionRead).finished();
     await expect(
       page.getByRole("status").filter({ hasText: "Verificando o estado atual" }),
     ).toBeVisible();
@@ -659,11 +654,13 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
       page.getByText("Acesso atualizado e sessões incompatíveis encerradas.", { exact: true }),
     ).toHaveCount(0);
 
-    await page.clock.runFor(10_001);
+    // O prazo real não avança os deadlines das leituras de sessão concorrentes.
     const accessDetail = page.getByRole("region", { name: /^Acessos da conta /u });
     await expect(accessDetail.getByRole("alert")).toContainText(
       "Não foi possível verificar o estado atual",
+      { timeout: 15_000 },
     );
+    expect(performance.now() - confirmationStartedAt).toBeGreaterThanOrEqual(10_000);
     holdRefresh = false;
     await page.getByRole("button", { name: "Tentar verificar acessos novamente" }).click();
     await expect(page.getByRole("button", { name: "Revisar revogação de suporte" })).toBeEnabled();
@@ -1039,5 +1036,196 @@ test("SL-F031-E2E-033 @p1 status confirmado bloqueia busca e paginação até re
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ bulk: bulk.identities, operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-034 @p0 alvo deslocado de página recupera status por UUID sem perder filtro nem repetir suspensão", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const support = createFeat031Operator(testInfo, "034_displaced_status_target");
+  const bulk = await createFeat031BulkUsers(`034_${testInfo.project.name}`);
+  const concurrentUsers: typeof bulk.identities = [];
+  const commands: unknown[] = [];
+  const results: unknown[] = [];
+  const reads: Array<{ body: unknown; method: string; search: string }> = [];
+  const readResults: Array<ReturnType<typeof backofficeUserListSchema.parse>> = [];
+  let failExactRead = true;
+  try {
+    await provisionFeat031Operator(page, support, "support", "031034");
+    await loginFeat031Backoffice(page, support);
+    const firstRead = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/users" &&
+        response.request().postDataJSON()?.query === bulk.query &&
+        response.status() === 200,
+    );
+    const search = page.getByRole("textbox", { name: "Buscar usuários" });
+    const searchSubmit = page.getByRole("button", { name: "Buscar", exact: true });
+    await search.fill(bulk.query);
+    await searchSubmit.click();
+    const initial = apiSuccessSchema(backofficeUserListSchema).parse(
+      await (await firstRead).json(),
+    ).data;
+    expect(bulk.identities).toHaveLength(52);
+    expect(initial.items).toHaveLength(50);
+    expect(initial.nextCursor).not.toBeNull();
+    const target = initial.items.at(-1);
+    if (target === undefined) throw new Error("A página QA precisa conter sua última conta.");
+    const cards = page.getByRole("article");
+    const targetLabel = `Identificador …${target.id.slice(-8)}`;
+    const targetCard = cards.filter({ has: page.getByText(targetLabel, { exact: true }) });
+    await expect(cards).toHaveCount(50);
+    await expect(cards.last()).toContainText(targetLabel);
+
+    await page.route("**/api/commands", async (route) => {
+      const command = route.request().postDataJSON() as { action?: unknown } | null;
+      if (command?.action !== "backoffice.user.suspend") {
+        await route.continue();
+        return;
+      }
+      commands.push(command);
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      results.push(await response.json());
+      // O comando real já commitou; a nova identidade entra antes da releitura do browser.
+      const inserted = await createFeat031BulkUsers("concurrent", 1, bulk.query);
+      concurrentUsers.push(...inserted.identities);
+      await route.fulfill({ response });
+    });
+    await page.route(
+      (url) => url.pathname === "/api/users",
+      async (route) => {
+        const request = route.request();
+        const body: unknown = request.method() === "POST" ? request.postDataJSON() : null;
+        reads.push({ body, method: request.method(), search: new URL(request.url()).search });
+        if (
+          failExactRead &&
+          typeof body === "object" &&
+          body !== null &&
+          "query" in body &&
+          body.query === target.id
+        ) {
+          await route.abort("failed");
+          return;
+        }
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        readResults.push(
+          apiSuccessSchema(backofficeUserListSchema).parse(await response.json()).data,
+        );
+        await route.fulfill({ response });
+      },
+    );
+
+    await targetCard.getByRole("button", { name: "Revisar suspensão" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    const impact = confirmation.getByRole("checkbox", {
+      name: "Revisei o impacto desta alteração",
+    });
+    const submit = confirmation.getByRole("button", { name: "Confirmar", exact: true });
+    const loadMore = page.getByRole("button", { name: "Carregar mais" });
+    await impact.check();
+    await submit.click();
+    const error = page.getByRole("alert").filter({ hasText: "Alteração confirmada" });
+    const retry = page.getByRole("button", { name: "Tentar carregar usuários novamente" });
+    await expect(error).toContainText("o comando não será reenviado");
+    await expect(retry).toBeEnabled();
+    const confirmed = apiSuccessSchema(backofficeUserSummarySchema).parse(results[0]).data;
+    expect(confirmed).toMatchObject({ id: target.id, status: "suspended" });
+    expect(confirmed.accountVersion).toBeGreaterThan(target.accountVersion);
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ payload: { userId: target.id } });
+    expect(concurrentUsers).toHaveLength(1);
+    const expectedFirstPageIds = [
+      concurrentUsers[0]?.id,
+      ...initial.items.slice(0, -1).map((user) => user.id),
+    ];
+    expect(readResults).toHaveLength(1);
+    expect(readResults[0]?.items.map((user) => user.id)).toEqual(expectedFirstPageIds);
+    expect(reads.slice(1).length).toBeGreaterThan(0);
+    expect(reads[0]?.body).toEqual({ query: bulk.query, cursor: null });
+    for (const read of reads.slice(1))
+      expect(read.body).toEqual({ query: target.id, cursor: null });
+    await expect(cards).toHaveCount(50);
+    await expect(targetCard).toHaveCount(0);
+    await expect(confirmation).toContainText("O histórico permanece.");
+    await expect(impact).toBeChecked();
+    await expect(impact).toBeDisabled();
+    await expect(submit).toBeDisabled();
+    await expect(
+      confirmation.getByRole("button", { name: "Cancelar", exact: true }),
+    ).toBeDisabled();
+    await expect(search).toBeDisabled();
+    await expect(search).toHaveValue(bulk.query);
+    await expect(searchSubmit).toBeDisabled();
+    await expect(loadMore).toBeDisabled();
+    await expect(cards.first().getByRole("button", { name: "Revisar suspensão" })).toBeDisabled();
+    await expect(
+      cards.first().getByRole("button", { name: "Revelar dados por 60 segundos" }),
+    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Repetir mesma tentativa" })).toHaveCount(0);
+    expect(await readFeat031UserStatus(target.id)).toMatchObject({
+      account_version: confirmed.accountVersion,
+      status: "suspended",
+    });
+    expect(await readFeat031Audit("backoffice.user_suspended", target.id)).toHaveLength(1);
+
+    const failedReadCount = reads.length;
+    failExactRead = false;
+    await retry.click();
+    await expect(error).toHaveCount(0);
+    await expect(confirmation).toHaveCount(0);
+    await expect(
+      page.getByText("Usuário suspenso e sessões operacionais encerradas.", { exact: true }),
+    ).toBeVisible();
+    await expect(search).toBeEnabled();
+    await expect(search).toHaveValue(bulk.query);
+    await expect(searchSubmit).toBeEnabled();
+    await expect(loadMore).toBeEnabled();
+    await expect(cards.first().getByRole("button", { name: "Revisar suspensão" })).toBeEnabled();
+    await expect(cards).toHaveCount(50);
+    await expect(targetCard).toHaveCount(0);
+    expect(reads.slice(failedReadCount).map((read) => read.body)).toEqual([
+      { query: bulk.query, cursor: null },
+      { query: target.id, cursor: null },
+    ]);
+    expect(readResults[1]?.items.map((user) => user.id)).toEqual(expectedFirstPageIds);
+    expect(readResults[2]?.items).toEqual([confirmed]);
+    expect(readResults[2]?.nextCursor).toBeNull();
+    expect(commands).toHaveLength(1);
+
+    const nextCursor = readResults[1]?.nextCursor;
+    expect(nextCursor).toEqual(expect.any(String));
+    await loadMore.click();
+    await expect(cards).toHaveCount(53);
+    await expect(targetCard.getByText("Suspenso", { exact: true })).toBeVisible();
+    await expect(targetCard).toContainText(`versão ${confirmed.accountVersion}`);
+    await expect(targetCard.getByRole("button", { name: "Revisar restauração" })).toBeEnabled();
+    await expect(loadMore).toHaveCount(0);
+    await expect(search).toHaveValue(bulk.query);
+    expect(reads.at(-1)?.body).toEqual({ query: bulk.query, cursor: nextCursor });
+    expect(readResults).toHaveLength(4);
+    expect(readResults[3]?.items[0]).toEqual(confirmed);
+    expect(readResults[3]?.nextCursor).toBeNull();
+    const loadedIds = [...(readResults[1]?.items ?? []), ...(readResults[3]?.items ?? [])].map(
+      (user) => user.id,
+    );
+    expect(loadedIds).toHaveLength(53);
+    expect(new Set(loadedIds)).toEqual(
+      new Set([...bulk.identities, ...concurrentUsers].map((user) => user.id)),
+    );
+    expect(reads.every((read) => read.method === "POST" && read.search === "")).toBe(true);
+    expect(new URL(page.url()).pathname).toBe("/usuarios");
+    expect(new URL(page.url()).search).toBe("");
+    expect(commands).toHaveLength(1);
+    expect(await readFeat031Audit("backoffice.user_suspended", target.id)).toHaveLength(1);
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({
+      bulk: [...bulk.identities, ...concurrentUsers],
+      operators: [support],
+    });
   }
 });

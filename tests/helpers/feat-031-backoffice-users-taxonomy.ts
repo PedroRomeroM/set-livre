@@ -270,8 +270,15 @@ export function createFeat031IncompleteIdentity(scenario: string) {
   });
 }
 
-export async function createFeat031BulkUsers(scenario: string, count = 52) {
-  const namespace = `qa_f031_bulk_${safeNamespace(scenario)}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
+export async function createFeat031BulkUsers(scenario: string, count = 52, existingQuery?: string) {
+  const prefix =
+    existingQuery === undefined
+      ? "qa_f031_bulk"
+      : z
+          .string()
+          .regex(/^qa_f031_bulk_[a-z0-9_]+$/u)
+          .parse(existingQuery);
+  const namespace = `${prefix}_${safeNamespace(scenario)}_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
   return withFeat031AdminPool(async (pool) => {
     const inserted = await pool.query(
       `with generated as materialized (

@@ -249,9 +249,14 @@ Os cenários `SL-F031-E2E-*` cobrem:
   permanecem bloqueados durante mutação pendente ou resultado ambíguo, preservando alvo, payload e
   chave idempotente até a reconciliação. O fingerprint assíncrono serializa submissões, e a busca
   normaliza caixa e espaços de forma consistente com SQL e cursor;
+- `SL-F031-E2E-030` retém a resposta RSC após concessão real de acesso, verifica o prazo real de
+  dez segundos sem acelerar as leituras concorrentes de sessão e recupera sem repetir o comando;
 - `SL-F031-E2E-031/032/033` interrompem a leitura após comandos reais de criação/edição de taxonomia,
   arquivamento/reativação e suspensão/restauração. Preservam confirmação e formulário, bloqueiam ações,
   busca e paginação e recuperam somente a leitura do mesmo recorte, sem duplicar comando ou auditoria;
+- `SL-F031-E2E-034` desloca a última conta visível após um cadastro concorrente: a verificação por UUID
+  recupera uma falha de leitura sem reenviar suspensão, preserva o filtro/páginas da tela e permite
+  alcançar o alvo pela paginação normal, sem duplicar auditoria;
 - ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
   explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
   diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;

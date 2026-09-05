@@ -288,6 +288,20 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   });
   const resetUsers = () =>
     queryClient.resetQueries({ queryKey: ["backoffice", "users", session.scope] });
+  const verifiedUserRows = (queryKey: readonly string[]) => {
+    const retained =
+      queryClient.getQueryState<InfiniteData<BackofficeUserList, string | null>>(queryKey);
+    // Cancelamento com revert pode resolver o refetch com dados anteriores.
+    if (
+      retained?.status !== "success" ||
+      retained.fetchStatus !== "idle" ||
+      retained.isInvalidated ||
+      !retained.data?.pages.every((page) => page.scope === session.scope)
+    ) {
+      throw new Error("A leitura de usuários ainda não foi verificada.");
+    }
+    return retained.data.pages.flatMap((page) => page.items);
+  };
   const verifyUsers = async (confirmed: NonNullable<typeof verification>) => {
     if (verificationInFlight.current || queryClient.getQueryState(usersQueryKey) === undefined)
       return;
@@ -301,20 +315,44 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       });
       if (queryClient.getQueryState(usersQueryKey) === undefined) return;
       await users.refetch({ throwOnError: true });
-      const retained =
-        queryClient.getQueryState<InfiniteData<BackofficeUserList, string | null>>(usersQueryKey);
-      const retainedUser = retained?.data?.pages
-        .flatMap((page) => page.items)
-        .find((item) => item.id === confirmed.user.id);
+      let retainedUser = verifiedUserRows(usersQueryKey).find(
+        (item) => item.id === confirmed.user.id,
+      );
+      if (retainedUser === undefined) {
+        const targetQueryKey = backofficeQueryKeys.users(
+          session.scope,
+          await backofficeFilterFingerprint(confirmed.user.id),
+        );
+        verifiedUserRows(usersQueryKey);
+        await queryClient.invalidateQueries({
+          exact: true,
+          queryKey: targetQueryKey,
+          refetchType: "none",
+        });
+        verifiedUserRows(usersQueryKey);
+        await queryClient.fetchInfiniteQuery({
+          getNextPageParam: (page: BackofficeUserList) => page.nextCursor,
+          initialPageParam: null as string | null,
+          networkMode: "always",
+          pages: 1,
+          queryFn: ({ signal }) =>
+            listBackofficeUsersClient(
+              {
+                expectedScope: session.scope,
+                query: { cursor: null, query: confirmed.user.id },
+              },
+              signal,
+            ),
+          queryKey: targetQueryKey,
+          staleTime: 0,
+        });
+        verifiedUserRows(usersQueryKey);
+        retainedUser = verifiedUserRows(targetQueryKey).find(
+          (item) => item.id === confirmed.user.id,
+        );
+      }
       const verifiedNotice = userStatusNoticeFromRetainedState(confirmed.user, retainedUser);
-      // Cancelamento com revert pode resolver o refetch com dados anteriores.
-      if (
-        retained?.status !== "success" ||
-        retained.fetchStatus !== "idle" ||
-        retained.isInvalidated ||
-        !retained.data?.pages.every((page) => page.scope === session.scope) ||
-        verifiedNotice === undefined
-      ) {
+      if (verifiedNotice === undefined) {
         setVerification({ ...confirmed, status: "error" });
         return;
       }

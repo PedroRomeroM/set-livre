@@ -43,13 +43,17 @@ produz tela de outro usuário nem revela o registro na mensagem de erro.
 
 Em comandos de conta e taxonomia, sucesso do comando e verificação da lista são estados distintos.
 Após confirmação, a tentativa, o formulário e a confirmação de impacto permanecem preservados até
-uma leitura do mesmo escopo e filtro cobrir a versão retornada. Erro, cancelamento que reverta ao
+uma leitura autoritativa do mesmo escopo cobrir a versão retornada. Erro, cancelamento que reverta ao
 cache anterior ou resposta sem a versão necessária mantêm erro recuperável. Enquanto a leitura não
 for verificada, ficam bloqueados edição, novas ações, cancelamento, busca e paginação; dados antigos podem continuar visíveis,
 mas não autorizam decisões. A recuperação usa somente a leitura existente (`GET /api/taxonomies` ou
 `POST /api/users`, que mantém o filtro fora da URL), nunca reenvia `/api/commands`. As outras buscas
-do mesmo escopo ficam invalidadas; a verificação relê apenas o filtro ativo, com suas páginas, sem
-troca de cursor ou refetch automático por foco/reconexão concorrendo com a recuperação. Leitura offline
+do mesmo escopo ficam invalidadas; a verificação relê o filtro ativo, com suas páginas, sem
+troca de cursor ou refetch automático por foco/reconexão concorrendo com a recuperação. Se uma conta
+sair dessas páginas, por exemplo após novos cadastros, a busca existente por UUID exato verifica o
+alvo em uma única página, no mesmo TanStack Query e com o fingerprint desse filtro. Ela não altera
+o recorte visível, não insere o alvo artificialmente na lista e não percorre o histórico; erro ou
+resposta sem o alvo/versão mantém a recuperação bloqueada. Leitura offline
 também conclui em erro limitado, sem ficar pausada indefinidamente. Só depois da leitura verificada
 os controles são liberados e o sucesso é anunciado; uma versão posterior é descrita como o estado
 mais recente, sem atribuir a ela o resultado antigo.
