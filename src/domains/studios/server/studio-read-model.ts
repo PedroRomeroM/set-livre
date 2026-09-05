@@ -69,7 +69,11 @@ export class StudioNotFoundError extends Error {
   }
 }
 
-function mapStudioEditorRow(row: unknown, expectedUserId: string): StudioEditor {
+function mapStudioEditorRow(
+  row: unknown,
+  expectedUserId: string,
+  expectedStudioId: string,
+): StudioEditor {
   const parsed = studioEditorRowSchema.parse(row);
   const editor = studioEditorSchema.parse({
     draftRevisionId: parsed.draft_revision_id,
@@ -104,6 +108,9 @@ function mapStudioEditorRow(row: unknown, expectedUserId: string): StudioEditor 
   });
   if (editor.scope !== expectedUserId) {
     throw new Error("O editor de estúdio retornou um escopo diferente da sessão.");
+  }
+  if (editor.studioId !== expectedStudioId) {
+    throw new Error("O editor de estúdio retornou um estúdio diferente do solicitado.");
   }
   return editor;
 }
@@ -151,7 +158,7 @@ export async function readOwnerStudioEditorWithClient(
   signal?: AbortSignal,
 ) {
   const parsedUserId = z.uuid().parse(userId);
-  const parsedStudioId = z.uuid().parse(studioId);
+  const parsedStudioId = z.uuid().parse(studioId).toLowerCase();
   return withReadDeadline(async (deadlineSignal) => {
     const { data, error } = await client
       .rpc("get_owner_studio_editor", { p_studio_id: parsedStudioId })
@@ -161,7 +168,7 @@ export async function readOwnerStudioEditorWithClient(
       throw new Error("Não foi possível carregar o editor de estúdio autenticado.");
     }
     if (data === null) throw new StudioNotFoundError();
-    return mapStudioEditorRow(data, parsedUserId);
+    return mapStudioEditorRow(data, parsedUserId, parsedStudioId);
   }, signal);
 }
 

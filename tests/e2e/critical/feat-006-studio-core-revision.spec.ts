@@ -1,7 +1,8 @@
 import {
   apiSuccessSchema,
   studioCreateCommandSchema,
-  studioCreateResultSchema,
+  studioCommandResultSchema,
+  studioEditorSchema,
 } from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
@@ -248,9 +249,12 @@ test("SL-F006-E2E-018 @p0 reload reconcilia criação ambígua com a mesma ident
         expect(command.action).toBe("studio.create");
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const result = apiSuccessSchema(studioCreateResultSchema).parse(await response.json()).data;
+        const result = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+          await response.json(),
+        ).data;
+        expect(result.action).toBe(command.action);
         expect(result.idempotencyKey).toBe(command.idempotencyKey);
-        committedStudioId = result.editor.studioId;
+        committedStudioId = result.result.studioId;
         await route.abort("failed");
       },
       { times: 1 },

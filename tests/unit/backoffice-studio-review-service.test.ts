@@ -15,6 +15,7 @@ import {
 vi.mock("server-only", () => ({}));
 
 const dalMocks = vi.hoisted(() => ({
+  getBackofficeUserAccess: vi.fn<typeof BackofficeDalModule.getBackofficeUserAccess>(),
   getBackofficeStudioReview: vi.fn(),
   listBackofficeStudioReviews: vi.fn(),
   listBackofficeUsers: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock(
     const actual = await importOriginal<typeof BackofficeDalModule>();
     return {
       ...actual,
+      getBackofficeUserAccess: dalMocks.getBackofficeUserAccess,
       getBackofficeStudioReview: dalMocks.getBackofficeStudioReview,
       listBackofficeStudioReviews: dalMocks.listBackofficeStudioReviews,
       listBackofficeUsers: dalMocks.listBackofficeUsers,
@@ -118,6 +120,7 @@ function requireAbortSignal(signal: AbortSignal | null) {
 
 describe("FEAT-030 backoffice review service boundaries", () => {
   beforeEach(() => {
+    dalMocks.getBackofficeUserAccess.mockReset();
     dalMocks.getBackofficeStudioReview.mockReset().mockResolvedValue(reviewRecord);
     dalMocks.listBackofficeStudioReviews.mockReset();
     dalMocks.listBackofficeUsers.mockReset();
@@ -365,5 +368,57 @@ describe("FEAT-030 backoffice review service boundaries", () => {
       expect.objectContaining<Partial<BackofficeApiError>>({ code: "NOT_FOUND", status: 404 }),
     );
     expect(dalMocks.getBackofficeStudioReview).not.toHaveBeenCalled();
+    expect(dalMocks.getBackofficeUserAccess).not.toHaveBeenCalled();
   });
+});
+
+describe("FEAT-031 backoffice user access service boundary", () => {
+  const accessRecord = {
+    account_version: 3,
+    created_at: "2026-09-03T06:00:00.000Z",
+    email_masked: "u***@example.test",
+    id: "a1000000-0000-4000-8000-000000000012",
+    profile_completed: true,
+    roles: ["support"],
+    status: "active",
+  } satisfies Awaited<ReturnType<typeof BackofficeDalModule.getBackofficeUserAccess>>;
+
+  beforeEach(() => {
+    dalMocks.getBackofficeUserAccess.mockReset().mockResolvedValue(accessRecord);
+  });
+
+  it.each([accessRecord.id, accessRecord.id.toUpperCase()])(
+    "canonicalizes requested UUID %s and preserves the matching account for SSR",
+    async (userId) => {
+      await expect(readBackofficeUserAccess({ auth, userId })).resolves.toBe(accessRecord);
+
+      expect(dalMocks.getBackofficeUserAccess).toHaveBeenCalledExactlyOnceWith({
+        auth,
+        userId: accessRecord.id,
+      });
+    },
+  );
+
+  it.each([accessRecord.id, accessRecord.id.toUpperCase()])(
+    "rejects another account for requested UUID %s before returning data to SSR",
+    async (userId) => {
+      dalMocks.getBackofficeUserAccess.mockResolvedValueOnce({
+        ...accessRecord,
+        id: "a1000000-0000-4000-8000-000000000013",
+        email_masked: "b***@example.test",
+        roles: ["admin"],
+      });
+
+      const operation = readBackofficeUserAccess({ auth, userId });
+
+      await expect(operation).rejects.toThrow(
+        new Error("backoffice_user_access_response_boundary_violation"),
+      );
+      await expect(operation).rejects.not.toHaveProperty("cause");
+      expect(dalMocks.getBackofficeUserAccess).toHaveBeenCalledExactlyOnceWith({
+        auth,
+        userId: accessRecord.id,
+      });
+    },
+  );
 });

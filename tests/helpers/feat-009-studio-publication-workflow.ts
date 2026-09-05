@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
+  studioCommandResultSchema,
   studioCommandSchema,
   studioPublicationSchema,
   type StudioCommand,
   type StudioEditor,
+  type StudioPublication,
 } from "@set-livre/contracts";
 import { expect, type Page } from "@playwright/test";
 import { z } from "zod";
@@ -271,13 +273,19 @@ async function expectPublicationCommand(
     throw new Error(`A resposta observada não corresponde ao comando ${action}.`);
   }
   const payload: unknown = await response.json();
+  let publication: StudioPublication | undefined;
+  if (response.status() === 200) {
+    const result = apiSuccessSchema(studioCommandResultSchema(studioPublicationSchema)).parse(
+      payload,
+    ).data;
+    expect(result.action).toBe(action);
+    expect(result.idempotencyKey).toBe(command.idempotencyKey);
+    publication = result.result;
+  }
   return {
     command,
     payload,
-    publication:
-      response.status() === 200
-        ? apiSuccessSchema(studioPublicationSchema).parse(payload).data
-        : undefined,
+    publication,
     response,
   };
 }

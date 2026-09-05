@@ -1,3 +1,13 @@
+import { randomUUID } from "node:crypto";
+
+import {
+  apiSuccessSchema,
+  studioCommandResultSchema,
+  studioMediaCommandSchema,
+  studioMediaGallerySchema,
+  studioMediaUploadPreparationSchema,
+  type StudioMediaCommand,
+} from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
 import {
@@ -7,6 +17,7 @@ import {
   createFeat008StudioFixture,
   feat008PngFile,
   installFeat008MediaHarness,
+  provisionFeat008Studio,
   provisionFeat008StudioWithHarness,
   uploadFeat008Photos,
 } from "../../helpers/feat-008-studio-media";
@@ -379,6 +390,151 @@ test("SL-F008-E2E-014 @p1 avanço após preparo libera a reserva antes de oferec
       harness.actions.filter((action) => action === "studio.media.upload.finalize"),
     ).toHaveLength(3);
     expect(harness.uploadAttempts).toHaveLength(1);
+  } finally {
+    await closeFeat008PageBeforeCleanup(page);
+    await cleanupFeat008QaIdentity(identity);
+  }
+});
+
+test("SL-F008-E2E-015 @p1 preparo rejeita reserva irmã antes do Storage e preserva chave no retry", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(190_000);
+  const identity = createFeat008QaIdentity(testInfo, "015_prepare_response_identity");
+  const commands: StudioMediaCommand[] = [];
+  const storageUploads: string[] = [];
+  let mismatchedResponses = 0;
+  let originalMediaId: string | undefined;
+  let siblingMediaId: string | undefined;
+  try {
+    const { editor } = await provisionFeat008Studio(page, identity, "815");
+    const commandResponseSchema = apiSuccessSchema(
+      studioCommandResultSchema(studioMediaUploadPreparationSchema),
+    );
+    page.on("request", (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (
+        pathname.startsWith("/storage/v1/object/upload/sign/") &&
+        ["POST", "PUT", "PATCH"].includes(request.method())
+      ) {
+        storageUploads.push(pathname);
+      }
+      if (request.method() !== "POST" || pathname !== "/api/commands") return;
+      const command = studioMediaCommandSchema.safeParse(request.postDataJSON());
+      if (command.success) commands.push(command.data);
+    });
+    await page.route("**/api/commands", async (route) => {
+      const parsed = studioMediaCommandSchema.safeParse(route.request().postDataJSON());
+      if (!parsed.success || parsed.data.action !== "studio.media.upload.prepare") {
+        await route.fallback();
+        return;
+      }
+      const command = parsed.data;
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      const payload = commandResponseSchema.parse(await response.json());
+      expect(payload.data.action).toBe(command.action);
+      expect(payload.data.idempotencyKey).toBe(command.idempotencyKey);
+      expect(payload.data.result.revisionId).toBe(command.payload.expectedRevisionId);
+      expect(payload.data.result.revisionVersion).toBe(command.payload.expectedRevisionVersion);
+      expect(payload.data.result.scope).toBe(identity.userId);
+      expect(payload.data.result.studioId).toBe(editor.studioId);
+      originalMediaId ??= payload.data.result.mediaId;
+      expect(payload.data.result.mediaId).toBe(originalMediaId);
+      if (mismatchedResponses === 0) {
+        const siblingResponse = await route.fetch({
+          postData: JSON.stringify({ ...command, idempotencyKey: randomUUID() }),
+        });
+        expect(siblingResponse.status()).toBe(200);
+        const sibling = commandResponseSchema.parse(await siblingResponse.json());
+        expect(sibling.data.action).toBe(command.action);
+        expect(sibling.data.idempotencyKey).not.toBe(command.idempotencyKey);
+        expect(sibling.data.result.revisionId).toBe(payload.data.result.revisionId);
+        expect(sibling.data.result.revisionVersion).toBe(payload.data.result.revisionVersion);
+        expect(sibling.data.result.scope).toBe(payload.data.result.scope);
+        expect(sibling.data.result.studioId).toBe(editor.studioId);
+        siblingMediaId = sibling.data.result.mediaId;
+        expect(siblingMediaId).not.toBe(originalMediaId);
+        mismatchedResponses += 1;
+        await route.fulfill({ response: siblingResponse });
+        return;
+      }
+      if (mismatchedResponses === 1) {
+        mismatchedResponses += 1;
+        await route.fulfill({
+          response,
+          json: commandResponseSchema.parse({
+            ...payload,
+            data: { ...payload.data, action: "studio.media.cover.set" },
+          }),
+        });
+        return;
+      }
+      await route.fulfill({ response });
+    });
+
+    const queue = page.getByRole("list", { name: "Fila de uploads" });
+    await page
+      .getByLabel("Selecionar fotos")
+      .setInputFiles(feat008PngFile("qa-preparo-original.png"));
+    for (const attempt of [1, 2]) {
+      await expect(
+        queue.getByText(
+          "O resultado não foi confirmado. Verifique o estado atual antes de repetir qualquer etapa.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(mismatchedResponses).toBe(attempt);
+      expect(commands).toHaveLength(attempt);
+      expect(storageUploads).toHaveLength(0);
+      await expect(queue.getByText("qa-preparo-original.png", { exact: true })).toBeVisible();
+      await expect(queue.getByText("Concluído", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("0 de 20 fotos", { exact: true })).toBeVisible();
+      await expect(page.getByLabel("Selecionar fotos")).toBeDisabled();
+      await queue.getByRole("button", { name: "Verificar estado atual" }).click();
+      await expect(
+        queue.getByText(
+          "A preparação não foi confirmada. Você pode repetir exatamente a mesma solicitação.",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(storageUploads).toHaveLength(0);
+      expect(commands).toHaveLength(attempt);
+      const retryResponse = page.waitForResponse((response) => {
+        if (
+          response.request().method() !== "POST" ||
+          new URL(response.url()).pathname !== "/api/commands"
+        )
+          return false;
+        const command = studioMediaCommandSchema.safeParse(response.request().postDataJSON());
+        return command.success && command.data.action === "studio.media.upload.prepare";
+      });
+      await queue.getByRole("button", { name: "Repetir a mesma solicitação" }).click();
+      expect((await retryResponse).status()).toBe(200);
+    }
+    await expect(queue.getByText("Concluído", { exact: true })).toBeVisible();
+    await expect(page.getByText("1 de 20 fotos", { exact: true })).toBeVisible();
+    expect(commands.map((command) => command.action)).toEqual([
+      "studio.media.upload.prepare",
+      "studio.media.upload.prepare",
+      "studio.media.upload.prepare",
+      "studio.media.upload.finalize",
+    ]);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(commands[2]).toEqual(commands[0]);
+    if (originalMediaId === undefined || siblingMediaId === undefined) {
+      throw new Error("O cenário QA não identificou as duas reservas de upload.");
+    }
+    expect(commands[3]?.payload).toMatchObject({ mediaId: originalMediaId });
+    expect(storageUploads).toHaveLength(1);
+    expect(storageUploads[0]).toContain(originalMediaId);
+    expect(storageUploads[0]).not.toContain(siblingMediaId);
+    const galleryResponse = await page.request.get(`/api/owner/studios/${editor.studioId}/media`);
+    expect(galleryResponse.status()).toBe(200);
+    const gallery = apiSuccessSchema(studioMediaGallerySchema).parse(
+      await galleryResponse.json(),
+    ).data;
+    expect(gallery.items.map((item) => item.id)).toEqual([originalMediaId]);
   } finally {
     await closeFeat008PageBeforeCleanup(page);
     await cleanupFeat008QaIdentity(identity);

@@ -482,7 +482,10 @@ export async function installFeat008MediaHarness(page: Page, editor: StudioEdito
       await route.abort("failed");
       return;
     }
-    await fulfillJson(route, successPayload(result));
+    await fulfillJson(
+      route,
+      successPayload({ action: command.action, idempotencyKey: command.idempotencyKey, result }),
+    );
   });
 
   return {

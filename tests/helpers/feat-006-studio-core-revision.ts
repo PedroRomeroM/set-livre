@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
-  studioCreateCommandSchema,
-  studioCreateResultSchema,
+  studioCommandResultSchema,
+  studioCommandSchema,
   studioEditorSchema,
   type StudioEditor,
 } from "@set-livre/contracts";
@@ -149,14 +149,13 @@ async function expectFeat006EditorCommand(
   const payload: unknown = await response.json();
   let editor: StudioEditor | undefined;
   if (response.status() === 200) {
-    if (action === "studio.create") {
-      const result = apiSuccessSchema(studioCreateResultSchema).parse(payload).data;
-      const command = studioCreateCommandSchema.parse(response.request().postDataJSON());
-      expect(result.idempotencyKey).toBe(command.idempotencyKey);
-      editor = result.editor;
-    } else {
-      editor = apiSuccessSchema(studioEditorSchema).parse(payload).data;
-    }
+    const result = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+      payload,
+    ).data;
+    const command = studioCommandSchema.parse(response.request().postDataJSON());
+    expect(result.action).toBe(action);
+    expect(result.idempotencyKey).toBe(command.idempotencyKey);
+    editor = result.result;
   }
   return {
     editor,

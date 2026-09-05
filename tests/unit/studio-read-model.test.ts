@@ -12,6 +12,7 @@ vi.mock("../../src/lib/supabase/server", () => ({
 import {
   readActiveStudioTaxonomiesWithClient,
   readActiveStudioTypesWithClient,
+  readOwnerStudioEditor,
   readOwnerStudioEditorWithClient,
   StudioNotFoundError,
 } from "../../src/domains/studios/server/studio-read-model";
@@ -55,7 +56,7 @@ describe("studio read model", () => {
     mocks.maybeSingle.mockResolvedValue({ data: editorRow, error: null });
   });
 
-  it("maps the strict authenticated editor row and validates its scope", async () => {
+  it("maps the strict authenticated editor row for the requested scope and studio", async () => {
     await expect(
       readOwnerStudioEditorWithClient(
         client as never,
@@ -69,6 +70,61 @@ describe("studio read model", () => {
     expect(mocks.abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
   });
 
+  it.each([studioTestIds.studioId, studioTestIds.studioId.toUpperCase()])(
+    "rejects another studio owned by the same user when requesting %s",
+    async (studioId) => {
+      mocks.maybeSingle.mockResolvedValueOnce({
+        data: { ...editorRow, studio_id: studioTestIds.otherStudioId },
+        error: null,
+      });
+
+      await expect(readOwnerStudioEditor(studioTestIds.userId, studioId)).rejects.toEqual(
+        new Error("O editor de estúdio retornou um estúdio diferente do solicitado."),
+      );
+    },
+  );
+
+  it("canonicalizes the requested UUID before reading and checking the editor target", async () => {
+    await expect(
+      readOwnerStudioEditor(studioTestIds.userId, studioTestIds.studioId.toUpperCase()),
+    ).resolves.toEqual(studioEditorFixture);
+    expect(mocks.rpc).toHaveBeenCalledWith("get_owner_studio_editor", {
+      p_studio_id: studioTestIds.studioId,
+    });
+  });
+
+  it.each([
+    { studioId: studioTestIds.studioId, userId: "invalid-user" },
+    { studioId: "invalid-studio", userId: studioTestIds.userId },
+  ])("rejects invalid input before the RPC: $userId / $studioId", async ({ studioId, userId }) => {
+    await expect(readOwnerStudioEditor(userId, studioId)).rejects.toThrow();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { data: null, label: "null" },
+    { data: editorRow, label: "an editor row" },
+  ])("preserves a safe RPC error when data is $label", async ({ data }) => {
+    mocks.maybeSingle.mockResolvedValueOnce({
+      data,
+      error: { message: "private SQL or provider details" },
+    });
+
+    await expect(
+      readOwnerStudioEditor(studioTestIds.userId, studioTestIds.studioId),
+    ).rejects.toEqual(new Error("Não foi possível carregar o editor de estúdio autenticado."));
+  });
+
+  it("rejects the requested studio when its scope differs from the session", async () => {
+    mocks.maybeSingle.mockResolvedValueOnce({
+      data: { ...editorRow, scope: studioTestIds.otherUserId },
+      error: null,
+    });
+    await expect(
+      readOwnerStudioEditor(studioTestIds.userId, studioTestIds.studioId),
+    ).rejects.toEqual(new Error("O editor de estúdio retornou um escopo diferente da sessão."));
+  });
+
   it("returns not-found without exposing ownership and rejects DTO drift", async () => {
     mocks.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
     await expect(
@@ -78,18 +134,6 @@ describe("studio read model", () => {
         studioTestIds.studioId,
       ),
     ).rejects.toBeInstanceOf(StudioNotFoundError);
-
-    mocks.maybeSingle.mockResolvedValueOnce({
-      data: { ...editorRow, scope: studioTestIds.otherUserId },
-      error: null,
-    });
-    await expect(
-      readOwnerStudioEditorWithClient(
-        client as never,
-        studioTestIds.userId,
-        studioTestIds.studioId,
-      ),
-    ).rejects.toThrow("escopo diferente");
 
     mocks.maybeSingle.mockResolvedValueOnce({
       data: { ...editorRow, private_owner_tax_id: "52998224725" },

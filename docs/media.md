@@ -2,7 +2,7 @@
 
 ## Contrato de fotos
 
-O editor aceita de zero a vinte fotos por revisão. Submissão futura exige ao menos uma foto e uma capa;
+O editor aceita de zero a vinte fotos por revisão. Submissão exige ao menos uma foto e uma capa;
 a edição não antecipa essa validação. Cada original pode ter até 15 MiB, 8.192 px por dimensão e 36
 milhões de pixels no total. Os formatos permitidos são JPEG, PNG, WebP e AVIF; SVG, GIF, HEIC e vídeo
 próprio são recusados.
@@ -29,11 +29,11 @@ owners/<ownerId>/studios/<studioId>/revisions/<revisionId>/<mediaId>.<ext>
 owners/<ownerId>/studios/<studioId>/revisions/<revisionId>/<mediaId>.preview.webp
 ```
 
-IDs enviados pelo cliente não provam ownership. O read model atual é exclusivo do próprio dono
+IDs enviados pelo cliente não provam ownership. O read model da galeria do dono é exclusivo do próprio dono
 elegível, lê os paths por uma função privada do DAL e usa a secret key somente no servidor para devolver
 URLs assinadas curtas. O browser não recebe `storagePath`, grants de leitura dos registros ou permissão
-para assinar objetos. Reviewer e entrega pública serão adicionados somente pelas features que os
-consomem.
+para assinar objetos. A leitura administrativa segue a fronteira de revisão em
+[`backoffice.md`](backoffice.md); a entrega pública permanece com sua feature proprietária.
 
 ## Upload e verificação
 
@@ -48,6 +48,9 @@ consomem.
 3. O browser envia o original diretamente ao Storage, com deadline de 60 segundos; o upload não
    atravessa a VM. Essa etapa usa o cliente oficial dedicado de Storage com a chave pública e o token
    assinado, sem criar outro cliente Auth nem persistir sessão no navegador.
+   Antes de aceitar token, path ou `mediaId`, a fronteira de comandos confere ação, chave da tentativa
+   e alvo conforme [`api-contracts.md`](api-contracts.md#53-estúdio-e-revisão). Resposta de outra reserva
+   não inicia upload e preserva o comando original para recuperação.
 4. `studio.media.upload.finalize` persiste um claim único por dono + chave antes do slot de imagem. A
    mesma linha reserva também o `media_id` e mantém uma lease cercada de 30 segundos. Retry da mesma
    chave aguarda com conexões do pool liberadas entre consultas, retoma somente após expiração ou relê o

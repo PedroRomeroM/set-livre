@@ -37,6 +37,9 @@ taxonomias exigem o grupo solicitado e, em edição/arquivamento/reativação, t
 Criação exige ainda nome e slug normalizados pelo contrato, ordem enviada e estado inicial ativo;
 um item do mesmo grupo com valores divergentes não confirma a tentativa idempotente.
 Resposta de outro alvo ou grupo falha fechada e solicita recomposição da sessão privada.
+O detalhe de acessos também compara, no serviço server-only, o ID devolvido pelo DAL com o UUID
+canônico solicitado antes de renderizar a conta e suas ações no Server Component. Divergência não
+produz tela de outro usuário nem revela o registro na mensagem de erro.
 
 `support` opera usuários. `reviewer` revisa candidatas editoriais. `admin` substitui deliberadamente
 ambos e também administra acessos, taxonomias e moderação de estúdios. As capacidades não são

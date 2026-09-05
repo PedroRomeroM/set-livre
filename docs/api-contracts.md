@@ -212,7 +212,7 @@ checklist sem avançar os fences editoriais, o comparador recusa a projeção de
 recompõe a rota SSR; a nova tela mostra a pendência sem repetir o POST. O `latestReview` segue a
 sequência causal do banco; timestamp e UUID não desempatam a timeline.
 
-Os três comandos retornam `StudioPublication`: escopo, status, `publicationVersion`, checklist,
+O resultado dos três comandos é `StudioPublication`: escopo, status, `publicationVersion`, checklist,
 capacidades derivadas, último fato editorial e as revisões atual/publicada. Capas privadas são
 assinadas pelo servidor, deduplicadas por path e validadas novamente contra owner/estúdio/revisão;
 paths de Storage nunca entram no DTO. Submit grava revisão pendente, evento, intenção de e-mail,
@@ -224,13 +224,17 @@ Taxonomia recebe listas únicas de no máximo 20 UUIDs por grupo e o banco aceit
 ativos. Conteúdo recebe plain text aparado, até 20 FAQs ordenadas e `youtubeVideoId` nulo ou com 11
 caracteres allowlisted; URLs são interpretadas apenas na fronteira do browser e nunca persistidas.
 
-Updates retornam o `StudioEditor` autoritativo. Create retorna o envelope estrito
-`{idempotencyKey, editor: StudioEditor}`: o serviço ecoa a chave do comando validado somente depois
-do resultado autoritativo do DAL. O browser confere essa chave e o escopo do editor antes de resolver
-a recuperação ou oferecer navegação; chave ausente/divergente é `RESPONSE_INVALID` ambíguo e preserva
-a tentativa original. Assim, uma resposta de outra criação do mesmo dono, mesmo com conteúdo igual,
-não confirma a tentativa pendente. A chave identifica a operação, não substitui ownership ou
-`requestId`, e não integra os read models do editor. Discard retorna união discriminada:
+Todo sucesso de comando `studio.*` usa `data: {action, idempotencyKey, result}` no envelope HTTP
+canônico. O handler ecoa ação e chave validadas somente depois de o serviço concluir; `result` contém
+o DTO autoritativo já definido para a operação. O browser valida o envelope estrito, ação, chave,
+escopo e, quando o alvo já existe, ID do estúdio antes de devolver somente o DTO à UI. Campo
+ausente/divergente é `RESPONSE_INVALID` ambíguo: não anuncia sucesso, não resolve recovery e não libera
+upload para Storage; preserva o mesmo comando para recuperação. Assim, resposta de outra tentativa
+do mesmo dono/estúdio não confirma criação, publicação ou reserva de mídia, mesmo com conteúdo igual.
+A identidade da tentativa não substitui ownership, fences de versão, validação do DTO ou `requestId`
+e não integra os read models de GET. Não há envelope alternativo exclusivo de criação.
+
+Create e updates têm `StudioEditor` como resultado. Discard retorna união discriminada:
 `studioDeleted=true` sem editor para estúdio inédito ou `studioDeleted=false` com editor da revisão
 publicada preservada. A mesma chave/payload não repete efeito e retorna exatamente o resultado cujo
 hash foi registrado; se uma mudança posterior impedir reconstruir esse resultado, o replay falha
@@ -265,7 +269,8 @@ Leituras implementadas:
 - `GET /api/studio-taxonomies`: sessão autenticada e projeção estrita de tags/comodidades ativas;
 - `GET /api/owner/studios/[studioId]`: sessão autenticada, conta ativa, perfil completo, autoridade de
   dono ativa e contrato vigente são revalidados em toda leitura; depois disso, UUID estrito e 0/1
-  editor do próprio dono. UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem
+  editor do próprio dono, com ID igual ao solicitado também na fronteira usada pelo Server Component.
+  UUID inválido ou ownership diferente retornam o mesmo `404 NOT_FOUND` sem
   revelar existência. Revogação durante uma sessão aberta recompõe a rota SSR antes de nova edição.
 - `GET /api/owner/studios/[studioId]/publication`: aplica as mesmas guardas e retorna somente o
   `StudioPublication` do dono. Estúdio inválido/alheio continua indistinguível em `404`; falha de

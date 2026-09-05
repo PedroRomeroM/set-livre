@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
+  studioCommandResultSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
 } from "@set-livre/contracts";
@@ -188,9 +189,9 @@ test("SL-F007-E2E-008 @p1 descarte restaura conteúdo e remove a galeria da draf
     await page.getByRole("button", { name: "Confirmar descarte" }).click();
     const discardResponse = await discardResponsePromise;
     expect(discardResponse.status()).toBe(200);
-    const discardResult = apiSuccessSchema(studioDraftDiscardResultSchema).parse(
-      await discardResponse.json(),
-    ).data;
+    const discardResult = apiSuccessSchema(
+      studioCommandResultSchema(studioDraftDiscardResultSchema),
+    ).parse(await discardResponse.json()).data.result;
     if (discardResult.studioDeleted) {
       throw new Error("O descarte da segunda revisão não deveria excluir o estúdio publicado.");
     }
@@ -354,9 +355,9 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
       headers: { origin: new URL(page.url()).origin },
     });
     expect(concurrentResponse.status()).toBe(200);
-    const concurrentEditor = apiSuccessSchema(studioEditorSchema).parse(
+    const concurrentEditor = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
       await concurrentResponse.json(),
-    ).data;
+    ).data.result;
     expectFeat007EditorVersion(concurrentEditor, 2);
 
     const backgroundRead = page.waitForResponse(
@@ -435,7 +436,9 @@ test("SL-F007-E2E-011 @p1 refetch não ignora conflito nem sobrescreve conteúdo
     });
     expect(latestConcurrentResponse.status()).toBe(200);
     expectFeat007EditorVersion(
-      apiSuccessSchema(studioEditorSchema).parse(await latestConcurrentResponse.json()).data,
+      apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+        await latestConcurrentResponse.json(),
+      ).data.result,
       4,
     );
 

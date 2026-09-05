@@ -27,6 +27,11 @@ function assertExpectedScope(context: PrivateCommandContext, expectedScope: stri
 
 export async function executeStudioCommand(command: StudioCommand, context: PrivateCommandContext) {
   assertExpectedScope(context, command.expectedScope);
+  const result = await executeStudioCommandResult(command, context);
+  return { action: command.action, idempotencyKey: command.idempotencyKey, result };
+}
+
+async function executeStudioCommandResult(command: StudioCommand, context: PrivateCommandContext) {
   switch (command.action) {
     case "studio.create":
       return createStudio(command, context);

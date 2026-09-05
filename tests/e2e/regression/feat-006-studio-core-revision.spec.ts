@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import {
   apiSuccessSchema,
   studioCreateCommandSchema,
-  studioCreateResultSchema,
+  studioCommandResultSchema,
+  studioEditorSchema,
   studioDraftDiscardCommandSchema,
   studioDraftDiscardResultSchema,
 } from "@set-livre/contracts";
@@ -244,7 +245,8 @@ test("SL-F006-E2E-009 @p1 criação concluída entra em estado terminal antes de
     const response = await createResponse;
     expect(response.status()).toBe(200);
     const payload: unknown = await response.json();
-    const editor = apiSuccessSchema(studioCreateResultSchema).parse(payload).data.editor;
+    const editor = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(payload)
+      .data.result;
 
     await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
@@ -633,20 +635,23 @@ async function expectCreationResponseBoundary(
         const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const payload = apiSuccessSchema(studioCreateResultSchema).parse(await response.json());
-        committedStudioId = payload.data.editor.studioId;
+        const payload = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+          await response.json(),
+        );
+        committedStudioId = payload.data.result.studioId;
+        expect(payload.data.action).toBe(command.action);
         expect(payload.data.idempotencyKey).toBe(command.idempotencyKey);
         if (scenario === "022") {
           const unrelatedResponse = await route.fetch({
             postData: JSON.stringify({ ...command, idempotencyKey: randomUUID() }),
           });
           expect(unrelatedResponse.status()).toBe(200);
-          const unrelated = apiSuccessSchema(studioCreateResultSchema).parse(
+          const unrelated = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
             await unrelatedResponse.json(),
           );
-          expect(unrelated.data.editor.scope).toBe(identity.userId);
+          expect(unrelated.data.result.scope).toBe(identity.userId);
           expect(unrelated.data.idempotencyKey).not.toBe(command.idempotencyKey);
-          unrelatedStudioId = unrelated.data.editor.studioId;
+          unrelatedStudioId = unrelated.data.result.studioId;
           expect(unrelatedStudioId).not.toBe(committedStudioId);
           await route.fulfill({ response: unrelatedResponse });
           return;
@@ -657,8 +662,8 @@ async function expectCreationResponseBoundary(
             ...payload,
             data: {
               ...payload.data,
-              editor: {
-                ...payload.data.editor,
+              result: {
+                ...payload.data.result,
                 scope: randomUUID(),
                 studioId: unrelatedStudioId,
               },
@@ -746,10 +751,10 @@ test("SL-F006-E2E-021 @p1 descarte rejeita escopo e estúdio divergentes antes d
         studioDraftDiscardCommandSchema.parse(route.request().postDataJSON());
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const payload = apiSuccessSchema(studioDraftDiscardResultSchema).parse(
-          await response.json(),
-        );
-        expect(payload.data).toMatchObject({
+        const payload = apiSuccessSchema(
+          studioCommandResultSchema(studioDraftDiscardResultSchema),
+        ).parse(await response.json());
+        expect(payload.data.result).toMatchObject({
           scope: identity.userId,
           studioDeleted: true,
           studioId: editor.studioId,
@@ -759,7 +764,10 @@ test("SL-F006-E2E-021 @p1 descarte rejeita escopo e estúdio divergentes antes d
         corruptedResponses += 1;
         await route.fulfill({
           response,
-          json: { ...payload, data: { ...payload.data, ...wrongBoundary } },
+          json: {
+            ...payload,
+            data: { ...payload.data, result: { ...payload.data.result, ...wrongBoundary } },
+          },
         });
       },
       { times: 2 },

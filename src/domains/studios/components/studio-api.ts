@@ -1,7 +1,7 @@
 import {
   apiErrorSchema,
   apiSuccessSchema,
-  studioCreateResultSchema,
+  studioCommandResultSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
   studioMediaGallerySchema,
@@ -116,27 +116,32 @@ async function requestStudio<TData>(
   return parsed.data.data;
 }
 
-function requestStudioCommand<TData extends Readonly<{ scope: string; studioId: string }>>(
-  command: Exclude<StudioCommand, { action: "studio.create" }>,
+async function requestStudioCommand<TData extends Readonly<{ scope: string; studioId: string }>>(
+  command: StudioCommand,
   dataSchema: z.ZodType<TData>,
   timeoutMs = studioRequestTimeoutMs,
 ): Promise<TData> {
-  const expectedScope = command.expectedScope;
-  const expectedStudioId = command.payload.studioId;
-  return requestStudio(
+  const { action, expectedScope, idempotencyKey } = command;
+  const expectedStudioId = action === "studio.create" ? undefined : command.payload.studioId;
+  const response = await requestStudio(
     "/api/commands",
-    dataSchema.refine(
-      (result) => result.scope === expectedScope && result.studioId === expectedStudioId,
+    studioCommandResultSchema(dataSchema).refine(
+      (response) =>
+        response.action === action &&
+        response.idempotencyKey === idempotencyKey &&
+        response.result.scope === expectedScope &&
+        (expectedStudioId === undefined || response.result.studioId === expectedStudioId),
     ),
     { body: JSON.stringify(command), method: "POST" },
     timeoutMs,
   );
+  return response.result;
 }
 
 export function readStudioEditor(studioId: string, signal?: AbortSignal): Promise<StudioEditor> {
   return requestStudio(
     `/api/owner/studios/${encodeURIComponent(studioId)}`,
-    studioEditorSchema,
+    studioEditorSchema.refine((editor) => editor.studioId === studioId.toLowerCase()),
     signal === undefined ? undefined : { signal },
   );
 }
@@ -157,16 +162,8 @@ export function readStudioTaxonomies(signal?: AbortSignal): Promise<StudioTaxono
   );
 }
 
-export async function createStudio(command: Extract<StudioCommand, { action: "studio.create" }>) {
-  const { expectedScope, idempotencyKey } = command;
-  const result = await requestStudio(
-    "/api/commands",
-    studioCreateResultSchema.refine(
-      (result) => result.idempotencyKey === idempotencyKey && result.editor.scope === expectedScope,
-    ),
-    { body: JSON.stringify(command), method: "POST" },
-  );
-  return result.editor;
+export function createStudio(command: Extract<StudioCommand, { action: "studio.create" }>) {
+  return requestStudioCommand(command, studioEditorSchema);
 }
 
 export function updateStudioCore(
@@ -206,7 +203,7 @@ export function readStudioMedia(
 ): Promise<StudioMediaGallery> {
   return requestStudio(
     `/api/owner/studios/${encodeURIComponent(studioId)}/media`,
-    studioMediaGallerySchema,
+    studioMediaGallerySchema.refine((gallery) => gallery.studioId === studioId.toLowerCase()),
     signal === undefined ? undefined : { signal },
   );
 }
@@ -217,7 +214,9 @@ export function readStudioPublication(
 ): Promise<StudioPublication> {
   return requestStudio(
     `/api/owner/studios/${encodeURIComponent(studioId)}/publication`,
-    studioPublicationSchema,
+    studioPublicationSchema.refine(
+      (publication) => publication.studioId === studioId.toLowerCase(),
+    ),
     signal === undefined ? undefined : { signal },
   );
 }

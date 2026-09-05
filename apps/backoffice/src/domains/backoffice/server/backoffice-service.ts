@@ -318,10 +318,15 @@ export async function readBackofficeUserAccess(input: {
   userId: string;
 }) {
   try {
-    return await getBackofficeUserAccess({
+    const userId = parseBackofficeRouteUuid(input.userId);
+    const record = await getBackofficeUserAccess({
       auth: input.auth,
-      userId: parseBackofficeRouteUuid(input.userId),
+      userId,
     });
+    if (record.id !== userId) {
+      throw new Error("backoffice_user_access_response_boundary_violation");
+    }
+    return record;
   } catch (error) {
     translateBackofficeDatabaseError(error);
   }

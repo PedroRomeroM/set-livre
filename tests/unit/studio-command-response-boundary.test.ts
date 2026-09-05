@@ -1,9 +1,11 @@
 import {
-  studioCreateResultSchema,
+  studioCommandActionSchema,
+  studioCommandResultSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
   studioMediaGallerySchema,
   studioMediaUploadPreparationSchema,
+  type StudioCommandAction,
 } from "@set-livre/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -55,13 +57,6 @@ function editorFor(expected: ResponseBoundary) {
   return studioEditorSchema.parse({ ...studioEditorFixture, ...expected });
 }
 
-function createResultFor(expected: ResponseBoundary) {
-  return studioCreateResultSchema.parse({
-    editor: editorFor(expected),
-    idempotencyKey: createCommand.idempotencyKey,
-  });
-}
-
 function galleryFor(expected: ResponseBoundary) {
   return studioMediaGallerySchema.parse({
     ...expected,
@@ -75,8 +70,16 @@ function galleryFor(expected: ResponseBoundary) {
   });
 }
 
-const existingStudioCases = [
+type CommandResponseCase = Readonly<{
+  action: StudioCommandAction;
+  name: string;
+  request: () => Promise<unknown>;
+  resultFor: (expected: ResponseBoundary) => ResponseBoundary;
+}>;
+
+const existingStudioCases: readonly CommandResponseCase[] = [
   {
+    action: "studio.revision.updateCore",
     name: "updateCore",
     request: () =>
       updateStudioCore({
@@ -87,6 +90,7 @@ const existingStudioCases = [
     resultFor: editorFor,
   },
   {
+    action: "studio.revision.updateTaxonomy",
     name: "updateTaxonomy",
     request: () =>
       updateStudioTaxonomy({
@@ -97,6 +101,7 @@ const existingStudioCases = [
     resultFor: editorFor,
   },
   {
+    action: "studio.revision.updateContent",
     name: "updateContent",
     request: () =>
       updateStudioContent({
@@ -112,6 +117,7 @@ const existingStudioCases = [
     resultFor: editorFor,
   },
   ...([true, false] as const).map((studioDeleted) => ({
+    action: "studio.draft.discard" as const,
     name: `discard studioDeleted=${studioDeleted}`,
     request: () => discardStudioDraft(discardCommand),
     resultFor: (expected: ResponseBoundary) =>
@@ -122,6 +128,7 @@ const existingStudioCases = [
       }),
   })),
   ...(["studio.pause", "studio.resume", "studio.revision.submit"] as const).map((action) => ({
+    action,
     name: action,
     request: () =>
       changeStudioPublication(
@@ -136,6 +143,7 @@ const existingStudioCases = [
     resultFor: (expected: ResponseBoundary) => createStudioPublicationFixture(expected),
   })),
   {
+    action: "studio.media.upload.prepare",
     name: "media upload prepare",
     request: () =>
       prepareStudioMediaUpload({
@@ -161,6 +169,7 @@ const existingStudioCases = [
       }),
   },
   {
+    action: "studio.media.upload.finalize",
     name: "media upload finalize",
     request: () =>
       finalizeStudioMediaUpload({
@@ -171,6 +180,7 @@ const existingStudioCases = [
     resultFor: galleryFor,
   },
   {
+    action: "studio.media.reorder",
     name: "media reorder",
     request: () =>
       reorderStudioMedia({
@@ -181,6 +191,7 @@ const existingStudioCases = [
     resultFor: galleryFor,
   },
   {
+    action: "studio.media.cover.set",
     name: "media cover set",
     request: () =>
       setStudioMediaCover({
@@ -191,6 +202,7 @@ const existingStudioCases = [
     resultFor: galleryFor,
   },
   {
+    action: "studio.media.delete",
     name: "media delete",
     request: () =>
       deleteStudioMedia({
@@ -201,8 +213,13 @@ const existingStudioCases = [
     resultFor: galleryFor,
   },
 ];
-const allCases = [
-  { name: "create", request: () => createStudio(createCommand), resultFor: createResultFor },
+const allCases: readonly CommandResponseCase[] = [
+  {
+    action: "studio.create",
+    name: "create",
+    request: () => createStudio(createCommand),
+    resultFor: editorFor,
+  },
   ...existingStudioCases,
 ];
 
@@ -217,19 +234,29 @@ function respondWith(data: unknown) {
 describe("studio command response boundary", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each(existingStudioCases)(
-    "accepts the requested scope and studio for $name",
-    async ({ request, resultFor }) => {
+  it("covers every registered studio command action", () => {
+    expect(new Set(allCases.map(({ action }) => action))).toEqual(
+      new Set(studioCommandActionSchema.options),
+    );
+  });
+
+  it.each(allCases)(
+    "unwraps only the DTO with matching action, key, scope and studio for $name",
+    async ({ action, request, resultFor }) => {
       const result = resultFor(boundary);
-      respondWith(result);
+      respondWith({ action, idempotencyKey: envelope.idempotencyKey, result });
       await expect(request()).resolves.toEqual(result);
     },
   );
 
   it.each(allCases)(
     "rejects another owner's structurally valid result before success for $name",
-    async ({ request, resultFor }) => {
-      respondWith(resultFor({ ...boundary, scope: studioTestIds.otherUserId }));
+    async ({ action, request, resultFor }) => {
+      respondWith({
+        action,
+        idempotencyKey: envelope.idempotencyKey,
+        result: resultFor({ ...boundary, scope: studioTestIds.otherUserId }),
+      });
       const onSuccess = vi.fn();
       const error = await request()
         .then(onSuccess)
@@ -244,8 +271,12 @@ describe("studio command response boundary", () => {
 
   it.each(existingStudioCases)(
     "rejects another studio's structurally valid result for $name",
-    async ({ request, resultFor }) => {
-      respondWith(resultFor({ ...boundary, studioId: studioTestIds.otherStudioId }));
+    async ({ action, request, resultFor }) => {
+      respondWith({
+        action,
+        idempotencyKey: envelope.idempotencyKey,
+        result: resultFor({ ...boundary, studioId: studioTestIds.otherStudioId }),
+      });
       await expect(request()).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
     },
   );
@@ -254,13 +285,15 @@ describe("studio command response boundary", () => {
     { ...boundary, scope: studioTestIds.otherUserId },
     { ...boundary, studioId: studioTestIds.otherStudioId },
   ])("rejects discard's nested editor when only the envelope matches: %j", async (mismatched) => {
-    respondWith(
-      studioDraftDiscardResultSchema.parse({
+    respondWith({
+      action: discardCommand.action,
+      idempotencyKey: discardCommand.idempotencyKey,
+      result: studioDraftDiscardResultSchema.parse({
         ...boundary,
         editor: editorFor(mismatched),
         studioDeleted: false,
       }),
-    );
+    });
     await expect(discardStudioDraft(discardCommand)).rejects.toMatchObject({
       code: "RESPONSE_INVALID",
     });
@@ -270,11 +303,12 @@ describe("studio command response boundary", () => {
     "rejects another creation attempt's valid key for the same owner's studio %s before success",
     async (studioId) => {
       const otherIdempotencyKey = "33333333-3333-4333-8333-333333333334";
-      const result = studioCreateResultSchema.parse({
-        editor: editorFor({ ...boundary, studioId }),
+      const result = studioCommandResultSchema(studioEditorSchema).parse({
+        action: createCommand.action,
         idempotencyKey: otherIdempotencyKey,
+        result: editorFor({ ...boundary, studioId }),
       });
-      expect(result.editor.scope).toBe(createCommand.expectedScope);
+      expect(result.result.scope).toBe(createCommand.expectedScope);
       expect(result.idempotencyKey).not.toBe(createCommand.idempotencyKey);
       respondWith(result);
       const onSuccess = vi.fn();
@@ -292,49 +326,93 @@ describe("studio command response boundary", () => {
     },
   );
 
-  it.each([
-    { name: "missing key", result: { editor: studioEditorFixture } },
-    {
-      name: "invalid UUID key",
-      result: { editor: studioEditorFixture, idempotencyKey: "qa-invalid-idempotency-key" },
-    },
-    { name: "null key", result: { editor: studioEditorFixture, idempotencyKey: null } },
-    { name: "legacy bare editor", result: studioEditorFixture },
-    {
-      name: "unexpected envelope field",
-      result: { ...createResultFor(boundary), ownerTaxId: "52998224725" },
-    },
-    {
-      name: "unexpected editor field",
-      result: {
-        editor: { ...studioEditorFixture, ownerTaxId: "52998224725" },
-        idempotencyKey: createCommand.idempotencyKey,
+  describe.each(allCases)("$name response identity", ({ action, request, resultFor }) => {
+    const result = resultFor(boundary);
+    const matching = { action, idempotencyKey: envelope.idempotencyKey, result };
+    const otherIdempotencyKey = "33333333-3333-4333-8333-333333333334";
+
+    it.each([
+      { name: "missing key", data: { action, result } },
+      { name: "different valid key", data: { ...matching, idempotencyKey: otherIdempotencyKey } },
+      {
+        name: "different valid action",
+        data: {
+          ...matching,
+          action: action === "studio.create" ? "studio.revision.updateCore" : "studio.create",
+        },
       },
-    },
-  ])("rejects a creation response with $name as ambiguous before success", async ({ result }) => {
-    respondWith(result);
-    const onSuccess = vi.fn();
+      ...(action === "studio.media.upload.prepare"
+        ? [
+            {
+              name: "invalid UUID key",
+              data: { ...matching, idempotencyKey: "qa-invalid-idempotency-key" },
+            },
+            { name: "null key", data: { ...matching, idempotencyKey: null } },
+            { name: "missing action", data: { idempotencyKey: envelope.idempotencyKey, result } },
+            { name: "non-studio action", data: { ...matching, action: "owner.activate" } },
+            { name: "legacy bare DTO", data: result },
+            { name: "unexpected envelope PII", data: { ...matching, ownerTaxId: "52998224725" } },
+            {
+              name: "unexpected DTO PII",
+              data: { ...matching, result: { ...result, ownerTaxId: "52998224725" } },
+            },
+            {
+              name: "unexpected envelope token",
+              data: { ...matching, signedToken: "qa-unexpected-signed-token" },
+            },
+          ]
+        : []),
+    ])("rejects $name as ambiguous before onSuccess without leaking payload", async ({ data }) => {
+      respondWith(data);
+      const onSuccess = vi.fn();
 
-    const error = await createStudio(createCommand)
-      .then(onSuccess)
-      .catch((cause: unknown) => cause);
+      const error = await request()
+        .then(onSuccess)
+        .catch((cause: unknown) => cause);
 
-    expect(error).toBeInstanceOf(StudioApiError);
-    expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
-    expect(isAmbiguousStudioError(error)).toBe(true);
-    expect(onSuccess).not.toHaveBeenCalled();
-    expect(JSON.stringify(error)).not.toContain("qa-invalid-idempotency-key");
-    expect(JSON.stringify(error)).not.toContain("52998224725");
+      expect(error).toBeInstanceOf(StudioApiError);
+      expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
+      expect(isAmbiguousStudioError(error)).toBe(true);
+      expect(onSuccess).not.toHaveBeenCalled();
+      const serialized = [
+        String(error),
+        JSON.stringify(error),
+        JSON.stringify(error, Object.getOwnPropertyNames(error)),
+      ].join("\n");
+      for (const privateValue of [
+        otherIdempotencyKey,
+        studioTestIds.idempotencyKey,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        studioCoreFixture.street,
+        "qa-invalid-idempotency-key",
+        "52998224725",
+        "qa-unit-signed-token",
+        "qa-unexpected-signed-token",
+        "token=test",
+      ]) {
+        expect(serialized).not.toContain(privateValue);
+      }
+    });
+  });
+
+  it("rejects the superseded create-specific envelope", async () => {
+    respondWith({ editor: studioEditorFixture, idempotencyKey: createCommand.idempotencyKey });
+    await expect(createStudio(createCommand)).rejects.toMatchObject({ code: "RESPONSE_INVALID" });
   });
 
   it.each([studioTestIds.studioId, studioTestIds.otherStudioId])(
     "returns only the editor for server-generated studio ID %s with the matching creation key and scope",
     async (studioId) => {
-      const result = createResultFor({ ...boundary, studioId });
-      respondWith(result);
+      const result = editorFor({ ...boundary, studioId });
+      respondWith({
+        action: createCommand.action,
+        idempotencyKey: createCommand.idempotencyKey,
+        result,
+      });
 
       expect(createCommand.payload).not.toHaveProperty("studioId");
-      await expect(createStudio(createCommand)).resolves.toEqual(result.editor);
+      await expect(createStudio(createCommand)).resolves.toEqual(result);
     },
   );
 });

@@ -289,6 +289,9 @@ Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
   rollback autoritativo `N+1 → N` feito em outra aba sem restaurar uma resposta de comando obsoleta;
 - o teste unitário do cliente comprova que uma finalização válida pode ultrapassar o deadline genérico
   sem exceder o envelope dedicado de 45 segundos, sem adicionar espera real à matriz Playwright;
+- `SL-F008-E2E-015` devolve uma reserva real de tentativa irmã do mesmo estúdio: chave ou ação
+  divergentes impedem qualquer upload ao Storage, preservam o comando e só a confirmação do retry
+  original permite finalizar a mídia correta;
 - axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
@@ -314,6 +317,8 @@ Os cenários `SL-F009-E2E-*` exercitam a matriz permanente desta feature:
   fence retorna projeção derivada divergente, taxonomia arquivada entre leitura e submit sem efeito
   parcial, releitura autoritativa após resposta ambígua sem um segundo POST e descarte integral da
   correção criada após a primeira rejeição;
+- `SL-F009-E2E-017` recusa chave e ação divergentes em respostas estruturalmente válidas, não anuncia
+  conclusão, preserva o replay exato e comprova uma única submissão, outbox e auditoria no banco;
 - axe, teclado, foco, toque, 320 px e tema escuro executam em quatro composições;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 

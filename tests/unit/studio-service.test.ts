@@ -54,11 +54,11 @@ describe("studio service", () => {
   });
 
   it.each([studioTestIds.idempotencyKey, "33333333-3333-4333-8333-333333333334"])(
-    "echoes creation key %s and derives user and request identities only from the authenticated context",
+    "passes creation key %s to the DAL, returns only the DTO and derives identities from context",
     async (idempotencyKey) => {
       await expect(
         createStudioService(dependencies).create({ ...createCommand, idempotencyKey }, context),
-      ).resolves.toEqual({ editor: studioEditorFixture, idempotencyKey });
+      ).resolves.toEqual(studioEditorFixture);
       expect(dependencies.createStudioDraft).toHaveBeenCalledWith({
         core: studioCoreFixture,
         idempotencyKey,

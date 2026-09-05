@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
+  studioCommandResultSchema,
   studioCommandSchema,
   studioDraftDiscardResultSchema,
   studioPublicationSchema,
@@ -182,7 +183,9 @@ test("SL-F009-E2E-015 @p1 descarte após primeira rejeição remove o estúdio a
     const discardResponse = await discardResponsePromise;
     expect(discardResponse.status()).toBe(200);
     expect(
-      apiSuccessSchema(studioDraftDiscardResultSchema).parse(await discardResponse.json()).data,
+      apiSuccessSchema(studioCommandResultSchema(studioDraftDiscardResultSchema)).parse(
+        await discardResponse.json(),
+      ).data.result,
     ).toMatchObject({ studioDeleted: true, studioId: editor.studioId });
 
     await expect(page.getByText("Rascunho descartado", { exact: true })).toBeVisible();
@@ -546,6 +549,95 @@ test("SL-F009-E2E-014 @p1 releitura autoritativa encerra resposta ambígua sem n
   }
 });
 
+test("SL-F009-E2E-017 @p1 publicação rejeita outra tentativa ou transição sem perder o replay", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(260_000);
+  const identity = createFeat009QaIdentity(testInfo, "017_command_response_identity");
+  let mismatchedResponses = 0;
+  try {
+    const { editor } = await provisionFeat009Studio(page, identity, "917", { complete: true });
+    const commands = observeFeat009Commands(page);
+    const commandResponseSchema = apiSuccessSchema(
+      studioCommandResultSchema(studioPublicationSchema),
+    );
+    await page.route("**/api/commands", async (route) => {
+      const parsed = studioCommandSchema.safeParse(route.request().postDataJSON());
+      if (!parsed.success || parsed.data.action !== "studio.revision.submit") {
+        await route.fallback();
+        return;
+      }
+      const command = parsed.data;
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      const payload = commandResponseSchema.parse(await response.json());
+      expect(payload.data).toMatchObject({
+        action: command.action,
+        idempotencyKey: command.idempotencyKey,
+        result: { scope: identity.userId, studioId: editor.studioId },
+      });
+      if (mismatchedResponses < 2) {
+        // Keep the committed DTO intact and isolate each wire identity check.
+        const wrongIdentity =
+          mismatchedResponses === 0 ? { idempotencyKey: randomUUID() } : { action: "studio.pause" };
+        mismatchedResponses += 1;
+        await route.fulfill({
+          response,
+          json: commandResponseSchema.parse({
+            ...payload,
+            data: { ...payload.data, ...wrongIdentity },
+          }),
+        });
+        return;
+      }
+      await route.fulfill({ response });
+    });
+
+    const completed = page.getByRole("status").filter({
+      hasText: "A revisão foi enviada uma vez e agora permanece imutável durante a análise.",
+    });
+    await page.getByRole("button", { name: "Enviar revisão completa" }).click();
+    for (const attempt of [1, 2]) {
+      await expect(
+        page.getByText("A resposta não confirmou a ação", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("O servidor enviou dados de estúdio inesperados.")).toBeVisible();
+      expect(mismatchedResponses).toBe(attempt);
+      expect(commands).toHaveLength(attempt);
+      await expect(completed).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Enviar revisão completa" })).toBeDisabled();
+      const retryResponse = page.waitForResponse((response) => {
+        if (
+          response.request().method() !== "POST" ||
+          new URL(response.url()).pathname !== "/api/commands"
+        )
+          return false;
+        const command = studioCommandSchema.safeParse(response.request().postDataJSON());
+        return command.success && command.data.action === "studio.revision.submit";
+      });
+      await page.getByRole("button", { name: "Repetir exatamente a mesma ação" }).click();
+      expect((await retryResponse).status()).toBe(200);
+    }
+    await expect(completed).toBeVisible();
+    await expect(completed).toBeFocused();
+    await expect(page.getByRole("heading", { level: 2, name: "Em revisão" })).toBeVisible();
+    await expect(page.getByText("A resposta não confirmou a ação", { exact: true })).toHaveCount(0);
+    expect(commands).toHaveLength(3);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(commands[2]).toEqual(commands[0]);
+    const evidence = await readFeat009PublicationEvidence(editor.studioId);
+    expect(evidence.reviews).toHaveLength(1);
+    expect(evidence.outbox).toHaveLength(1);
+    expect(evidence.requests).toHaveLength(1);
+    expect(evidence.audit_actions).toEqual(["studio.revision_submitted"]);
+    expect(evidence.requests[0]?.idempotency_key).toBe(commands[0]?.idempotencyKey);
+    expect(evidence.status).toBe("pending_review");
+  } finally {
+    await closeFeat009PageBeforeCleanup(page);
+    await cleanupFeat009QaIdentity(identity);
+  }
+});
+
 test("SL-F009-E2E-016 @p1 resposta tardia anuncia a publicação mais nova preservada", async ({
   page,
 }, testInfo) => {
@@ -599,7 +691,9 @@ test("SL-F009-E2E-016 @p1 resposta tardia anuncia a publicação mais nova prese
           throw new Error(`A pausa concorrente retornou HTTP ${response.status()}.`);
         }
         const payload: unknown = JSON.parse(body.toString("utf8"));
-        pausedPublication = apiSuccessSchema(studioPublicationSchema).parse(payload).data;
+        pausedPublication = apiSuccessSchema(
+          studioCommandResultSchema(studioPublicationSchema),
+        ).parse(payload).data.result;
         pauseApplied.resolve();
         await releasePauseResponse.promise;
         await route.fulfill({ body, response });
@@ -639,9 +733,9 @@ test("SL-F009-E2E-016 @p1 resposta tardia anuncia a publicação mais nova prese
       headers: { origin: new URL(page.url()).origin },
     });
     expect(resumeResponse.status()).toBe(200);
-    const resumedPublication = apiSuccessSchema(studioPublicationSchema).parse(
-      await resumeResponse.json(),
-    ).data;
+    const resumedPublication = apiSuccessSchema(
+      studioCommandResultSchema(studioPublicationSchema),
+    ).parse(await resumeResponse.json()).data.result;
     expect(resumedPublication.studioStatus).toBe("published");
 
     releasePublicationRead.resolve();

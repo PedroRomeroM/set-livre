@@ -1,3 +1,4 @@
+import { studioMediaGallerySchema } from "@set-livre/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +7,8 @@ import {
   isAmbiguousStudioError,
   isStudioBoundaryChangedError,
   readStudioEditor,
+  readStudioMedia,
+  readStudioPublication,
   readStudioTaxonomies,
   readStudioTypes,
   StudioApiError,
@@ -13,6 +16,7 @@ import {
   updateStudioContent,
   updateStudioTaxonomy,
 } from "../../src/domains/studios/components/studio-api";
+import { createStudioPublicationFixture } from "./studio-publication-test-fixture";
 import {
   studioCoreFixture,
   studioEditorFixture,
@@ -21,6 +25,25 @@ import {
 } from "./studio-test-fixture";
 
 const responseRequestId = "99999999-9999-4999-8999-999999999999";
+const readCases = [
+  { name: "editor", read: readStudioEditor, result: studioEditorFixture },
+  {
+    name: "media",
+    read: readStudioMedia,
+    result: studioMediaGallerySchema.parse({
+      canEdit: true,
+      items: [],
+      previewExpiresAt: "2026-09-05T20:05:00.000Z",
+      revisionId: studioTestIds.revisionId,
+      revisionNumber: 1,
+      revisionStatus: "draft",
+      revisionVersion: 1,
+      scope: studioTestIds.userId,
+      studioId: studioTestIds.studioId,
+    }),
+  },
+  { name: "publication", read: readStudioPublication, result: createStudioPublicationFixture() },
+];
 
 describe("studio browser API", () => {
   afterEach(() => {
@@ -57,7 +80,11 @@ describe("studio browser API", () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
       async () =>
         Response.json({
-          data: { editor: studioEditorFixture, idempotencyKey: studioTestIds.idempotencyKey },
+          data: {
+            action: "studio.create",
+            idempotencyKey: studioTestIds.idempotencyKey,
+            result: studioEditorFixture,
+          },
           requestId: responseRequestId,
         }),
     );
@@ -76,9 +103,28 @@ describe("studio browser API", () => {
   });
 
   it("serializes taxonomy and content commands without translating their payload", async () => {
-    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () => Response.json({ data: studioEditorFixture, requestId: responseRequestId }),
-    );
+    const fetchMock = vi
+      .fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(
+        Response.json({
+          data: {
+            action: "studio.revision.updateTaxonomy",
+            idempotencyKey: studioTestIds.idempotencyKey,
+            result: studioEditorFixture,
+          },
+          requestId: responseRequestId,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          data: {
+            action: "studio.revision.updateContent",
+            idempotencyKey: studioTestIds.idempotencyKey,
+            result: studioEditorFixture,
+          },
+          requestId: responseRequestId,
+        }),
+      );
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });
     const boundary = {
@@ -108,10 +154,56 @@ describe("studio browser API", () => {
       },
     } satisfies Parameters<typeof updateStudioContent>[0];
 
-    await updateStudioTaxonomy(taxonomy);
-    await updateStudioContent(content);
+    await expect(updateStudioTaxonomy(taxonomy)).resolves.toEqual(studioEditorFixture);
+    await expect(updateStudioContent(content)).resolves.toEqual(studioEditorFixture);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(taxonomy);
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(content);
+  });
+
+  it.each(readCases)(
+    "rejects a valid GET $name DTO for another studio before success",
+    async ({ read, result }) => {
+      vi.stubGlobal("window", { clearTimeout, setTimeout });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({
+            data: { ...result, studioId: studioTestIds.otherStudioId },
+            requestId: responseRequestId,
+          }),
+        ),
+      );
+      const onSuccess = vi.fn();
+
+      const error = await read(studioTestIds.studioId)
+        .then(onSuccess)
+        .catch((cause: unknown) => cause);
+
+      expect(error).toBeInstanceOf(StudioApiError);
+      expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(JSON.stringify(error)).not.toContain(studioTestIds.otherStudioId);
+    },
+  );
+
+  describe.each(readCases)("GET $name DTO identity", ({ read, result }) => {
+    it.each([studioTestIds.studioId, studioTestIds.studioId.toUpperCase()])(
+      "accepts canonical studio identity for requested ID %s without a command envelope",
+      async (requestedStudioId) => {
+        vi.stubGlobal("window", { clearTimeout, setTimeout });
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () =>
+            Response.json({
+              data: result,
+              requestId: responseRequestId,
+            }),
+          ),
+        );
+
+        await expect(read(requestedStudioId)).resolves.toEqual(result);
+      },
+    );
   });
 
   it("rejects extra private response fields and classifies verification-first failures", async () => {
