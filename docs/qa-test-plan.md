@@ -173,8 +173,10 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   arquivamento concorrente do tipo em criação/edição, falha transitória na releitura de conflito,
   navegação terminal explícita após descarte e revogação de conta em desktop, mobile, 320 px e altura
   compacta;
-- `SL-F006-E2E-020/021` rejeitam respostas com escopo ou estúdio divergentes antes de persistir
+- `SL-F006-E2E-020/021/022` rejeitam respostas com escopo, estúdio ou tentativa divergentes antes de persistir
   recovery ou remover painéis, preservam o replay da intenção original e comprovam a reconciliação;
+  a criação também recebe uma resposta real de outra tentativa do mesmo dono, com o mesmo conteúdo,
+  e só resolve a recuperação depois de conferir a chave original no replay;
   o descarte definitivo remove também as abas do estúdio, enquanto descartar somente uma revisão
   mantém a navegação da publicação existente;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;

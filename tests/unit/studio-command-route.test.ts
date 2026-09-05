@@ -55,7 +55,10 @@ describe("studio command route", () => {
         userId: studioTestIds.userId,
       },
     });
-    mocks.createStudio.mockResolvedValue(studioEditorFixture);
+    mocks.createStudio.mockResolvedValue({
+      editor: studioEditorFixture,
+      idempotencyKey: studioTestIds.idempotencyKey,
+    });
     mocks.updateStudioCore.mockResolvedValue(studioEditorFixture);
     mocks.updateStudioContent.mockResolvedValue(studioEditorFixture);
     mocks.updateStudioTaxonomy.mockResolvedValue(studioEditorFixture);
@@ -100,6 +103,10 @@ describe("studio command route", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-studio-session")).toBe("refreshed");
+    await expect(response.json()).resolves.toEqual({
+      data: { editor: studioEditorFixture, idempotencyKey: command.idempotencyKey },
+      requestId: studioTestIds.requestId,
+    });
     expect(mocks.createStudio).toHaveBeenCalledWith(
       command,
       expect.objectContaining({

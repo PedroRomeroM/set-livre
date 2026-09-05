@@ -291,6 +291,7 @@ export {
   studioCommandSchema,
   studioCorePayloadSchema,
   studioCreateCommandSchema,
+  studioCreateResultSchema,
   studioDescriptionSchema,
   studioDraftDiscardCommandSchema,
   studioDraftDiscardResultSchema,

@@ -180,6 +180,11 @@ export const studioEditorSchema = z
     }
   });
 
+export const studioCreateResultSchema = z.strictObject({
+  editor: studioEditorSchema,
+  idempotencyKey: z.uuid(),
+});
+
 export const studioPublicationChecklistKeySchema = z.enum(["details", "content", "media"]);
 
 export const studioPublicationChecklistItemSchema = z

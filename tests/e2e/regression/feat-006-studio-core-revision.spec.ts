@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import {
   apiSuccessSchema,
   studioCreateCommandSchema,
+  studioCreateResultSchema,
   studioDraftDiscardCommandSchema,
   studioDraftDiscardResultSchema,
-  studioEditorSchema,
 } from "@set-livre/contracts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { z } from "zod";
 
 import {
@@ -244,7 +244,7 @@ test("SL-F006-E2E-009 @p1 criação concluída entra em estado terminal antes de
     const response = await createResponse;
     expect(response.status()).toBe(200);
     const payload: unknown = await response.json();
-    const editor = apiSuccessSchema(studioEditorSchema).parse(payload).data;
+    const editor = apiSuccessSchema(studioCreateResultSchema).parse(payload).data.editor;
 
     await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
@@ -607,13 +607,15 @@ test("SL-F006-E2E-015 @p1 revogação de conta recompõe o editor antes de nova 
   }
 });
 
-test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recovery e reconcilia após reload", async ({
-  page,
-}, testInfo) => {
+async function expectCreationResponseBoundary(
+  page: Page,
+  testInfo: TestInfo,
+  scenario: "020" | "022",
+) {
   test.setTimeout(180_000);
-  const identity = createFeat006QaIdentity(testInfo, "020_create_response_scope");
+  const identity = createFeat006QaIdentity(testInfo, `${scenario}_create_response_boundary`);
   const submittedCommands: unknown[] = [];
-  const unrelatedStudioId = randomUUID();
+  let unrelatedStudioId: string = randomUUID();
   let committedStudioId: string | undefined;
   page.on("request", (request) => {
     if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") return;
@@ -621,23 +623,46 @@ test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recover
     if (command.success) submittedCommands.push(command.data);
   });
   try {
-    await provisionFeat006Owner(page, identity, "020");
+    await provisionFeat006Owner(page, identity, scenario);
     if (identity.userId === undefined)
       throw new Error("A criação QA não possui escopo autenticado.");
     await fillFeat006Core(page);
     await page.route(
       "**/api/commands",
       async (route) => {
-        studioCreateCommandSchema.parse(route.request().postDataJSON());
+        const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const payload = apiSuccessSchema(studioEditorSchema).parse(await response.json());
-        committedStudioId = payload.data.studioId;
+        const payload = apiSuccessSchema(studioCreateResultSchema).parse(await response.json());
+        committedStudioId = payload.data.editor.studioId;
+        expect(payload.data.idempotencyKey).toBe(command.idempotencyKey);
+        if (scenario === "022") {
+          const unrelatedResponse = await route.fetch({
+            postData: JSON.stringify({ ...command, idempotencyKey: randomUUID() }),
+          });
+          expect(unrelatedResponse.status()).toBe(200);
+          const unrelated = apiSuccessSchema(studioCreateResultSchema).parse(
+            await unrelatedResponse.json(),
+          );
+          expect(unrelated.data.editor.scope).toBe(identity.userId);
+          expect(unrelated.data.idempotencyKey).not.toBe(command.idempotencyKey);
+          unrelatedStudioId = unrelated.data.editor.studioId;
+          expect(unrelatedStudioId).not.toBe(committedStudioId);
+          await route.fulfill({ response: unrelatedResponse });
+          return;
+        }
         await route.fulfill({
           response,
           json: {
             ...payload,
-            data: { ...payload.data, scope: randomUUID(), studioId: unrelatedStudioId },
+            data: {
+              ...payload.data,
+              editor: {
+                ...payload.data.editor,
+                scope: randomUUID(),
+                studioId: unrelatedStudioId,
+              },
+            },
           },
         });
       },
@@ -654,7 +679,11 @@ test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recover
       const serialized = window.sessionStorage.getItem(`set-livre:studio-create:v1:${scope}`);
       return serialized === null ? null : (JSON.parse(serialized) as unknown);
     }, identity.userId);
-    expect(recovery).toEqual({ command: submittedCommands[0], createdStudioId: null, version: 1 });
+    expect(recovery).toEqual({
+      command: submittedCommands[0],
+      createdStudioId: null,
+      version: 1,
+    });
     expect(JSON.stringify(recovery)).not.toContain(unrelatedStudioId);
 
     await page.reload({ waitUntil: "domcontentloaded" });
@@ -680,6 +709,18 @@ test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recover
     await closeFeat006PageBeforeCleanup(page);
     await cleanupFeat006QaIdentity(identity);
   }
+}
+
+test("SL-F006-E2E-020 @p1 criação rejeita escopo alheio sem contaminar recovery e reconcilia após reload", async ({
+  page,
+}, testInfo) => {
+  await expectCreationResponseBoundary(page, testInfo, "020");
+});
+
+test("SL-F006-E2E-022 @p1 criação rejeita outra tentativa do mesmo dono e recupera a intenção original", async ({
+  page,
+}, testInfo) => {
+  await expectCreationResponseBoundary(page, testInfo, "022");
 });
 
 test("SL-F006-E2E-021 @p1 descarte rejeita escopo e estúdio divergentes antes de remover painéis", async ({

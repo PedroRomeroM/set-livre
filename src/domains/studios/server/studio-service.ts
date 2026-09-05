@@ -124,12 +124,13 @@ export function createStudioService(
     assertMutableAccount(context);
     enforceStudioMutationRateLimit(command.action, context.session.userId);
     try {
-      return await dependencies.createStudioDraft({
+      const editor = await dependencies.createStudioDraft({
         core: command.payload,
         idempotencyKey: command.idempotencyKey,
         requestId: context.requestId,
         userId: context.session.userId,
       });
+      return { editor, idempotencyKey: command.idempotencyKey };
     } catch (error) {
       if (error instanceof ApiRouteError) throw error;
       return handleStudioDatabaseError(error);

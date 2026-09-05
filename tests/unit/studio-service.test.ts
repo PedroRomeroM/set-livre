@@ -53,18 +53,21 @@ describe("studio service", () => {
     });
   });
 
-  it("derives user and request identities only from the authenticated context", async () => {
-    await expect(createStudioService(dependencies).create(createCommand, context)).resolves.toEqual(
-      studioEditorFixture,
-    );
-    expect(dependencies.createStudioDraft).toHaveBeenCalledWith({
-      core: studioCoreFixture,
-      idempotencyKey: studioTestIds.idempotencyKey,
-      requestId: studioTestIds.requestId,
-      userId: studioTestIds.userId,
-    });
-    expect(mocks.enforceIdentityRateLimit).toHaveBeenCalledOnce();
-  });
+  it.each([studioTestIds.idempotencyKey, "33333333-3333-4333-8333-333333333334"])(
+    "echoes creation key %s and derives user and request identities only from the authenticated context",
+    async (idempotencyKey) => {
+      await expect(
+        createStudioService(dependencies).create({ ...createCommand, idempotencyKey }, context),
+      ).resolves.toEqual({ editor: studioEditorFixture, idempotencyKey });
+      expect(dependencies.createStudioDraft).toHaveBeenCalledWith({
+        core: studioCoreFixture,
+        idempotencyKey,
+        requestId: studioTestIds.requestId,
+        userId: studioTestIds.userId,
+      });
+      expect(mocks.enforceIdentityRateLimit).toHaveBeenCalledOnce();
+    },
+  );
 
   it("shares the 20-per-hour upload-prepare ceiling by owner identity", () => {
     studioServiceBoundary.enforceStudioMutationRateLimit(

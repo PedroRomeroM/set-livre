@@ -1,4 +1,5 @@
 import {
+  studioCreateResultSchema,
   studioDraftDiscardResultSchema,
   studioEditorSchema,
   studioMediaGallerySchema,
@@ -52,6 +53,13 @@ const createCommand = {
 
 function editorFor(expected: ResponseBoundary) {
   return studioEditorSchema.parse({ ...studioEditorFixture, ...expected });
+}
+
+function createResultFor(expected: ResponseBoundary) {
+  return studioCreateResultSchema.parse({
+    editor: editorFor(expected),
+    idempotencyKey: createCommand.idempotencyKey,
+  });
 }
 
 function galleryFor(expected: ResponseBoundary) {
@@ -194,7 +202,7 @@ const existingStudioCases = [
   },
 ];
 const allCases = [
-  { name: "create", request: () => createStudio(createCommand), resultFor: editorFor },
+  { name: "create", request: () => createStudio(createCommand), resultFor: createResultFor },
   ...existingStudioCases,
 ];
 
@@ -209,7 +217,7 @@ function respondWith(data: unknown) {
 describe("studio command response boundary", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it.each(allCases)(
+  it.each(existingStudioCases)(
     "accepts the requested scope and studio for $name",
     async ({ request, resultFor }) => {
       const result = resultFor(boundary);
@@ -258,9 +266,75 @@ describe("studio command response boundary", () => {
     });
   });
 
-  it("accepts a server-generated studio ID for creation in the requested scope", async () => {
-    const editor = editorFor({ ...boundary, studioId: studioTestIds.otherStudioId });
-    respondWith(editor);
-    await expect(createStudio(createCommand)).resolves.toEqual(editor);
+  it.each([studioTestIds.studioId, studioTestIds.otherStudioId])(
+    "rejects another creation attempt's valid key for the same owner's studio %s before success",
+    async (studioId) => {
+      const otherIdempotencyKey = "33333333-3333-4333-8333-333333333334";
+      const result = studioCreateResultSchema.parse({
+        editor: editorFor({ ...boundary, studioId }),
+        idempotencyKey: otherIdempotencyKey,
+      });
+      expect(result.editor.scope).toBe(createCommand.expectedScope);
+      expect(result.idempotencyKey).not.toBe(createCommand.idempotencyKey);
+      respondWith(result);
+      const onSuccess = vi.fn();
+
+      const error = await createStudio(createCommand)
+        .then(onSuccess)
+        .catch((cause: unknown) => cause);
+
+      expect(error).toBeInstanceOf(StudioApiError);
+      expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
+      expect(isAmbiguousStudioError(error)).toBe(true);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(JSON.stringify(error)).not.toContain(otherIdempotencyKey);
+      expect(JSON.stringify(error)).not.toContain(studioId);
+    },
+  );
+
+  it.each([
+    { name: "missing key", result: { editor: studioEditorFixture } },
+    {
+      name: "invalid UUID key",
+      result: { editor: studioEditorFixture, idempotencyKey: "qa-invalid-idempotency-key" },
+    },
+    { name: "null key", result: { editor: studioEditorFixture, idempotencyKey: null } },
+    { name: "legacy bare editor", result: studioEditorFixture },
+    {
+      name: "unexpected envelope field",
+      result: { ...createResultFor(boundary), ownerTaxId: "52998224725" },
+    },
+    {
+      name: "unexpected editor field",
+      result: {
+        editor: { ...studioEditorFixture, ownerTaxId: "52998224725" },
+        idempotencyKey: createCommand.idempotencyKey,
+      },
+    },
+  ])("rejects a creation response with $name as ambiguous before success", async ({ result }) => {
+    respondWith(result);
+    const onSuccess = vi.fn();
+
+    const error = await createStudio(createCommand)
+      .then(onSuccess)
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(StudioApiError);
+    expect(error).toMatchObject({ code: "RESPONSE_INVALID" });
+    expect(isAmbiguousStudioError(error)).toBe(true);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(JSON.stringify(error)).not.toContain("qa-invalid-idempotency-key");
+    expect(JSON.stringify(error)).not.toContain("52998224725");
   });
+
+  it.each([studioTestIds.studioId, studioTestIds.otherStudioId])(
+    "returns only the editor for server-generated studio ID %s with the matching creation key and scope",
+    async (studioId) => {
+      const result = createResultFor({ ...boundary, studioId });
+      respondWith(result);
+
+      expect(createCommand.payload).not.toHaveProperty("studioId");
+      await expect(createStudio(createCommand)).resolves.toEqual(result.editor);
+    },
+  );
 });

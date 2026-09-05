@@ -55,7 +55,11 @@ describe("studio browser API", () => {
 
   it("serializes the strict idempotent create command", async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
-      async () => Response.json({ data: studioEditorFixture, requestId: responseRequestId }),
+      async () =>
+        Response.json({
+          data: { editor: studioEditorFixture, idempotencyKey: studioTestIds.idempotencyKey },
+          requestId: responseRequestId,
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", { clearTimeout, setTimeout });

@@ -224,7 +224,13 @@ Taxonomia recebe listas únicas de no máximo 20 UUIDs por grupo e o banco aceit
 ativos. Conteúdo recebe plain text aparado, até 20 FAQs ordenadas e `youtubeVideoId` nulo ou com 11
 caracteres allowlisted; URLs são interpretadas apenas na fronteira do browser e nunca persistidas.
 
-O retorno de create/update é o `StudioEditor` autoritativo. Discard retorna união discriminada:
+Updates retornam o `StudioEditor` autoritativo. Create retorna o envelope estrito
+`{idempotencyKey, editor: StudioEditor}`: o serviço ecoa a chave do comando validado somente depois
+do resultado autoritativo do DAL. O browser confere essa chave e o escopo do editor antes de resolver
+a recuperação ou oferecer navegação; chave ausente/divergente é `RESPONSE_INVALID` ambíguo e preserva
+a tentativa original. Assim, uma resposta de outra criação do mesmo dono, mesmo com conteúdo igual,
+não confirma a tentativa pendente. A chave identifica a operação, não substitui ownership ou
+`requestId`, e não integra os read models do editor. Discard retorna união discriminada:
 `studioDeleted=true` sem editor para estúdio inédito ou `studioDeleted=false` com editor da revisão
 publicada preservada. A mesma chave/payload não repete efeito e retorna exatamente o resultado cujo
 hash foi registrado; se uma mudança posterior impedir reconstruir esse resultado, o replay falha
