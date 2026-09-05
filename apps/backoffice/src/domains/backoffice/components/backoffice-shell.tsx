@@ -154,6 +154,7 @@ export function BackofficeShell({
 
   const logout = useMutation({
     mutationFn: () => logoutBackofficeClient(session.scope),
+    networkMode: "always",
     onError: (error) => {
       if (!isBackofficeReauthenticationBoundaryError(error)) return;
       recomposeSession();

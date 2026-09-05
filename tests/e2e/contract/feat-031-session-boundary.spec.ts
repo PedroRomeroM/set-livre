@@ -13,6 +13,32 @@ import {
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
 import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 
+async function recordPrivateBoundaryClosure(page: Page, evidenceKey: string) {
+  await page.evaluate((key) => {
+    window.sessionStorage.removeItem(key);
+    const captureClosedBoundary = () => {
+      const privateHeadingVisible = Array.from(document.querySelectorAll("h1")).some(
+        (heading) => heading.textContent?.trim() === "Usuários",
+      );
+      const transitionVisible = Array.from(document.querySelectorAll('[role="status"]')).some(
+        (status) => status.textContent?.includes("Encerrando a visualização privada"),
+      );
+      if (transitionVisible && !privateHeadingVisible && document.querySelector("nav") === null) {
+        window.sessionStorage.setItem(key, "closed-before-navigation");
+      }
+    };
+    const observer = new MutationObserver(captureClosedBoundary);
+    observer.observe(document.body, { childList: true, subtree: true });
+    captureClosedBoundary();
+  }, evidenceKey);
+}
+
+async function expectRecordedPrivateBoundaryClosure(page: Page, evidenceKey: string) {
+  await expect
+    .poll(() => page.evaluate((key) => window.sessionStorage.getItem(key), evidenceKey))
+    .toBe("closed-before-navigation");
+}
+
 test("SL-F031-E2E-016 @p0 logout confirmado oculta o shell antes da navegação", async ({
   page,
 }, testInfo) => {
@@ -160,23 +186,7 @@ test("SL-F031-E2E-025 @p0 resposta perdida do logout fecha o shell e recompõe a
   try {
     await provisionFeat031Operator(page, support, "support", "031025");
     await loginFeat031Backoffice(page, support, { unlockRuntime: false });
-    await page.evaluate((evidenceKey) => {
-      window.sessionStorage.removeItem(evidenceKey);
-      const captureClosedBoundary = () => {
-        const privateHeadingVisible = Array.from(document.querySelectorAll("h1")).some(
-          (heading) => heading.textContent?.trim() === "Usuários",
-        );
-        const transitionVisible = Array.from(document.querySelectorAll('[role="status"]')).some(
-          (status) => status.textContent?.includes("Encerrando a visualização privada"),
-        );
-        if (transitionVisible && !privateHeadingVisible && document.querySelector("nav") === null) {
-          window.sessionStorage.setItem(evidenceKey, "closed-before-navigation");
-        }
-      };
-      const observer = new MutationObserver(captureClosedBoundary);
-      observer.observe(document.body, { childList: true, subtree: true });
-      captureClosedBoundary();
-    }, boundaryEvidenceKey);
+    await recordPrivateBoundaryClosure(page, boundaryEvidenceKey);
     await page.route(
       "**/api/auth/logout",
       async (route) => {
@@ -191,16 +201,43 @@ test("SL-F031-E2E-025 @p0 resposta perdida do logout fecha o shell e recompõe a
     await page.getByRole("button", { name: "Sair" }).click();
     await expect.poll(() => upstreamLogoutStatus).toBe(200);
     await expect(page).toHaveURL(/\/entrar$/u);
-    await expect
-      .poll(() =>
-        page.evaluate(
-          (evidenceKey) => window.sessionStorage.getItem(evidenceKey),
-          boundaryEvidenceKey,
-        ),
-      )
-      .toBe("closed-before-navigation");
+    await expectRecordedPrivateBoundaryClosure(page, boundaryEvidenceKey);
   } finally {
     await page.unroute("**/api/auth/logout");
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ operators: [support] });
+  }
+});
+
+test("SL-F031-E2E-029 @p0 logout offline fecha imediatamente a composição privada", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const support = createFeat031Operator(testInfo, "029_offline_logout_boundary");
+  const safeEnvironment = readSafeE2EEnvironment();
+  const boundaryEvidenceKey = "sl-f031-029-private-boundary";
+  let offline = false;
+  try {
+    await provisionFeat031Operator(page, support, "support", "031029");
+    await loginFeat031Backoffice(page, support, { unlockRuntime: false });
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
+    await recordPrivateBoundaryClosure(page, boundaryEvidenceKey);
+
+    await page.context().setOffline(true);
+    offline = true;
+    const failedLogout = page.waitForEvent("requestfailed", (request) => {
+      const address = new URL(request.url());
+      return address.pathname === "/api/auth/logout" && request.method() === "POST";
+    });
+    await page.getByRole("button", { name: "Sair" }).click();
+    await failedLogout;
+
+    await page.context().setOffline(false);
+    offline = false;
+    await page.goto(`${safeEnvironment.backofficeBaseUrl}/usuarios`);
+    await expectRecordedPrivateBoundaryClosure(page, boundaryEvidenceKey);
+  } finally {
+    if (offline) await page.context().setOffline(false);
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [support] });
   }

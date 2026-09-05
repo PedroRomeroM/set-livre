@@ -231,7 +231,8 @@ Os cenários `SL-F031-E2E-*` cobrem:
   aba e reautenticação inconclusiva fecham a composição privada anterior; a reautenticação válida
   conserva a aba autora, publica a sessão renovada no cache antes de avisar somente as demais abas,
   exige novo desbloqueio local e permite concluir a ação revisada; revogar o próprio papel
-  administrativo fecha a composição tanto no sucesso quanto diante de resposta perdida, sem expor shell stale;
+  administrativo fecha a composição tanto no sucesso quanto diante de resposta perdida, e o logout
+  offline começa imediatamente e oculta a shell sem aguardar reconexão;
   a expiração autoritativa também fecha a shell quando a rede está indisponível, enquanto um deadline
   antigo não invalida uma sessão já renovada; conflitos de conta, papel e taxonomia descartam
   confirmações versionadas e exigem nova leitura nas quatro composições de regressão;
