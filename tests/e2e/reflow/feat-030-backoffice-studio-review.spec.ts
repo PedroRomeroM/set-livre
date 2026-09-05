@@ -137,6 +137,46 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           const rectangle = element.getBoundingClientRect();
           const style = getComputedStyle(element);
           const section = element.closest("section");
+          const fragmentTolerance = 1;
+          const fragmentSampleSize = 32;
+          const paintedFragmentsOutside: Array<{
+            bottom: number;
+            left: number;
+            right: number;
+            top: number;
+          }> = [];
+          let paintedFragmentCount = 0;
+          let paintedLeft = Number.POSITIVE_INFINITY;
+          let paintedRight = Number.NEGATIVE_INFINITY;
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          let textNode = walker.nextNode();
+          while (textNode !== null) {
+            const value = textNode.textContent ?? "";
+            for (let start = 0; start < value.length; start += fragmentSampleSize) {
+              const range = document.createRange();
+              range.setStart(textNode, start);
+              range.setEnd(textNode, Math.min(start + fragmentSampleSize, value.length));
+              for (const fragment of range.getClientRects()) {
+                if (fragment.width === 0 && fragment.height === 0) continue;
+                paintedFragmentCount += 1;
+                paintedLeft = Math.min(paintedLeft, fragment.left);
+                paintedRight = Math.max(paintedRight, fragment.right);
+                if (
+                  fragment.left < rectangle.left - fragmentTolerance ||
+                  fragment.right > rectangle.right + fragmentTolerance
+                ) {
+                  paintedFragmentsOutside.push({
+                    bottom: fragment.bottom,
+                    left: fragment.left,
+                    right: fragment.right,
+                    top: fragment.top,
+                  });
+                }
+              }
+              range.detach();
+            }
+            textNode = walker.nextNode();
+          }
           const clippingAncestors: Array<{
             className: string | null;
             overflowX: string;
@@ -162,12 +202,18 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             elementLeft: rectangle.left,
             elementRight: rectangle.right,
             overflowWrap: style.overflowWrap,
+            paintedFragmentCount,
+            paintedFragmentsOutside: paintedFragmentsOutside.slice(0, 16),
+            paintedLeft,
+            paintedRight,
             scrollWidth: element.scrollWidth,
             textFits:
               element.clientWidth > 0 &&
-              element.scrollWidth <= element.clientWidth &&
+              paintedFragmentCount > 0 &&
+              paintedFragmentsOutside.length === 0 &&
               rectangle.left >= 0 &&
               rectangle.right <= viewportWidth &&
+              (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
               clippingAncestors.length === 0,
             viewportWidth,
             wordBreak: style.wordBreak,
@@ -180,99 +226,115 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       JSON.stringify(faqTextLayout, null, 2),
     ).toBe(true);
 
-    const layout = await page.evaluate((safeArea) => {
-      const clientWidth = document.documentElement.clientWidth;
-      const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
-        const rectangle = element.getBoundingClientRect();
+    const layout = await page.evaluate(
+      ({ safeArea, verifiedWrappedTexts }) => {
+        const clientWidth = document.documentElement.clientWidth;
+        const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
+          const rectangle = element.getBoundingClientRect();
+          const textContent = element.textContent?.trim() ?? "";
+          return {
+            className: element.getAttribute("class"),
+            clientWidth: element.clientWidth,
+            left: rectangle.left,
+            right: rectangle.right,
+            scrollWidth: element.scrollWidth,
+            tag: element.tagName,
+            text: textContent.slice(0, 80),
+            verifiedByPaintedFragments: verifiedWrappedTexts.includes(textContent),
+          };
+        });
+        const skipLinkElement = document.querySelector<HTMLAnchorElement>(
+          'a[href="#conteudo-principal"]',
+        );
+        const skipLinkRectangle = skipLinkElement?.getBoundingClientRect();
+        const skipLinkStyle = skipLinkElement ? getComputedStyle(skipLinkElement) : undefined;
+        const skipLinkTextRectangle = (() => {
+          if (!skipLinkElement) return undefined;
+          const range = document.createRange();
+          range.selectNodeContents(skipLinkElement);
+          return range.getBoundingClientRect();
+        })();
+        const skipLinkContentBounds = (() => {
+          if (!skipLinkRectangle || !skipLinkStyle) return undefined;
+          return {
+            left:
+              skipLinkRectangle.left +
+              Number.parseFloat(skipLinkStyle.borderLeftWidth) +
+              Number.parseFloat(skipLinkStyle.paddingLeft),
+            right:
+              skipLinkRectangle.right -
+              Number.parseFloat(skipLinkStyle.borderRightWidth) -
+              Number.parseFloat(skipLinkStyle.paddingRight),
+          };
+        })();
         return {
-          className: element.getAttribute("class"),
-          clientWidth: element.clientWidth,
-          left: rectangle.left,
-          right: rectangle.right,
-          scrollWidth: element.scrollWidth,
-          tag: element.tagName,
-          text: element.textContent?.trim().slice(0, 80) ?? "",
+          bodyClientWidth: document.body.clientWidth,
+          bodyFits: document.body.scrollWidth <= window.innerWidth,
+          bodyScrollWidth: document.body.scrollWidth,
+          documentClientWidth: clientWidth,
+          documentFits: document.documentElement.scrollWidth <= clientWidth,
+          documentScrollWidth: document.documentElement.scrollWidth,
+          images: [...document.querySelectorAll("img")].map((image) => ({
+            fits: image.getBoundingClientRect().right <= clientWidth,
+            frameHeight: image.parentElement?.getBoundingClientRect().height ?? 0,
+            height: image.getBoundingClientRect().height,
+            maximumFrameHeight: Math.min(512, Math.max(160, window.innerHeight * 0.6)) + 2,
+            naturalHeight: image.naturalHeight,
+            naturalWidth: image.naturalWidth,
+            objectFit: getComputedStyle(image).objectFit,
+          })),
+          unverifiedInternalOverflowing: measuredElements
+            .filter(
+              (element) =>
+                element.clientWidth > 0 &&
+                element.scrollWidth > element.clientWidth &&
+                !element.verifiedByPaintedFragments,
+            )
+            .slice(0, 16),
+          overflowing: measuredElements
+            .filter((element) => element.left < 0 || element.right > clientWidth)
+            .map((element) => ({
+              ...element,
+              left: Math.round(element.left * 1000) / 1000,
+              right: Math.round(element.right * 1000) / 1000,
+            }))
+            .slice(0, 16),
+          skipLink:
+            skipLinkRectangle === undefined
+              ? null
+              : {
+                  fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
+                  contentLeft: skipLinkContentBounds?.left ?? 0,
+                  contentRight: skipLinkContentBounds?.right ?? 0,
+                  left: skipLinkRectangle.left,
+                  right: skipLinkRectangle.right,
+                  safeAreaCleared:
+                    skipLinkRectangle.left >= safeArea.left &&
+                    skipLinkRectangle.right <= clientWidth - safeArea.right &&
+                    skipLinkRectangle.top >= safeArea.top,
+                  textLeft: skipLinkTextRectangle?.left ?? 0,
+                  textRight: skipLinkTextRectangle?.right ?? 0,
+                  top: skipLinkRectangle.top,
+                  whiteSpace: skipLinkStyle?.whiteSpace ?? "",
+                  width: skipLinkRectangle.width,
+                  wordBreak: skipLinkStyle?.wordBreak ?? "",
+                  overflowWrap: skipLinkStyle?.overflowWrap ?? "",
+                },
+          windowInnerWidth: window.innerWidth,
         };
-      });
-      const skipLinkElement = document.querySelector<HTMLAnchorElement>(
-        'a[href="#conteudo-principal"]',
-      );
-      const skipLinkRectangle = skipLinkElement?.getBoundingClientRect();
-      const skipLinkStyle = skipLinkElement ? getComputedStyle(skipLinkElement) : undefined;
-      const skipLinkTextRectangle = (() => {
-        if (!skipLinkElement) return undefined;
-        const range = document.createRange();
-        range.selectNodeContents(skipLinkElement);
-        return range.getBoundingClientRect();
-      })();
-      const skipLinkContentBounds = (() => {
-        if (!skipLinkRectangle || !skipLinkStyle) return undefined;
-        return {
-          left:
-            skipLinkRectangle.left +
-            Number.parseFloat(skipLinkStyle.borderLeftWidth) +
-            Number.parseFloat(skipLinkStyle.paddingLeft),
-          right:
-            skipLinkRectangle.right -
-            Number.parseFloat(skipLinkStyle.borderRightWidth) -
-            Number.parseFloat(skipLinkStyle.paddingRight),
-        };
-      })();
-      return {
-        bodyClientWidth: document.body.clientWidth,
-        bodyFits: document.body.scrollWidth <= window.innerWidth,
-        bodyScrollWidth: document.body.scrollWidth,
-        documentClientWidth: clientWidth,
-        documentFits: document.documentElement.scrollWidth <= clientWidth,
-        documentScrollWidth: document.documentElement.scrollWidth,
-        images: [...document.querySelectorAll("img")].map((image) => ({
-          fits: image.getBoundingClientRect().right <= clientWidth,
-          frameHeight: image.parentElement?.getBoundingClientRect().height ?? 0,
-          height: image.getBoundingClientRect().height,
-          maximumFrameHeight: Math.min(512, Math.max(160, window.innerHeight * 0.6)) + 2,
-          naturalHeight: image.naturalHeight,
-          naturalWidth: image.naturalWidth,
-          objectFit: getComputedStyle(image).objectFit,
-        })),
-        internallyOverflowing: measuredElements
-          .filter((element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth)
-          .slice(0, 16),
-        overflowing: measuredElements
-          .filter((element) => element.left < 0 || element.right > clientWidth)
-          .map((element) => ({
-            ...element,
-            left: Math.round(element.left * 1000) / 1000,
-            right: Math.round(element.right * 1000) / 1000,
-          }))
-          .slice(0, 16),
-        skipLink:
-          skipLinkRectangle === undefined
-            ? null
-            : {
-                fits: skipLinkRectangle.left >= 0 && skipLinkRectangle.right <= clientWidth,
-                contentLeft: skipLinkContentBounds?.left ?? 0,
-                contentRight: skipLinkContentBounds?.right ?? 0,
-                left: skipLinkRectangle.left,
-                right: skipLinkRectangle.right,
-                safeAreaCleared:
-                  skipLinkRectangle.left >= safeArea.left &&
-                  skipLinkRectangle.right <= clientWidth - safeArea.right &&
-                  skipLinkRectangle.top >= safeArea.top,
-                textLeft: skipLinkTextRectangle?.left ?? 0,
-                textRight: skipLinkTextRectangle?.right ?? 0,
-                top: skipLinkRectangle.top,
-                whiteSpace: skipLinkStyle?.whiteSpace ?? "",
-                width: skipLinkRectangle.width,
-                wordBreak: skipLinkStyle?.wordBreak ?? "",
-                overflowWrap: skipLinkStyle?.overflowWrap ?? "",
-              },
-        windowInnerWidth: window.innerWidth,
-      };
-    }, simulatedSafeArea);
+      },
+      {
+        safeArea: simulatedSafeArea,
+        verifiedWrappedTexts: [
+          feat030ExtremeTextFixture.faqQuestion,
+          feat030ExtremeTextFixture.faqAnswer,
+        ],
+      },
+    );
     const layoutEvidence = JSON.stringify(layout, null, 2);
     expect(layout.bodyFits, layoutEvidence).toBe(true);
     expect(layout.documentFits, layoutEvidence).toBe(true);
-    expect(layout.internallyOverflowing, layoutEvidence).toEqual([]);
+    expect(layout.unverifiedInternalOverflowing, layoutEvidence).toEqual([]);
     expect(layout.overflowing).toEqual([]);
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);

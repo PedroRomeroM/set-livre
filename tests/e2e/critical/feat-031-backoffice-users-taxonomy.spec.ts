@@ -684,9 +684,24 @@ test("SL-F031-E2E-002 @p0 somente admin gerencia papéis", async ({ browser, pag
     await page.getByRole("button", { name: "Sair" }).click();
     await expect(page).toHaveURL(/\/entrar\?saida=sucesso$/u);
     await loginFeat031Backoffice(page, admin);
+    await expireStrongAuthentication(admin.userId);
     await page.getByRole("link", { name: "Acessos" }).click();
     const adminCard = await searchUser(page, target.email, target.userId);
     await adminCard.getByRole("link", { name: "Gerenciar acesso" }).click();
+    await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
+    await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    const reauthentication = page.getByRole("heading", { name: "Confirme sua identidade" });
+    await expect(reauthentication).toBeVisible();
+    await page.getByLabel("Senha atual").fill(admin.password);
+    await page.getByRole("button", { name: "Confirmar identidade" }).click();
+    await expect(reauthentication).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Identidade confirmada" }),
+    ).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Backoffice" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: /Acessos da conta/u })).toBeVisible();
+    await expect(page.getByText("Operações críticas bloqueadas neste runtime.")).toBeVisible();
+    await unlockFeat031Backoffice(page);
     await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Acesso atualizado" })).toBeVisible();

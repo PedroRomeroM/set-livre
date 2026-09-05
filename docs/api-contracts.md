@@ -384,8 +384,10 @@ arquivamento/reativação, e o banco deriva o booleano final; o cliente nunca en
 autoridade implícita nesses campos, revalida sessão/papel no banco e converte estado obsoleto para
 `409/STALE_STATE`. Nesse caso a UI remove a confirmação, limpa o alvo versionado e relê o read model
 antes de permitir outra ação. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna
-replay somente enquanto as versões canônicas continuam idênticas. Toda mutação, inclusive revelação de
-PII, exige o desbloqueio local vigente; ausência ou expiração retorna `423/RUNTIME_LOCKED` antes da DAL.
+replay somente enquanto as versões canônicas continuam idênticas. O cliente valida `scope` e `userId`
+da resposta contra o comando antes de entregá-la ao consumidor efêmero; divergência recompõe a
+fronteira privada sem renderizar PII. Toda mutação, inclusive revelação de PII, exige o desbloqueio local
+vigente; ausência ou expiração retorna `423/RUNTIME_LOCKED` antes da DAL.
 Chave ausente no processo retorna `503/RUNTIME_UNLOCK_UNAVAILABLE` e chave divergente retorna
 `403/RUNTIME_UNLOCK_DENIED`. Nenhuma resposta expõe SQL, provider, chave ou detalhe de autorização.
 Antes de validar a action, falhas de origem, limite, JSON e schema são registradas apenas como

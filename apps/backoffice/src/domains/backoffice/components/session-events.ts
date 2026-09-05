@@ -2,27 +2,34 @@
 
 const backofficeSessionChannel = "set-livre-backoffice-session-v1";
 const backofficeSessionEvent = "set-livre:backoffice-session-changed";
+let peerSessionChannel: BroadcastChannel | undefined;
+
+function getPeerSessionChannel() {
+  if (typeof BroadcastChannel === "undefined") return undefined;
+  peerSessionChannel ??= new BroadcastChannel(backofficeSessionChannel);
+  return peerSessionChannel;
+}
+
+export function notifyBackofficePeerSessionsChanged() {
+  getPeerSessionChannel()?.postMessage("changed");
+}
 
 export function notifyBackofficeSessionChanged() {
   window.dispatchEvent(new Event(backofficeSessionEvent));
-  if (typeof BroadcastChannel === "undefined") return;
-  const channel = new BroadcastChannel(backofficeSessionChannel);
-  channel.postMessage("changed");
-  channel.close();
+  notifyBackofficePeerSessionsChanged();
 }
 
 export function subscribeToBackofficeSessionChanges(listener: () => void) {
   const handleLocalChange = () => listener();
   window.addEventListener(backofficeSessionEvent, handleLocalChange);
-  if (typeof BroadcastChannel === "undefined") {
+  const channel = getPeerSessionChannel();
+  if (channel === undefined) {
     return () => window.removeEventListener(backofficeSessionEvent, handleLocalChange);
   }
 
-  const channel = new BroadcastChannel(backofficeSessionChannel);
   channel.addEventListener("message", listener);
   return () => {
     channel.removeEventListener("message", listener);
-    channel.close();
     window.removeEventListener(backofficeSessionEvent, handleLocalChange);
   };
 }

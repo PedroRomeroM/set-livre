@@ -228,8 +228,10 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
   regressão;
 - revalidação de sessão/papel, auto-suspensão confirmada ou com resposta perdida, login ambíguo em outra
-  aba e reautenticação inconclusiva fecham a composição privada anterior; revogar o próprio papel
-  administrativo faz o mesmo tanto no sucesso quanto diante de resposta perdida, sem expor shell stale;
+  aba e reautenticação inconclusiva fecham a composição privada anterior; a reautenticação válida
+  conserva a aba autora, publica a sessão renovada no cache antes de avisar somente as demais abas,
+  exige novo desbloqueio local e permite concluir a ação revisada; revogar o próprio papel
+  administrativo fecha a composição tanto no sucesso quanto diante de resposta perdida, sem expor shell stale;
   a expiração autoritativa também fecha a shell quando a rede está indisponível, enquanto um deadline
   antigo não invalida uma sessão já renovada; conflitos de conta, papel e taxonomia descartam
   confirmações versionadas e exigem nova leitura nas quatro composições de regressão;
@@ -237,7 +239,8 @@ Os cenários `SL-F031-E2E-*` cobrem:
   anterior; o fingerprint assíncrono serializa submissões e nenhuma busca ou troca de contexto começa
   enquanto a anterior ou uma mutação está em voo;
 - listas privadas de usuários e taxonomias rejeitam uma resposta cujo `scope` já pertence a outra
-  composição antes que o TanStack Query a aceite no cache;
+  composição antes que o TanStack Query a aceite no cache; PII revelada valida `scope` e `userId`
+  solicitados antes do consumidor efêmero e recompõe a fronteira sem renderizar em qualquer divergência;
 - o detalhe de acessos oferece concessões somente para conta ativa com perfil completo, explica a
   restrição e mantém disponíveis as revogações de papéis já concedidos; UUID válido de uma conta que
   deixou de existir retorna a fronteira contextual de not-found com HTTP 404 e `noindex`, sem
@@ -329,11 +332,15 @@ Os cenários `SL-F030-E2E-*` cobrem:
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
   verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto do link em relação à
-  caixa de conteúdo. Pergunta e resposta sem oportunidades naturais de quebra são comprovadas pela
-  largura rolável em relação à largura visível, pelos limites crus da caixa e pela ausência de clipping
-  em sua hierarquia local; a página também exige que a lista global de overflow interno fique vazia.
-  Assim, a evidência mede o layout efetivamente navegável sem depender dos retângulos fragmentados de
-  `Range`, que não são estáveis no WebKit para blocos de texto muito altos.
+  caixa de conteúdo. Pergunta e resposta sem oportunidades naturais de quebra são comprovadas pelos
+  limites de pequenos fragmentos efetivamente pintados, pelos limites crus da caixa e pela ausência de
+  clipping em sua hierarquia local. A largura rolável continua registrada como diagnóstico, mas não é
+  usada como oráculo para esses dois blocos: o WebKit pode conservar um `scrollWidth` anterior após a
+  substituição dinâmica de conteúdo muito alto mesmo quando todos os fragmentos já foram quebrados e
+  pintados dentro da coluna. Os demais elementos continuam sujeitos à lista global de overflow interno,
+  enquanto documento, corpo e caixas permanecem sujeitos às provas globais de largura. O particionamento
+  evita tanto a união instável de um `Range` sobre milhares de caracteres quanto o falso positivo de
+  `scrollWidth`, sem isentar o conteúdo extremo da verificação geométrica.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as

@@ -169,14 +169,18 @@ Medir; não usar Infinity em dado operacional.
   para verificação ou repetição exata, sem liberar outra transição;
 - no backoffice, login/reautenticação mantêm e-mail/senha somente em refs efêmeras e chamam
   `mutate()` sem variables; qualquer desfecho limpa os inputs. Login ambíguo limpa o QueryClient e
-  recompõe `/` para que a sessão server-side decida o estado;
+  recompõe `/` para que a sessão server-side decida o estado. Reautenticação conclusiva publica a
+  sessão retornada somente se cache, resposta e composição preservarem scope, e-mail e versão de
+  autorização; então avisa apenas as demais abas pelo canal compartilhado da aba autora, sem disparar
+  a recomposição local que apagaria a sessão recém-publicada;
 - diretório usa uma única unidade `{query,fingerprint}` para impedir que o texto de uma busca seja
   executado sob a key de outra. Páginas mantêm keyset/cursor no mesmo scope e nunca colocam o filtro
   na URL;
 - comandos administrativos não fazem optimistic update. Uma resposta ambígua preserva comando,
   payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
-  resposta conclusiva descarta a tentativa e invalida o read model. PII usa apenas estado React
-  efêmero, expira em 60 segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
+  resposta conclusiva descarta a tentativa e invalida o read model. PII só alcança o consumidor após
+  validar `scope` e `userId` contra a solicitação, usa apenas estado React efêmero, expira em 60
+  segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
 - a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
   `backoffice.studio(scope,studioId)`. Cada normalizer confirma `scope` e, no detalhe, `studioId`
   antes de devolver a resposta ao TanStack Query; divergência sinaliza recomposição de sessão e nunca

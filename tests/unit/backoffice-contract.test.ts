@@ -286,6 +286,58 @@ describe("backoffice contracts", () => {
     expect(dispatchEvent).toHaveBeenCalledTimes(5);
   });
 
+  it.each([
+    {
+      label: "another session scope",
+      scope: backofficeStudioReviewTestIds.reviewerId,
+      userId: targetId,
+    },
+    {
+      label: "another requested user",
+      scope: actorId,
+      userId: studioTestIds.otherStudioId,
+    },
+  ])("rejects revealed PII for $label before consumption", async ({ scope, userId }) => {
+    const dispatchEvent = vi.fn();
+    const consume = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal("BroadcastChannel", undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: {
+              additionalDocument: null,
+              email: "target@example.test",
+              name: "Usuário alvo",
+              phoneE164: null,
+              scope,
+              taxId: null,
+              userId,
+            },
+            requestId: "10000000-0000-4000-8000-000000000099",
+          }),
+          { headers: { "content-type": "application/json" }, status: 200 },
+        ),
+      ),
+    );
+
+    await expect(
+      revealBackofficePiiWithoutCaching(
+        {
+          action: "backoffice.user.revealPii",
+          expectedScope: actorId,
+          idempotencyKey,
+          payload: { reason: "support_case", userId: targetId },
+        },
+        consume,
+      ),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    expect(consume).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledOnce();
+  });
+
   it("accepts only the operational roles delivered by FEAT-031 and FEAT-030", () => {
     expect(platformRolesSchema.parse(["support", "reviewer", "admin"])).toEqual([
       "support",

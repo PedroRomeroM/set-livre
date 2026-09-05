@@ -332,6 +332,9 @@ export async function revealBackofficePiiWithoutCaching(
     body: JSON.stringify(command),
     method: "POST",
   });
+  if (pii.scope !== command.expectedScope || pii.userId !== command.payload.userId) {
+    rejectBackofficePrivateBoundary();
+  }
   consume(pii);
   return { revealed: true as const };
 }

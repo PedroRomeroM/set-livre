@@ -1,9 +1,13 @@
 import type { BackofficeSession } from "@set-livre/contracts";
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { reconcileSuccessfulBackofficeReauthentication } from "../../apps/backoffice/src/domains/backoffice/components/access-role-actions";
 import { backofficeQueryKeys } from "../../apps/backoffice/src/domains/backoffice/components/query-keys";
+import {
+  notifyBackofficePeerSessionsChanged,
+  subscribeToBackofficeSessionChanges,
+} from "../../apps/backoffice/src/domains/backoffice/components/session-events";
 
 const currentSession = {
   authenticated: true,
@@ -22,12 +26,16 @@ const reauthenticatedSession = {
   strongAuthenticationExpiresAt: "2026-09-04T19:10:00.000Z",
 } satisfies BackofficeSession;
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("backoffice access reauthentication session", () => {
-  it("publishes the exact successful session before notifying every tab", () => {
+  it("publishes the exact successful session before notifying peer tabs", () => {
     const queryClient = new QueryClient();
     const sessionKey = backofficeQueryKeys.session(currentSession.scope);
     const observedAtNotification: BackofficeSession[] = [];
-    const notifySessionChanged = vi.fn(() => {
+    const notifyPeerSessionsChanged = vi.fn(() => {
       const observed = queryClient.getQueryData<BackofficeSession>(sessionKey);
       if (observed !== undefined) observedAtNotification.push(observed);
     });
@@ -38,7 +46,7 @@ describe("backoffice access reauthentication session", () => {
       reconcileSuccessfulBackofficeReauthentication({
         currentSession,
         nextSession: reauthenticatedSession,
-        notifySessionChanged,
+        notifyPeerSessionsChanged,
         queryClient,
         recomposeSession,
       }),
@@ -47,8 +55,52 @@ describe("backoffice access reauthentication session", () => {
     expect(queryClient.getQueryData(sessionKey)).toEqual(reauthenticatedSession);
     expect(queryClient.getQueryData(sessionKey)).not.toEqual(currentSession);
     expect(observedAtNotification).toEqual([reauthenticatedSession]);
-    expect(notifySessionChanged).toHaveBeenCalledOnce();
+    expect(notifyPeerSessionsChanged).toHaveBeenCalledOnce();
     expect(recomposeSession).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts a successful reauthentication to peer tabs without notifying its own shell", () => {
+    const channelNames: string[] = [];
+    const dispatchEvent = vi.fn();
+    const listener = vi.fn();
+    const postMessage = vi.fn();
+    const messageListeners = new Set<() => void>();
+    class PeerChannel {
+      constructor(name: string) {
+        channelNames.push(name);
+      }
+
+      addEventListener(type: string, callback: () => void) {
+        if (type === "message") messageListeners.add(callback);
+      }
+
+      postMessage(message: unknown) {
+        postMessage(message);
+      }
+
+      removeEventListener(type: string, callback: () => void) {
+        if (type === "message") messageListeners.delete(callback);
+      }
+    }
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { addEventListener, dispatchEvent, removeEventListener });
+    vi.stubGlobal("BroadcastChannel", PeerChannel);
+
+    const unsubscribe = subscribeToBackofficeSessionChanges(listener);
+    notifyBackofficePeerSessionsChanged();
+
+    expect(channelNames).toEqual(["set-livre-backoffice-session-v1"]);
+    expect(postMessage).toHaveBeenCalledWith("changed");
+    expect(dispatchEvent).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+
+    for (const peerMessage of messageListeners) peerMessage();
+    expect(listener).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    expect(messageListeners).toHaveLength(0);
+    expect(removeEventListener).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -82,7 +134,7 @@ describe("backoffice access reauthentication session", () => {
   }[])("recomposes without publishing when $label", ({ cachedSession, nextSession }) => {
     const queryClient = new QueryClient();
     const sessionKey = backofficeQueryKeys.session(currentSession.scope);
-    const notifySessionChanged = vi.fn();
+    const notifyPeerSessionsChanged = vi.fn();
     const recomposeSession = vi.fn();
     if (cachedSession !== undefined) queryClient.setQueryData(sessionKey, cachedSession);
 
@@ -90,14 +142,14 @@ describe("backoffice access reauthentication session", () => {
       reconcileSuccessfulBackofficeReauthentication({
         currentSession,
         nextSession,
-        notifySessionChanged,
+        notifyPeerSessionsChanged,
         queryClient,
         recomposeSession,
       }),
     ).toBe("session-boundary");
 
     expect(queryClient.getQueryData(sessionKey)).toEqual(cachedSession);
-    expect(notifySessionChanged).not.toHaveBeenCalled();
+    expect(notifyPeerSessionsChanged).not.toHaveBeenCalled();
     expect(recomposeSession).toHaveBeenCalledOnce();
   });
 });

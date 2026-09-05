@@ -24,7 +24,7 @@ import {
 } from "./backoffice-private-boundary";
 import styles from "./backoffice.module.css";
 import { backofficeQueryKeys } from "./query-keys";
-import { notifyBackofficeSessionChanged } from "./session-events";
+import { notifyBackofficePeerSessionsChanged } from "./session-events";
 import { useBackofficeHydrated } from "./use-backoffice-hydrated";
 
 type AccessAction = BackofficeAccessCommand["action"];
@@ -46,13 +46,13 @@ function matchesBackofficeSessionBoundary(
 export function reconcileSuccessfulBackofficeReauthentication({
   currentSession,
   nextSession,
-  notifySessionChanged,
+  notifyPeerSessionsChanged,
   queryClient,
   recomposeSession,
 }: Readonly<{
   currentSession: AuthenticatedSession;
   nextSession: AuthenticatedSession;
-  notifySessionChanged: () => void;
+  notifyPeerSessionsChanged: () => void;
   queryClient: BackofficeSessionCache;
   recomposeSession: () => void;
 }>): "published" | "session-boundary" {
@@ -67,7 +67,7 @@ export function reconcileSuccessfulBackofficeReauthentication({
   }
 
   queryClient.setQueryData<BackofficeSession>(sessionKey, nextSession);
-  notifySessionChanged();
+  notifyPeerSessionsChanged();
   return "published";
 }
 
@@ -230,7 +230,7 @@ export function AccessRoleActions({
             reconcileSuccessfulBackofficeReauthentication({
               currentSession: session,
               nextSession,
-              notifySessionChanged: notifyBackofficeSessionChanged,
+              notifyPeerSessionsChanged: notifyBackofficePeerSessionsChanged,
               queryClient,
               recomposeSession,
             });
