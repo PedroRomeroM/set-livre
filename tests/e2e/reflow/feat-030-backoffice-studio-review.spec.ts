@@ -94,6 +94,122 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       page.getByText(feat030ExtremeTextFixture.taxonomyName, { exact: true }),
     ).toHaveCount(2);
 
+    const faqTextLayout = [];
+    for (const text of [faqQuestion, faqAnswer]) {
+      for (const alignment of ["start", "end"] as const) {
+        await text.evaluate((element, block) => {
+          element.scrollIntoView({ block, inline: "nearest" });
+        }, alignment);
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            }),
+        );
+        faqTextLayout.push(
+          await text.evaluate((element, block) => {
+            if (!(element instanceof HTMLElement)) {
+              throw new Error("O texto do FAQ não expõe uma caixa HTML mensurável.");
+            }
+            const rectangle = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            const section = element.closest("section");
+            const fragmentTolerance = 1;
+            const visiblePaintedCharactersOutside: Array<{
+              bottom: number;
+              left: number;
+              right: number;
+              top: number;
+            }> = [];
+            let visiblePaintedCharacterCount = 0;
+            let visiblePaintedLeft = Number.POSITIVE_INFINITY;
+            let visiblePaintedRight = Number.NEGATIVE_INFINITY;
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            let textNode = walker.nextNode();
+            while (textNode !== null) {
+              const value = textNode.textContent ?? "";
+              for (let start = 0; start < value.length; start += 1) {
+                const range = document.createRange();
+                range.setStart(textNode, start);
+                range.setEnd(textNode, start + 1);
+                for (const fragment of range.getClientRects()) {
+                  if (
+                    (fragment.width === 0 && fragment.height === 0) ||
+                    fragment.bottom <= 0 ||
+                    fragment.top >= window.innerHeight
+                  ) {
+                    continue;
+                  }
+                  visiblePaintedCharacterCount += 1;
+                  visiblePaintedLeft = Math.min(visiblePaintedLeft, fragment.left);
+                  visiblePaintedRight = Math.max(visiblePaintedRight, fragment.right);
+                  if (
+                    fragment.left < rectangle.left - fragmentTolerance ||
+                    fragment.right > rectangle.right + fragmentTolerance
+                  ) {
+                    visiblePaintedCharactersOutside.push({
+                      bottom: fragment.bottom,
+                      left: fragment.left,
+                      right: fragment.right,
+                      top: fragment.top,
+                    });
+                  }
+                }
+                range.detach();
+              }
+              textNode = walker.nextNode();
+            }
+            const clippingAncestors: Array<{
+              className: string | null;
+              overflowX: string;
+              tag: string;
+            }> = [];
+            let current: HTMLElement | null = element;
+            while (current !== null) {
+              const overflowX = getComputedStyle(current).overflowX;
+              if (overflowX === "clip" || overflowX === "hidden") {
+                clippingAncestors.push({
+                  className: current.getAttribute("class"),
+                  overflowX,
+                  tag: current.tagName,
+                });
+              }
+              if (current === section) break;
+              current = current.parentElement;
+            }
+            const viewportWidth = document.documentElement.clientWidth;
+            return {
+              alignment: block,
+              clientWidth: element.clientWidth,
+              clippingAncestors,
+              elementLeft: rectangle.left,
+              elementRight: rectangle.right,
+              overflowWrap: style.overflowWrap,
+              scrollWidth: element.scrollWidth,
+              textFits:
+                element.clientWidth > 0 &&
+                visiblePaintedCharacterCount > 0 &&
+                visiblePaintedCharactersOutside.length === 0 &&
+                rectangle.left >= 0 &&
+                rectangle.right <= viewportWidth &&
+                (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
+                clippingAncestors.length === 0,
+              viewportWidth,
+              visiblePaintedCharacterCount,
+              visiblePaintedCharactersOutside: visiblePaintedCharactersOutside.slice(0, 16),
+              visiblePaintedLeft,
+              visiblePaintedRight,
+              wordBreak: style.wordBreak,
+            };
+          }, alignment),
+        );
+      }
+    }
+    expect(
+      faqTextLayout.every((text) => text.textFits),
+      JSON.stringify(faqTextLayout, null, 2),
+    ).toBe(true);
+
     const approve = page.getByRole("button", { name: "Aprovar e publicar" });
     await approve.scrollIntoViewIfNeeded();
     await expect(approve).toBeVisible();
@@ -128,103 +244,6 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(skipLink).toBeFocused();
     await expect(skipLink).toBeVisible();
 
-    const faqTextLayout = await Promise.all(
-      [faqQuestion, faqAnswer].map((text) =>
-        text.evaluate((element) => {
-          if (!(element instanceof HTMLElement)) {
-            throw new Error("O texto do FAQ não expõe uma caixa HTML mensurável.");
-          }
-          const rectangle = element.getBoundingClientRect();
-          const style = getComputedStyle(element);
-          const section = element.closest("section");
-          const fragmentTolerance = 1;
-          const paintedCharactersOutside: Array<{
-            bottom: number;
-            left: number;
-            right: number;
-            top: number;
-          }> = [];
-          let paintedCharacterCount = 0;
-          let paintedLeft = Number.POSITIVE_INFINITY;
-          let paintedRight = Number.NEGATIVE_INFINITY;
-          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-          let textNode = walker.nextNode();
-          while (textNode !== null) {
-            const value = textNode.textContent ?? "";
-            for (let start = 0; start < value.length; start += 1) {
-              const range = document.createRange();
-              range.setStart(textNode, start);
-              range.setEnd(textNode, start + 1);
-              for (const fragment of range.getClientRects()) {
-                if (fragment.width === 0 && fragment.height === 0) continue;
-                paintedCharacterCount += 1;
-                paintedLeft = Math.min(paintedLeft, fragment.left);
-                paintedRight = Math.max(paintedRight, fragment.right);
-                if (
-                  fragment.left < rectangle.left - fragmentTolerance ||
-                  fragment.right > rectangle.right + fragmentTolerance
-                ) {
-                  paintedCharactersOutside.push({
-                    bottom: fragment.bottom,
-                    left: fragment.left,
-                    right: fragment.right,
-                    top: fragment.top,
-                  });
-                }
-              }
-              range.detach();
-            }
-            textNode = walker.nextNode();
-          }
-          const clippingAncestors: Array<{
-            className: string | null;
-            overflowX: string;
-            tag: string;
-          }> = [];
-          let current: HTMLElement | null = element;
-          while (current !== null) {
-            const overflowX = getComputedStyle(current).overflowX;
-            if (overflowX === "clip" || overflowX === "hidden") {
-              clippingAncestors.push({
-                className: current.getAttribute("class"),
-                overflowX,
-                tag: current.tagName,
-              });
-            }
-            if (current === section) break;
-            current = current.parentElement;
-          }
-          const viewportWidth = document.documentElement.clientWidth;
-          return {
-            clientWidth: element.clientWidth,
-            clippingAncestors,
-            elementLeft: rectangle.left,
-            elementRight: rectangle.right,
-            overflowWrap: style.overflowWrap,
-            paintedCharacterCount,
-            paintedCharactersOutside: paintedCharactersOutside.slice(0, 16),
-            paintedLeft,
-            paintedRight,
-            scrollWidth: element.scrollWidth,
-            textFits:
-              element.clientWidth > 0 &&
-              paintedCharacterCount > 0 &&
-              paintedCharactersOutside.length === 0 &&
-              rectangle.left >= 0 &&
-              rectangle.right <= viewportWidth &&
-              (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
-              clippingAncestors.length === 0,
-            viewportWidth,
-            wordBreak: style.wordBreak,
-          };
-        }),
-      ),
-    );
-    expect(
-      faqTextLayout.every((text) => text.textFits),
-      JSON.stringify(faqTextLayout, null, 2),
-    ).toBe(true);
-
     const layout = await page.evaluate(
       ({ safeArea, verifiedWrappedTexts }) => {
         const clientWidth = document.documentElement.clientWidth;
@@ -239,7 +258,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             scrollWidth: element.scrollWidth,
             tag: element.tagName,
             text: textContent.slice(0, 80),
-            verifiedByPaintedFragments: verifiedWrappedTexts.includes(textContent),
+            verifiedByVisibleTextLayout: verifiedWrappedTexts.includes(textContent),
           };
         });
         const skipLinkElement = document.querySelector<HTMLAnchorElement>(
@@ -287,7 +306,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
               (element) =>
                 element.clientWidth > 0 &&
                 element.scrollWidth > element.clientWidth &&
-                !element.verifiedByPaintedFragments,
+                !element.verifiedByVisibleTextLayout,
             )
             .slice(0, 16),
           overflowing: measuredElements

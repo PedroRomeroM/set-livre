@@ -333,16 +333,16 @@ Os cenários `SL-F030-E2E-*` cobrem:
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
   verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto do link em relação à
-  caixa de conteúdo. Pergunta e resposta sem oportunidades naturais de quebra são comprovadas pelos
-  limites de cada caractere efetivamente pintado, pelos limites crus da caixa e pela ausência de
-  clipping em sua hierarquia local. A largura rolável continua registrada como diagnóstico, mas não é
-  usada como oráculo para esses dois blocos: o WebKit pode conservar um `scrollWidth` anterior após a
-  substituição dinâmica de conteúdo muito alto mesmo quando todos os fragmentos já foram quebrados e
-  pintados dentro da coluna. Os demais elementos continuam sujeitos à lista global de overflow interno,
-  enquanto documento, corpo e caixas permanecem sujeitos às provas globais de largura. A medição
-  caractere a caractere evita tanto a união instável que o WebKit pode atribuir a um `Range` com vários
-  caracteres atravessando linhas quebradas quanto o falso positivo de `scrollWidth`, sem isentar o
-  conteúdo extremo da verificação geométrica.
+  caixa de conteúdo. Pergunta e resposta homogêneas sem oportunidades naturais de quebra são
+  posicionadas pelo início e pelo fim no viewport; em cada posição, os caracteres efetivamente visíveis
+  são comprovados contra os limites crus da caixa e contra a ausência de clipping na hierarquia local.
+  A largura rolável continua registrada como diagnóstico, mas não é usada como oráculo para esses dois
+  blocos: depois de uma longa suíte, o WebKit pode conservar tanto um `scrollWidth` anterior quanto um
+  retângulo de `Range` fora do viewport após a substituição dinâmica de conteúdo muito alto. Os demais
+  elementos continuam sujeitos à lista global de overflow interno, enquanto documento, corpo e caixas
+  permanecem sujeitos às provas globais de largura. A amostragem das duas extremidades evita aceitar
+  pixels realmente visíveis fora da coluna sem transformar geometria stale e invisível em falso
+  positivo.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as
