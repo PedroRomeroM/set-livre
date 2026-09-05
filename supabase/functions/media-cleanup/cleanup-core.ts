@@ -10,7 +10,7 @@ const previewPathPattern = new RegExp(
   "u",
 );
 const safeErrorCodePattern = /^[a-z0-9_]{2,80}$/u;
-export const cleanupBatchSize = 4;
+export const cleanupBatchSize = 3;
 
 export interface CleanupResult {
   claimed: number;

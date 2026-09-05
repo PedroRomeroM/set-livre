@@ -74,22 +74,25 @@ export const backofficeUserQuerySchema = z.strictObject({
   query: z.string().trim().max(160).optional(),
 });
 
-export const backofficeUserPiiSchema = z.strictObject({
-  additionalDocument: z.string().min(3).max(40).nullable(),
-  email: identityEmailSchema,
-  name: profileNameSchema.nullable(),
-  phoneE164: brazilianPhoneSchema.nullable(),
-  scope: z.uuid(),
-  taxId: z.string().min(11).max(14).nullable(),
-  userId: z.uuid(),
-});
-
 export const backofficePiiReasonSchema = z.enum([
   "identity_verification",
   "legal_request",
   "security_investigation",
   "support_case",
 ]);
+
+export const backofficeUserPiiSchema = z.strictObject({
+  action: z.literal("backoffice.user.revealPii"),
+  additionalDocument: z.string().min(3).max(40).nullable(),
+  email: identityEmailSchema,
+  idempotencyKey: z.uuid(),
+  name: profileNameSchema.nullable(),
+  phoneE164: brazilianPhoneSchema.nullable(),
+  reason: backofficePiiReasonSchema,
+  scope: z.uuid(),
+  taxId: z.string().min(11).max(14).nullable(),
+  userId: z.uuid(),
+});
 
 export const backofficeTaxonomyKindSchema = z.enum(["studioType", "tag", "amenity"]);
 export const backofficeTaxonomySlugSchema = z
@@ -152,6 +155,19 @@ export const backofficeUserRevealPiiCommandSchema = idempotentBackofficeCommandS
     userId: z.uuid(),
   }),
 });
+
+export function matchesBackofficePiiAttempt(
+  pii: BackofficeUserPii,
+  command: BackofficeUserRevealPiiCommand,
+) {
+  return (
+    pii.scope === command.expectedScope &&
+    pii.userId === command.payload.userId &&
+    pii.action === command.action &&
+    pii.idempotencyKey === command.idempotencyKey &&
+    pii.reason === command.payload.reason
+  );
+}
 
 const backofficeAccessPayloadSchema = z.strictObject({
   expectedAccountVersion: z.number().int().nonnegative(),

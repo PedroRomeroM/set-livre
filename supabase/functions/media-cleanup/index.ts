@@ -241,8 +241,8 @@ function createCleanupFetch(
       method === "POST" &&
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup";
-    // Four items: 10s removal + two 5s completion attempts each. Stop work at 90s;
-    // the final ledger RPC gets its own 5s deadline within the remaining 10s.
+    // Setup: 5s input + 5s begin + two 5s claims. Three items need at most 60s
+    // including completion replays: 80s work + 5s finalization fit below 90s/100s.
     const remainingMs =
       invocationStartedAt +
       (isRunCompletion ? cleanupInvocationDeadlineMs : cleanupWorkDeadlineMs) -

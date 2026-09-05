@@ -8797,6 +8797,7 @@ CREATE OR REPLACE FUNCTION "private"."reveal_backoffice_user_pii"("p_actor_user_
     AS $$
 declare
   actor_context record;
+  audited_attempt jsonb;
   auth_updated_at timestamptz;
   existing_request private.backoffice_command_requests%rowtype;
   payload_hash text;
@@ -8884,58 +8885,78 @@ begin
     then
       raise exception using errcode = '40001', message = 'backoffice_pii_result_stale';
     end if;
-    return result;
+  else
+    insert into private.backoffice_command_requests (
+      actor_user_id,
+      idempotency_key,
+      action,
+      payload_hash,
+      result_hash,
+      target_type,
+      target_id,
+      result_profile_version,
+      result_auth_updated_at
+    )
+    values (
+      p_actor_user_id,
+      p_idempotency_key,
+      'backoffice.user.revealPii',
+      payload_hash,
+      null,
+      'profile',
+      p_target_user_id,
+      profile_version,
+      auth_updated_at
+    )
+    returning * into existing_request;
+
+    insert into audit.events (
+      actor_user_id,
+      actor_role,
+      action,
+      target_type,
+      target_id,
+      result,
+      request_id,
+      idempotency_key,
+      ip_hash,
+      metadata
+    )
+    values (
+      p_actor_user_id,
+      actor_context.actor_role,
+      'backoffice.user_pii_revealed',
+      'profile',
+      p_target_user_id,
+      'succeeded',
+      p_request_id,
+      p_idempotency_key,
+      null,
+      pg_catalog.jsonb_build_object('reason', p_reason)
+    );
   end if;
 
-  insert into private.backoffice_command_requests (
-    actor_user_id,
-    idempotency_key,
-    action,
-    payload_hash,
-    result_hash,
-    target_type,
-    target_id,
-    result_profile_version,
-    result_auth_updated_at
+  -- A unicidade existente (action, target_id, idempotency_key) limita a leitura.
+  -- O request_id HTTP pode mudar no replay; a identidade auditada não muda.
+  select pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', event.idempotency_key,
+    'reason', event.metadata ->> 'reason'
   )
-  values (
-    p_actor_user_id,
-    p_idempotency_key,
-    'backoffice.user.revealPii',
-    payload_hash,
-    null,
-    'profile',
-    p_target_user_id,
-    profile_version,
-    auth_updated_at
-  );
+  into audited_attempt
+  from audit.events as event
+  where event.action = 'backoffice.user_pii_revealed'
+    and event.target_id = existing_request.target_id
+    and event.idempotency_key = existing_request.idempotency_key
+    and event.actor_user_id = existing_request.actor_user_id
+    and event.target_type = existing_request.target_type
+    and event.result = 'succeeded';
 
-  insert into audit.events (
-    actor_user_id,
-    actor_role,
-    action,
-    target_type,
-    target_id,
-    result,
-    request_id,
-    idempotency_key,
-    ip_hash,
-    metadata
-  )
-  values (
-    p_actor_user_id,
-    actor_context.actor_role,
-    'backoffice.user_pii_revealed',
-    'profile',
-    p_target_user_id,
-    'succeeded',
-    p_request_id,
-    p_idempotency_key,
-    null,
-    pg_catalog.jsonb_build_object('reason', p_reason)
-  );
+  if not found or audited_attempt ->> 'reason' is distinct from p_reason then
+    raise exception using errcode = '40001', message = 'backoffice_pii_audit_mismatch';
+  end if;
 
-  return result;
+  return result || audited_attempt;
 end;
 $$;
 

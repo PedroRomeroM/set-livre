@@ -14,6 +14,7 @@ import {
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  matchesBackofficePiiAttempt,
   backofficeUserSummarySchema,
   type BackofficeCommand,
   type BackofficeLoginPayload,
@@ -396,6 +397,13 @@ export async function revealBackofficePiiWithoutCaching(
   });
   if (pii.scope !== command.expectedScope || pii.userId !== command.payload.userId) {
     rejectBackofficePrivateBoundary();
+  }
+  if (!matchesBackofficePiiAttempt(pii, command)) {
+    throw new BackofficeClientError({
+      code: "RESPONSE_INVALID",
+      message: "O servidor retornou uma confirmação que não corresponde à tentativa enviada.",
+      status: 200,
+    });
   }
   notifyBackofficeActivityCompleted();
   consume(pii);

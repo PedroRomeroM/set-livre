@@ -107,7 +107,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(63);
+select plan(67);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -958,28 +958,36 @@ select matches(
 );
 
 set local role app_dal;
-select pg_catalog.set_config(
-  'set_livre.test.f031_pii',
-  private.reveal_backoffice_user_pii(
-    '81000000-0000-4000-8000-000000000002',
-    '82000000-0000-4000-8000-000000000002',
-    pg_catalog.clock_timestamp() + interval '30 minutes',
-    '81000000-0000-4000-8000-000000000003',
-    'support_case',
-    '87000000-0000-4000-8000-000000000010',
-    '86000000-0000-4000-8000-000000000010'
-  )::text,
-  true
-);
-select private.reveal_backoffice_user_pii(
-  '81000000-0000-4000-8000-000000000002',
-  '82000000-0000-4000-8000-000000000002',
-  pg_catalog.clock_timestamp() + interval '30 minutes',
-  '81000000-0000-4000-8000-000000000003',
-  'support_case',
-  '87000000-0000-4000-8000-000000000010',
-  '86000000-0000-4000-8000-000000000099'
-);
+do $test$
+begin
+  perform pg_catalog.set_config(
+    'set_livre.test.f031_pii',
+    private.reveal_backoffice_user_pii(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81000000-0000-4000-8000-000000000003',
+      'support_case',
+      '87000000-0000-4000-8000-000000000010',
+      '86000000-0000-4000-8000-000000000010'
+    )::text,
+    true
+  );
+  perform pg_catalog.set_config(
+    'set_livre.test.f031_pii_replay',
+    private.reveal_backoffice_user_pii(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81000000-0000-4000-8000-000000000003',
+      'support_case',
+      '87000000-0000-4000-8000-000000000010',
+      '86000000-0000-4000-8000-000000000099'
+    )::text,
+    true
+  );
+end;
+$test$;
 reset role;
 select ok(
   pg_catalog.current_setting('set_livre.test.f031_pii')::jsonb
@@ -1014,6 +1022,79 @@ select is(
   ),
   1,
   'replay de PII não duplica auditoria'
+);
+
+select ok(
+  (
+    select pg_catalog.current_setting('set_livre.test.f031_pii')::jsonb @>
+      pg_catalog.jsonb_build_object(
+        'action', request.action,
+        'idempotencyKey', event.idempotency_key,
+        'reason', event.metadata ->> 'reason'
+      )
+    from private.backoffice_command_requests as request
+    join audit.events as event
+      on event.actor_user_id = request.actor_user_id
+      and event.idempotency_key = request.idempotency_key
+      and event.target_id = request.target_id
+      and event.action = 'backoffice.user_pii_revealed'
+    where request.actor_user_id = '81000000-0000-4000-8000-000000000002'
+      and request.idempotency_key = '87000000-0000-4000-8000-000000000010'
+  ),
+  'resposta de PII ecoa action do ledger e chave/motivo do evento auditado exato'
+);
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_pii')::jsonb =
+    pg_catalog.current_setting('set_livre.test.f031_pii_replay')::jsonb,
+  'replay preserva identidade auditada e resultado apesar de outro request_id HTTP'
+);
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select private.reveal_backoffice_user_pii(
+        '81000000-0000-4000-8000-000000000002',
+        '82000000-0000-4000-8000-000000000002',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        '81000000-0000-4000-8000-000000000003',
+        'legal_request',
+        '87000000-0000-4000-8000-000000000010',
+        '86000000-0000-4000-8000-000000000097'
+      )
+    $command$
+  ),
+  '^40001:backoffice_idempotency_conflict$',
+  'outro motivo não pode substituir o motivo auditado da mesma chave'
+);
+set local role app_dal;
+do $test$
+begin
+  perform pg_catalog.set_config(
+    'set_livre.test.f031_pii_second',
+    private.reveal_backoffice_user_pii(
+      '81000000-0000-4000-8000-000000000002',
+      '82000000-0000-4000-8000-000000000002',
+      pg_catalog.clock_timestamp() + interval '30 minutes',
+      '81000000-0000-4000-8000-000000000003',
+      'legal_request',
+      '87000000-0000-4000-8000-000000000096',
+      '86000000-0000-4000-8000-000000000096'
+    )::text,
+    true
+  );
+end;
+$test$;
+reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f031_pii_second')::jsonb @>
+    '{"action":"backoffice.user.revealPii","idempotencyKey":"87000000-0000-4000-8000-000000000096","reason":"legal_request"}'::jsonb
+    and (
+      select metadata = '{"reason":"legal_request"}'::jsonb
+      from audit.events
+      where action = 'backoffice.user_pii_revealed'
+        and target_id = '81000000-0000-4000-8000-000000000003'
+        and idempotency_key = '87000000-0000-4000-8000-000000000096'
+    ),
+  'nova tentativa do mesmo operador/alvo devolve a própria chave e motivo auditados'
 );
 
 set local role app_dal;

@@ -157,6 +157,12 @@ Enquanto uma suspensão/restauração estiver em voo ou com resultado ambíguo, 
 bloqueada, inclusive no handler de submit, preservando alvo, payload e chave para replay. Nova busca
 só descarta uma confirmação ainda não enviada ou uma tentativa já verificada pela leitura.
 
+Revelação só confirma e libera a tentativa pendente depois da validação do
+[eco auditado exato](api-contracts.md#57-adminbackoffice). Resposta de outra tentativa do mesmo
+operador/alvo não publica seus dados e mantém o motivo bloqueado, com `Repetir mesma revelação` usando a
+mesma chave/payload. O replay válido não duplica auditoria. Expiração, limpeza por mudança de motivo,
+aba oculta e marcador redigido da MutationCache permanecem iguais.
+
 ## 5. Acessos e taxonomias
 
 Somente `admin` vê e abre `/acessos`, `/acessos/[userId]` e `/taxonomias`; chamada direta continua sendo
@@ -282,6 +288,8 @@ Audit é append-only para operadores. Export controlado.
 - runtime bloqueado não executa mutação; desbloqueio expira, não atravessa sessão e nunca persiste a chave;
 - arquivamento preserva referência e bloqueia nova seleção;
 - PII permanece mascarada, temporária e auditada;
+- resposta de outra tentativa do mesmo operador/alvo não revela PII nem libera o motivo; replay
+  recupera a tentativa exata sem duplicar auditoria (`SL-F031-E2E-005`);
 - resposta de PII concluída em aba oculta nunca é renderizada;
 - busca/cursor ficam no servidor e fora da URL;
 - troca de sessão/papel elimina imediatamente a composição privada após a revalidação;

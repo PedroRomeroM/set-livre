@@ -182,8 +182,10 @@ Medir; não usar Infinity em dado operacional.
 - comandos administrativos não fazem optimistic update. Uma resposta ambígua preserva comando,
   payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
   resposta conclusiva descarta a tentativa e invalida o read model. PII só alcança o consumidor após
-  validar `scope` e `userId` contra a solicitação, usa apenas estado React efêmero, expira em 60
-  segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
+  validar a [identidade auditada da tentativa](api-contracts.md#57-adminbackoffice) contra a
+  solicitação, antes também de limpar o pending. Eco inválido não publica sucesso nem dados e mantém
+  a mesma chave/payload para replay. PII usa apenas estado React efêmero, expira em 60 segundos/aba
+  oculta e a MutationCache recebe somente o marcador redigido;
 - a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
   `backoffice.studio(scope,studioId)`. Sem páginas iniciais, a fila executa a leitura mesmo offline
   para oferecer erro e retry explícito limitado; reconexão continua disparando refetch.

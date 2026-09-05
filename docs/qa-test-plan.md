@@ -236,6 +236,11 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - PII mascarada até revelação justificada, com o motivo auditado imutável durante a requisição e
   descarte imediato do valor anterior quando o motivo muda, além de busca/cursor server-side em
   desktop, 390 px, 320 px e altura compacta;
+- `SL-F031-E2E-005` entrega à nova tentativa a resposta real de outra revelação do mesmo operador/alvo,
+  preservando a correlação HTTP atual: dados continuam ocultos e motivo bloqueado até replay da
+  chave/payload exatos, sem auditoria duplicada. Unitários isolam chave, motivo e action
+  ausentes/divergentes na resposta; pgTAP prova o eco vindo do ledger/evento auditado e sua
+  estabilidade no replay, com recusa de motivo trocado e resultado stale;
 - resposta de PII que conclui depois de a aba ficar oculta é descartada nas quatro composições de
   regressão;
 - revalidação de sessão/papel, auto-suspensão confirmada ou com resposta perdida, login ambíguo em outra

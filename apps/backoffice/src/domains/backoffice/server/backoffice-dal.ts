@@ -9,6 +9,7 @@ import {
   backofficeStudioReviewQueueSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  matchesBackofficePiiAttempt,
   backofficeUserSummarySchema,
   platformRolesSchema,
   type BackofficeAccessCommand,
@@ -305,11 +306,15 @@ export async function revealBackofficeUserPii(input: {
       input.requestId,
     ],
   );
-  return exactlyOne(
+  const pii = exactlyOne(
     result.rows,
     z.strictObject({ result: backofficeUserPiiSchema }),
     "reveal_backoffice_user_pii",
   ).result;
+  if (!matchesBackofficePiiAttempt(pii, { ...input.command, expectedScope: input.auth.userId })) {
+    throw new Error("A confirmação de PII não corresponde à tentativa auditada solicitada.");
+  }
+  return pii;
 }
 
 export async function setBackofficeUserRole(input: {

@@ -45,6 +45,7 @@ export {
   backofficeTaxonomyUpsertCommandSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  matchesBackofficePiiAttempt,
   backofficeUserQuerySchema,
   backofficeUserRevealPiiCommandSchema,
   backofficeUserRestoreCommandSchema,

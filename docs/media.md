@@ -115,7 +115,7 @@ imediatamente. Uma Edge Function:
 - usa a secret key padrão fornecida pelo próprio runtime Supabase; browser nunca a recebe e o processo
   web da VM a usa somente em sua fronteira server-only separada;
 - chama RPCs públicos concedidos apenas a `service_role`, que delegam a rotinas de manutenção;
-- reivindica lotes de até quatro itens com token, `SKIP LOCKED`, lease e replay, conforme o orçamento
+- reivindica lotes limitados com token, `SKIP LOCKED`, lease e replay, conforme o orçamento
   de execução e capacidade definido em [`infrastructure.md`](infrastructure.md#configuração-do-github);
 - remove original e prévia somente pela Storage API;
 - conclui sucesso ou agenda backoff limitado em falha.

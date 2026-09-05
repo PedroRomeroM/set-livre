@@ -4,7 +4,11 @@ import {
   backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
+  backofficeUserPiiSchema,
+  backofficeUserRevealPiiCommandSchema,
   backofficeUserSummarySchema,
+  type BackofficeUserPii,
+  type BackofficeUserRevealPiiCommand,
 } from "@set-livre/contracts";
 
 import {
@@ -217,16 +221,40 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
   }
 });
 
-test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e auditada", async ({
+test("SL-F031-E2E-005 @p1 PII exige a tentativa auditada exata e recupera resposta trocada sem duplicar auditoria", async ({
   page,
 }, testInfo) => {
   test.setTimeout(180_000);
   const support = createFeat031Operator(testInfo, "005_pii");
   const target = await createFeat031DirectIdentity("PII alvo");
+  const attempts: BackofficeUserRevealPiiCommand[] = [];
+  let previousPii: BackofficeUserPii | undefined;
   try {
     await provisionFeat031Operator(page, support, "support", "031005");
     await loginFeat031Backoffice(page, support);
     const card = await searchUser(page, target.email, target.userId);
+    await page.route("**/api/commands", async (route) => {
+      const command = backofficeUserRevealPiiCommandSchema.safeParse(
+        route.request().postDataJSON(),
+      );
+      if (!command.success) {
+        await route.continue();
+        return;
+      }
+      attempts.push(command.data);
+      const response = await route.fetch();
+      const parsed = apiSuccessSchema(backofficeUserPiiSchema).safeParse(await response.json());
+      if (!parsed.success) throw new Error("A revelação QA não retornou o contrato auditado.");
+      if (attempts.length === 1) previousPii = parsed.data.data;
+      if (attempts.length === 2) {
+        if (previousPii === undefined)
+          throw new Error("A tentativa QA anterior não foi capturada.");
+        // Resposta real da tentativa anterior, com a correlação HTTP atual.
+        await route.fulfill({ response, json: { ...parsed.data, data: previousPii } });
+        return;
+      }
+      await route.fulfill({ response });
+    });
     await expect(card).not.toContainText(target.name);
     await expect(card).not.toContainText(target.email);
     await expect(card).not.toContainText(target.taxId);
@@ -250,7 +278,26 @@ test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e audi
     await expect(card).not.toContainText(target.name);
     await expect(card).not.toContainText(target.taxId);
     await card.getByRole("button", { name: "Revelar dados por 60 segundos" }).click();
+    const retry = card.getByRole("button", { name: "Repetir mesma revelação" });
+    await expect(retry).toBeVisible();
+    await expect(card.getByRole("alert")).toHaveText(
+      "O resultado não pôde ser confirmado. Repita a mesma tentativa para consultar o resultado idempotente.",
+    );
+    await expect(reason).toBeDisabled();
+    await expect(reason).toHaveValue("legal_request");
+    await expect(card.getByRole("region", { name: /Dados revelados de/u })).toHaveCount(0);
+    await expect(card).not.toContainText(target.email);
+    await expect(card).not.toContainText(target.name);
+    await expect(card).not.toContainText(target.taxId);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]?.idempotencyKey).not.toBe(attempts[0]?.idempotencyKey);
+    expect(await readFeat031Audit("backoffice.user_pii_revealed", target.userId)).toHaveLength(2);
+
+    await retry.click();
     await expect(card.getByText(target.email, { exact: true })).toBeVisible();
+    await expect(reason).toBeEnabled();
+    expect(attempts).toHaveLength(3);
+    expect(attempts[2]).toEqual(attempts[1]);
     const renewedAudit = await readFeat031Audit("backoffice.user_pii_revealed", target.userId);
     expect(renewedAudit).toHaveLength(2);
     expect(renewedAudit[0]).toMatchObject({

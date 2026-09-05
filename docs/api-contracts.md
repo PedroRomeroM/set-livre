@@ -395,9 +395,15 @@ arquivamento/reativação, e o banco deriva o booleano final; o cliente nunca en
 autoridade implícita nesses campos, revalida sessão/papel no banco e converte estado obsoleto para
 `409/STALE_STATE`. Nesse caso a UI remove a confirmação, limpa o alvo versionado e relê o read model
 antes de permitir outra ação. Revelação de PII exige motivo allowlisted, nunca entra em cache e retorna
-replay somente enquanto as versões canônicas continuam idênticas. O cliente valida `scope` e `userId`
-da resposta contra o comando antes de entregá-la ao consumidor efêmero; divergência recompõe a
-fronteira privada sem renderizar PII. Toda mutação, inclusive revelação de PII, exige o desbloqueio local
+replay somente enquanto as versões canônicas continuam idênticas. A resposta inclui obrigatoriamente
+`action: "backoffice.user.revealPii"`, `idempotencyKey` e `reason`, derivados da tentativa persistida no
+ledger/evento auditado pela função privada, além de `scope`, `userId` e os campos sensíveis. DAL e
+cliente validam esses cinco identificadores contra a solicitação antes de liberar os dados. O
+`requestId` HTTP é correlação, não identidade da tentativa, e pode mudar no replay. Outro scope/alvo
+recompõe a fronteira privada; chave/motivo divergentes ou eco ausente/inválido são confirmação ambígua:
+o cliente retorna `RESPONSE_INVALID`, não consome PII nem limpa a tentativa e permite repetir somente
+o mesmo comando. O servidor não completa campos ausentes com dados da request.
+Toda mutação, inclusive revelação de PII, exige o desbloqueio local
 vigente; ausência ou expiração retorna `423/RUNTIME_LOCKED` antes da DAL.
 Chave ausente no processo retorna `503/RUNTIME_UNLOCK_UNAVAILABLE` e chave divergente retorna
 `403/RUNTIME_UNLOCK_DENIED`. Nenhuma resposta expõe SQL, provider, chave ou detalhe de autorização.

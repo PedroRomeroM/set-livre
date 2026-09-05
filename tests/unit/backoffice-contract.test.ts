@@ -8,6 +8,7 @@ import {
   backofficeStudioReadActivityHeader,
   backofficeTaxonomyItemSchema,
   backofficeUserListSchema,
+  backofficeUserPiiSchema,
   backofficeUserSummarySchema,
   platformRolesSchema,
   type BackofficeTaxonomyStatusCommand,
@@ -638,10 +639,13 @@ describe("backoffice contracts", () => {
         new Response(
           JSON.stringify({
             data: {
+              action: "backoffice.user.revealPii",
               additionalDocument: null,
               email: "target@example.test",
+              idempotencyKey,
               name: "Usuário alvo",
               phoneE164: null,
+              reason: "support_case",
               scope,
               taxId: null,
               userId,
@@ -666,6 +670,55 @@ describe("backoffice contracts", () => {
     ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
     expect(consume).not.toHaveBeenCalled();
     expect(dispatchEvent).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { label: "another key", patch: { idempotencyKey: revisionId } },
+    { label: "another audited reason", patch: { reason: "legal_request" } },
+    { label: "another action", patch: { action: "backoffice.user.restore" } },
+    { label: "missing action", patch: { action: undefined } },
+    { label: "missing key", patch: { idempotencyKey: undefined } },
+    { label: "missing audited reason", patch: { reason: undefined } },
+  ])("rejects PII with $label without consuming or confirming the attempt", async ({ patch }) => {
+    const command = {
+      action: "backoffice.user.revealPii",
+      expectedScope: actorId,
+      idempotencyKey,
+      payload: { reason: "support_case", userId: targetId },
+    } as const;
+    const pii = {
+      action: command.action,
+      additionalDocument: null,
+      email: "qa-pii@example.test",
+      idempotencyKey,
+      name: "QA PII",
+      phoneE164: null,
+      reason: command.payload.reason,
+      scope: actorId,
+      taxId: null,
+      userId: targetId,
+    };
+    const consume = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(successResponse({ ...pii, ...patch }))
+      .mockResolvedValueOnce(successResponse(pii));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error: unknown = await revealBackofficePiiWithoutCaching(command, consume).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+    expect(isAmbiguousBackofficeError(error)).toBe(true);
+    expect(consume).not.toHaveBeenCalled();
+    expect(JSON.stringify(error)).not.toContain(pii.email);
+
+    const result = await revealBackofficePiiWithoutCaching(command, consume);
+    expect(result).toEqual({ revealed: true });
+    expect(consume).toHaveBeenCalledOnce();
+    expect(consume.mock.calls[0]?.[0] === undefined).toBe(false);
+    expect(backofficeUserPiiSchema.safeParse(consume.mock.calls[0]?.[0]).success).toBe(true);
+    expect(fetchMock.mock.calls[0]?.[1].body).toBe(fetchMock.mock.calls[1]?.[1].body);
   });
 
   it("accepts only the operational roles delivered by FEAT-031 and FEAT-030", () => {

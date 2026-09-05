@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260905123458_serialize_media_cleanup_claim_replay`, criada depois de
-`20260903061604_expose_backoffice_access_eligibility`; uma feature nova nunca é inserida antes de uma
+`20260905134031_bind_pii_reveal_audited_attempt`, criada depois de
+`20260905123458_serialize_media_cleanup_claim_replay`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -205,6 +205,15 @@ terminar. Caminhos que renovam `last_seen_at` preservam `FOR UPDATE`.
 Ledger idempotente por ator + chave. Guarda action, hash de payload, alvo e hash do resultado
 autoritativo. Para revelação de PII, não guarda valor nem hash reutilizável: conserva somente versões
 canônicas de perfil/Auth para recusar replay stale. RLS fica habilitada sem policy e sem grant web.
+`private.reveal_backoffice_user_pii` compõe o eco de tentativa pela action desse ledger e pela
+chave/motivo do evento `audit.events` bem-sucedido do mesmo ator/alvo, tanto na primeira execução
+quanto no replay. A unicidade existente de ação/alvo/chave limita essa leitura; não há novo índice,
+coluna nem cópia de PII. Evento ausente ou motivo divergente falha fechado. O `request_id` de um
+replay pode mudar sem alterar a identidade auditada. O contrato HTTP fica em
+[`api-contracts.md`](api-contracts.md#57-adminbackoffice).
+Essa alteração de JSON é incompatível com o consumidor estrito anterior: rollback exige código
+compatível com o eco auditado ou nova migration corretiva forward-only, nunca remoção manual dos
+campos nem edição da migration aplicada.
 
 ### 4.4 `terms_versions`
 

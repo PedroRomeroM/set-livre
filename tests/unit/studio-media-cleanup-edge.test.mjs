@@ -123,7 +123,7 @@ describe("studio media cleanup edge adapter", () => {
     });
     expect(rpc).toHaveBeenCalledWith("claim_studio_media_cleanup", {
       p_claim_token: runId,
-      p_limit: 4,
+      p_limit: 3,
     });
     expect(rpc).toHaveBeenCalledWith("complete_studio_media_cleanup", {
       p_claim_token: runId,
@@ -431,8 +431,8 @@ describe("studio media cleanup edge adapter", () => {
 
 describe("studio media cleanup edge core", () => {
   it("limita lote e cardinalidade reclamada antes de qualquer remoção", async () => {
-    expect(cleanupBatchSize).toBe(4);
-    for (const batchSize of [0, 5, 25, 100, Number.NaN]) {
+    expect(cleanupBatchSize).toBe(3);
+    for (const batchSize of [0, 4, 5, 25, 100, Number.NaN]) {
       const contract = dependencies();
       await expect(
         runStudioMediaCleanup(contract, { batchSize, functionSlug, runId }),

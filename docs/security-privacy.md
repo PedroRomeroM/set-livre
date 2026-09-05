@@ -97,7 +97,11 @@ contra `expectedAccountVersion`. O último admin ativo é protegido sob lock glo
 PII aparece mascarada no read model. A busca comum aceita somente prefixo de e-mail ou UUID exato e
 nunca avalia `profiles.name`; nome bruto fica exclusivamente na revelação por motivo allowlisted, fora
 de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver
-visível e é descartada se terminar durante ocultação. Um observador relê a sessão no mount, foco,
+visível e é descartada se terminar durante ocultação. Antes de consumir os dados, DAL e cliente
+exigem o [eco da tentativa auditada exata](api-contracts.md#57-adminbackoffice); identidade de
+operador/alvo sozinha não confirma outra tentativa. Eco ausente/divergente não é reconstruído da
+request, não expõe PII e não libera o pending no cliente.
+Um observador relê a sessão no mount, foco,
 intervalo curto e eventos entre abas; identidade ou versão de autorização divergente ocultam o DOM
 privado e limpam o cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo,
 motivo/versões e correlação, nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada
