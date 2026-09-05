@@ -10,7 +10,7 @@ const previewPathPattern = new RegExp(
   "u",
 );
 const safeErrorCodePattern = /^[a-z0-9_]{2,80}$/u;
-export const cleanupBatchSize = 3;
+export const cleanupBatchSize = 2;
 
 export interface CleanupResult {
   claimed: number;
@@ -345,8 +345,26 @@ async function completeRun(
         errorCode,
       }),
     );
-  } catch (cause) {
-    throw new CleanupRunError("cleanup_run_complete_failed", result, { cause });
+  } catch {
+    try {
+      // beginRun is also the existing idempotent ledger read for this UUID/slug.
+      const persisted = parseCleanupRunLedgerState(
+        await dependencies.beginRun(context),
+        context.runId,
+        context.functionSlug,
+      );
+      if (
+        persisted.status !== (errorCode === null ? "succeeded" : "failed") ||
+        persisted.claimed !== result.claimed ||
+        persisted.deleted !== result.deleted ||
+        persisted.failed !== result.failed ||
+        persisted.errorCode !== errorCode
+      ) {
+        throw new Error("cleanup_run_reconciliation_conflict");
+      }
+    } catch (cause) {
+      throw new CleanupRunError("cleanup_run_complete_failed", result, { cause });
+    }
   }
   if (errorCode !== null) {
     throw new CleanupRunError(errorCode, result);

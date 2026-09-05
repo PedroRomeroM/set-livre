@@ -110,13 +110,22 @@ afterEach(() => {
 describe("cleanup HTTP and ledger deadlines", () => {
   it("reserves setup, claim replay and item reconciliation before sealing the full batch", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const elapsed = performance.now.bind(performance);
+    let processingMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => elapsed() + processingMs);
     let beginAttempts = 0;
     let claimAttempts = 0;
     let finishAttempts = 0;
     const completionAttempts = new Map();
     const outcomes = new Map();
+    let terminalRun;
     const probe = harness(({ name, value, parameters }) => {
-      if (name === begin && ++beginAttempts === 1) return slowBody(null, null).response;
+      // Model parsing/dispatch overhead outside the awaited HTTP body deadlines.
+      processingMs += 300;
+      if (name === begin) {
+        if (++beginAttempts === 1) return slowBody(null, null).response;
+        if (terminalRun) return slowBody(terminalRun, 4_900).response;
+      }
       if (name === claim) {
         if (++claimAttempts === 1) return slowBody(null, null).response;
         if (claimAttempts === 3) {
@@ -150,7 +159,9 @@ describe("cleanup HTTP and ledger deadlines", () => {
             { status: 409 },
           );
         }
-        if (++finishAttempts === 1) return slowBody(null, null).response;
+        finishAttempts += 1;
+        terminalRun = value;
+        return slowBody(null, null).response;
       }
       return slowBody(value, 4_900).response;
     });
@@ -168,19 +179,90 @@ describe("cleanup HTTP and ledger deadlines", () => {
       deleted: items.length,
       failed: 0,
     });
-    expect(beginAttempts).toBe(2);
+    expect(beginAttempts).toBe(3);
     expect(claimAttempts).toBe(3);
     expect(finishAttempts).toBe(2);
     expect(outcomes.size).toBe(items.length);
     expect([...completionAttempts.values()]).toEqual(items.map(() => 2));
     expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(items.length);
-    expect(probe.calls.at(-1).name).toBe(finish);
+    expect(probe.calls.at(-1).name).toBe(begin);
     const finishes = probe.calls.filter(({ name }) => name === finish);
     expect(finishes[1].parameters).toEqual(finishes[0].parameters);
     const reconciliation = probe.calls.filter(({ name }) => name === claim).at(-1);
-    expect(reconciliation.at).toBeLessThan(85_000);
-    expect(finishes[0].at).toBeLessThan(90_000);
-    expect(settledAt).toBeLessThan(100_000);
+    expect(reconciliation.at).toBeLessThan(80_000);
+    expect(finishes[0].at).toBeLessThan(85_000);
+    expect(settledAt).toBeLessThan(95_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["headers", "body"])(
+    "reconciles twice-lost terminal run response %s even after caller disconnect",
+    async (stage) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      let terminalRun;
+      const probe = harness(({ name, value }) => {
+        if (name === begin && terminalRun) return Response.json(terminalRun);
+        if (name === finish) {
+          terminalRun = value;
+          controller.abort();
+          if (stage === "headers") throw new TypeError("Lost terminal run response");
+          return slowBody(null, null).response;
+        }
+        return Response.json(value);
+      });
+      const responsePromise = probe.handler(request({ signal: controller.signal }));
+      await probe.firstRpc;
+      await vi.advanceTimersByTimeAsync(10_000);
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        claimed: items.length,
+        deleted: items.length,
+        failed: 0,
+      });
+      const begins = probe.calls.filter(({ name }) => name === begin);
+      expect(begins).toHaveLength(2);
+      expect(begins[1].parameters).toEqual(begins[0].parameters);
+      expect(begins[1].signal.aborted).toBe(false);
+      expect(probe.calls.filter(({ name }) => name === finish)).toHaveLength(2);
+      expect(probe.calls.filter(({ name }) => name === claim)).toHaveLength(1);
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(items.length);
+      expect(probe.calls.at(-1).name).toBe(begin);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("bounds terminal reread in the reserved window even when its body never arrives", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const elapsed = performance.now.bind(performance);
+    let suspensionMs = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => elapsed() + suspensionMs);
+    const controller = new AbortController();
+    let completions = 0;
+    const probe = harness(({ name, value }) => {
+      if (name === finish) {
+        controller.abort();
+        if (++completions === 2) suspensionMs = 95_000;
+        throw new TypeError("Lost run completion response");
+      }
+      if (name === begin && completions > 0) return slowBody(null, null).response;
+      return Response.json(value);
+    });
+    const responsePromise = probe.handler(request({ signal: controller.signal }));
+    await probe.firstRpc;
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await responsePromise;
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      errorCode: "cleanup_run_complete_failed",
+    });
+    const reread = probe.calls.at(-1);
+    expect(reread.name).toBe(begin);
+    expect(reread.at).toBe(95_000);
+    expect(reread.signal.aborted).toBe(true);
+    expect(reread.signal.reason.name).toBe("TimeoutError");
+    expect(performance.now()).toBe(100_000);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -201,12 +283,16 @@ describe("cleanup HTTP and ledger deadlines", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       const response = await responsePromise;
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ claimed: 3, deleted: 3, failed: 0 });
+      await expect(response.json()).resolves.toEqual({
+        claimed: items.length,
+        deleted: items.length,
+        failed: 0,
+      });
       const begins = probe.calls.filter(({ name }) => name === begin);
       expect(begins).toHaveLength(2);
       expect(begins[1].parameters).toEqual(begins[0].parameters);
       expect(begins[0].parameters).toEqual({ p_run_id: runId, p_function_slug: functionSlug });
-      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(3);
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(items.length);
       expect(vi.getTimerCount()).toBe(0);
     },
   );
@@ -235,12 +321,16 @@ describe("cleanup HTTP and ledger deadlines", () => {
       });
       const responsePromise = probe.handler(request());
       await probe.firstRpc;
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(items.length * 10_000);
       const response = await responsePromise;
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ claimed: 3, deleted: 3, failed: 0 });
-      expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(6);
-      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(3);
+      await expect(response.json()).resolves.toEqual({
+        claimed: items.length,
+        deleted: items.length,
+        failed: 0,
+      });
+      expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(items.length * 2);
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(items.length);
       const claims = probe.calls.filter(({ name }) => name === claim);
       expect(claims).toHaveLength(2);
       expect(claims[1].parameters).toEqual(claims[0].parameters);
@@ -249,7 +339,7 @@ describe("cleanup HTTP and ledger deadlines", () => {
     },
   );
 
-  it("finishes three sequential slow removals beyond the old 20s caller timeout", async () => {
+  it("finishes the bounded batch of slow sequential removals", async () => {
     vi.useFakeTimers();
     const probe = harness(({ name, value }) =>
       name === storage ? slowBody(value, 8_000).response : Response.json(value),
@@ -264,12 +354,12 @@ describe("cleanup HTTP and ledger deadlines", () => {
       makeRunId: () => runId,
     });
     await probe.firstStorage;
-    await vi.advanceTimersByTimeAsync(24_000);
+    await vi.advanceTimersByTimeAsync(items.length * 8_000);
     await expect(responsePromise).resolves.toBeUndefined();
     expect(probe.calls.at(-1).parameters).toMatchObject({
       p_status: "succeeded",
-      p_claimed: 3,
-      p_deleted: 3,
+      p_claimed: items.length,
+      p_deleted: items.length,
       p_failed: 0,
     });
     expect(probe.calls.map(({ name }) => name)).toEqual([
@@ -279,11 +369,11 @@ describe("cleanup HTTP and ledger deadlines", () => {
       complete,
       storage,
       complete,
-      storage,
-      complete,
       finish,
     ]);
-    expect(probe.calls.find(({ name }) => name === claim).parameters.p_limit).toBe(3);
+    expect(probe.calls.find(({ name }) => name === claim).parameters.p_limit).toBe(
+      cleanupBatchSize,
+    );
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -300,21 +390,21 @@ describe("cleanup HTTP and ledger deadlines", () => {
       });
       const responsePromise = probe.handler(request());
       await probe.firstStorage;
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(items.length * 10_000);
       const response = await responsePromise;
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({
-        claimed: 3,
+        claimed: items.length,
         deleted: 0,
-        failed: 3,
+        failed: items.length,
         errorCode: "cleanup_storage_remove_failed",
       });
-      expect(bodies).toHaveLength(3);
+      expect(bodies).toHaveLength(items.length);
       expect(bodies.every(({ cancel }) => cancel.mock.calls.length === 1)).toBe(true);
       expect(probe.calls.at(-1).parameters).toMatchObject({
         p_status: "failed",
-        p_claimed: 3,
-        p_failed: 3,
+        p_claimed: items.length,
+        p_failed: items.length,
       });
       expect(vi.getTimerCount()).toBe(0);
     },
@@ -323,7 +413,7 @@ describe("cleanup HTTP and ledger deadlines", () => {
   it.each([
     [begin, 10_000, "cleanup_run_begin_failed"],
     [claim, 10_000, "cleanup_claim_failed"],
-    [complete, 30_000, "cleanup_item_complete_failed"],
+    [complete, items.length * 10_000, "cleanup_item_complete_failed"],
     [finish, 10_000, "cleanup_run_complete_failed"],
   ])(
     "bounds stalled %s response bodies without publishing success",
@@ -343,7 +433,7 @@ describe("cleanup HTTP and ledger deadlines", () => {
         expect(probe.calls.map(({ name }) => name)).toEqual([begin, claim, claim]);
       }
       if (stage === complete) {
-        expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(6);
+        expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(items.length * 2);
         expect(probe.calls.at(-1).name).toBe(claim);
         expect(probe.calls.some(({ name }) => name === finish)).toBe(false);
       }
@@ -392,13 +482,17 @@ describe("cleanup HTTP and ledger deadlines", () => {
       await vi.advanceTimersByTimeAsync(5_000);
       const response = await responsePromise;
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ claimed: 3, deleted: 3, failed: 0 });
+      await expect(response.json()).resolves.toEqual({
+        claimed: items.length,
+        deleted: items.length,
+        failed: 0,
+      });
       const claims = probe.calls.filter(({ name }) => name === claim);
       expect(claims).toHaveLength(2);
       expect(claims[1].parameters).toEqual(claims[0].parameters);
-      expect(claims[1].parameters).toEqual({ p_claim_token: runId, p_limit: 3 });
-      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(3);
-      expect(outcomes.size).toBe(3);
+      expect(claims[1].parameters).toEqual({ p_claim_token: runId, p_limit: cleanupBatchSize });
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(items.length);
+      expect(outcomes.size).toBe(items.length);
       expect(probe.calls.filter(({ name }) => name === finish)).toHaveLength(1);
       expect(vi.getTimerCount()).toBe(0);
     },
@@ -422,7 +516,11 @@ describe("cleanup HTTP and ledger deadlines", () => {
 
     const replay = await probe.handler(request());
     expect(replay.status).toBe(200);
-    await expect(replay.json()).resolves.toEqual({ claimed: 3, deleted: 3, failed: 0 });
+    await expect(replay.json()).resolves.toEqual({
+      claimed: items.length,
+      deleted: items.length,
+      failed: 0,
+    });
     expect(probe.calls.filter(({ name }) => name === claim)).toHaveLength(3);
     expect(probe.calls.filter(({ name }) => name === finish)).toHaveLength(1);
     expect(vi.getTimerCount()).toBe(0);
@@ -482,7 +580,7 @@ describe("cleanup HTTP and ledger deadlines", () => {
     expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(1);
     expect(probe.calls.at(-1)).toMatchObject({
       name: finish,
-      parameters: { p_status: "failed", p_failed: 3 },
+      parameters: { p_status: "failed", p_failed: items.length },
     });
     expect(probe.calls.at(-1).signal.aborted).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
@@ -528,20 +626,20 @@ describe("cleanup HTTP and ledger deadlines", () => {
 
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toEqual({
-        claimed: 3,
+        claimed: items.length,
         deleted: 1,
-        failed: 2,
+        failed: items.length - 1,
         errorCode: "cleanup_storage_remove_failed",
       });
       expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(1);
       const completions = probe.calls.filter(({ name }) => name === complete);
-      expect(completions).toHaveLength(4);
+      expect(completions).toHaveLength(items.length + 1);
       expect(completions[1].parameters).toEqual(completions[0].parameters);
       expect(completions.slice(1).every(({ signal }) => !signal.aborted)).toBe(true);
-      expect(outcomes.size).toBe(3);
+      expect(outcomes.size).toBe(items.length);
       expect(probe.calls.at(-1)).toMatchObject({
         name: finish,
-        parameters: { p_status: "failed", p_deleted: 1, p_failed: 2 },
+        parameters: { p_status: "failed", p_deleted: 1, p_failed: items.length - 1 },
       });
       expect(vi.getTimerCount()).toBe(0);
     },

@@ -667,7 +667,7 @@ oneshot falhar durante um bootstrap compatível, o symlink da release, o blocker
 marcadores de recovery permanecem íntegros para nova tentativa, com os serviços parados. Não existe
 edição manual do banco como procedimento operacional.
 
-Cada invocação da Function reclama no máximo três itens sequenciais. A leitura do corpo de entrada
+Cada invocação da Function reclama no máximo dois itens sequenciais. A leitura do corpo de entrada
 tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
 do corpo da resposta, limitado a 64 KiB. Abertura, claim, conclusão de item e fechamento admitem no
 máximo uma segunda tentativa com os mesmos parâmetros e identidade, dentro desses prazos.
@@ -679,16 +679,24 @@ confere identidade, cardinalidade e resultados terminais persistidos, sem repeti
 pendente, membro ausente/duplicado/trocado ou releitura indisponível deixa o run inconclusivo e
 replayable, com erro sem totais; não transforma incerteza em `failed`. O mesmo vale para uma abertura
 cuja segunda resposta permanece inconclusiva. Um replay de abertura já terminal reproduz o resultado
-sem reclamar outro lote.
-O orçamento inclui 5s de entrada, duas aberturas e dois claims de 5s, mais três itens de até 20s
-(remoção de 10s e duas confirmações de 5s), totalizando 85s. A releitura única dispõe de até 5s
-adicionais dentro dos 90s de trabalho; o fechamento e seu replay cabem nos 10s reservados até 100s.
+sem reclamar outro lote. Se as duas respostas de fechamento se perderem, a RPC de abertura existente
+relê uma única vez o mesmo UUID/slug: somente estado terminal com status, contagens e código de erro
+exatamente iguais confirma o resultado. Falha persistida continua falha; resposta running, divergente
+ou indisponível nunca vira sucesso.
+O orçamento inclui 5s de entrada, duas aberturas e dois claims de 5s, mais dois itens de até 20s
+(remoção de 10s e duas confirmações de 5s), totalizando 65s. A releitura de itens dispõe de até 5s:
+o I/O de trabalho soma 70s, com 20s de margem até seu limite de 90s. Fechamento, replay e releitura
+terminal usam até 15s adicionais: 85s de I/O total, com 15s de margem até o envelope de 100s para
+despacho, parsing e processamento. O teste de orçamento inclui overhead fora do I/O; uma suspensão
+arbitrariamente longa ainda falha fechada, não amplia o limite.
 Desconexão cancela novos claims e remoções, mas não cancela as confirmações idempotentes de item:
 elas precisam reconciliar um commit cuja resposta se perdeu antes de derivar as contagens do run.
 Continuam sujeitas ao deadline de RPC e ao orçamento de trabalho; não há repetição da remoção física.
 Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
-run tem deadline próprio de 5s por tentativa dentro da janela reservada até 100s, inclusive se o
-chamador desconectar. Desconexão ou esgotamento do orçamento que impeça a releitura final preserva
+run e sua releitura terminal têm deadline próprio de 5s por chamada dentro da janela até 100s,
+inclusive se o chamador desconectar. A abertura inicial continua cancelável; somente a releitura após
+iniciar o fechamento pertence à finalização. Desconexão que impeça a releitura dos itens ou
+esgotamento do orçamento que impeça confirmar o ledger preserva
 o resultado inconclusivo, sem selar contagens estimadas.
 Falhas comprovadas continuam contabilizadas e o resultado só é saudável depois da confirmação
 do ledger. Indisponibilidade ou resposta ambígua do próprio ledger permanece fail-closed e usa a
@@ -704,13 +712,13 @@ O gate `set-livre-application-start.service` permanece sem timeout próprio: par
 [systemd desabilita o timeout de startup por padrão](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml#L529-L537),
 sem herdar os 90s usuais do manager. A oneshot de cleanup e a recovery conservam seus limites explícitos.
 
-O teto inicial é de 18 mídias por hora (36 objetos, pois cada item remove original e prévia).
-Uma galeria máxima de 20 fotos exige sete ciclos: até 70 minutos mais a duração da última execução
+O teto inicial é de 12 mídias por hora (24 objetos, pois cada item remove original e prévia).
+Uma galeria máxima de 20 fotos exige dez ciclos: até 100 minutos mais a duração da última execução
 depois da elegibilidade, sem outras entradas ou falhas. Esse limite privilegia o fechamento seguro de
 um lote na baseline de baixo volume, não promete esvaziar a fila numa única invocação. Readiness mede
 sucesso terminal recente e runs falhos/travados, não exige fila vazia; portanto a remoção de uma galeria
 não impede novos ciclos nem a saúde entre lotes. O claim ordena por elegibilidade e ID. Antes de admitir
-volume sustentado acima de 18 mídias elegíveis/h, é necessário medir entradas, idade do backlog e tempo
+volume sustentado acima de 12 mídias elegíveis/h, é necessário medir entradas, idade do backlog e tempo
 de drenagem e rever capacidade; aumentar apenas o timeout não resolve saturação.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight

@@ -220,6 +220,7 @@ function createCleanupFetch(
   supabaseUrl: string,
   invocationSignal: AbortSignal,
   invocationStartedAt: number,
+  isFinalizingRun: () => boolean,
 ): CleanupFetch {
   const storageObjectEndpoint = new URL("/storage/v1/object/", supabaseUrl);
 
@@ -241,11 +242,17 @@ function createCleanupFetch(
       method === "POST" &&
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup";
-    // Setup: 5s input + two 5s begins + two 5s claims. Three items need at most 60s.
-    // One 5s batch reconciliation fits the 90s work budget; two 5s finishes fit 100s.
+    const isRunReconciliation =
+      isFinalizingRun() &&
+      method === "POST" &&
+      endpoint.origin === storageObjectEndpoint.origin &&
+      endpoint.pathname === "/rest/v1/rpc/begin_studio_media_cleanup_run";
+    const isFinalization = isRunCompletion || isRunReconciliation;
+    // Setup25 + two items40 + batch read5 =70s, leaving 20s of work slack.
+    // Two finishes10 + terminal read5 =85s, leaving 15s before the 100s envelope.
     const remainingMs =
       invocationStartedAt +
-      (isRunCompletion ? cleanupInvocationDeadlineMs : cleanupWorkDeadlineMs) -
+      (isFinalization ? cleanupInvocationDeadlineMs : cleanupWorkDeadlineMs) -
       performance.now();
     if (remainingMs <= 0) {
       throw new Error("cleanup_invocation_deadline_exceeded");
@@ -253,7 +260,7 @@ function createCleanupFetch(
     const deadlineController = new AbortController();
     const signal = AbortSignal.any([
       // Disconnect stops physical work, not bounded item reconciliation or run finalization.
-      ...(isRunCompletion || isItemCompletion ? [] : [invocationSignal]),
+      ...(isFinalization || isItemCompletion ? [] : [invocationSignal]),
       ...(input instanceof Request ? [input.signal] : []),
       ...(init?.signal ? [init.signal] : []),
       deadlineController.signal,
@@ -387,6 +394,7 @@ export function createCleanupRequestHandler({
       return failureResponse("invalid_request", 400);
     }
 
+    let finalizingRun = false;
     const client = createSupabaseClient(config.url, config.secretKey, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: {
@@ -395,6 +403,7 @@ export function createCleanupRequestHandler({
           config.url,
           request.signal,
           invocationStartedAt,
+          () => finalizingRun,
         ),
       },
     });
@@ -425,6 +434,7 @@ export function createCleanupRequestHandler({
         if (error !== null) throw new Error("cleanup_item_complete_failed");
       },
       async completeRun(context) {
+        finalizingRun = true;
         const { data, error } = await client.rpc("complete_studio_media_cleanup_run", {
           p_claimed: context.claimed,
           p_deleted: context.deleted,
