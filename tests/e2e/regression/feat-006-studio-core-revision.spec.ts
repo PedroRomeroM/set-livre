@@ -83,6 +83,69 @@ test("SL-F006-E2E-004 @p1 valida endereço e capacidade sem sanitizar entrada in
   }
 });
 
+test("SL-F006-E2E-025 @p1 criação offline oferece recuperação antes de liberar o formulário", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  const identity = createFeat006QaIdentity(testInfo, "025_offline_creation");
+  let sessionUnavailable = true;
+  let sessionReads = 0;
+  let createPosts = 0;
+  try {
+    await provisionFeat006Owner(page, identity, "025");
+    await page.addInitScript(() => {
+      if (window.location.pathname !== "/dono/estudios/novo") return;
+      const addEventListener = window.addEventListener.bind(window);
+      Object.defineProperty(window, "addEventListener", {
+        configurable: true,
+        value(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+          options?: boolean | AddEventListenerOptions,
+        ) {
+          addEventListener(type, listener, options);
+          if (type === "offline") {
+            window.addEventListener = addEventListener;
+            window.dispatchEvent(new Event("offline"));
+          }
+        },
+      });
+    });
+    await page.route("**/api/auth/session", async (route) => {
+      sessionReads += 1;
+      if (sessionUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        createPosts += 1;
+      }
+    });
+
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1, name: "Novo estúdio" })).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Acesso de dono indisponível" }),
+    ).toBeVisible();
+    expect(sessionReads).toBeGreaterThan(0);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Tentar novamente", exact: true })).toBeEnabled();
+    expect(createPosts).toBe(0);
+
+    sessionUnavailable = false;
+    await page.getByRole("button", { name: "Tentar novamente", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await fillFeat006Core(page);
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    expect(createPosts).toBe(1);
+    await expectNoHorizontalOverflow(page);
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
 test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolha local", async ({
   page,
 }, testInfo) => {

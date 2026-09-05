@@ -54,6 +54,9 @@ describe("backoffice user list cursor", () => {
     const firstPage = await listBackofficeUsers({ auth, query: "  AnA  " });
     expect(firstPage.nextCursor).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/u);
     expect(mocks.query.mock.calls[0]?.[1]?.[3]).toBe("ana");
+    expect(mocks.query.mock.calls[0]?.[0]).toMatch(
+      /select\s+listed\.account_version, listed\.created_at, listed\.email_masked, listed\.id, listed\.status,/u,
+    );
     expect(await backofficeFilterFingerprint("  AnA  ")).toBe(
       await backofficeFilterFingerprint("ana"),
     );

@@ -29,13 +29,22 @@ Acesso:
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
 - nenhum service role no browser.
 
+O polling de sessão tem limite de 120 leituras por minuto por operador e sessão Auth, derivados de
+`scope` e `authSessionId` autoritativos, nunca de identidade declarada em headers ou cookies. Antes da
+autenticação, uma fachada de 600 requisições por minuto por rede limita o custo agregado; visitantes e
+credenciais inválidas têm um bucket separado de 120 por minuto. Respostas `429` preservam cookies de
+refresh/limpeza. A fachada é um teto operacional para o acesso fechado por SSH, não uma capacidade
+comprovada da VM; sair desse modelo exige reavaliar esse orçamento.
+
 Leituras e mutações HTTP no browser têm deadline de dez segundos, incluindo o consumo do corpo.
 O deadline é combinado com o sinal de cancelamento do chamador: substituição de query preserva o
 cancelamento original, enquanto expiração retorna erro recuperável, sem deixar loading indefinido.
-Resultados privados são validados antes do sucesso: comandos de conta/acesso exigem o UUID do alvo;
-taxonomias exigem o grupo solicitado e, em edição/arquivamento/reativação, também o UUID do item.
-Criação exige ainda nome e slug normalizados pelo contrato, ordem enviada e estado inicial ativo;
-um item do mesmo grupo com valores divergentes não confirma a tentativa idempotente.
+Resultados privados são validados antes do sucesso: comandos de conta/acesso exigem o UUID do alvo,
+avanço de exatamente uma versão e o estado exigido pela ação. Taxonomias exigem o grupo solicitado e,
+em edição/arquivamento/reativação, o UUID do item e avanço de exatamente uma versão. Arquivar/reativar
+exige o estado correspondente; criação começa ativa na versão zero. Criação e edição exigem ainda
+nome e slug normalizados pelo contrato e a ordem enviada. Resultado incoerente do mesmo alvo não
+confirma a tentativa idempotente: preserva o comando para recuperação, inclusive no replay legítimo.
 Resposta de outro alvo ou grupo falha fechada e solicita recomposição da sessão privada.
 O detalhe de acessos também compara, no serviço server-only, o ID devolvido pelo DAL com o UUID
 canônico solicitado antes de renderizar a conta e suas ações no Server Component. Divergência não

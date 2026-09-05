@@ -77,6 +77,146 @@ async function emulateDocumentVisibility(page: Page, visibilityState: "hidden" |
   await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe(visibilityState);
 }
 
+test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta e taxonomia até replay", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const admin = createFeat031Operator(testInfo, "035_command_outcomes");
+  const target = await createFeat031DirectIdentity("Resultado de conta QA");
+  const slug = `qa-f031-outcome-${Date.now().toString(36)}`;
+  const commands: unknown[] = [];
+  let tagId: string | undefined;
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031035");
+    await loginFeat031Backoffice(page, admin);
+    const userCard = await searchUser(page, target.email, target.userId);
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/commands") {
+        commands.push(request.postDataJSON());
+      }
+    });
+    let userResponses = 0;
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const result = apiSuccessSchema(backofficeUserSummarySchema).parse(await response.json());
+        expect(result.data).toMatchObject({
+          id: target.userId,
+          status: "suspended",
+          accountVersion: 1,
+        });
+        userResponses += 1;
+        await route.fulfill({
+          response,
+          json: {
+            ...result,
+            data: {
+              ...result.data,
+              ...(userResponses === 1 ? { status: "active" } : { accountVersion: 0 }),
+            },
+          },
+        });
+      },
+      { times: 2 },
+    );
+    await userCard.getByRole("button", { name: "Revisar suspensão" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
+    await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
+    await confirmation.getByRole("button", { name: "Confirmar", exact: true }).click();
+    const userReplay = confirmation.getByRole("button", { name: "Repetir mesma tentativa" });
+    for (const responseCount of [1, 2]) {
+      await expect.poll(() => userResponses).toBe(responseCount);
+      await expect(confirmation.getByRole("alert")).toContainText(
+        "O resultado não pôde ser confirmado",
+      );
+      await expect(userReplay).toBeEnabled();
+      await expect(page.getByRole("textbox", { name: "Buscar usuários" })).toBeDisabled();
+      await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+      await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toHaveCount(0);
+      expect(userResponses).toBe(responseCount);
+      expect(commands).toHaveLength(responseCount);
+      await userReplay.click();
+    }
+    await expect(confirmation).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toBeVisible();
+    expect(commands).toHaveLength(3);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(commands[2]).toEqual(commands[0]);
+    expect(await readFeat031Audit("backoffice.user_suspended", target.userId)).toHaveLength(1);
+
+    await page.getByRole("link", { name: "Taxonomias" }).click();
+    await page.getByRole("combobox", { name: "Grupo" }).selectOption("tag");
+    await page.getByRole("textbox", { name: "Nome" }).fill("Taxonomia QA anterior");
+    await page.getByRole("textbox", { name: "Slug" }).fill(slug);
+    await page.getByRole("button", { name: "Criar taxonomia" }).click();
+    const taxonomyCard = page
+      .getByRole("article")
+      .filter({ has: page.getByText(slug, { exact: true }) });
+    await taxonomyCard.getByRole("button", { name: "Editar", exact: true }).click();
+    const nextName = "Taxonomia QA confirmada";
+    await page.getByRole("textbox", { name: "Nome" }).fill(` ${nextName} `);
+    const beforeEdit = commands.length;
+    let taxonomyResponses = 0;
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const result = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(await response.json());
+        expect(result.data).toMatchObject({ name: nextName, slug, version: 1, active: true });
+        tagId = result.data.id;
+        taxonomyResponses += 1;
+        await route.fulfill({
+          response,
+          json: {
+            ...result,
+            data: {
+              ...result.data,
+              ...(taxonomyResponses === 1 ? { name: "Taxonomia QA anterior" } : { version: 0 }),
+            },
+          },
+        });
+      },
+      { times: 2 },
+    );
+    await page.getByRole("button", { name: "Salvar edição" }).click();
+    const manager = page.getByRole("region", { name: "Taxonomias" });
+    const taxonomyReplay = manager.getByRole("button", { name: "Repetir mesma tentativa" });
+    for (const responseCount of [1, 2]) {
+      await expect.poll(() => taxonomyResponses).toBe(responseCount);
+      await expect(manager.getByRole("alert")).toContainText("O resultado não pôde ser confirmado");
+      await expect(taxonomyReplay).toBeEnabled();
+      await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue(` ${nextName} `);
+      await expect(page.getByRole("textbox", { name: "Nome" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Cancelar edição" })).toBeDisabled();
+      await expect(
+        taxonomyCard.getByRole("button", { name: "Editar", exact: true }),
+      ).toBeDisabled();
+      await expect(page.getByRole("status").filter({ hasText: "salva na versão 1" })).toHaveCount(
+        0,
+      );
+      expect(taxonomyResponses).toBe(responseCount);
+      expect(commands).toHaveLength(beforeEdit + responseCount);
+      await taxonomyReplay.click();
+    }
+    await expect(taxonomyReplay).toHaveCount(0);
+    await expect(taxonomyCard.getByRole("heading", { name: nextName, exact: true })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "salva na versão 1" })).toBeVisible();
+    expect(commands).toHaveLength(beforeEdit + 3);
+    expect(commands[beforeEdit + 1]).toEqual(commands[beforeEdit]);
+    expect(commands[beforeEdit + 2]).toEqual(commands[beforeEdit]);
+    if (tagId === undefined) throw new Error("A resposta real não identificou a taxonomia QA.");
+    expect(await readFeat031Audit("backoffice.taxonomy_updated", tagId)).toHaveLength(1);
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Taxonomy(undefined, slug);
+    await cleanupFeat031Users({ direct: [target], operators: [admin] });
+  }
+});
+
 test("SL-F031-E2E-005 @p1 PII fica mascarada até revelação justificada e auditada", async ({
   page,
 }, testInfo) => {

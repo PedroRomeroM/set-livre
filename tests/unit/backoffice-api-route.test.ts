@@ -1,23 +1,22 @@
 import { randomUUID } from "node:crypto";
+import type { BackofficeServerSession } from "../../apps/backoffice/src/domains/backoffice/server/backoffice-session";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sessionMocks = vi.hoisted(() => ({
+  readRouteBackofficeSession: vi.fn(),
   requireRouteBackofficeSession: vi.fn(),
+  toBrowserBackofficeSession: vi.fn(),
 }));
+const environmentMocks = vi.hoisted(() => ({ readBackofficeSupabaseEnvironment: vi.fn() }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("../../apps/backoffice/src/lib/supabase/config", () => ({
-  readBackofficeSupabaseEnvironment: () => ({
-    accessMode: "reverse-proxy",
-    appOrigin: "http://backoffice.local",
-    environment: "local",
-  }),
-}));
+vi.mock("../../apps/backoffice/src/lib/supabase/config", () => environmentMocks);
 vi.mock(
   "../../apps/backoffice/src/domains/backoffice/server/backoffice-session",
   () => sessionMocks,
 );
 
+import { GET as getBackofficeSession } from "../../apps/backoffice/src/app/api/auth/session/route";
 import { BackofficeApiError } from "../../apps/backoffice/src/lib/server/api-route";
 import { runProtectedBackofficeRoute } from "../../apps/backoffice/src/lib/server/protected-api-route";
 import {
@@ -41,11 +40,197 @@ function protectedRequest() {
 }
 
 beforeEach(() => {
+  environmentMocks.readBackofficeSupabaseEnvironment.mockReturnValue({
+    accessMode: "reverse-proxy",
+    appOrigin: "http://backoffice.local",
+    environment: "local",
+  });
+  sessionMocks.readRouteBackofficeSession.mockReset();
   sessionMocks.requireRouteBackofficeSession.mockReset();
+  sessionMocks.toBrowserBackofficeSession.mockReset();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe("backoffice session polling rate limits", () => {
+  let clockWindow = 0;
+  const userA = "a1000000-0000-4000-8000-000000000001";
+  const userB = "a1000000-0000-4000-8000-000000000002";
+  const sessionA = "b1000000-0000-4000-8000-000000000001";
+  const sessionB = "b1000000-0000-4000-8000-000000000002";
+
+  function sessionRequest(headers?: Record<string, string>) {
+    return new Request("http://127.0.0.1:3001/api/auth/session", {
+      headers: {
+        host: "127.0.0.1:3001",
+        "x-forwarded-host": "127.0.0.1:3001",
+        "x-forwarded-proto": "http",
+        ...headers,
+      },
+    });
+  }
+
+  function authenticatedSession(scope = userA, authSessionId = sessionA): BackofficeServerSession {
+    return {
+      authenticated: true,
+      authorizationVersion: 1,
+      authSessionId,
+      email: "operator@example.test",
+      expiresAt: "2026-09-06T13:00:00.000Z",
+      roles: ["admin"],
+      scope,
+      strongAuthenticationExpiresAt: "2026-09-06T12:05:00.000Z",
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-06T12:00:00.000Z").getTime() + clockWindow++ * 120_000);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    environmentMocks.readBackofficeSupabaseEnvironment.mockReturnValue({
+      accessMode: "ssh-tunnel",
+      appOrigin: "http://127.0.0.1:3001",
+      environment: "production",
+    });
+    sessionMocks.toBrowserBackofficeSession.mockImplementation(
+      (session: BackofficeServerSession) =>
+        session.authenticated
+          ? {
+              authenticated: true,
+              authorizationVersion: session.authorizationVersion,
+              email: session.email,
+              expiresAt: session.expiresAt,
+              runtimeUnlockExpiresAt: null,
+              scope: session.scope,
+              strongAuthenticationExpiresAt: session.strongAuthenticationExpiresAt,
+            }
+          : { authenticated: false },
+    );
+  });
+
+  it("accepts four polling rounds from 31 operators behind the same SSH tunnel", async () => {
+    for (let round = 0; round < 4; round += 1) {
+      for (let operator = 1; operator <= 31; operator += 1) {
+        const suffix = String(operator).padStart(12, "0");
+        sessionMocks.readRouteBackofficeSession.mockResolvedValueOnce({
+          session: authenticatedSession(
+            `a1000000-0000-4000-8000-${suffix}`,
+            `b1000000-0000-4000-8000-${suffix}`,
+          ),
+          responseHeaders: new Headers(),
+        });
+        expect((await getBackofficeSession(sessionRequest())).status).toBe(200);
+      }
+      vi.advanceTimersByTime(15_000);
+    }
+    expect(sessionMocks.readRouteBackofficeSession).toHaveBeenCalledTimes(124);
+  });
+
+  it("shares a quota across tabs of one verified session, not other sessions or operators", async () => {
+    const headers = new Headers({ "x-session-refresh": "preserved" });
+    headers.append("set-cookie", "session-refresh=unit-test; Path=/; HttpOnly");
+    sessionMocks.readRouteBackofficeSession.mockResolvedValue({
+      session: authenticatedSession(),
+      responseHeaders: headers,
+    });
+    for (let request = 0; request < 120; request += 1) {
+      expect((await getBackofficeSession(sessionRequest())).status).toBe(200);
+    }
+    const limited = await getBackofficeSession(
+      sessionRequest({
+        "x-user-id": userB,
+        "x-session-id": sessionB,
+        "x-forwarded-for": "203.0.113.25",
+      }),
+    );
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("x-session-refresh")).toBe("preserved");
+    expect(limited.headers.getSetCookie()).toEqual(headers.getSetCookie());
+    expect(limited.headers.get("cache-control")).toBe("private, no-store");
+    await expect(limited.json()).resolves.toMatchObject({ error: { code: "RATE_LIMITED" } });
+    expect(sessionMocks.toBrowserBackofficeSession).toHaveBeenCalledTimes(120);
+
+    for (const session of [
+      authenticatedSession(userA, sessionB),
+      authenticatedSession(userB, sessionA),
+    ]) {
+      sessionMocks.readRouteBackofficeSession.mockResolvedValueOnce({
+        session,
+        responseHeaders: new Headers(),
+      });
+      const response = await getBackofficeSession(sessionRequest());
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).not.toContain("authSessionId");
+      expect(body).not.toContain("roles");
+    }
+    vi.advanceTimersByTime(60_000);
+    expect((await getBackofficeSession(sessionRequest())).status).toBe(200);
+  });
+
+  it("keeps anonymous and invalid credentials in a bounded network quota without charging operators", async () => {
+    sessionMocks.readRouteBackofficeSession.mockResolvedValue({
+      session: { authenticated: false },
+      responseHeaders: new Headers({ "x-session-refresh": "cleared" }),
+    });
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const response = await getBackofficeSession(
+        sessionRequest({
+          cookie: `untrusted-session=${attempt}`,
+          "x-user-id": `forged-${attempt}`,
+          "x-session-id": `forged-${attempt}`,
+          "x-forwarded-for": `203.0.113.${attempt + 1}`,
+        }),
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ data: { authenticated: false } });
+    }
+    const limited = await getBackofficeSession(sessionRequest());
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("x-session-refresh")).toBe("cleared");
+    sessionMocks.readRouteBackofficeSession.mockResolvedValueOnce({
+      session: authenticatedSession(),
+      responseHeaders: new Headers(),
+    });
+    expect((await getBackofficeSession(sessionRequest())).status).toBe(200);
+  });
+
+  it("charges unsuccessful session verification to the anonymous quota and never returns private data", async () => {
+    sessionMocks.readRouteBackofficeSession.mockRejectedValue(
+      new Error("private-provider-diagnostic"),
+    );
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const response = await getBackofficeSession(sessionRequest());
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain("private-provider-diagnostic");
+    }
+    expect((await getBackofficeSession(sessionRequest())).status).toBe(429);
+    expect(sessionMocks.toBrowserBackofficeSession).not.toHaveBeenCalled();
+  });
+
+  it("bounds canonical authentication work even when credentials rotate or verification fails", async () => {
+    sessionMocks.readRouteBackofficeSession.mockRejectedValue(new Error("unavailable"));
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      await getBackofficeSession(sessionRequest({ cookie: `untrusted-session=${attempt}` }));
+    }
+    expect(sessionMocks.readRouteBackofficeSession).toHaveBeenCalledTimes(600);
+    expect((await getBackofficeSession(sessionRequest())).status).toBe(429);
+    expect(sessionMocks.readRouteBackofficeSession).toHaveBeenCalledTimes(600);
+    expect(sessionMocks.toBrowserBackofficeSession).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect((await getBackofficeSession(sessionRequest())).status).toBe(503);
+    expect(sessionMocks.readRouteBackofficeSession).toHaveBeenCalledTimes(601);
+  });
+
+  it("rejects an untrusted host before reading authentication or allocating a session quota", async () => {
+    const response = await getBackofficeSession(sessionRequest({ host: "untrusted.example" }));
+    expect(response.status).toBe(403);
+    expect(sessionMocks.readRouteBackofficeSession).not.toHaveBeenCalled();
+    expect(sessionMocks.toBrowserBackofficeSession).not.toHaveBeenCalled();
+  });
 });
 
 describe("backoffice command telemetry", () => {

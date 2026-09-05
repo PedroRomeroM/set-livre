@@ -321,6 +321,21 @@ export async function executeBackofficeUserCommand(
     method: "POST",
   });
   if (user.id !== command.payload.userId) rejectBackofficePrivateBoundary();
+  if (
+    user.accountVersion !== command.payload.expectedAccountVersion + 1 ||
+    (command.action === "backoffice.user.suspend" && user.status !== "suspended") ||
+    ((command.action === "backoffice.user.restore" ||
+      command.action === "backoffice.access.grantAdmin" ||
+      command.action === "backoffice.access.grantReviewer" ||
+      command.action === "backoffice.access.grantSupport") &&
+      user.status !== "active")
+  ) {
+    throw new BackofficeClientError({
+      code: "RESPONSE_INVALID",
+      message: "O servidor retornou uma confirmação que não corresponde à tentativa enviada.",
+      status: 200,
+    });
+  }
   notifyBackofficeActivityCompleted();
   return user;
 }
@@ -346,16 +361,26 @@ export async function executeBackofficeTaxonomyCommand(
   ) {
     rejectBackofficePrivateBoundary();
   }
-  if (command.action === "backoffice.taxonomy.upsert" && command.payload.id === undefined) {
-    const submitted = backofficeTaxonomyUpsertCommandSchema.parse(command).payload;
-    if (
-      item.name !== submitted.name ||
-      item.slug !== submitted.slug ||
-      item.sortOrder !== submitted.sortOrder ||
-      !item.active
-    ) {
-      rejectBackofficePrivateBoundary();
-    }
+  const submitted =
+    command.action === "backoffice.taxonomy.upsert"
+      ? backofficeTaxonomyUpsertCommandSchema.parse(command).payload
+      : undefined;
+  if (
+    item.version !==
+      (command.payload.expectedVersion === undefined ? 0 : command.payload.expectedVersion + 1) ||
+    (command.action === "backoffice.taxonomy.archive" && item.active) ||
+    (command.action === "backoffice.taxonomy.reactivate" && !item.active) ||
+    (submitted !== undefined &&
+      (item.name !== submitted.name ||
+        item.slug !== submitted.slug ||
+        item.sortOrder !== submitted.sortOrder ||
+        (submitted.id === undefined && !item.active)))
+  ) {
+    throw new BackofficeClientError({
+      code: "RESPONSE_INVALID",
+      message: "O servidor retornou uma confirmação que não corresponde à tentativa enviada.",
+      status: 200,
+    });
   }
   notifyBackofficeActivityCompleted();
   return item;

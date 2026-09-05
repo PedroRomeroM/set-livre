@@ -182,6 +182,8 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
 - `SL-F006-E2E-023/024` esgotam a quota da aba somente após a criação real: preservam a intenção
   original, bloqueiam uma confirmação não durável e recuperam a persistência sem novo comando;
   reload reconcilia a mesma chave sem duplicar, e uma nova criação só começa após o consumo seguro;
+- `SL-F006-E2E-025` inicia a fronteira de criação offline, exige erro recuperável sem formulário
+  privado, revalida o acesso por tentativa explícita e cria um único estúdio;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -257,6 +259,9 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - `SL-F031-E2E-034` desloca a última conta visível após um cadastro concorrente: a verificação por UUID
   recupera uma falha de leitura sem reenviar suspensão, preserva o filtro/páginas da tela e permite
   alcançar o alvo pela paginação normal, sem duplicar auditoria;
+- `SL-F031-E2E-035` corrompe estado, campos e versão após comandos reais de conta/taxonomia;
+  rejeita a confirmação incoerente, preserva a tentativa e recupera por replay idempotente, com
+  auditoria única. Unitários cobrem também arquivamento/reativação e concessão/revogação de papéis;
 - ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
   explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
   diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;

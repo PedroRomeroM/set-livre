@@ -43,7 +43,9 @@ describe("backoffice user access DAL", () => {
       getBackofficeUserAccess({ auth, userId: "a1000000-0000-4000-8000-000000000012" }),
     ).resolves.toMatchObject({ account_version: 3, profile_completed: false, roles: [] });
     expect(mocks.query).toHaveBeenCalledWith(
-      expect.stringContaining("get_backoffice_user_access"),
+      expect.stringMatching(
+        /^select account_version, created_at, email_masked, id, status, profile_completed, roles\s+from private\.get_backoffice_user_access/u,
+      ),
       [auth.userId, auth.authSessionId, auth.authExpiresAt, "a1000000-0000-4000-8000-000000000012"],
     );
   });

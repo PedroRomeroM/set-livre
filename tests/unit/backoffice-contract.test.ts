@@ -341,41 +341,72 @@ describe("backoffice contracts", () => {
     "backoffice.access.revokeAdmin",
     "backoffice.access.revokeReviewer",
     "backoffice.access.revokeSupport",
-  ] as const)("binds %s results to the requested user before accepting success", async (action) => {
-    const dispatchEvent = vi.fn();
-    vi.stubGlobal("window", { dispatchEvent });
-    vi.stubGlobal("BroadcastChannel", undefined);
-    const user = {
-      accountVersion: 1,
-      createdAt: "2026-09-04T10:00:00.000Z",
-      emailMasked: "t***@example.test",
-      id: targetId,
-      status: "active",
-    };
-    const command = {
-      action,
-      expectedScope: actorId,
-      idempotencyKey,
-      payload: { userId: targetId, expectedAccountVersion: 0 },
-    };
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(successResponse({ ...user, id: actorId }))
-        .mockResolvedValueOnce(successResponse(user)),
-    );
+  ] as const)(
+    "validates the target, version and outcome of %s before accepting success",
+    async (action) => {
+      const dispatchEvent = vi.fn();
+      vi.stubGlobal("window", { dispatchEvent });
+      vi.stubGlobal("BroadcastChannel", undefined);
+      const user = {
+        accountVersion: 2,
+        createdAt: "2026-09-04T10:00:00.000Z",
+        emailMasked: "t***@example.test",
+        id: targetId,
+        status: action === "backoffice.user.suspend" ? "suspended" : "active",
+      };
+      const command = {
+        action,
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { userId: targetId, expectedAccountVersion: 1 },
+      };
+      const isRevocation = action.startsWith("backoffice.access.revoke");
+      const mismatches = [
+        { ...user, id: actorId },
+        ...[0, 1, 3].map((accountVersion) => ({ ...user, accountVersion })),
+        ...(isRevocation
+          ? []
+          : [{ ...user, status: user.status === "active" ? "suspended" : "active" }]),
+      ];
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const activity = vi.fn();
+      const unsubscribe = subscribeToBackofficeActivity(activity);
+      try {
+        for (const response of mismatches) {
+          fetchMock.mockResolvedValueOnce(successResponse(response));
+          const mismatch = await executeBackofficeUserCommand(command).catch(
+            (error: unknown) => error,
+          );
+          expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+          expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
+        }
+        expect(dispatchEvent).toHaveBeenCalledOnce();
+        expect(activity).not.toHaveBeenCalled();
 
-    const mismatch = await executeBackofficeUserCommand(command).catch((error: unknown) => error);
-    expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
-    expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
-    expect(dispatchEvent).toHaveBeenCalledOnce();
-    await expect(executeBackofficeUserCommand(command)).resolves.toEqual(user);
-    expect(dispatchEvent).toHaveBeenCalledOnce();
-  });
+        // A valid replay returns the same post-command version, not another increment.
+        const validResults = [
+          user,
+          user,
+          ...(isRevocation ? [{ ...user, status: "suspended" }] : []),
+        ];
+        for (const result of validResults) {
+          fetchMock.mockResolvedValueOnce(successResponse(result));
+          await expect(executeBackofficeUserCommand(command)).resolves.toEqual(result);
+        }
+        expect(activity).toHaveBeenCalledTimes(validResults.length);
+        expect(dispatchEvent).toHaveBeenCalledOnce();
+        for (const call of fetchMock.mock.calls) {
+          expect(call[1]?.body).toBe(JSON.stringify(command));
+        }
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
 
   it.each(["create", "update", "archive", "reactivate"] as const)(
-    "binds taxonomy %s results to the requested kind and existing id",
+    "validates taxonomy %s values, transitions and versions while preserving replay",
     async (action) => {
       const dispatchEvent = vi.fn();
       vi.stubGlobal("window", { dispatchEvent });
@@ -388,8 +419,8 @@ describe("backoffice contracts", () => {
               idempotencyKey,
               payload: {
                 kind: "tag",
-                name: action === "create" ? " Podcast " : "Podcast",
-                slug: action === "create" ? " podcast " : "podcast",
+                name: " Podcast ",
+                slug: " podcast ",
                 sortOrder: 1,
                 ...(action === "update" ? { id: targetId, expectedVersion: 1 } : {}),
               },
@@ -412,31 +443,55 @@ describe("backoffice contracts", () => {
         sortOrder: 1,
         updatedAt: "2026-09-04T10:00:00.000Z",
         usageCount: 0,
-        version: 2,
+        version: action === "create" ? 0 : 2,
       };
       const mismatches = [
         { ...item, kind: "amenity" },
-        ...(action === "create"
+        ...(action === "create" || action === "update"
           ? [
               { ...item, name: "Outra taxonomia" },
               { ...item, slug: "outro-slug" },
               { ...item, sortOrder: 2 },
-              { ...item, active: false },
             ]
-          : [{ ...item, id: actorId }]),
+          : []),
+        ...(action === "create" ? [] : [{ ...item, id: actorId }]),
+        ...(action === "update" ? [] : [{ ...item, active: !item.active }]),
+        ...(action === "create" ? [1] : [0, 1, 3]).map((version) => ({ ...item, version })),
       ];
-      for (const response of mismatches) {
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(successResponse(response)));
-        const mismatch = await executeBackofficeTaxonomyCommand(command).catch(
-          (error: unknown) => error,
-        );
-        expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
-        expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const activity = vi.fn();
+      const unsubscribe = subscribeToBackofficeActivity(activity);
+      try {
+        for (const response of mismatches) {
+          fetchMock.mockResolvedValueOnce(successResponse(response));
+          const mismatch = await executeBackofficeTaxonomyCommand(command).catch(
+            (error: unknown) => error,
+          );
+          expect(mismatch).toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+          expect(isAmbiguousBackofficeError(mismatch)).toBe(true);
+        }
+        expect(activity).not.toHaveBeenCalled();
+        expect(dispatchEvent).toHaveBeenCalledTimes(action === "create" ? 1 : 2);
+
+        // Editing preserves active, including an archived item; replay preserves its version.
+        const validResults = [
+          item,
+          item,
+          ...(action === "update" ? [{ ...item, active: false }] : []),
+        ];
+        for (const result of validResults) {
+          fetchMock.mockResolvedValueOnce(successResponse(result));
+          await expect(executeBackofficeTaxonomyCommand(command)).resolves.toEqual(result);
+        }
+        expect(activity).toHaveBeenCalledTimes(validResults.length);
+        expect(dispatchEvent).toHaveBeenCalledTimes(action === "create" ? 1 : 2);
+        for (const call of fetchMock.mock.calls) {
+          expect(call[1]?.body).toBe(JSON.stringify(command));
+        }
+      } finally {
+        unsubscribe();
       }
-      expect(dispatchEvent).toHaveBeenCalledTimes(mismatches.length);
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(successResponse(item)));
-      await expect(executeBackofficeTaxonomyCommand(command)).resolves.toEqual(item);
-      expect(dispatchEvent).toHaveBeenCalledTimes(mismatches.length);
     },
   );
 

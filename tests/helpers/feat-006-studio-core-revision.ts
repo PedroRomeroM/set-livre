@@ -182,6 +182,7 @@ export async function createFeat006StudioThroughUi(page: Page) {
   const editorRead = await initialEditorRead;
   expect(editorRead.status()).toBe(200);
   expect(new URL(editorRead.url()).pathname).toBe(`/api/owner/studios/${result.editor.studioId}`);
+  await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
   return result.editor;
 }
 

@@ -145,7 +145,8 @@ function parseBackofficeStudioReviewCursor(input: {
 
 export async function openBackofficeBinding(auth: BackofficeAuthContext) {
   const result = await backofficeDalPool().query(
-    `select * from private.open_backoffice_session($1::uuid, $2::uuid, $3::timestamptz)`,
+    `select authorization_version, expires_at, roles, scope, strong_authentication_expires_at
+     from private.open_backoffice_session($1::uuid, $2::uuid, $3::timestamptz)`,
     bindingArguments(auth),
   );
   return exactlyOne(result.rows, sessionRowSchema, "open_backoffice_session");
@@ -153,7 +154,8 @@ export async function openBackofficeBinding(auth: BackofficeAuthContext) {
 
 export async function readBackofficeBinding(auth: BackofficeAuthContext) {
   const result = await backofficeDalPool().query(
-    `select * from private.get_backoffice_session($1::uuid, $2::uuid, $3::timestamptz)`,
+    `select authorization_version, expires_at, roles, scope, strong_authentication_expires_at
+     from private.get_backoffice_session($1::uuid, $2::uuid, $3::timestamptz)`,
     bindingArguments(auth),
   );
   return exactlyOne(result.rows, sessionRowSchema, "get_backoffice_session");
@@ -182,7 +184,7 @@ export async function listBackofficeUsers(input: {
   const cursor = parseBackofficeUserCursor({ auth: input.auth, query, value: input.cursor });
   const result = await backofficeDalPool().query(
     `select
-       listed.*,
+       listed.account_version, listed.created_at, listed.email_masked, listed.id, listed.status,
        pg_catalog.to_char(
          listed.created_at at time zone 'UTC',
          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
@@ -226,7 +228,8 @@ export async function getBackofficeUserAccess(input: {
   userId: string;
 }) {
   const result = await backofficeDalPool().query(
-    `select * from private.get_backoffice_user_access($1::uuid, $2::uuid, $3::timestamptz, $4::uuid)`,
+    `select account_version, created_at, email_masked, id, status, profile_completed, roles
+     from private.get_backoffice_user_access($1::uuid, $2::uuid, $3::timestamptz, $4::uuid)`,
     [...bindingArguments(input.auth), input.userId],
   );
   return exactlyOne(result.rows, accessRowSchema, "get_backoffice_user_access");
@@ -234,7 +237,8 @@ export async function getBackofficeUserAccess(input: {
 
 export async function listBackofficeTaxonomies(auth: BackofficeAuthContext) {
   const result = await backofficeDalPool().query(
-    `select * from private.list_backoffice_taxonomies($1::uuid, $2::uuid, $3::timestamptz)`,
+    `select active, id, kind, name, slug, sort_order, taxonomy_version, updated_at, usage_count
+     from private.list_backoffice_taxonomies($1::uuid, $2::uuid, $3::timestamptz)`,
     bindingArguments(auth),
   );
   const rows = z.array(taxonomyRowSchema).max(501).parse(result.rows);

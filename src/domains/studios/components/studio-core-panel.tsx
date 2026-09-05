@@ -468,6 +468,7 @@ function CreateStudioForm({
   const router = useRouter();
   const queryClient = useQueryClient();
   const accessQuery = useQuery({
+    networkMode: "always",
     queryFn: () => readStudioCreationAccess(userId),
     queryKey: studioQueryKeys.creationAccess(userId),
     refetchOnMount: "always",

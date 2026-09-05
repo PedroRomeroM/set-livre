@@ -134,6 +134,9 @@ Medir; não usar Infinity em dado operacional.
   uma key já existente do mesmo usuário/estúdio; callback tardio depois da limpeza falha fechado e não
   recria dados privados. Outros estúdios do mesmo dono são preservados e scopes de outro usuário são
   removidos;
+- a verificação de identidade e autoridade para criar estúdio usa `networkMode: "always"`, inclusive
+  quando a página começa offline: conclui em erro limitado com tentativa explícita, sem ficar
+  indefinidamente pausada. O formulário só é liberado após ambas as leituras autoritativas;
 - create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
   mesma chave quando o resultado é ambíguo. Campos e ações concorrentes ficam bloqueados durante esse
   retry. Criação aceita entra em estado terminal e exige navegação explícita para o editor, sem gerar
