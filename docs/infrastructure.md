@@ -645,7 +645,12 @@ outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
 
 O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
 depois de 30 minutos, a primeira execução com outra identidade o fecha como
-`cleanup_run_abandoned`. Cada claim registra antes um item imutável no ledger do run; o fechamento
+`cleanup_run_abandoned`. O replay relê o lote original pelo ledger: resultados já persistidos entram
+nas contagens sem repetir Storage ou conclusão de item, e somente os membros pendentes ainda pertencentes
+ao token recebem paths. Mesmo com todos os itens concluídos, o mesmo run não reclama um novo lote.
+Falha histórica permanece falha; lease transferida a outro run mantém o replay fail-closed, sem tocar
+objetos alheios, até a recuperação por abandono. Cada claim registra antes um item imutável no ledger
+do run; o fechamento
 deriva esse conjunto histórico, marca como failed qualquer item ainda pendente e mantém sempre
 `claimed = deleted + failed`. Claims e completion tokens em mídia e probes são apenas o estado
 operacional atual. O claim seguinte pode reassumir leases vencidos sem apagar o pertencimento anterior,

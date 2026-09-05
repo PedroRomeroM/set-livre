@@ -532,7 +532,7 @@ from (
 
 begin;
 
-select plan(63);
+select plan(65);
 
 select has_column(
   'public',
@@ -634,7 +634,7 @@ select ok(
   'manifesto do Storage fixa policy, role, comando, operação e helper security-definer'
 );
 select ok(
-  private.check_readiness('20260905134031'),
+  private.check_readiness('20260905144332'),
   'readiness reconhece a migration e preserva os grants exatos'
 );
 
@@ -645,7 +645,7 @@ create policy feat030_unexpected_storage_download
   to authenticated
   using (bucket_id = 'studio-media');
 select ok(
-  not private.check_readiness('20260905134031'),
+  not private.check_readiness('20260905144332'),
   'readiness falha fechado quando uma policy extra amplia operações do Storage'
 );
 rollback to savepoint storage_policy_widening;
@@ -654,7 +654,7 @@ release savepoint storage_policy_widening;
 savepoint storage_helper_grant_widening;
 grant execute on function private.can_sign_backoffice_studio_media(text) to anon;
 select ok(
-  not private.check_readiness('20260905134031'),
+  not private.check_readiness('20260905144332'),
   'readiness falha fechado quando o helper autenticado ganha grant adicional'
 );
 rollback to savepoint storage_helper_grant_widening;
@@ -663,26 +663,26 @@ release savepoint storage_helper_grant_widening;
 savepoint editorial_table_grant_widening;
 grant select on table public.studio_review_events to authenticated;
 select ok(
-  not private.check_readiness('20260905134031'),
+  not private.check_readiness('20260905144332'),
   'readiness falha fechado com grant web de tabela editorial sem acesso direto'
 );
 rollback to savepoint editorial_table_grant_widening;
 release savepoint editorial_table_grant_widening;
 select ok(
-  private.check_readiness('20260905134031'),
+  private.check_readiness('20260905144332'),
   'readiness volta a verde após rollback do grant editorial de tabela'
 );
 
 savepoint editorial_column_grant_widening;
 grant select (preview_storage_path) on table public.studio_media to authenticated;
 select ok(
-  not private.check_readiness('20260905134031'),
+  not private.check_readiness('20260905144332'),
   'readiness falha fechado com grant web de coluna privada de mídia'
 );
 rollback to savepoint editorial_column_grant_widening;
 release savepoint editorial_column_grant_widening;
 select ok(
-  private.check_readiness('20260905134031'),
+  private.check_readiness('20260905144332'),
   'readiness volta a verde após rollback do grant editorial de coluna'
 );
 
@@ -693,13 +693,13 @@ create policy feat030_unexpected_studio_review_event_select
   to authenticated
   using (true);
 select ok(
-  not private.check_readiness('20260905134031'),
+  not private.check_readiness('20260905144332'),
   'readiness falha fechado com policy web editorial adicional'
 );
 rollback to savepoint editorial_policy_widening;
 release savepoint editorial_policy_widening;
 select ok(
-  private.check_readiness('20260905134031'),
+  private.check_readiness('20260905144332'),
   'readiness volta a verde após rollback da policy editorial adicional'
 );
 
@@ -2064,6 +2064,29 @@ select is(
   pg_catalog.current_setting('set_livre.test.f030_rejected')::jsonb,
   'replay da rejeição não duplica a draft nem efeitos laterais'
 );
+select matches(
+  private.feat030_capture_error(
+    pg_catalog.format(
+      $command$
+        select private.execute_backoffice_studio_command(
+          'a3000000-0000-4000-8000-000000000002',
+          'a4000000-0000-4000-8000-000000000002',
+          pg_catalog.clock_timestamp() + interval '30 minutes',
+          %L::uuid, %L::uuid, %L::bigint,
+          'backoffice.studio.reject',
+          'Outro motivo QA não pertence à rejeição confirmada.',
+          'a5000000-0000-4000-8000-000000000008',
+          'a6000000-0000-4000-8000-000000000099'
+        )
+      $command$,
+      pg_catalog.current_setting('set_livre.test.f030_approve')::jsonb ->> 'studioId',
+      pg_catalog.current_setting('set_livre.test.f030_changes_draft')::jsonb #>> '{revision,id}',
+      pg_catalog.current_setting('set_livre.test.f030_changes_submit')::jsonb ->> 'publicationVersion'
+    )
+  ),
+  '^40001:backoffice_idempotency_conflict$',
+  'mesma chave, estúdio, revisão e versão não podem confirmar outro motivo de rejeição'
+);
 select is(
   array[
     private.feat030_capture_error(
@@ -2995,8 +3018,38 @@ reset role;
 revoke app_dal from postgres granted by current_user;
 
 select ok(
-  private.check_readiness('20260905134031'),
+  private.check_readiness('20260905144332'),
   'readiness final permanece verde após os cenários completos'
+);
+
+select ok(
+  (
+    select pg_catalog.bool_and(
+      ledger.actor_user_id is not null
+      and response.value @> pg_catalog.jsonb_build_object(
+        'scope', ledger.actor_user_id,
+        'action', ledger.action,
+        'idempotencyKey', ledger.idempotency_key,
+        'studioId', ledger.target_id
+      )
+      and private.backoffice_result_hash(response.value - 'idempotencyKey') = ledger.result_hash
+    )
+    from (values
+      ('f030_first_rejected', 'a3000000-0000-4000-8000-000000000002'::uuid, 'a5000000-0000-4000-8000-000000000020'::uuid),
+      ('f030_approved', 'a3000000-0000-4000-8000-000000000002'::uuid, 'a5000000-0000-4000-8000-000000000001'::uuid),
+      ('f030_approved_replay', 'a3000000-0000-4000-8000-000000000002'::uuid, 'a5000000-0000-4000-8000-000000000001'::uuid),
+      ('f030_disabled', 'a3000000-0000-4000-8000-000000000004'::uuid, 'a5000000-0000-4000-8000-000000000004'::uuid),
+      ('f030_restored', 'a3000000-0000-4000-8000-000000000004'::uuid, 'a5000000-0000-4000-8000-000000000005'::uuid),
+      ('f030_rejected', 'a3000000-0000-4000-8000-000000000002'::uuid, 'a5000000-0000-4000-8000-000000000008'::uuid),
+      ('f030_rejected_replay', 'a3000000-0000-4000-8000-000000000002'::uuid, 'a5000000-0000-4000-8000-000000000008'::uuid)
+    ) as fixture(setting_name, actor_id, attempt_key)
+    cross join lateral (
+      select pg_catalog.current_setting('set_livre.test.' || fixture.setting_name)::jsonb as value
+    ) as response
+    left join private.backoffice_command_requests as ledger
+      on ledger.actor_user_id = fixture.actor_id and ledger.idempotency_key = fixture.attempt_key
+  ),
+  'quatro ações editoriais e replays ecoam o ledger sem reescrever hashes históricos'
 );
 
 select * from finish();

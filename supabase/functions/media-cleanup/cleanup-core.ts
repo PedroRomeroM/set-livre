@@ -56,9 +56,14 @@ interface CleanupCandidate extends CleanupRemovalContext {
   mediaId: string;
 }
 
+interface CompletedCleanupItem {
+  mediaId: string;
+  outcome: "deleted" | "failed";
+}
+
 interface CleanupClaim {
   claimed: number;
-  items: CleanupCandidate[];
+  items: (CleanupCandidate | CompletedCleanupItem)[];
 }
 
 interface RunningCleanupLedgerState {
@@ -256,7 +261,15 @@ export class CleanupRunError extends Error {
   }
 }
 
-function parseCandidate(candidate: unknown): CleanupCandidate {
+function parseCandidate(candidate: unknown): CleanupCandidate | CompletedCleanupItem {
+  if (
+    isExactObject(candidate, ["mediaId", "outcome"]) &&
+    typeof candidate.mediaId === "string" &&
+    uuidPattern.test(candidate.mediaId) &&
+    (candidate.outcome === "deleted" || candidate.outcome === "failed")
+  ) {
+    return { mediaId: candidate.mediaId, outcome: candidate.outcome };
+  }
   if (
     !isExactObject(candidate, ["attempt", "bucket", "mediaId", "paths"]) ||
     typeof candidate.mediaId !== "string" ||
@@ -413,6 +426,14 @@ export async function runStudioMediaCleanup(
   let failed = 0;
   let runErrorCode: string | null = null;
   for (const candidate of claim.items) {
+    if ("outcome" in candidate) {
+      if (candidate.outcome === "deleted") deleted += 1;
+      else {
+        failed += 1;
+        runErrorCode ??= "cleanup_replayed_item_failed";
+      }
+      continue;
+    }
     let succeeded = false;
     try {
       await dependencies.remove({

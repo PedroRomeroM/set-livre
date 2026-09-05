@@ -1,3 +1,4 @@
+import { matchesBackofficeStudioAttempt } from "@set-livre/contracts";
 import type {
   BackofficeStudioCommand,
   BackofficeStudioCommandResult,
@@ -123,17 +124,7 @@ export function assertStudioCommandResultMatchesAttempt(
   command: BackofficeStudioCommand,
   result: BackofficeStudioCommandResult,
 ) {
-  const expectedRevisionId =
-    command.action === "backoffice.studio.approve" || command.action === "backoffice.studio.reject"
-      ? command.payload.expectedRevisionId
-      : undefined;
-  if (
-    result.scope !== command.expectedScope ||
-    result.studioId !== command.payload.studioId ||
-    result.action !== command.action ||
-    result.publicationVersion !== command.payload.expectedPublicationVersion + 1 ||
-    (expectedRevisionId !== undefined && result.revisionId !== expectedRevisionId)
-  ) {
+  if (!matchesBackofficeStudioAttempt(command, result)) {
     invalidStudioCommandResult();
   }
   return result;

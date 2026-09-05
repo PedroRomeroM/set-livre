@@ -6,12 +6,84 @@ import {
 } from "../../helpers/feat-002-authentication";
 import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 import {
+  e2eDatabaseSafetyPreflight,
+  withE2EAdminClient,
+  withE2EDalClient,
+} from "../../helpers/e2e-database-preflight";
+import {
   cleanupFeat031Users,
+  createFeat031DirectIdentity,
   createFeat031Operator,
   loginFeat031Backoffice,
   provisionFeat031Operator,
 } from "../../helpers/feat-031-backoffice-users-taxonomy";
+import {
+  cleanupLocalAuthUser,
+  cleanupLocalAuthUserWithDependencies,
+} from "../../helpers/local-auth-cleanup";
 import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
+
+test("SL-F031-E2E-036 @p1 limpeza Auth QA aguarda leitores de sessão antes do cascade", async () => {
+  const target = await createFeat031DirectIdentity("Limpeza concorrente QA");
+  try {
+    await withE2EDalClient(async (reader) => {
+      await reader.query("begin");
+      let readerOpen = true;
+      try {
+        await reader.query(
+          "select pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0))",
+        );
+        await withE2EAdminClient(async (cleaner) => {
+          const identity = await cleaner.query<{ pid: number }>("select pg_backend_pid() as pid");
+          const pid = identity.rows[0]?.pid;
+          if (pid === undefined) throw new Error("O backend de limpeza QA não foi identificado.");
+          const pending = cleanupLocalAuthUserWithDependencies(
+            { email: target.email, userId: target.userId },
+            {
+              preflight: e2eDatabaseSafetyPreflight,
+              withClient: (operation) =>
+                operation({
+                  query: async (text, values) => {
+                    const result = await cleaner.query(text, [...values]);
+                    return { rowCount: result.rowCount, rows: result.rows };
+                  },
+                }),
+            },
+          ).then(
+            (deleted) => ({ deleted, failed: false }),
+            () => ({ deleted: false, failed: true }),
+          );
+          try {
+            await expect
+              .poll(async () => {
+                const locks = await reader.query<{ waiting: boolean }>(
+                  `select exists (
+                    select 1 from pg_catalog.pg_locks
+                    where pid = $1 and locktype = 'advisory'
+                      and mode = 'ExclusiveLock' and not granted
+                  ) as waiting`,
+                  [pid],
+                );
+                return locks.rows[0]?.waiting;
+              })
+              .toBe(true);
+          } finally {
+            await reader.query("rollback");
+            readerOpen = false;
+            expect(await pending).toEqual({ deleted: true, failed: false });
+          }
+        });
+      } finally {
+        if (readerOpen) await reader.query("rollback");
+      }
+    });
+    await expect(
+      cleanupLocalAuthUser({ email: target.email, userId: target.userId }),
+    ).resolves.toBe(false);
+  } finally {
+    await cleanupFeat031Users({ direct: [target] });
+  }
+});
 
 async function recordPrivateBoundaryClosure(page: Page, evidenceKey: string) {
   await page.evaluate((key) => {

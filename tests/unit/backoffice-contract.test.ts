@@ -81,6 +81,29 @@ function BackofficeHydrationProbe() {
 }
 
 describe("backoffice contracts", () => {
+  it("rejects a role acknowledgement without the ledger attempt identity", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        successResponse({
+          accountVersion: 2,
+          createdAt: "2026-09-05T10:00:00.000Z",
+          emailMasked: "q***@example.test",
+          id: targetId,
+          status: "active",
+        }),
+      ),
+    );
+    await expect(
+      executeBackofficeUserCommand({
+        action: "backoffice.access.grantSupport",
+        expectedScope: actorId,
+        idempotencyKey,
+        payload: { expectedAccountVersion: 1, userId: targetId },
+      }),
+    ).rejects.toMatchObject({ code: "RESPONSE_INVALID", status: 200 });
+  });
+
   it("keeps the focused skip link inside the viewport safe areas", () => {
     const styles = readFileSync(
       resolve(
@@ -364,6 +387,16 @@ describe("backoffice contracts", () => {
       const isRevocation = action.startsWith("backoffice.access.revoke");
       const mismatches = [
         { ...user, id: actorId },
+        { ...user, idempotencyKey: revisionId },
+        { ...user, idempotencyKey: undefined },
+        { ...user, action: undefined },
+        {
+          ...user,
+          action:
+            action === "backoffice.user.restore"
+              ? "backoffice.access.grantAdmin"
+              : "backoffice.user.restore",
+        },
         ...[0, 1, 3].map((accountVersion) => ({ ...user, accountVersion })),
         ...(isRevocation
           ? []
@@ -375,7 +408,9 @@ describe("backoffice contracts", () => {
       const unsubscribe = subscribeToBackofficeActivity(activity);
       try {
         for (const response of mismatches) {
-          fetchMock.mockResolvedValueOnce(successResponse(response));
+          fetchMock.mockResolvedValueOnce(
+            successResponse({ action, idempotencyKey, scope: actorId, ...response }),
+          );
           const mismatch = await executeBackofficeUserCommand(command).catch(
             (error: unknown) => error,
           );
@@ -392,7 +427,9 @@ describe("backoffice contracts", () => {
           ...(isRevocation ? [{ ...user, status: "suspended" }] : []),
         ];
         for (const result of validResults) {
-          fetchMock.mockResolvedValueOnce(successResponse(result));
+          fetchMock.mockResolvedValueOnce(
+            successResponse({ action, idempotencyKey, scope: actorId, ...result }),
+          );
           await expect(executeBackofficeUserCommand(command)).resolves.toEqual(result);
         }
         expect(activity).toHaveBeenCalledTimes(validResults.length);
@@ -448,6 +485,16 @@ describe("backoffice contracts", () => {
       };
       const mismatches = [
         { ...item, kind: "amenity" },
+        { ...item, idempotencyKey: revisionId },
+        { ...item, idempotencyKey: undefined },
+        { ...item, action: undefined },
+        {
+          ...item,
+          action:
+            command.action === "backoffice.taxonomy.upsert"
+              ? "backoffice.taxonomy.archive"
+              : "backoffice.taxonomy.upsert",
+        },
         ...(action === "create" || action === "update"
           ? [
               { ...item, name: "Outra taxonomia" },
@@ -465,7 +512,14 @@ describe("backoffice contracts", () => {
       const unsubscribe = subscribeToBackofficeActivity(activity);
       try {
         for (const response of mismatches) {
-          fetchMock.mockResolvedValueOnce(successResponse(response));
+          fetchMock.mockResolvedValueOnce(
+            successResponse({
+              action: command.action,
+              idempotencyKey,
+              scope: actorId,
+              ...response,
+            }),
+          );
           const mismatch = await executeBackofficeTaxonomyCommand(command).catch(
             (error: unknown) => error,
           );
@@ -482,7 +536,9 @@ describe("backoffice contracts", () => {
           ...(action === "update" ? [{ ...item, active: false }] : []),
         ];
         for (const result of validResults) {
-          fetchMock.mockResolvedValueOnce(successResponse(result));
+          fetchMock.mockResolvedValueOnce(
+            successResponse({ action: command.action, idempotencyKey, scope: actorId, ...result }),
+          );
           await expect(executeBackofficeTaxonomyCommand(command)).resolves.toEqual(result);
         }
         expect(activity).toHaveBeenCalledTimes(validResults.length);
@@ -524,6 +580,9 @@ describe("backoffice contracts", () => {
       fetchMock.mockResolvedValueOnce(
         successResponse({
           accountVersion: 1,
+          action: "backoffice.access.grantSupport",
+          idempotencyKey,
+          scope: actorId,
           createdAt: "2026-09-04T10:00:00.000Z",
           emailMasked: "t***@example.test",
           id: targetId,

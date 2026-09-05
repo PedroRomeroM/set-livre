@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   apiSuccessSchema,
-  backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  backofficeUserCommandResultSchema,
+  backofficeTaxonomyCommandResultSchema,
   backofficeUserRevealPiiCommandSchema,
-  backofficeUserSummarySchema,
   type BackofficeUserPii,
   type BackofficeUserRevealPiiCommand,
 } from "@set-livre/contracts";
@@ -105,7 +105,9 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
       async (route) => {
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const result = apiSuccessSchema(backofficeUserSummarySchema).parse(await response.json());
+        const result = apiSuccessSchema(backofficeUserCommandResultSchema).parse(
+          await response.json(),
+        );
         expect(result.data).toMatchObject({
           id: target.userId,
           status: "suspended",
@@ -118,19 +120,23 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
             ...result,
             data: {
               ...result.data,
-              ...(userResponses === 1 ? { status: "active" } : { accountVersion: 0 }),
+              ...(userResponses === 1
+                ? { status: "active" }
+                : userResponses === 2
+                  ? { accountVersion: 0 }
+                  : { idempotencyKey: "31000000-0000-4000-8000-000000000035" }),
             },
           },
         });
       },
-      { times: 2 },
+      { times: 3 },
     );
     await userCard.getByRole("button", { name: "Revisar suspensão" }).click();
     const confirmation = page.getByRole("region", { name: "Confirmar suspensão" });
     await confirmation.getByRole("checkbox", { name: "Revisei o impacto desta alteração" }).check();
     await confirmation.getByRole("button", { name: "Confirmar", exact: true }).click();
     const userReplay = confirmation.getByRole("button", { name: "Repetir mesma tentativa" });
-    for (const responseCount of [1, 2]) {
+    for (const responseCount of [1, 2, 3]) {
       await expect.poll(() => userResponses).toBe(responseCount);
       await expect(confirmation.getByRole("alert")).toContainText(
         "O resultado não pôde ser confirmado",
@@ -145,9 +151,10 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
     }
     await expect(confirmation).toHaveCount(0);
     await expect(page.getByRole("status").filter({ hasText: "Usuário suspenso" })).toBeVisible();
-    expect(commands).toHaveLength(3);
+    expect(commands).toHaveLength(4);
     expect(commands[1]).toEqual(commands[0]);
     expect(commands[2]).toEqual(commands[0]);
+    expect(commands[3]).toEqual(commands[0]);
     expect(await readFeat031Audit("backoffice.user_suspended", target.userId)).toHaveLength(1);
 
     await page.getByRole("link", { name: "Taxonomias" }).click();
@@ -168,7 +175,9 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
       async (route) => {
         const response = await route.fetch();
         expect(response.status()).toBe(200);
-        const result = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(await response.json());
+        const result = apiSuccessSchema(backofficeTaxonomyCommandResultSchema).parse(
+          await response.json(),
+        );
         expect(result.data).toMatchObject({ name: nextName, slug, version: 1, active: true });
         tagId = result.data.id;
         taxonomyResponses += 1;
@@ -178,17 +187,21 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
             ...result,
             data: {
               ...result.data,
-              ...(taxonomyResponses === 1 ? { name: "Taxonomia QA anterior" } : { version: 0 }),
+              ...(taxonomyResponses === 1
+                ? { name: "Taxonomia QA anterior" }
+                : taxonomyResponses === 2
+                  ? { version: 0 }
+                  : { idempotencyKey: "31000000-0000-4000-8000-000000000035" }),
             },
           },
         });
       },
-      { times: 2 },
+      { times: 3 },
     );
     await page.getByRole("button", { name: "Salvar edição" }).click();
     const manager = page.getByRole("region", { name: "Taxonomias" });
     const taxonomyReplay = manager.getByRole("button", { name: "Repetir mesma tentativa" });
-    for (const responseCount of [1, 2]) {
+    for (const responseCount of [1, 2, 3]) {
       await expect.poll(() => taxonomyResponses).toBe(responseCount);
       await expect(manager.getByRole("alert")).toContainText("O resultado não pôde ser confirmado");
       await expect(taxonomyReplay).toBeEnabled();
@@ -208,9 +221,10 @@ test("SL-F031-E2E-035 @p1 confirmação incoerente preserva a tentativa de conta
     await expect(taxonomyReplay).toHaveCount(0);
     await expect(taxonomyCard.getByRole("heading", { name: nextName, exact: true })).toBeVisible();
     await expect(page.getByRole("status").filter({ hasText: "salva na versão 1" })).toBeVisible();
-    expect(commands).toHaveLength(beforeEdit + 3);
+    expect(commands).toHaveLength(beforeEdit + 4);
     expect(commands[beforeEdit + 1]).toEqual(commands[beforeEdit]);
     expect(commands[beforeEdit + 2]).toEqual(commands[beforeEdit]);
+    expect(commands[beforeEdit + 3]).toEqual(commands[beforeEdit]);
     if (tagId === undefined) throw new Error("A resposta real não identificou a taxonomia QA.");
     expect(await readFeat031Audit("backoffice.taxonomy_updated", tagId)).toHaveLength(1);
   } finally {
@@ -810,6 +824,7 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
   });
   let holdRefresh = true;
   let commandRequests = 0;
+  const commandBodies: unknown[] = [];
   try {
     await provisionFeat031Operator(page, admin, "admin", "031030");
     await loginFeat031Backoffice(page, admin);
@@ -817,6 +832,32 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
     const card = await searchUser(page, target.email, target.userId);
     await card.getByRole("link", { name: "Gerenciar acesso" }).click();
     await page.getByRole("button", { name: "Revisar concessão de suporte" }).click();
+    let invalidConfirmations = 0;
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        commandBodies.push(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const result = apiSuccessSchema(backofficeUserCommandResultSchema).parse(
+          await response.json(),
+        );
+        invalidConfirmations += 1;
+        await route.fulfill({
+          response,
+          json: {
+            ...result,
+            data: {
+              ...result.data,
+              ...(invalidConfirmations === 1
+                ? { idempotencyKey: "31000000-0000-4000-8000-000000000030" }
+                : { action: "backoffice.access.grantReviewer" }),
+            },
+          },
+        });
+      },
+      { times: 2 },
+    );
     await page.route("**/acessos/**", async (route) => {
       if (route.request().headers()["rsc"] !== "1" || !holdRefresh) {
         await route.continue();
@@ -827,10 +868,30 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
       await route.abort("failed");
     });
     page.on("request", (request) => {
-      if (new URL(request.url()).pathname === "/api/commands") commandRequests += 1;
+      if (new URL(request.url()).pathname === "/api/commands") {
+        commandRequests += 1;
+        if (commandRequests === 3) commandBodies.push(request.postDataJSON());
+      }
     });
-    const confirmationStartedAt = performance.now();
     await page.getByRole("button", { name: "Confirmar alteração" }).click();
+    const confirmation = page.getByRole("region", { name: "Confirmar alteração de acesso" });
+    let confirmationStartedAt = 0;
+    for (const count of [1, 2]) {
+      await expect.poll(() => invalidConfirmations).toBe(count);
+      await expect(confirmation.getByRole("alert")).toContainText(
+        "O resultado não pôde ser confirmado",
+      );
+      await expect(confirmation.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+      await expect(
+        page.getByRole("button", { name: "Revisar concessão de suporte" }),
+      ).toBeDisabled();
+      await expect(
+        page.getByText("Acesso atualizado e sessões incompatíveis encerradas.", { exact: true }),
+      ).toHaveCount(0);
+      expect(commandRequests).toBe(count);
+      if (count === 2) confirmationStartedAt = performance.now();
+      await confirmation.getByRole("button", { name: "Repetir mesma tentativa" }).click();
+    }
     await heldRefresh;
     await expect(
       page.getByRole("status").filter({ hasText: "Verificando o estado atual" }),
@@ -855,7 +916,11 @@ test("SL-F031-E2E-030 @p1 acesso confirmado aguarda RSC autoritativo e recupera 
     await expect(
       page.getByText("Acesso atualizado e sessões incompatíveis encerradas.", { exact: true }),
     ).toBeVisible();
-    expect(commandRequests).toBe(1);
+    expect(commandRequests).toBe(3);
+    expect(commandBodies).toHaveLength(3);
+    expect(commandBodies[1]).toEqual(commandBodies[0]);
+    expect(commandBodies[2]).toEqual(commandBodies[0]);
+    expect(await readFeat031Audit("backoffice.role_granted", target.userId)).toHaveLength(1);
     expect(await readFeat031Roles(target.userId)).toEqual([{ role: "support" }]);
   } finally {
     releaseRefresh();
@@ -977,9 +1042,15 @@ test("SL-F031-E2E-031 @p1 criação e edição confirmadas recuperam somente a l
       const error = manager.getByRole("alert").filter({ hasText: "Alteração confirmada" });
       await expect(error).toContainText("o comando não será reenviado");
       await expect(retry).toBeEnabled();
-      const confirmed = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(
-        faults.results.at(-1),
-      ).data;
+      const { action, idempotencyKey, scope, ...confirmed } = apiSuccessSchema(
+        backofficeTaxonomyCommandResultSchema,
+      ).parse(faults.results.at(-1)).data;
+      expect(scope).toBe(admin.userId);
+      expect(faults.commands.at(-1)).toMatchObject({
+        action,
+        expectedScope: scope,
+        idempotencyKey,
+      });
       expect(confirmed).toMatchObject({ name, slug, active: true });
       const commandCount = editing ? 2 : 1;
       expect(faults.commands).toHaveLength(commandCount);
@@ -1068,7 +1139,7 @@ test("SL-F031-E2E-032 @p1 arquivamento e reativação confirmados preservam o im
       const retry = page.getByRole("button", { name: "Tentar carregar taxonomias novamente" });
       await expect(error).toContainText("o comando não será reenviado");
       await expect(retry).toBeEnabled();
-      const confirmed = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(
+      const confirmed = apiSuccessSchema(backofficeTaxonomyCommandResultSchema).parse(
         faults.results.at(-1),
       ).data;
       expect(confirmed.active).toBe(!archiving);
@@ -1156,7 +1227,7 @@ test("SL-F031-E2E-033 @p1 status confirmado bloqueia busca e paginação até re
       const retry = page.getByRole("button", { name: "Tentar carregar usuários novamente" });
       await expect(error).toContainText("o comando não será reenviado");
       await expect(retry).toBeEnabled();
-      const confirmed = apiSuccessSchema(backofficeUserSummarySchema).parse(
+      const confirmed = apiSuccessSchema(backofficeUserCommandResultSchema).parse(
         faults.results.at(-1),
       ).data;
       expect(confirmed).toMatchObject({
@@ -1318,7 +1389,11 @@ test("SL-F031-E2E-034 @p0 alvo deslocado de página recupera status por UUID sem
     const retry = page.getByRole("button", { name: "Tentar carregar usuários novamente" });
     await expect(error).toContainText("o comando não será reenviado");
     await expect(retry).toBeEnabled();
-    const confirmed = apiSuccessSchema(backofficeUserSummarySchema).parse(results[0]).data;
+    const { action, idempotencyKey, scope, ...confirmed } = apiSuccessSchema(
+      backofficeUserCommandResultSchema,
+    ).parse(results[0]).data;
+    expect(scope).toBe(support.userId);
+    expect(commands[0]).toMatchObject({ action, expectedScope: scope, idempotencyKey });
     expect(confirmed).toMatchObject({ id: target.id, status: "suspended" });
     expect(confirmed.accountVersion).toBeGreaterThan(target.accountVersion);
     expect(commands).toHaveLength(1);

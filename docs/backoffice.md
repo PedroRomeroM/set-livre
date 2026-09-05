@@ -39,7 +39,11 @@ comprovada da VM; sair desse modelo exige reavaliar esse orçamento.
 Leituras e mutações HTTP no browser têm deadline de dez segundos, incluindo o consumo do corpo.
 O deadline é combinado com o sinal de cancelamento do chamador: substituição de query preserva o
 cancelamento original, enquanto expiração retorna erro recuperável, sem deixar loading indefinido.
-Resultados privados são validados antes do sucesso: comandos de conta/acesso exigem o UUID do alvo,
+Resultados privados são validados antes do sucesso: todos os comandos implementados exigem o
+[eco da tentativa persistida](api-contracts.md#57-adminbackoffice), comparado na DAL e no cliente antes
+do consumo ou encerramento do pending. Mesmos operador, alvo e versão não substituem action/chave;
+para rejeição editorial, a chave também está vinculada ao motivo pelo hash do payload no ledger.
+Comandos de conta/acesso exigem o UUID do alvo,
 avanço de exatamente uma versão e o estado exigido pela ação. Taxonomias exigem o grupo solicitado e,
 em edição/arquivamento/reativação, o UUID do item e avanço de exatamente uma versão. Arquivar/reativar
 exige o estado correspondente; criação começa ativa na versão zero. Criação e edição exigem ainda
@@ -175,6 +179,9 @@ da hidratação, evitando perda silenciosa de um clique antecipado. A salvaguard
 remover o último administrador ativo. Remover o último papel de uma conta encerra suas sessões de
 backoffice.
 
+Alteração de papel só é confirmada após validar scope/action/chave e alvo/versionamento da resposta
+SQL, sem devolver papéis ao browser. Resposta de outra tentativa mantém a confirmação selecionada e
+permite somente o replay exato; não inicia refresh nem usa uma linha RSC como prova dessa tentativa.
 Depois de uma alteração de papel confirmada ou de conflito de versão, o detalhe oculta o estado
 anterior e bloqueia novas ações até receber pelo RSC o mesmo alvo numa versão autoritativa que cubra
 o resultado. Sucesso só é anunciado junto dessa composição verificada; uma versão posterior é
@@ -298,7 +305,11 @@ Audit é append-only para operadores. Export controlado.
   não encerra uma binding renovada nem mantém expiração real ou falha de leitura aberta;
 - criação de taxonomia rejeita respostas válidas de outro conteúdo do mesmo grupo;
 - atualização de acesso aguarda a versão RSC verificada, com recuperação de leitura sem repetir
-  a mutação (`SL-F031-E2E-030`);
+  a mutação; antes disso, chave ou action divergente preserva o comando para replay (`SL-F031-E2E-030`);
+- rejeição editorial real de outra chave/motivo não confirma a decisão pendente; retry preserva o
+  comando original e seu conflito exige releitura (`SL-F030-E2E-017`);
+- conta/taxonomia recusam também chave divergente em resultado coerente do mesmo alvo e versão
+  (`SL-F031-E2E-035`);
 - criação/edição, arquivamento/reativação e suspensão/restauração confirmadas conservam os controles
   bloqueados quando a leitura falha, recuperam a lista no mesmo recorte e não duplicam comando nem
   auditoria (`SL-F031-E2E-031`, `SL-F031-E2E-032`, `SL-F031-E2E-033`);

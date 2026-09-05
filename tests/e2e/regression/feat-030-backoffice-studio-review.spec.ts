@@ -1,5 +1,7 @@
 import {
   apiSuccessSchema,
+  backofficeStudioCommandResultSchema,
+  backofficeStudioRejectCommandSchema,
   backofficeStudioReviewDetailSchema,
   backofficeStudioReviewQueueSchema,
   backofficeStudioReadActivityHeader,
@@ -154,6 +156,99 @@ test("SL-F030-E2E-005 @p1 admin restaura exatamente published, paused e changes_
     }
   } finally {
     await cleanupFeat030Scenario(page, { operators: [admin], owners });
+  }
+});
+
+test("SL-F030-E2E-017 @p0 rejeição de outra tentativa e motivo não confirma a decisão pendente", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const reviewer = createFeat030Operator(testInfo, "017_attempt_identity");
+  let owner: Feat030Owner | undefined;
+  const commands: unknown[] = [];
+  const statuses: number[] = [];
+  const intendedReason = "Confirme o endereço antes de enviar novamente.";
+  const otherReason = "Confirme a capacidade antes de enviar novamente.";
+  const otherKey = "30000000-0000-4000-8000-000000000017";
+  try {
+    const pending = await provisionFeat030PendingStudio(
+      page,
+      testInfo,
+      "017_attempt_identity",
+      "3017",
+    );
+    owner = pending.owner;
+    await provisionAndLoginFeat030Operator(page, reviewer, "reviewer", "030017");
+    await openFeat030StudioReview(page, pending.studioId, pending.name);
+    await prepareFeat030Decision(page, "Rejeitar e devolver para correção", intendedReason);
+    await page.route("**/api/commands", async (route) => {
+      const command = backofficeStudioRejectCommandSchema.parse(route.request().postDataJSON());
+      commands.push(command);
+      // A confirmação vem de uma tentativa realmente persistida, com outro motivo.
+      const response = await route.fetch(
+        commands.length === 1
+          ? {
+              postData: {
+                ...command,
+                idempotencyKey: otherKey,
+                payload: { ...command.payload, reason: otherReason },
+              },
+            }
+          : {},
+      );
+      statuses.push(response.status());
+      if (commands.length === 1) {
+        expect(response.status()).toBe(200);
+        const envelope = apiSuccessSchema(backofficeStudioCommandResultSchema).parse(
+          await response.json(),
+        );
+        expect(envelope.data).toMatchObject({
+          action: command.action,
+          idempotencyKey: otherKey,
+          scope: command.expectedScope,
+          studioId: command.payload.studioId,
+          revisionId: command.payload.expectedRevisionId,
+          publicationVersion: command.payload.expectedPublicationVersion + 1,
+        });
+        expect(envelope.data.idempotencyKey).not.toBe(command.idempotencyKey);
+      }
+      await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: "Confirmar ação", exact: true }).click();
+    const retry = page.getByRole("button", { name: "Repetir mesma tentativa" });
+    await expect(retry).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Motivo para o dono" })).toHaveValue(
+      intendedReason,
+    );
+    await expect(page.getByRole("textbox", { name: "Motivo para o dono" })).toBeDisabled();
+    await expect(page.getByRole("status").filter({ hasText: "Operação confirmada" })).toHaveCount(
+      0,
+    );
+    expect(commands).toHaveLength(1);
+
+    // Reenvia A intacta: o conflito real exige releitura, nunca atribui o sucesso de B a A.
+    await retry.click();
+    await expect(page.getByText("Revisão não disponível", { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Motivo para o dono" })).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Operação confirmada" })).toHaveCount(
+      0,
+    );
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(statuses).toEqual([200, 409]);
+    const evidence = await readFeat030Evidence(pending.studioId);
+    expect(evidence.review_events).toEqual(["submitted", "rejected"]);
+    expect(evidence.audit_actions).toEqual(["backoffice.studio_rejected"]);
+    await withE2EAdminClient(async (client) => {
+      const result = await client.query<{ matches: boolean }>(
+        "select count(*) = 1 and bool_and(rejection_reason = $2) as matches from public.studio_review_events where studio_id = $1::uuid and event_type = 'rejected'",
+        [pending.studioId, otherReason],
+      );
+      expect(result.rows[0]?.matches).toBe(true);
+    });
+  } finally {
+    await page.unroute("**/api/commands");
+    await cleanupFeat030Scenario(page, { operators: [reviewer], owner });
   }
 });
 

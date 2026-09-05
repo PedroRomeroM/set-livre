@@ -107,7 +107,7 @@ revoke all on function private.feat031_create_user(
   uuid, text, text, text, text, integer, boolean, boolean
 ) from public, anon, authenticated, service_role, app_dal;
 
-select plan(67);
+select plan(72);
 
 select has_table('public', 'platform_roles', 'papéis da plataforma existem');
 select has_table('private', 'backoffice_sessions', 'bindings curtas do backoffice existem');
@@ -597,6 +597,20 @@ select pg_catalog.set_config(
   )::text,
   true
 );
+select pg_catalog.set_config(
+  'set_livre.test.f031_support_role_replay',
+  private.set_backoffice_user_role(
+    '81000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000001',
+    pg_catalog.clock_timestamp() + interval '30 minutes',
+    '81000000-0000-4000-8000-000000000002',
+    0,
+    'backoffice.access.grantSupport',
+    '87000000-0000-4000-8000-000000000004',
+    '86000000-0000-4000-8000-000000000098'
+  )::text,
+  true
+);
 select * from private.open_backoffice_session(
   '81000000-0000-4000-8000-000000000002',
   '82000000-0000-4000-8000-000000000002',
@@ -613,6 +627,24 @@ select ok(
         and role = 'support'
     ),
   'admin recente concede support sem devolver papel no resultado do browser'
+);
+select matches(
+  private.feat031_capture_error(
+    $command$
+      select private.set_backoffice_user_role(
+        '81000000-0000-4000-8000-000000000001',
+        '82000000-0000-4000-8000-000000000001',
+        pg_catalog.clock_timestamp() + interval '30 minutes',
+        '81000000-0000-4000-8000-000000000002',
+        0,
+        'backoffice.access.grantReviewer',
+        '87000000-0000-4000-8000-000000000004',
+        '86000000-0000-4000-8000-000000000099'
+      )
+    $command$
+  ),
+  '^40001:backoffice_idempotency_conflict$',
+  'a chave de grantSupport não confirma outro papel para o mesmo usuário'
 );
 select ok(
   exists (
@@ -1176,18 +1208,22 @@ select pg_catalog.set_config(
   )::text,
   true
 );
-select private.upsert_backoffice_taxonomy(
-  '81000000-0000-4000-8000-000000000001',
-  '82000000-0000-4000-8000-000000000001',
-  pg_catalog.clock_timestamp() + interval '30 minutes',
-  'tag',
-  null,
-  null,
-  'ensaio-feat031',
-  'Ensaio FEAT 031',
-  91,
-  '87000000-0000-4000-8000-000000000011',
-  '86000000-0000-4000-8000-000000000097'
+select pg_catalog.set_config(
+  'set_livre.test.f031_tag_replay',
+  private.upsert_backoffice_taxonomy(
+    '81000000-0000-4000-8000-000000000001',
+    '82000000-0000-4000-8000-000000000001',
+    pg_catalog.clock_timestamp() + interval '30 minutes',
+    'tag',
+    null,
+    null,
+    'ensaio-feat031',
+    'Ensaio FEAT 031',
+    91,
+    '87000000-0000-4000-8000-000000000011',
+    '86000000-0000-4000-8000-000000000097'
+  )::text,
+  true
 );
 reset role;
 select ok(
@@ -1531,15 +1567,19 @@ select pg_catalog.set_config(
   )::text,
   true
 );
-select private.set_backoffice_user_status(
-  '81000000-0000-4000-8000-000000000002',
-  '82000000-0000-4000-8000-000000000002',
-  pg_catalog.clock_timestamp() + interval '30 minutes',
-  '81000000-0000-4000-8000-000000000003',
-  0,
-  'backoffice.user.suspend',
-  '87000000-0000-4000-8000-000000000019',
-  '86000000-0000-4000-8000-000000000096'
+select pg_catalog.set_config(
+  'set_livre.test.f031_owner_suspended_replay',
+  private.set_backoffice_user_status(
+    '81000000-0000-4000-8000-000000000002',
+    '82000000-0000-4000-8000-000000000002',
+    pg_catalog.clock_timestamp() + interval '30 minutes',
+    '81000000-0000-4000-8000-000000000003',
+    0,
+    'backoffice.user.suspend',
+    '87000000-0000-4000-8000-000000000019',
+    '86000000-0000-4000-8000-000000000096'
+  )::text,
+  true
 );
 reset role;
 select ok(
@@ -1680,6 +1720,56 @@ revoke app_dal from postgres granted by current_user;
 select ok(
   private.check_readiness('20260831021612'),
   'readiness inclui a migration FEAT-031 e a allowlist DAL exata'
+);
+
+select ok(
+  (
+    select pg_catalog.bool_and(
+      ledger.actor_user_id is not null
+      and response.value @> pg_catalog.jsonb_build_object(
+        'scope', ledger.actor_user_id,
+        'action', ledger.action,
+        'idempotencyKey', ledger.idempotency_key,
+        'id', ledger.target_id
+      )
+      and private.backoffice_result_hash(
+        response.value - array['scope', 'action', 'idempotencyKey']
+      ) = ledger.result_hash
+    )
+    from (values
+      ('f031_support_role', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000004'::uuid),
+      ('f031_support_role_replay', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000004'::uuid),
+      ('f031_tag', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000011'::uuid),
+      ('f031_tag_replay', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000011'::uuid),
+      ('f031_tag_edited', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000012'::uuid),
+      ('f031_tag_archived', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000017'::uuid),
+      ('f031_tag_archived_replay', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000017'::uuid),
+      ('f031_tag_reactivated', '81000000-0000-4000-8000-000000000001'::uuid, '87000000-0000-4000-8000-000000000018'::uuid),
+      ('f031_owner_suspended', '81000000-0000-4000-8000-000000000002'::uuid, '87000000-0000-4000-8000-000000000019'::uuid),
+      ('f031_owner_suspended_replay', '81000000-0000-4000-8000-000000000002'::uuid, '87000000-0000-4000-8000-000000000019'::uuid)
+    ) as fixture(setting_name, actor_id, attempt_key)
+    cross join lateral (
+      select pg_catalog.current_setting('set_livre.test.' || fixture.setting_name)::jsonb as value
+    ) as response
+    left join private.backoffice_command_requests as ledger
+      on ledger.actor_user_id = fixture.actor_id and ledger.idempotency_key = fixture.attempt_key
+  ),
+  'conta, acesso e taxonomia ecoam o ledger real; metadata não altera o hash histórico'
+);
+select is(
+  pg_catalog.current_setting('set_livre.test.f031_support_role_replay')::jsonb,
+  pg_catalog.current_setting('set_livre.test.f031_support_role')::jsonb,
+  'replay de acesso preserva a identidade da tentativa apesar de novo requestId'
+);
+select is(
+  pg_catalog.current_setting('set_livre.test.f031_tag_replay')::jsonb,
+  pg_catalog.current_setting('set_livre.test.f031_tag')::jsonb,
+  'replay de criação de taxonomia preserva a identidade da tentativa apesar de novo requestId'
+);
+select is(
+  pg_catalog.current_setting('set_livre.test.f031_owner_suspended_replay')::jsonb,
+  pg_catalog.current_setting('set_livre.test.f031_owner_suspended')::jsonb,
+  'replay de status preserva a identidade da tentativa apesar de novo requestId'
 );
 
 select * from finish();

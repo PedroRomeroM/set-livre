@@ -180,6 +180,12 @@ Medir; não usar Infinity em dado operacional.
   executado sob a key de outra. Páginas mantêm keyset/cursor no mesmo scope e nunca colocam o filtro
   na URL;
 - comandos administrativos não fazem optimistic update. Uma resposta ambígua preserva comando,
+  inclusive quando o DTO é estruturalmente válido, mas pertence a outra tentativa do mesmo alvo.
+  Conta, acesso, taxonomia e revisão editorial validam na DAL e no cliente o
+  [eco persistido de scope/action/chave](api-contracts.md#57-adminbackoffice) antes de consumir a
+  resposta, limpar pending ou iniciar o handoff de leitura. Read model e versão RSC não substituem
+  essa confirmação. Conta/taxonomia removem o eco após validá-lo, sem ampliar o DTO do QueryCache.
+  A recuperação preserva comando,
   payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
   resposta conclusiva descarta a tentativa e invalida o read model. PII só alcança o consumidor após
   validar a [identidade auditada da tentativa](api-contracts.md#57-adminbackoffice) contra a

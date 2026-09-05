@@ -1,7 +1,6 @@
 import "server-only";
 
 import {
-  backofficeTaxonomyItemSchema,
   backofficeTaxonomyListSchema,
   backofficeStudioCommandResultSchema,
   backofficeStudioReviewDetailRecordSchema,
@@ -9,6 +8,9 @@ import {
   backofficeStudioReviewQueueSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  backofficeUserCommandResultSchema,
+  backofficeTaxonomyCommandResultSchema,
+  matchesBackofficeStudioAttempt,
   matchesBackofficePiiAttempt,
   backofficeUserSummarySchema,
   platformRolesSchema,
@@ -67,10 +69,10 @@ const taxonomyRowSchema = z.strictObject({
   updated_at: timestampSchema,
   usage_count: pgSafeIntegerSchema,
 });
-const userMutationResultSchema = backofficeUserSummarySchema.extend({
+const userMutationResultSchema = backofficeUserCommandResultSchema.extend({
   createdAt: timestampSchema,
 });
-const taxonomyMutationResultSchema = backofficeTaxonomyItemSchema.extend({
+const taxonomyMutationResultSchema = backofficeTaxonomyCommandResultSchema.extend({
   updatedAt: timestampSchema,
 });
 const studioReviewQueueRowSchema = z.strictObject({
@@ -284,7 +286,16 @@ export async function setBackofficeUserStatus(input: {
   );
   return exactlyOne(
     result.rows,
-    z.strictObject({ result: userMutationResultSchema }),
+    z.strictObject({
+      result: userMutationResultSchema.refine(
+        (value) =>
+          value.scope === input.auth.userId &&
+          value.action === input.command.action &&
+          value.idempotencyKey === input.command.idempotencyKey &&
+          value.id === input.command.payload.userId,
+        "A confirmação não corresponde à tentativa persistida solicitada.",
+      ),
+    }),
     "set_backoffice_user_status",
   ).result;
 }
@@ -339,7 +350,16 @@ export async function setBackofficeUserRole(input: {
   );
   return exactlyOne(
     result.rows,
-    z.strictObject({ result: userMutationResultSchema }),
+    z.strictObject({
+      result: userMutationResultSchema.refine(
+        (value) =>
+          value.scope === input.auth.userId &&
+          value.action === input.command.action &&
+          value.idempotencyKey === input.command.idempotencyKey &&
+          value.id === input.command.payload.userId,
+        "A confirmação não corresponde à tentativa persistida solicitada.",
+      ),
+    }),
     "set_backoffice_user_role",
   ).result;
 }
@@ -369,7 +389,17 @@ export async function upsertBackofficeTaxonomy(input: {
   );
   return exactlyOne(
     result.rows,
-    z.strictObject({ result: taxonomyMutationResultSchema }),
+    z.strictObject({
+      result: taxonomyMutationResultSchema.refine(
+        (value) =>
+          value.scope === input.auth.userId &&
+          value.action === input.command.action &&
+          value.idempotencyKey === input.command.idempotencyKey &&
+          value.kind === input.command.payload.kind &&
+          (input.command.payload.id === undefined || value.id === input.command.payload.id),
+        "A confirmação não corresponde à tentativa persistida solicitada.",
+      ),
+    }),
     "upsert_backoffice_taxonomy",
   ).result;
 }
@@ -397,7 +427,17 @@ export async function transitionBackofficeTaxonomy(input: {
   );
   return exactlyOne(
     result.rows,
-    z.strictObject({ result: taxonomyMutationResultSchema }),
+    z.strictObject({
+      result: taxonomyMutationResultSchema.refine(
+        (value) =>
+          value.scope === input.auth.userId &&
+          value.action === input.command.action &&
+          value.idempotencyKey === input.command.idempotencyKey &&
+          value.kind === input.command.payload.kind &&
+          value.id === input.command.payload.id,
+        "A confirmação não corresponde à tentativa persistida solicitada.",
+      ),
+    }),
     "transition_backoffice_taxonomy",
   ).result;
 }
@@ -505,7 +545,16 @@ export async function executeBackofficeStudioCommand(input: {
   );
   return exactlyOne(
     result.rows,
-    z.strictObject({ result: backofficeStudioCommandResultSchema }),
+    z.strictObject({
+      result: backofficeStudioCommandResultSchema.refine(
+        (value) =>
+          matchesBackofficeStudioAttempt(
+            { ...input.command, expectedScope: input.auth.userId },
+            value,
+          ),
+        "A confirmação não corresponde à tentativa persistida solicitada.",
+      ),
+    }),
     "execute_backoffice_studio_command",
   ).result;
 }

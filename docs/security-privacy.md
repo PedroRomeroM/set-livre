@@ -94,6 +94,13 @@ lista enviada ao browser carregam somente uma versão opaca de autorização; o 
 é composto por fachada admin-only no Server Component. Cada concessão/revogação é uma action explícita
 contra `expectedAccountVersion`. O último admin ativo é protegido sob lock global.
 
+Confirmações de revisão editorial, conta, acesso e taxonomia exigem a
+[identidade persistida da tentativa](api-contracts.md#57-adminbackoffice), não apenas alvo/versão.
+O eco é derivado do ledger SQL na transação auditada e validado na DAL e no cliente antes do
+consumo. O hash do payload vincula a chave ao papel solicitado ou ao motivo normalizado de rejeição,
+sem transportar papéis ou duplicar texto livre no DTO. Eco inválido não limpa o pending nem autoriza
+sucesso por uma leitura posterior. Locks, RLS, grants mínimos e hashes históricos são preservados.
+
 PII aparece mascarada no read model. A busca comum aceita somente prefixo de e-mail ou UUID exato e
 nunca avalia `profiles.name`; nome bruto fica exclusivamente na revelação por motivo allowlisted, fora
 de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver

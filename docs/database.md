@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260905134031_bind_pii_reveal_audited_attempt`, criada depois de
-`20260905123458_serialize_media_cleanup_claim_replay`; uma feature nova nunca é inserida antes de uma
+`20260905144332_bind_backoffice_command_attempts`, criada depois de
+`20260905144153_replay_completed_cleanup_members`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -205,6 +205,11 @@ terminar. Caminhos que renovam `last_seen_at` preservam `FOR UPDATE`.
 Ledger idempotente por ator + chave. Guarda action, hash de payload, alvo e hash do resultado
 autoritativo. Para revelação de PII, não guarda valor nem hash reutilizável: conserva somente versões
 canônicas de perfil/Auth para recusar replay stale. RLS fica habilitada sem policy e sem grant web.
+Confirmações de status, papéis, taxonomias e decisão de estúdio acrescentam `action`,
+`idempotencyKey` e `scope` lidos da tentativa persistida, após a verificação do resultado canônico.
+Esses campos não alteram os hashes históricos do resultado; o hash do payload continua vinculando
+a chave à intenção completa, incluindo papel, motivo e versão esperada. DAL e consumidor validam
+essa identidade antes de aceitar a confirmação, conforme o contrato HTTP abaixo.
 `private.reveal_backoffice_user_pii` compõe o eco de tentativa pela action desse ledger e pela
 chave/motivo do evento `audit.events` bem-sucedido do mesmo ator/alvo, tanto na primeira execução
 quanto no replay. A unicidade existente de ação/alvo/chave limita essa leitura; não há novo índice,
@@ -398,6 +403,11 @@ item histórico. A criação entra diretamente em `running`; a conclusão é som
 O claim serializa chamadas com o mesmo token por advisory lock transacional antes de ler reservas.
 Assim, um retry cuja primeira transação ainda está confirmando relê o lote e suas tentativas, sem
 reservar outro lote; tokens distintos continuam concorrentes com `SKIP LOCKED`.
+Quando já existe pertencimento histórico, o claim retorna o conjunto original inteiro: membros
+terminais têm somente `mediaId` e `outcome`, e pendentes ainda cercados pelo mesmo token conservam
+paths e tentativa. A remoção do token mutável na conclusão não apaga resultados nem autoriza um novo
+lote no mesmo run. O worker contabiliza terminais sem repetir efeitos; lease reassumida por outro
+run bloqueia o replay antigo, mantendo a recuperação por abandono abaixo.
 Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
 ou falha sem sucesso posterior. Ao abrir um novo
 run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu

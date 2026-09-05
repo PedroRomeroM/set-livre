@@ -472,6 +472,7 @@ describe("FEAT-030 backoffice studio review contracts", () => {
 
   it("accepts only action-specific command result states", () => {
     const common = {
+      idempotencyKey,
       publicationVersion: 3,
       scope: reviewerId,
       studioId: studioTestIds.studioId,
@@ -518,6 +519,10 @@ describe("FEAT-030 backoffice studio review contracts", () => {
     }
 
     const impossibleResults = [
+      { ...approve, idempotencyKey: undefined },
+      { ...reject, idempotencyKey: undefined },
+      { ...disable, idempotencyKey: undefined },
+      { ...restore, idempotencyKey: undefined },
       { ...approve, publishedRevisionId: studioTestIds.publishedRevisionId },
       { ...reject, draftRevisionId: reject.revisionId },
       { ...reject, publishedRevisionId: studioTestIds.publishedRevisionId },

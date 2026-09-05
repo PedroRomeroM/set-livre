@@ -63,6 +63,21 @@ export const backofficeUserSummarySchema = z.strictObject({
   status: identityStatusSchema,
 });
 
+export const backofficeUserCommandResultSchema = backofficeUserSummarySchema.extend({
+  action: z.enum([
+    "backoffice.user.suspend",
+    "backoffice.user.restore",
+    "backoffice.access.grantAdmin",
+    "backoffice.access.grantReviewer",
+    "backoffice.access.grantSupport",
+    "backoffice.access.revokeAdmin",
+    "backoffice.access.revokeReviewer",
+    "backoffice.access.revokeSupport",
+  ]),
+  idempotencyKey: z.uuid(),
+  scope: z.uuid(),
+});
+
 export const backofficeUserListSchema = z.strictObject({
   items: z.array(backofficeUserSummarySchema).max(50),
   nextCursor: z.string().min(1).max(512).nullable(),
@@ -122,6 +137,16 @@ export const backofficeTaxonomyItemSchema = z.strictObject({
 
 export const backofficeTaxonomyListSchema = z.strictObject({
   items: z.array(backofficeTaxonomyItemSchema).max(500),
+  scope: z.uuid(),
+});
+
+export const backofficeTaxonomyCommandResultSchema = backofficeTaxonomyItemSchema.extend({
+  action: z.enum([
+    "backoffice.taxonomy.upsert",
+    "backoffice.taxonomy.archive",
+    "backoffice.taxonomy.reactivate",
+  ]),
+  idempotencyKey: z.uuid(),
   scope: z.uuid(),
 });
 
@@ -583,6 +608,7 @@ export const backofficeStudioRestoreCommandSchema = idempotentBackofficeCommandS
 
 const backofficeStudioCommandResultBase = {
   draftRevisionId: z.uuid().nullable(),
+  idempotencyKey: z.uuid(),
   publicationVersion: z.number().int().positive(),
   revisionId: z.uuid(),
   scope: z.uuid(),
@@ -689,6 +715,22 @@ export const backofficeStudioCommandResultSchema = z
         break;
     }
   });
+
+export function matchesBackofficeStudioAttempt(
+  command: BackofficeStudioCommand,
+  result: BackofficeStudioCommandResult,
+) {
+  return (
+    result.scope === command.expectedScope &&
+    result.action === command.action &&
+    result.idempotencyKey === command.idempotencyKey &&
+    result.studioId === command.payload.studioId &&
+    result.publicationVersion === command.payload.expectedPublicationVersion + 1 &&
+    ((command.action !== "backoffice.studio.approve" &&
+      command.action !== "backoffice.studio.reject") ||
+      result.revisionId === command.payload.expectedRevisionId)
+  );
+}
 
 export const backofficeCommandSchema = z.discriminatedUnion("action", [
   backofficeUserSuspendCommandSchema,

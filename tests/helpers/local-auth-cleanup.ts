@@ -48,7 +48,12 @@ export async function cleanupLocalAuthUserWithDependencies(
   try {
     result = await dependencies.withClient((client) =>
       client.query(
-        `delete from auth.users
+        `with authorization_fence as materialized (
+           select pg_catalog.pg_advisory_xact_lock(
+             pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+           )
+         )
+         delete from auth.users using authorization_fence
          where id = $1::uuid
            and email = $2
          returning id`,

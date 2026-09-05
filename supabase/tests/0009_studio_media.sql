@@ -420,7 +420,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(104);
+select plan(109);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -4089,6 +4089,15 @@ select public.complete_studio_media_cleanup_run(
   0,
   null
 );
+reset role;
+select matches(
+  private.feat008_capture_error($command$
+    select public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000451', 1)
+  $command$),
+  '^40001:studio_media_cleanup_replay_lease_lost$',
+  'replay antigo não remove objeto nem reclama outro lote após takeover por outro run'
+);
+set local role service_role;
 select public.begin_studio_media_cleanup_run(
   '8d000000-0000-4000-8000-000000000453',
   'media-cleanup-cccccccccccccccccccccccccccccccccccccccc'
@@ -4154,6 +4163,102 @@ select ok(
 );
 rollback to savepoint cleanup_run_membership_reuse;
 release savepoint cleanup_run_membership_reuse;
+
+savepoint cleanup_interrupted_replay;
+insert into public.studio_media (
+  id, studio_id, prepared_revision_id, uploaded_by, storage_bucket, storage_path,
+  preview_storage_path, declared_mime_type, declared_size_bytes, status,
+  prepared_at, upload_expires_at, cleanup_after, delete_requested_at, updated_at
+)
+select
+  fixture.id,
+  pg_catalog.current_setting('set_livre.test.f008_studio')::uuid,
+  pg_catalog.current_setting('set_livre.test.f008_revision')::uuid,
+  '81000000-0000-4000-8000-000000000001', 'studio-media',
+  pg_catalog.format('owners/%s/studios/%s/revisions/%s/%s.png',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'), fixture.id),
+  pg_catalog.format('owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    '81000000-0000-4000-8000-000000000001',
+    pg_catalog.current_setting('set_livre.test.f008_studio'),
+    pg_catalog.current_setting('set_livre.test.f008_revision'), fixture.id),
+  'image/png', 10, 'delete_pending',
+  pg_catalog.now() - interval '20 days', pg_catalog.now() - interval '20 days' + interval '2 hours',
+  pg_catalog.now() - interval '19 days', pg_catalog.now() - interval '19 days',
+  pg_catalog.now() - interval '19 days'
+from (values
+  ('8d000000-0000-4000-8000-000000000460'::uuid),
+  ('8d000000-0000-4000-8000-000000000461'::uuid),
+  ('8d000000-0000-4000-8000-000000000462'::uuid)
+) as fixture(id);
+
+set local role service_role;
+select public.begin_studio_media_cleanup_run(
+  '8d000000-0000-4000-8000-000000000470',
+  'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+);
+select public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000470', 2);
+select public.complete_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000470',
+  '8d000000-0000-4000-8000-000000000460', true, null
+);
+select pg_catalog.set_config('set_livre.test.f008_partial_replay',
+  public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000470', 2)::text, true);
+reset role;
+select ok(
+  pg_catalog.jsonb_array_length(
+    pg_catalog.current_setting('set_livre.test.f008_partial_replay')::jsonb -> 'items'
+  ) = 2
+  and pg_catalog.current_setting('set_livre.test.f008_partial_replay')::jsonb
+    #> '{items,0}' = '{"mediaId":"8d000000-0000-4000-8000-000000000460","outcome":"deleted"}'::jsonb
+  and pg_catalog.current_setting('set_livre.test.f008_partial_replay')::jsonb
+    #>> '{items,1,mediaId}' = '8d000000-0000-4000-8000-000000000461'
+  and (select cleanup_attempts = 1 from public.studio_media
+    where id = '8d000000-0000-4000-8000-000000000461'),
+  'replay parcial inclui conclusão histórica e somente o item pendente mantém paths/tentativa'
+);
+set local role service_role;
+select public.complete_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000470',
+  '8d000000-0000-4000-8000-000000000461', true, null
+);
+select pg_catalog.set_config('set_livre.test.f008_full_replay',
+  public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000470', 2)::text, true);
+reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f008_full_replay')::jsonb -> 'items'
+    = '[{"mediaId":"8d000000-0000-4000-8000-000000000460","outcome":"deleted"},
+        {"mediaId":"8d000000-0000-4000-8000-000000000461","outcome":"deleted"}]'::jsonb
+  and (select cleanup_claim_token is null and cleanup_attempts = 0 from public.studio_media
+    where id = '8d000000-0000-4000-8000-000000000462'),
+  'replay após todos os itens concluídos não reclama outro lote antes de fechar o run'
+);
+select lives_ok($command$
+  select public.complete_studio_media_cleanup_run(
+    '8d000000-0000-4000-8000-000000000470', 'succeeded', 2, 2, 0, null
+  )
+$command$, 'run interrompido converge com contagens integrais persistidas');
+set local role service_role;
+select public.begin_studio_media_cleanup_run(
+  '8d000000-0000-4000-8000-000000000471',
+  'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+);
+select public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000471', 1);
+select public.complete_studio_media_cleanup(
+  '8d000000-0000-4000-8000-000000000471',
+  '8d000000-0000-4000-8000-000000000462', false, 'storage_remove_failed'
+);
+select pg_catalog.set_config('set_livre.test.f008_failed_replay',
+  public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000471', 1)::text, true);
+reset role;
+select is(
+  pg_catalog.current_setting('set_livre.test.f008_failed_replay')::jsonb -> 'items',
+  '[{"mediaId":"8d000000-0000-4000-8000-000000000462","outcome":"failed"}]'::jsonb,
+  'replay conserva falha persistida e não reexecuta remoção nem aumenta tentativa'
+);
+rollback to savepoint cleanup_interrupted_replay;
+release savepoint cleanup_interrupted_replay;
 
 savepoint cleanup_failed_health;
 set local role service_role;

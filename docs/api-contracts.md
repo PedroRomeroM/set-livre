@@ -416,6 +416,29 @@ aceita `reason` não vazio. O cliente nunca envia status, papel efetivo, ponteir
 restauração. Conflito conclusivo retorna `409/STALE_STATE`; resposta ambígua conserva exatamente o
 mesmo payload e a mesma chave para replay, sem liberar outra decisão.
 
+Toda confirmação implementada de conta, acesso, taxonomia e revisão editorial inclui em `data`
+`scope`, `action` e `idempotencyKey`, além do resultado de domínio existente. As cinco funções
+privadas obtêm esses campos de `private.backoffice_command_requests`: `INSERT ... RETURNING` no
+sucesso novo e lookup por ator/chave no replay, depois da verificação de action, payload e resultado.
+O eco sai na mesma transação da auditoria. DAL e cliente comparam identidade, ação, chave e alvo antes
+de entregar o resultado ao consumidor; o cliente também exige as versões e estados esperados.
+Revisão editorial verifica ainda `expectedRevisionId` em aprovação/rejeição. O `requestId` HTTP
+nunca participa dessa identidade e pode mudar no retry.
+
+A chave está vinculada no ledger ao hash do payload completo, incluindo versão, revisão e motivo
+normalizado de rejeição; trocar motivo ou papel na mesma chave retorna conflito. Não se devolvem
+papéis nem se duplica o motivo livre no DTO de confirmação. Resultado de outra tentativa não confirma
+a atual, mesmo que operador, alvo, ação, estado e versão coincidam. Eco ausente/divergente falha
+fechado, sem preenchimento pela request, DAL ou UI; no cliente, `RESPONSE_INVALID` preserva a
+tentativa exata para replay. Para conta/taxonomia, o cliente remove os campos do eco somente após
+validá-los e conserva o read model anterior sem metadata de comando no cache.
+
+O eco de transporte não altera o `result_hash` histórico: as funções calculam/verificam esse hash
+sobre o resultado de domínio original e só então acrescentam a identidade persistida. Replays de
+ledgers anteriores continuam válidos se o resultado canônico não envelheceu. A migration append-only
+`20260905144332` não cria tabela, índice ou grant amplo. Aplicação e banco precisam publicar o contrato
+em conjunto: sem o eco, a aplicação permanece fail-closed, não oferece compatibilidade silenciosa.
+
 ## 6. Read models e DTOs
 
 ### 6.1 `list_studios`

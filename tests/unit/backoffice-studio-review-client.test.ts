@@ -38,6 +38,7 @@ function reviewDetail() {
 }
 
 const commandResult: BackofficeStudioCommandResult = {
+  idempotencyKey: "a1000000-0000-4000-8000-000000000002",
   action: "backoffice.studio.approve",
   disabledFromStatus: null,
   draftRevisionId: null,
@@ -64,6 +65,15 @@ function queryClient() {
 }
 
 describe("FEAT-030 studio review client state", () => {
+  it("rejects another studio attempt even when action, target and version match", () => {
+    expect(() =>
+      assertStudioCommandResultMatchesAttempt(command, {
+        ...commandResult,
+        idempotencyKey: "a1000000-0000-4000-8000-000000000099",
+      }),
+    ).toThrow("não corresponde à tentativa enviada");
+  });
+
   it("binds the acknowledgement copy to the decision action, not to the mixed studio state", () => {
     expect(actionAcknowledgement("backoffice.studio.approve")).toBe(
       "Revisei a candidata, a versão vigente e o impacto desta ação",
@@ -195,6 +205,7 @@ describe("FEAT-030 studio review client state", () => {
     expect(assertStudioCommandResultMatchesAttempt(command, commandResult)).toBe(commandResult);
 
     const differentAction: BackofficeStudioCommandResult = {
+      idempotencyKey: command.idempotencyKey,
       action: "backoffice.studio.reject",
       disabledFromStatus: null,
       draftRevisionId: studioTestIds.otherStudioId,

@@ -9,13 +9,14 @@ import {
   backofficeStudioReviewDetailSchema,
   backofficeStudioReviewQueueSchema,
   backofficeStudioReadActivityHeader,
-  backofficeTaxonomyItemSchema,
   backofficeTaxonomyUpsertCommandSchema,
   backofficeTaxonomyListSchema,
   backofficeUserListSchema,
   backofficeUserPiiSchema,
+  backofficeUserCommandResultSchema,
+  backofficeTaxonomyCommandResultSchema,
+  matchesBackofficeStudioAttempt,
   matchesBackofficePiiAttempt,
-  backofficeUserSummarySchema,
   type BackofficeCommand,
   type BackofficeLoginPayload,
   type BackofficeRuntimeUnlockPayload,
@@ -297,6 +298,13 @@ export async function executeBackofficeStudioCommand(
       method: "POST",
     },
   );
+  if (!matchesBackofficeStudioAttempt(command, result)) {
+    throw new BackofficeClientError({
+      code: "RESPONSE_INVALID",
+      message: "O servidor retornou uma confirmação que não corresponde à tentativa enviada.",
+      status: 200,
+    });
+  }
   notifyBackofficeActivityCompleted();
   return result;
 }
@@ -317,12 +325,19 @@ export async function executeBackofficeUserCommand(
     }
   >,
 ): Promise<BackofficeUserSummary> {
-  const user = await backofficeMutationRequest("/api/commands", backofficeUserSummarySchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
-  if (user.id !== command.payload.userId) rejectBackofficePrivateBoundary();
+  const { action, idempotencyKey, scope, ...user } = await backofficeMutationRequest(
+    "/api/commands",
+    backofficeUserCommandResultSchema,
+    {
+      body: JSON.stringify(command),
+      method: "POST",
+    },
+  );
+  if (scope !== command.expectedScope || user.id !== command.payload.userId)
+    rejectBackofficePrivateBoundary();
   if (
+    action !== command.action ||
+    idempotencyKey !== command.idempotencyKey ||
     user.accountVersion !== command.payload.expectedAccountVersion + 1 ||
     (command.action === "backoffice.user.suspend" && user.status !== "suspended") ||
     ((command.action === "backoffice.user.restore" ||
@@ -352,11 +367,16 @@ export async function executeBackofficeTaxonomyCommand(
     }
   >,
 ): Promise<BackofficeTaxonomyItem> {
-  const item = await backofficeMutationRequest("/api/commands", backofficeTaxonomyItemSchema, {
-    body: JSON.stringify(command),
-    method: "POST",
-  });
+  const { action, idempotencyKey, scope, ...item } = await backofficeMutationRequest(
+    "/api/commands",
+    backofficeTaxonomyCommandResultSchema,
+    {
+      body: JSON.stringify(command),
+      method: "POST",
+    },
+  );
   if (
+    scope !== command.expectedScope ||
     item.kind !== command.payload.kind ||
     (command.payload.id !== undefined && item.id !== command.payload.id)
   ) {
@@ -367,6 +387,8 @@ export async function executeBackofficeTaxonomyCommand(
       ? backofficeTaxonomyUpsertCommandSchema.parse(command).payload
       : undefined;
   if (
+    action !== command.action ||
+    idempotencyKey !== command.idempotencyKey ||
     item.version !==
       (command.payload.expectedVersion === undefined ? 0 : command.payload.expectedVersion + 1) ||
     (command.action === "backoffice.taxonomy.archive" && item.active) ||

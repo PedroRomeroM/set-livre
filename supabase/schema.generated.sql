@@ -4518,7 +4518,11 @@ begin
     then
       raise exception using errcode = '40001', message = 'backoffice_studio_result_stale';
     end if;
-    return result;
+    return result || pg_catalog.jsonb_build_object(
+      'action', existing_request.action,
+      'idempotencyKey', existing_request.idempotency_key,
+      'scope', existing_request.actor_user_id
+    );
   end if;
 
   select studio.*
@@ -4926,7 +4930,8 @@ begin
     private.backoffice_result_hash(result),
     'studio',
     p_studio_id
-  );
+  )
+  returning * into existing_request;
 
   insert into audit.events (
     actor_user_id,
@@ -4962,7 +4967,11 @@ begin
     )
   );
 
-  return result;
+  return result || pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', existing_request.idempotency_key,
+    'scope', existing_request.actor_user_id
+  );
 end;
 $$;
 
@@ -9075,7 +9084,11 @@ begin
     if private.backoffice_result_hash(result) <> existing_request.result_hash then
       raise exception using errcode = '40001', message = 'backoffice_role_result_stale';
     end if;
-    return result;
+    return result || pg_catalog.jsonb_build_object(
+      'action', existing_request.action,
+      'idempotencyKey', existing_request.idempotency_key,
+      'scope', existing_request.actor_user_id
+    );
   end if;
 
   select profile.*
@@ -9165,7 +9178,8 @@ begin
     private.backoffice_result_hash(result),
     'platform_role',
     p_target_user_id
-  );
+  )
+  returning * into existing_request;
 
   insert into audit.events (
     actor_user_id,
@@ -9198,7 +9212,11 @@ begin
     )
   );
 
-  return result;
+  return result || pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', existing_request.idempotency_key,
+    'scope', existing_request.actor_user_id
+  );
 end;
 $$;
 
@@ -9303,7 +9321,11 @@ begin
     if private.backoffice_result_hash(result) <> existing_request.result_hash then
       raise exception using errcode = '40001', message = 'backoffice_user_status_result_stale';
     end if;
-    return result;
+    return result || pg_catalog.jsonb_build_object(
+      'action', existing_request.action,
+      'idempotencyKey', existing_request.idempotency_key,
+      'scope', existing_request.actor_user_id
+    );
   end if;
 
   select profile.*
@@ -9386,7 +9408,8 @@ begin
     private.backoffice_result_hash(result),
     'profile',
     p_target_user_id
-  );
+  )
+  returning * into existing_request;
 
   insert into audit.events (
     actor_user_id,
@@ -9420,7 +9443,11 @@ begin
     )
   );
 
-  return result;
+  return result || pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', existing_request.idempotency_key,
+    'scope', existing_request.actor_user_id
+  );
 end;
 $$;
 
@@ -10550,7 +10577,11 @@ begin
     if private.backoffice_result_hash(result) <> existing_request.result_hash then
       raise exception using errcode = '40001', message = 'backoffice_taxonomy_result_stale';
     end if;
-    return result;
+    return result || pg_catalog.jsonb_build_object(
+      'action', existing_request.action,
+      'idempotencyKey', existing_request.idempotency_key,
+      'scope', existing_request.actor_user_id
+    );
   end if;
 
   if p_kind = 'studioType' then
@@ -10629,7 +10660,8 @@ begin
     private.backoffice_result_hash(result),
     target_type,
     p_id
-  );
+  )
+  returning * into existing_request;
 
   insert into audit.events (
     actor_user_id,
@@ -10664,7 +10696,11 @@ begin
     )
   );
 
-  return result;
+  return result || pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', existing_request.idempotency_key,
+    'scope', existing_request.actor_user_id
+  );
 end;
 $$;
 
@@ -11639,7 +11675,11 @@ begin
     if private.backoffice_result_hash(result) <> existing_request.result_hash then
       raise exception using errcode = '40001', message = 'backoffice_taxonomy_result_stale';
     end if;
-    return result;
+    return result || pg_catalog.jsonb_build_object(
+      'action', existing_request.action,
+      'idempotencyKey', existing_request.idempotency_key,
+      'scope', existing_request.actor_user_id
+    );
   end if;
 
   if is_create then
@@ -11758,7 +11798,8 @@ begin
     private.backoffice_result_hash(result),
     target_type,
     target_id
-  );
+  )
+  returning * into existing_request;
 
   insert into audit.events (
     actor_user_id,
@@ -11791,7 +11832,11 @@ begin
     )
   );
 
-  return result;
+  return result || pg_catalog.jsonb_build_object(
+    'action', existing_request.action,
+    'idempotencyKey', existing_request.idempotency_key,
+    'scope', existing_request.actor_user_id
+  );
 end;
 $_$;
 

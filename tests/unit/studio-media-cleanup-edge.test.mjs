@@ -430,6 +430,32 @@ describe("studio media cleanup edge adapter", () => {
 });
 
 describe("studio media cleanup edge core", () => {
+  it.each([
+    { outcomes: ["deleted"], deleted: 2, failed: 0, removals: 1 },
+    { outcomes: ["deleted", "deleted"], deleted: 2, failed: 0, removals: 0 },
+    { outcomes: ["failed", "deleted"], deleted: 1, failed: 1, removals: 0 },
+  ])("replay preserva resultados persistidos sem repetir Storage (%#)", async (scenario) => {
+    const items = candidates.map((candidate, index) =>
+      scenario.outcomes[index] === undefined
+        ? candidate
+        : { mediaId: candidate.mediaId, outcome: scenario.outcomes[index] },
+    );
+    const contract = dependencies({
+      claim: vi.fn().mockResolvedValue({ claimToken: workerId, items }),
+    });
+    const result = { claimed: 2, deleted: scenario.deleted, failed: scenario.failed };
+    const invocation = runStudioMediaCleanup(contract, { functionSlug, runId });
+    if (scenario.failed === 0) await expect(invocation).resolves.toEqual(result);
+    else
+      await expect(invocation).rejects.toMatchObject({
+        errorCode: "cleanup_replayed_item_failed",
+        result,
+      });
+    expect(contract.remove).toHaveBeenCalledTimes(scenario.removals);
+    expect(contract.complete).toHaveBeenCalledTimes(scenario.removals);
+    expect(contract.completeRun).toHaveBeenCalledWith(expect.objectContaining(result));
+  });
+
   it("limita lote e cardinalidade reclamada antes de qualquer remoção", async () => {
     expect(cleanupBatchSize).toBe(3);
     for (const batchSize of [0, 4, 5, 25, 100, Number.NaN]) {

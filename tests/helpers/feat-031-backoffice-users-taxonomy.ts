@@ -661,7 +661,13 @@ export async function cleanupFeat031Users(input: {
   if (bulk.length > 0) {
     await withFeat031AdminPool(async (pool) => {
       const result = await pool.query(
-        `delete from auth.users where id = any($1::uuid[]) returning id`,
+        `with authorization_fence as materialized (
+           select pg_catalog.pg_advisory_xact_lock(
+             pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+           )
+         )
+         delete from auth.users using authorization_fence
+         where id = any($1::uuid[]) returning id`,
         [bulk.map((identity) => identity.id)],
       );
       if (result.rowCount !== bulk.length)

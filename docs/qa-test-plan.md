@@ -149,8 +149,12 @@ um com no máximo uma conexão. Toda operação adquire e libera um cliente do p
 presas ao mesmo cliente. Criar e encerrar um pool por consulta é proibido: além de anular o pooling,
 esse churn esgota portas TCP efêmeras no gate Windows durante a matriz completa.
 Antes de apagar identidades ou linhas de domínio, o teardown fecha as páginas relacionadas e deixa a
-navegação já iniciada alcançar `domcontentloaded`; nenhuma limpeza pode concorrer com um refetch ou
-`router.refresh()` ainda ativo sobre a mesma sessão.
+navegação já iniciada alcançar `domcontentloaded`. Fechar o browser não cancela uma consulta SQL já
+enviada: exclusões Auth QA, exatas ou bulk, adquirem o advisory lock transacional exclusivo existente
+`set-livre:backoffice-authorization` antes dos locks de linha do cascade. Isso aguarda leitores de
+sessão que usam o lock compartilhado, sem inverter a ordem binding/Auth e sem retries. O cenário
+`SL-F031-E2E-036` mantém esse leitor aberto em outra conexão, observa a espera real em `pg_locks` e
+comprova a conclusão exata e idempotente após liberá-lo. Esse mecanismo é somente do teardown local.
 
 Recomposições de segurança aguardam a superfície autoritativa final e suas evidências de escopo, não
 uma navegação intermediária. Reload seguido de redirect ou nova composição SSR pode cancelar um
@@ -256,7 +260,9 @@ Os cenários `SL-F031-E2E-*` cobrem:
   permanecem bloqueados durante mutação pendente ou resultado ambíguo, preservando alvo, payload e
   chave idempotente até a reconciliação. O fingerprint assíncrono serializa submissões, e a busca
   normaliza caixa e espaços de forma consistente com SQL e cursor;
-- `SL-F031-E2E-030` retém a resposta RSC após concessão real de acesso, verifica o prazo real de
+- `SL-F031-E2E-030` entrega primeiro confirmações com outra chave/action para a mesma conta/versão;
+  mantém a seleção e repete exatamente o comando, sem auditoria duplicada. Depois retém a resposta
+  RSC após a confirmação válida, verifica o prazo real de
   dez segundos sem acelerar as leituras concorrentes de sessão e recupera sem repetir o comando;
 - `SL-F031-E2E-031/032/033` interrompem a leitura após comandos reais de criação/edição de taxonomia,
   arquivamento/reativação e suspensão/restauração. Preservam confirmação e formulário, bloqueiam ações,
@@ -264,9 +270,13 @@ Os cenários `SL-F031-E2E-*` cobrem:
 - `SL-F031-E2E-034` desloca a última conta visível após um cadastro concorrente: a verificação por UUID
   recupera uma falha de leitura sem reenviar suspensão, preserva o filtro/páginas da tela e permite
   alcançar o alvo pela paginação normal, sem duplicar auditoria;
-- `SL-F031-E2E-035` corrompe estado, campos e versão após comandos reais de conta/taxonomia;
+- `SL-F031-E2E-035` corrompe estado, campos, versão e chave após comandos reais de conta/taxonomia;
   rejeita a confirmação incoerente, preserva a tentativa e recupera por replay idempotente, com
   auditoria única. Unitários cobrem também arquivamento/reativação e concessão/revogação de papéis;
+- unitários de DAL recusam eco ausente ou outra chave nos cinco entrypoints; os contratos/clientes
+  rejeitam metadata inválida antes do consumo. `0007_backoffice_users_taxonomy.sql` compara
+  confirmações novas/replays com o ledger real e prova hashes históricos intactos, novo requestId
+  sem nova tentativa e conflito ao trocar o papel na mesma chave;
 - ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
   explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
   diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;
@@ -360,6 +370,11 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - resposta perdida após commit com repetição byte a byte da mesma intenção; preview inválida com
   bloqueio da decisão e renovação; conflito seguido de releitura `503/404` e `404` direto do comando,
   ambos descartando formulário, mídia e snapshot antes da nova leitura;
+- `SL-F030-E2E-017` entrega uma rejeição realmente persistida para o mesmo operador/estúdio/revisão,
+  action e versão, mas com outra chave/motivo. Não anuncia sucesso, mantém o motivo original bloqueado
+  e reenvia a tentativa original; seu conflito real exige releitura sem atribuir o resultado alheio.
+  `0011_backoffice_studio_review.sql` prova eco do ledger nas quatro ações e replays, preservação dos
+  hashes históricos e recusa de outro motivo na mesma chave;
 - recuperação da carga inicial e da próxima página da fila sem descartar itens já confirmados;
 - `SL-F030-E2E-016` inicia a fila offline, exige erro sem cards ou falso estado vazio e recupera
   o item real por nova leitura explícita, sem evento online nem comando;

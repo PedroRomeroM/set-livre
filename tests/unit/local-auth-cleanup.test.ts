@@ -42,6 +42,10 @@ describe("exact local Auth user cleanup", () => {
     const query = vi.fn(async (text: string, values: readonly [string, string]) => {
       events.push("query");
       expect(text).toContain("delete from auth.users");
+      expect(text).toContain("with authorization_fence as materialized");
+      expect(text).toContain("pg_catalog.pg_advisory_xact_lock(");
+      expect(text).toContain("'set-livre:backoffice-authorization'");
+      expect(text).toContain("delete from auth.users using authorization_fence");
       expect(text).toContain("id = $1::uuid");
       expect(text).toContain("email = $2");
       expect(text).not.toMatch(/\blike\b|%/iu);
