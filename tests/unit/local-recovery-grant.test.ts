@@ -3,24 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertExactLocalRecoverySessionClosedWithDependencies,
   expireExactLocalRecoveryGrantWithDependencies,
+  type LocalRecoveryGrantClient,
   type LocalRecoveryGrantDependencies,
-  type LocalRecoveryGrantPool,
 } from "../helpers/local-recovery-grant";
 
 const email = "qa_f002_recovery_expiry@example.test";
 const userId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
 const databaseUrl = "postgresql://postgres:unit-secret@127.0.0.1:54322/postgres";
 
-function dependenciesFor(pool: LocalRecoveryGrantPool, events: string[]) {
+function dependenciesFor(client: LocalRecoveryGrantClient, events: string[]) {
   const dependencies: LocalRecoveryGrantDependencies = {
-    adminDatabaseUrl: databaseUrl,
-    createPool(receivedDatabaseUrl) {
-      expect(receivedDatabaseUrl).toBe(databaseUrl);
-      events.push("pool");
-      return pool;
-    },
     async preflight() {
       events.push("preflight");
+    },
+    async withClient(operation) {
+      events.push("client");
+      return operation(client);
     },
   };
   return dependencies;
@@ -56,20 +54,17 @@ describe("exact local recovery grant expiry", () => {
       expect(values).toEqual([userId, email]);
       return { rowCount: 1, rows: [{ expired: true }] };
     });
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalRecoveryGrantClient = {
       query,
     };
 
     await expect(
       expireExactLocalRecoveryGrantWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     ).resolves.toBeUndefined();
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
     expect(query).toHaveBeenCalledTimes(1);
   });
 
@@ -80,10 +75,7 @@ describe("exact local recovery grant expiry", () => {
     { rowCount: 1, rows: [{ expired: false }] },
   ])("fails closed when one exact active grant was not proven", async (result) => {
     const events: string[] = [];
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalRecoveryGrantClient = {
       async query() {
         events.push("query");
         return result;
@@ -93,10 +85,10 @@ describe("exact local recovery grant expiry", () => {
     await expect(
       expireExactLocalRecoveryGrantWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     ).rejects.toThrow("com segurança");
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
   });
 
   it.each([
@@ -105,54 +97,47 @@ describe("exact local recovery grant expiry", () => {
     { email, userId: "not-a-uuid" },
   ])("rejects non-exact QA inputs before the database preflight", async (input) => {
     const preflight = vi.fn(async () => undefined);
-    const createPool = vi.fn(() => {
-      throw new Error("pool must not be created");
+    const withClient = vi.fn(() => {
+      throw new Error("client must not be acquired");
     });
 
     await expect(
       expireExactLocalRecoveryGrantWithDependencies(input, {
-        adminDatabaseUrl: databaseUrl,
-        createPool,
         preflight,
+        withClient,
       }),
     ).rejects.toThrow();
     expect(preflight).not.toHaveBeenCalled();
-    expect(createPool).not.toHaveBeenCalled();
+    expect(withClient).not.toHaveBeenCalled();
   });
 
-  it("redacts a failed local preflight before creating a pool", async () => {
+  it("redacts a failed local preflight before acquiring a client", async () => {
     const preflightSecret = "private-preflight-detail";
-    const createPool = vi.fn(() => {
-      throw new Error("pool must not be created");
+    const withClient = vi.fn(() => {
+      throw new Error("client must not be acquired");
     });
     const message = await capturedAsyncError(() =>
       expireExactLocalRecoveryGrantWithDependencies(
         { email, userId },
         {
-          adminDatabaseUrl: databaseUrl,
-          createPool,
           preflight: async () => {
             throw new Error(preflightSecret);
           },
+          withClient,
         },
       ),
     );
 
-    expect(createPool).not.toHaveBeenCalled();
+    expect(withClient).not.toHaveBeenCalled();
     expect(message).toContain("preflight");
     expect(message).not.toContain(preflightSecret);
     expect(message).not.toContain(databaseUrl);
   });
 
-  it("redacts query and shutdown failures while still closing the pool", async () => {
+  it("redacts a query failure without leaking database or provider details", async () => {
     const events: string[] = [];
     const querySecret = "private-query-detail";
-    const shutdownSecret = "private-shutdown-detail";
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-        throw new Error(shutdownSecret);
-      },
+    const client: LocalRecoveryGrantClient = {
       async query() {
         events.push("query");
         throw new Error(querySecret);
@@ -162,13 +147,12 @@ describe("exact local recovery grant expiry", () => {
     const message = await capturedAsyncError(() =>
       expireExactLocalRecoveryGrantWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     );
 
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
     expect(message).not.toContain(querySecret);
-    expect(message).not.toContain(shutdownSecret);
     expect(message).not.toContain(databaseUrl);
     expect(message).not.toContain(email);
     expect(message).not.toContain(userId);
@@ -201,20 +185,17 @@ describe("exact local recovery session closure proof", () => {
         ],
       };
     });
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalRecoveryGrantClient = {
       query,
     };
 
     await expect(
       assertExactLocalRecoverySessionClosedWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     ).resolves.toBeUndefined();
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
   });
 
   it.each([
@@ -255,10 +236,7 @@ describe("exact local recovery session closure proof", () => {
     },
   ])("fails closed when the structural post-condition is not exact", async (row) => {
     const events: string[] = [];
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalRecoveryGrantClient = {
       async query() {
         events.push("query");
         return { rowCount: 1, rows: [row] };
@@ -268,19 +246,16 @@ describe("exact local recovery session closure proof", () => {
     await expect(
       assertExactLocalRecoverySessionClosedWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     ).rejects.toThrow("encerramento");
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
   });
 
-  it("redacts query details while still closing the pool", async () => {
+  it("redacts query details while releasing the shared client boundary", async () => {
     const events: string[] = [];
     const privateDetail = "private-session-query-detail";
-    const pool: LocalRecoveryGrantPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalRecoveryGrantClient = {
       async query() {
         events.push("query");
         throw new Error(privateDetail);
@@ -290,11 +265,11 @@ describe("exact local recovery session closure proof", () => {
     const message = await capturedAsyncError(() =>
       assertExactLocalRecoverySessionClosedWithDependencies(
         { email, userId },
-        dependenciesFor(pool, events),
+        dependenciesFor(client, events),
       ),
     );
 
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
     expect(message).not.toContain(privateDetail);
     expect(message).not.toContain(email);
     expect(message).not.toContain(userId);

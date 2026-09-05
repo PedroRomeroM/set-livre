@@ -10,6 +10,12 @@ const trustedEnvironmentSchema = z.object({
   APP_ENV: z.enum(["development", "local", "production", "test"]),
   NEXT_PUBLIC_APP_URL: z.url(),
 });
+const canonicalRouteUuidSchema = z.uuid().transform((value) => value.toLowerCase());
+
+export function canonicalRouteUuid(value: string) {
+  const parsed = canonicalRouteUuidSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
 
 export type ApiRouteErrorCode =
   | "AUTH_INVALID"
@@ -21,15 +27,25 @@ export type ApiRouteErrorCode =
   | "CONTENT_TYPE_INVALID"
   | "FORBIDDEN"
   | "INPUT_INVALID"
+  | "MEDIA_COVER_REPLACEMENT_REQUIRED"
+  | "MEDIA_LIMIT_REACHED"
+  | "MEDIA_ORDER_CHANGED"
   | "METHOD_NOT_ALLOWED"
+  | "NOT_FOUND"
   | "ORIGIN_INVALID"
+  | "OWNER_CONTRACT_CHANGED"
   | "PAYMENT_PROVIDER_UNAVAILABLE"
   | "RATE_LIMITED"
   | "RECOVERY_INVALID"
   | "RECOVERY_RESTART_REQUIRED"
   | "SERVICE_UNAVAILABLE"
   | "SESSION_CHANGED"
+  | "STUDIO_SUBMISSION_INCOMPLETE"
+  | "STUDIO_TAXONOMY_UNAVAILABLE"
+  | "STUDIO_TYPE_UNAVAILABLE"
   | "UNAUTHENTICATED"
+  | "UPLOAD_EXPIRED"
+  | "UPLOAD_OBJECT_MISSING"
   | "VALIDATION_FAILED";
 
 export class ApiRouteError extends Error {
@@ -275,9 +291,32 @@ const observableActionSchema = z.enum([
   "profile.update",
   "recipient.onboarding.refresh",
   "recipient.onboarding.start",
+  "studio.create",
+  "studio.draft.discard",
+  "studio.media.cover.set",
+  "studio.media.delete",
+  "studio.media.read",
+  "studio.media.reorder",
+  "studio.media.upload.finalize",
+  "studio.media.upload.prepare",
+  "studio.pause",
+  "studio.publication.read",
+  "studio.read",
+  "studio.resume",
+  "studio.revision.submit",
+  "studio.revision.updateContent",
+  "studio.revision.updateCore",
+  "studio.revision.updateTaxonomy",
+  "studio.taxonomies.read",
+  "studio.types.read",
 ]);
 const observableOutcomeSchema = z.enum(["accepted", "rejected", "unavailable"]);
-const observableEventSchema = z.enum(["identity.request", "owner.request", "private.command"]);
+const observableEventSchema = z.enum([
+  "identity.request",
+  "owner.request",
+  "private.command",
+  "studio.request",
+]);
 
 export function writeSafeOperationalEvent(event: {
   action: z.infer<typeof observableActionSchema>;

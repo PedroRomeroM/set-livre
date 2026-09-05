@@ -7,6 +7,11 @@ autorizadas. O restante da infraestrutura é executado e validado pelo agente.
 
 Nenhuma ação humana permanece pendente para esta entrega.
 
+O cleanup de mídia reutiliza o `SUPABASE_ACCESS_TOKEN` já guardado no environment de produção. O
+workflow comprova automaticamente que ele pode ler a secret key moderna do projeto, mascara-a,
+entrega-a somente ao runtime web e testa a Edge Function com objetos reais; não é preciso criar nem
+copiar um novo secret. A VM agenda a invocação com as units `systemd` versionadas na release.
+
 Não cole senhas ou tokens neste arquivo. Secrets de GitHub, Supabase e SSH serão publicados por canais
 próprios e validados sem exibir seus valores.
 
@@ -15,6 +20,10 @@ próprios e validados sem exibir seus valores.
 - [ ] Antes de compartilhar implementação proprietária adicional, contratar GitHub Pro ou mover o
       repositório para um plano que preserve os mesmos checks e proteções de `main` em modo privado.
 - [ ] Autorizar explicitamente o go-live e a retirada do bloqueio de indexação.
+- [ ] Antes do primeiro uso do backoffice, criar/confirmar uma conta comum e concluir seu perfil pela
+      aplicação pública; informar ao agente qual e-mail será o primeiro admin. O agente executará o
+      bootstrap one-shot auditado, provará o papel e orientará o túnel SSH enquanto o backoffice
+      permanecer somente em loopback. Não executar `insert` manual em `platform_roles`.
 
 ### DNS no go-live comercial
 

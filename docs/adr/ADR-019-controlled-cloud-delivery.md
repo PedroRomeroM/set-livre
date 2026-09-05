@@ -52,9 +52,11 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - objetos internos do Supabase permanecem sob a identidade gerenciada `supabase_admin`, que não pode
   ser assumida pelo `postgres` do projeto. A produção não armazena segredo em GUC de role/database e
   o readiness falha se catálogos efetivamente legíveis contiverem configuração com nome sensível;
-- `pg_net` não pertence à baseline. Se o schema `net` existir e `anon`, `authenticated`,
-  `service_role`, `app_dal` ou o login de produção tiver `USAGE/CREATE`, o provisionamento falha antes
-  de habilitar o login e o health existente fica indisponível;
+- `pg_net`, Cron e Vault não pertencem à baseline das aplicações. A FEAT-008 usa a Edge Function para
+  remover objetos e o timer `systemd` já controlado da VM apenas para invocá-la. Se `anon`,
+  `authenticated`, `app_dal` ou o login de produção alcançar `maintenance`, ou qualquer role da
+  aplicação alcançar `net`, o provisionamento falha antes de habilitar o login e o health existente
+  fica indisponível; `service_role` recebe somente execução nas fachadas RPC estreitas do cleanup;
 - `CREATE/TEMP` direto no database para DAL ou login de produção também invalida essa fronteira;
 - branch protection, checks do GitHub e o ciclo documentado de review são a autoridade de merge;
 - depois da revisão limpa, o agente publica o status `Codex review contract` no SHA exato, apontando

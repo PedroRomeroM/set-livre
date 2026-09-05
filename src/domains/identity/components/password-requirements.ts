@@ -1,4 +1,4 @@
-import type { PasswordRequirement } from "@set-livre/ui";
+import type { PasswordRequirement } from "@set-livre/ui/password-input";
 
 function requirementStatus(password: string, isMet: boolean) {
   if (password.length === 0) {

@@ -462,13 +462,22 @@ clear_dangling_current_link() {
 
 stop_application_services() {
   local load_state service
-  for service in set-livre-web.service set-livre-backoffice.service; do
+  for service in \
+    set-livre-media-cleanup.timer \
+    set-livre-application-start.service \
+    set-livre-media-cleanup.service \
+    set-livre-web.service \
+    set-livre-backoffice.service; do
     load_state="$(systemctl show --property=LoadState --value "$service")" || return 1
     if [[ ${load_state} != "not-found" ]]; then
       systemctl stop "$service" || return 1
     fi
     ! systemctl is-active --quiet "$service" || return 1
   done
+}
+
+run_media_cleanup_once() {
+  systemctl start set-livre-media-cleanup.service
 }
 
 # BEGIN SET_LIVRE_SSH_POLICY_PRIMITIVES
@@ -1085,6 +1094,8 @@ for required_source in \
   "$NGINX_TLS_SOURCE" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-web.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-backoffice.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-media-cleanup.service" \
+  "${SCRIPT_DIRECTORY}/systemd/set-livre-media-cleanup.timer" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-application-start.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.service" \
   "${SCRIPT_DIRECTORY}/systemd/set-livre-release-recovery.path"; do
@@ -1187,6 +1198,8 @@ files = [
     "nginx/set-livre-tls.conf",
     "systemd/set-livre-application-start.service",
     "systemd/set-livre-backoffice.service",
+    "systemd/set-livre-media-cleanup.service",
+    "systemd/set-livre-media-cleanup.timer",
     "systemd/set-livre-release-recovery.path",
     "systemd/set-livre-release-recovery.service",
     "systemd/set-livre-web.service",
@@ -1457,6 +1470,8 @@ publish_managed_file \
 for systemd_unit in \
   set-livre-web.service \
   set-livre-backoffice.service \
+  set-livre-media-cleanup.service \
+  set-livre-media-cleanup.timer \
   set-livre-application-start.service \
   set-livre-release-recovery.service \
   set-livre-release-recovery.path; do
@@ -1736,11 +1751,23 @@ ensure_fstab_swap_entry || fail "/etc/fstab é inválido ou não pôde ser publi
 
 nginx -t
 systemctl daemon-reload
+systemd-analyze verify \
+  /etc/systemd/system/set-livre-web.service \
+  /etc/systemd/system/set-livre-backoffice.service \
+  /etc/systemd/system/set-livre-media-cleanup.service \
+  /etc/systemd/system/set-livre-media-cleanup.timer \
+  /etc/systemd/system/set-livre-application-start.service \
+  /etc/systemd/system/set-livre-release-recovery.service \
+  /etc/systemd/system/set-livre-release-recovery.path
 systemctl enable nginx unattended-upgrades
 systemctl restart nginx
-systemctl disable set-livre-web.service set-livre-backoffice.service
+systemctl disable \
+  set-livre-web.service \
+  set-livre-backoffice.service \
+  set-livre-media-cleanup.service
 systemctl enable \
   set-livre-application-start.service \
+  set-livre-media-cleanup.timer \
   set-livre-release-recovery.path
 systemctl start set-livre-release-recovery.path
 systemctl enable --now snap.certbot.renew.timer
@@ -1777,6 +1804,17 @@ if [[ -e /opt/set-livre/current || -L /opt/set-livre/current ]]; then
     == "/opt/set-livre/releases/${active_release_sha}" ]] \
     || fail "release ativa mudou durante o bootstrap."
   if [[ ${active_release_compatible} == true ]]; then
+    if ! run_media_cleanup_once; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      systemctl reset-failed set-livre-web.service set-livre-backoffice.service || true
+      [[ -L /opt/set-livre/current \
+        && $(readlink --canonicalize-existing /opt/set-livre/current) \
+          == "/opt/set-livre/releases/${active_release_sha}" ]] \
+        || fail "release ativa mudou durante o cleanup pós-bootstrap."
+      publish_bootstrap_in_progress "$host_configuration_digest" \
+        || fail "não foi possível preservar o bloqueio após falha do cleanup inicial."
+      fail "cleanup inicial falhou; release e estado de recovery foram preservados para retry."
+    fi
     if ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_active_health "$active_release_sha" \
       || ! wait_for_active_public_health "$active_release_sha"; then
@@ -1807,14 +1845,16 @@ else
   systemctl reset-failed set-livre-backoffice.service || true
 fi
 rm -f -- /etc/set-livre/web.env /etc/set-livre/backoffice.env /etc/set-livre/release.env
-bootstrap_gate_published=false
-host_configuration_published=false
 if [[ -n ${active_release_sha} && ${active_release_compatible} == true ]]; then
   rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
   rm -f -- "$ROLLBACK_MARKER"
+  systemctl start set-livre-media-cleanup.timer \
+    || fail "timer de cleanup não pôde ser recuperado após o bootstrap."
 else
   rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"
 fi
+bootstrap_gate_published=false
+host_configuration_published=false
 
 if [[ -n ${active_release_sha} && ${active_release_compatible} == false ]]; then
   printf 'Host preparado; release incompatível permanece parada até o deploy do mesmo contrato.\n'

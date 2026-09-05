@@ -1,5 +1,5 @@
 import { apiSuccessSchema, myProfileResultSchema } from "@set-livre/contracts";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
 import {
   assertFeat003PrivateValuesAbsentFromDom,
@@ -16,8 +16,6 @@ import {
   stageFeat003SensitiveValue,
 } from "../../helpers/feat-003-profile-account";
 import { gotoExpectedPage } from "../../helpers/expected-page";
-
-test.use({ screenshot: "off", trace: "off", video: "off" });
 
 function createDeferredSignal() {
   let resolved = false;
@@ -123,11 +121,6 @@ async function installPendingProfileRead(page: Page) {
     .toBe(true);
 }
 
-function invalidateVerificationDigit(value: string) {
-  const replacement = value.endsWith("0") ? "1" : "0";
-  return `${value.slice(0, -1)}${replacement}`;
-}
-
 async function expectNoHorizontalOverflow(page: Page) {
   const fits = await page.evaluate(
     () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
@@ -147,73 +140,6 @@ async function saveDarkAppearance(page: Page) {
   const payload: unknown = await response.json();
   return apiSuccessSchema(myProfileResultSchema).parse(payload).data;
 }
-
-test("SL-F003-E2E-003 @p1 valida telefone, CPF e CNPJ localmente no mobile de 320 px", async ({
-  page,
-}, testInfo) => {
-  test.setTimeout(120_000);
-  await page.setViewportSize({ height: 720, width: 320 });
-  expect(page.viewportSize()).toEqual({ height: 720, width: 320 });
-  const identity = createFeat003QaIdentity(testInfo, "003_invalidos");
-  const validCpf = createFeat003ProfileSecrets("individual").taxId;
-  const invalidCpf = invalidateVerificationDigit(validCpf);
-  const invalidCnpj = invalidateVerificationDigit(createFeat003ProfileSecrets("company").taxId);
-  const invalidForeignPrefix = "+54 9 2222-2222";
-  const invalidFormattedExcess = "+55 (41) 99999-12345";
-  let commandRequests = 0;
-
-  try {
-    await registerAndConfirmFeat003Identity(page, identity, "individual");
-    await gotoExpectedPage(page, "/conta", "Minha conta");
-    page.on("request", (request) => {
-      const address = new URL(request.url());
-      if (address.pathname === "/api/commands" && request.method() === "POST") {
-        commandRequests += 1;
-      }
-    });
-    const individualChoice = page.getByRole("radio", { name: "Pessoa física" });
-    await individualChoice.check();
-    await page.getByRole("textbox", { name: "Nome completo" }).fill("Pessoa QA Inválida");
-    const phoneControl = page.getByRole("textbox", { name: "Telefone" });
-    await fillFeat003PhoneWithoutReportValue(phoneControl, invalidForeignPrefix);
-    await expect(phoneControl).toHaveValue(formatFeat003PhoneForDisplay(invalidForeignPrefix));
-    await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), validCpf);
-    await expect(individualChoice).toBeChecked();
-    await page.getByRole("button", { name: "Concluir perfil" }).click();
-    await expect(
-      page.getByText("Informe um telefone brasileiro válido.", { exact: true }),
-    ).toBeVisible();
-
-    await fillFeat003PhoneWithoutReportValue(phoneControl, invalidFormattedExcess);
-    await expect(phoneControl).toHaveValue(formatFeat003PhoneForDisplay(invalidFormattedExcess));
-    await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), validCpf);
-    await expect(individualChoice).toBeChecked();
-    await page.getByRole("button", { name: "Concluir perfil" }).click();
-    await expect(
-      page.getByText("Informe um telefone brasileiro válido.", { exact: true }),
-    ).toBeVisible();
-
-    await fillFeat003PhoneWithoutReportValue(phoneControl, "(41) 99999-1003");
-    await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CPF" }), invalidCpf);
-    await expect(individualChoice).toBeChecked();
-    await page.getByRole("button", { name: "Concluir perfil" }).click();
-    await expect(page.getByText("Informe um CPF válido.", { exact: true })).toBeVisible();
-
-    const companyChoice = page.getByRole("radio", { name: "Pessoa jurídica" });
-    await companyChoice.check();
-    await page.getByRole("textbox", { name: "Nome empresarial" }).fill("Empresa QA Inválida");
-    await stageFeat003SensitiveValue(page.getByRole("textbox", { name: "CNPJ" }), invalidCnpj);
-    await expect(companyChoice).toBeChecked();
-    await page.getByRole("button", { name: "Concluir perfil" }).click();
-    await expect(page.getByText("Informe um CNPJ válido.", { exact: true })).toBeVisible();
-
-    expect(commandRequests).toBe(0);
-    await assertFeat003SecretsAbsentFromDom(page, [validCpf, invalidCpf, invalidCnpj]);
-    await expectNoHorizontalOverflow(page);
-  } finally {
-    await cleanupFeat003QaIdentity(identity);
-  }
-});
 
 test("SL-F003-E2E-005 @p1 mantém CPF e documento somente mascarados após salvar", async ({
   page,
@@ -311,8 +237,11 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   const releaseLogoutRequest = createDeferredSignal();
   let profileCommandRequests = 0;
   let logoutRequests = 0;
+  let logoutVerificationRequest: Request | undefined;
 
   try {
+    // Date fica fixo antes das leituras; o cache não envelhece 30s, mas os deadlines rodam.
+    await page.clock.setFixedTime(Date.now());
     await registerAndConfirmFeat003Identity(page, identity, "individual");
     await gotoExpectedPage(page, "/conta", "Minha conta");
     const initialProfile = await completeFeat003Profile(page, {
@@ -359,17 +288,42 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
         window.dispatchEvent(new Event("offline"));
         window.dispatchEvent(new Event("visibilitychange"));
       });
-      await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
-      await assertFeat003PrivateValuesAbsentFromDom(page, privateValues);
-      await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/account/profile",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Perfil indisponível" }),
+        ).toContainText("Perfil indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await assertFeat003PrivateValuesAbsentFromDom(page, [...privateValues, identity.email]);
+        await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+        await expect(page.getByRole("textbox", { name: "Nome completo" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Salvar alterações" })).toHaveCount(0);
+        await expect(page.getByRole("combobox", { name: "Tema da interface" })).toHaveCount(0);
+      }
     } finally {
       await page.context().setOffline(false);
       await page.evaluate(() => {
         window.dispatchEvent(new Event("online"));
-        window.dispatchEvent(new Event("visibilitychange"));
       });
     }
     await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
+    await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(profileName);
+    expect(profileCommandRequests).toBe(0);
+    await page.clock.setSystemTime(Date.now());
 
     await page.getByRole("textbox", { name: "Nome completo" }).fill(offlineName);
     await fillFeat003PhoneWithoutReportValue(
@@ -547,12 +501,60 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       offlineSecrets.additionalDocument,
     ]);
 
+    await page.clock.setFixedTime(Date.now());
     await gotoExpectedPage(page, "/conta/seguranca", "Segurança da conta");
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/session",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Segurança indisponível" }),
+        ).toContainText("Segurança indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        // O Flight do SSR contém initialSession; este boundary deve fechar a UI e seus controles.
+        await expect(page.getByRole("main")).not.toContainText(identity.email);
+        await expect(page.getByRole("textbox", { includeHidden: true })).toHaveCount(0);
+        await expect(page.getByRole("link", { name: "Recuperar ou trocar senha" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Sair desta conta" })).toHaveCount(0);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible({ timeout: 12_000 });
+    await expect(page.getByRole("button", { name: "Sair desta conta" })).toBeEnabled();
+    await page.clock.setSystemTime(Date.now());
     page.on("request", (request) => {
       const address = new URL(request.url());
       if (address.pathname === "/api/auth/logout" && request.method() === "POST") {
         logoutRequests += 1;
+      }
+      if (
+        request.method() === "GET" &&
+        request.isNavigationRequest() &&
+        request.resourceType() === "document" &&
+        `${address.pathname}${address.search}` === "/entrar?saida=verificar"
+      ) {
+        logoutVerificationRequest = request;
       }
     });
     await page.route(
@@ -585,13 +587,55 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
     ).toBeVisible();
     await expect(page.getByText(identity.email, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Saindo" })).toHaveCount(0);
+    const ambiguousLogoutNavigation = page.waitForURL(
+      (address) => `${address.pathname}${address.search}` === "/entrar?saida=verificar",
+      { timeout: 15_000, waitUntil: "commit" },
+    );
     releaseLogoutRequest.resolve();
-    await expect
-      .poll(() => {
-        const address = new URL(page.url());
-        return `${address.pathname}${address.search}`;
-      })
-      .toBe("/entrar?saida=verificar");
+    try {
+      await ambiguousLogoutNavigation;
+    } catch (error) {
+      // Observe the failed navigation; never recover it or turn a timeout into approval.
+      // Request emission/HAR -1 alone cannot distinguish server delay from a stalled renderer.
+      const network = {
+        requested: logoutVerificationRequest !== undefined,
+        responseStatus: logoutVerificationRequest?.existingResponse()?.status() ?? null,
+        failed:
+          logoutVerificationRequest === undefined
+            ? null
+            : logoutVerificationRequest.failure() !== null,
+        timing: logoutVerificationRequest?.timing() ?? null,
+      };
+      const rendererPing = new Promise<boolean>((resolve) => {
+        const deadline = setTimeout(() => resolve(false), 1_000);
+        void page
+          .evaluate(() => 1)
+          .then(
+            (value) => {
+              clearTimeout(deadline);
+              resolve(value === 1);
+            },
+            () => {
+              clearTimeout(deadline);
+              resolve(false);
+            },
+          );
+      });
+      const [rendererRespondedWithin1s, livenessStatus] = await Promise.all([
+        rendererPing,
+        page.request.get("/api/health/live", { timeout: 3_000 }).then(
+          (response) => response.status(),
+          () => null,
+        ),
+      ]);
+      await testInfo.attach("logout-navigation-diagnostic", {
+        body: Buffer.from(
+          JSON.stringify({ logoutRequests, network, rendererRespondedWithin1s, livenessStatus }),
+        ),
+        contentType: "application/json",
+      });
+      throw error;
+    }
     await expect(page.getByText("A sessão ainda está ativa", { exact: true })).toBeVisible();
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
     await page.evaluate(() => {

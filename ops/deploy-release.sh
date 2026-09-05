@@ -92,6 +92,8 @@ files = (
     ("nginx/set-livre-tls.conf", "/usr/local/share/set-livre/nginx-tls.conf", 0o644),
     ("systemd/set-livre-application-start.service", "/etc/systemd/system/set-livre-application-start.service", 0o644),
     ("systemd/set-livre-backoffice.service", "/etc/systemd/system/set-livre-backoffice.service", 0o644),
+    ("systemd/set-livre-media-cleanup.service", "/etc/systemd/system/set-livre-media-cleanup.service", 0o644),
+    ("systemd/set-livre-media-cleanup.timer", "/etc/systemd/system/set-livre-media-cleanup.timer", 0o644),
     ("systemd/set-livre-release-recovery.path", "/etc/systemd/system/set-livre-release-recovery.path", 0o644),
     ("systemd/set-livre-release-recovery.service", "/etc/systemd/system/set-livre-release-recovery.service", 0o644),
     ("systemd/set-livre-web.service", "/etc/systemd/system/set-livre-web.service", 0o644),
@@ -158,12 +160,14 @@ loaded_systemd_units_are_current() {
   for unit in \
     set-livre-web.service \
     set-livre-backoffice.service \
+    set-livre-media-cleanup.service \
+    set-livre-media-cleanup.timer \
     set-livre-application-start.service \
     set-livre-release-recovery.service \
     set-livre-release-recovery.path; do
     expected_fragment="/etc/systemd/system/${unit}"
     case "$unit" in
-      set-livre-application-start.service | set-livre-release-recovery.path)
+      set-livre-application-start.service | set-livre-media-cleanup.timer | set-livre-release-recovery.path)
         expected_state="enabled"
         ;;
       *)
@@ -178,6 +182,20 @@ loaded_systemd_units_are_current() {
       && ${actual_state} == "$expected_state" ]] \
       || return 1
   done
+}
+
+stop_media_cleanup_schedule() {
+  systemctl stop set-livre-media-cleanup.timer || return 1
+  systemctl stop set-livre-application-start.service || return 1
+  systemctl stop set-livre-media-cleanup.service
+}
+
+start_media_cleanup_schedule() {
+  systemctl start set-livre-media-cleanup.timer
+}
+
+run_media_cleanup_once() {
+  systemctl start set-livre-media-cleanup.service
 }
 
 activate_link() {
@@ -497,6 +515,7 @@ seal_interrupted_bootstrap_recovery() {
   [[ -e ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} \
     || -L ${HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS} ]] || return 0
   ensure_bootstrap_recovery_blocker || return 1
+  stop_media_cleanup_schedule || return 1
   systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
   read_rollback_marker || return 1
   authorize_interrupted_bootstrap_recovery "$recovered_release"
@@ -508,6 +527,7 @@ seal_interrupted_release_recovery() {
     return
   fi
   [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]] || return 0
+  stop_media_cleanup_schedule || return 1
   systemctl stop set-livre-web.service set-livre-backoffice.service || return 1
   read_rollback_marker
 }
@@ -549,7 +569,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v9\n'
+  printf 'set-livre-deploy-ready-v11\n'
   exit 0
 fi
 
@@ -566,6 +586,10 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     || fail "raiz de releases não atende ao contrato físico e de permissões."
   trap seal_interrupted_release_recovery_on_failure EXIT
   if [[ -e ${ROLLBACK_MARKER} || -L ${ROLLBACK_MARKER} ]]; then
+    stop_media_cleanup_schedule \
+      || fail "não foi possível bloquear o cleanup durante a recuperação."
+    systemctl stop set-livre-web.service set-livre-backoffice.service \
+      || fail "não foi possível interromper os aplicativos antes da recuperação."
     read_rollback_marker || fail "não foi possível ler a ativação interrompida."
     if bootstrap_recovery_state_is_present; then
       begin_interrupted_bootstrap_recovery "$recovered_release" \
@@ -575,13 +599,18 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
     if [[ -z ${recovered_release} ]]; then
       systemctl stop set-livre-web.service set-livre-backoffice.service \
         || fail "não foi possível estabilizar o host sem release anterior."
-    elif ! systemctl restart set-livre-web.service set-livre-backoffice.service \
+    elif ! run_media_cleanup_once \
+      || ! systemctl restart set-livre-web.service set-livre-backoffice.service \
       || ! wait_for_health "$recovered_release" \
       || ! wait_for_public_health "$recovered_release"; then
       systemctl stop set-livre-web.service set-livre-backoffice.service || true
       fail "a release recuperada não atingiu readiness; serviços interrompidos."
     fi
     rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"
+    if [[ -n ${recovered_release} ]] && ! start_media_cleanup_schedule; then
+      systemctl stop set-livre-web.service set-livre-backoffice.service || true
+      fail "o timer de cleanup não foi ativado após terminalizar o bootstrap; serviços interrompidos."
+    fi
     rm -f -- "$ROLLBACK_MARKER"
     authenticated_bootstrap_recovery_digest=""
     printf 'Ativação interrompida recuperada e serviços estabilizados.\n'
@@ -687,9 +716,12 @@ rollback_activation() {
   printf 'A nova release falhou em %s; iniciando rollback.\n' \
     "${activation_failure:-interrupção inesperada}" >&2
   journalctl --unit set-livre-web.service --unit set-livre-backoffice.service \
+    --unit set-livre-media-cleanup.service \
     --lines 40 --no-pager >&2 || true
 
-  if ! recover_link_from_marker; then
+  if ! stop_media_cleanup_schedule \
+    || ! systemctl stop set-livre-web.service set-livre-backoffice.service \
+    || ! recover_link_from_marker; then
     systemctl stop set-livre-web.service set-livre-backoffice.service || true
     printf 'deploy: rollback falhou; serviços interrompidos para evitar estado divergente.\n' >&2
     return 1
@@ -699,9 +731,11 @@ rollback_activation() {
     rm -f -- "$ROLLBACK_MARKER"
     return 0
   fi
-  if systemctl restart set-livre-web.service set-livre-backoffice.service \
+  if run_media_cleanup_once \
+    && systemctl restart set-livre-web.service set-livre-backoffice.service \
     && wait_for_health "$recovered_release" \
-    && wait_for_public_health "$recovered_release"; then
+    && wait_for_public_health "$recovered_release" \
+    && start_media_cleanup_schedule; then
     rm -f -- "$ROLLBACK_MARKER"
     return 0
   fi
@@ -762,6 +796,7 @@ validate_staged_release() {
     && ${top_level[4]} == "web" ]] \
     || fail "release staged possui conteúdo de topo inesperado."
   [[ -f "${directory}/web/server.js" \
+    && -f "${directory}/web/runtime/invoke-media-cleanup.mjs" \
     && -f "${directory}/backoffice/apps/backoffice/server.js" ]] \
     || fail "release staged não contém os entrypoints esperados."
   [[ -f "${directory}/.artifact.sha256" \
@@ -815,6 +850,7 @@ validate_staged_release() {
     (.hostConfiguration.sha256 | test("^[0-9a-f]{64}$")) and
     .applications.web.entrypoint == "server.js" and
     .applications.web.health == "/api/health/ready" and
+    .applications.web.mediaCleanupEntrypoint == "runtime/invoke-media-cleanup.mjs" and
     .applications.backoffice.entrypoint == "apps/backoffice/server.js" and
     .applications.backoffice.health == "/api/health/ready"
   ' "${directory}/release-manifest.json" >/dev/null \
@@ -894,13 +930,15 @@ import sys
 import urllib.parse
 
 web_path, backoffice_path = map(pathlib.Path, sys.argv[1:])
-expected_keys = {
+common_expected_keys = {
     "APP_ENV",
     "DATABASE_URL_APP_DAL",
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     "NEXT_PUBLIC_SUPABASE_URL",
 }
+runtime_unlock_key_name = "BACKOFFICE_RUNTIME_UNLOCK_KEY"
+supabase_secret_key_name = "SUPABASE_SECRET_KEY"
 project_ref = "oirvvnojgkzdppkdvhej"
 supabase_url = f"https://{project_ref}.supabase.co"
 
@@ -909,7 +947,7 @@ def fail(label, reason):
     raise SystemExit(f"ambiente {label} inválido: {reason}")
 
 
-def read_environment(path, label, expected_app_url):
+def read_environment(path, label, expected_app_url, extra_expected_keys=frozenset()):
     try:
         raw = path.read_bytes()
         text = raw.decode("utf-8")
@@ -924,6 +962,7 @@ def read_environment(path, label, expected_app_url):
         if match is None or match.group(1) in values:
             fail(label, "linha ou chave duplicada")
         values[match.group(1)] = match.group(2)
+    expected_keys = common_expected_keys | set(extra_expected_keys)
     if set(values) != expected_keys or any(value == "" for value in values.values()):
         fail(label, "conjunto de chaves")
     if any(
@@ -938,6 +977,14 @@ def read_environment(path, label, expected_app_url):
         fail(label, "origem pública")
     if values["NEXT_PUBLIC_SUPABASE_URL"] != supabase_url:
         fail(label, "projeto Supabase")
+    if runtime_unlock_key_name in values and re.fullmatch(
+        r"[A-Za-z0-9_-]{43}", values[runtime_unlock_key_name]
+    ) is None:
+        fail(label, "chave de desbloqueio do runtime")
+    if supabase_secret_key_name in values and re.fullmatch(
+        r"sb_secret_[A-Za-z0-9_-]{12,}", values[supabase_secret_key_name]
+    ) is None:
+        fail(label, "secret key do Supabase")
     publishable_key = values["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
     if re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{12,}", publishable_key) is None:
         fail(label, "publishable key")
@@ -964,8 +1011,18 @@ def read_environment(path, label, expected_app_url):
     return values
 
 
-web = read_environment(web_path, "web", "https://147.15.97.227")
-backoffice = read_environment(backoffice_path, "backoffice", "https://ops.setlivre.com")
+web = read_environment(
+    web_path,
+    "web",
+    "https://147.15.97.227",
+    {supabase_secret_key_name},
+)
+backoffice = read_environment(
+    backoffice_path,
+    "backoffice",
+    "http://127.0.0.1:3001",
+    {runtime_unlock_key_name},
+)
 if web["DATABASE_URL_APP_DAL"] != backoffice["DATABASE_URL_APP_DAL"]:
     fail("runtime", "URLs DAL divergentes")
 if web["NEXT_PUBLIC_SUPABASE_ANON_KEY"] != backoffice["NEXT_PUBLIC_SUPABASE_ANON_KEY"]:
@@ -1136,6 +1193,8 @@ mapfile -t top_level < <(find "$staging_directory" -mindepth 1 -maxdepth 1 -prin
 [[ ${top_level[0]} == "backoffice" && ${top_level[1]} == "release-manifest.json" \
   && ${top_level[2]} == "web" ]] || fail "estrutura da release inválida."
 [[ -f "${staging_directory}/web/server.js" ]] || fail "entrypoint web ausente."
+[[ -f "${staging_directory}/web/runtime/invoke-media-cleanup.mjs" ]] \
+  || fail "invocador de cleanup de mídia ausente."
 [[ -f "${staging_directory}/backoffice/apps/backoffice/server.js" ]] \
   || fail "entrypoint backoffice ausente."
 jq --exit-status --arg sha "$release_sha" '
@@ -1144,6 +1203,7 @@ jq --exit-status --arg sha "$release_sha" '
   (.hostConfiguration.sha256 | test("^[0-9a-f]{64}$")) and
   .applications.web.entrypoint == "server.js" and
   .applications.web.health == "/api/health/ready" and
+  .applications.web.mediaCleanupEntrypoint == "runtime/invoke-media-cleanup.mjs" and
   .applications.backoffice.entrypoint == "apps/backoffice/server.js" and
   .applications.backoffice.health == "/api/health/ready"
 ' "${staging_directory}/release-manifest.json" >/dev/null || fail "manifesto da release inválido."
@@ -1274,16 +1334,23 @@ validate_staged_release \
   "$release_directory" "$release_sha" "$expected_checksum" \
   "$expected_runtime_environment_digest"
 write_rollback_marker "$previous_release" || fail "não foi possível preparar a recuperação atômica."
-
 activation_started=true
+activation_failure="bloqueio do cleanup durante a ativação"
+stop_media_cleanup_schedule || fail "$activation_failure"
+activation_failure="interrupção dos aplicativos antes da ativação"
+systemctl stop set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
 activation_failure="troca do symlink"
 activate_link "$release_directory" || fail "$activation_failure"
+activation_failure="cleanup inicial de mídia"
+run_media_cleanup_once || fail "$activation_failure"
 activation_failure="reinício dos serviços"
 systemctl restart set-livre-web.service set-livre-backoffice.service || fail "$activation_failure"
 activation_failure="readiness interno"
 wait_for_health "$release_sha" || fail "$activation_failure"
 activation_failure="readiness HTTPS público"
 wait_for_public_health "$release_sha" || fail "$activation_failure"
+activation_failure="reativação do timer de cleanup"
+start_media_cleanup_schedule || fail "$activation_failure"
 
 trap '' HUP INT TERM
 rm -f -- "$ROLLBACK_MARKER"

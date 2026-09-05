@@ -26,6 +26,8 @@ export const hostConfigurationFiles = Object.freeze([
   "ops/nginx/set-livre-tls.conf",
   "ops/systemd/set-livre-application-start.service",
   "ops/systemd/set-livre-backoffice.service",
+  "ops/systemd/set-livre-media-cleanup.service",
+  "ops/systemd/set-livre-media-cleanup.timer",
   "ops/systemd/set-livre-release-recovery.path",
   "ops/systemd/set-livre-release-recovery.service",
   "ops/systemd/set-livre-web.service",
@@ -204,9 +206,12 @@ function assertNoSensitiveReleaseContent(directory, sensitiveValues) {
 
 export function releaseSensitiveValues(environment = process.env) {
   const values = [
+    environment.BACKOFFICE_RUNTIME_UNLOCK_KEY,
     environment.DATABASE_URL_APP_DAL,
     environment.PRD_DATABASE_URL_APP_DAL,
+    environment.PRD_SUPABASE_SECRET_KEY,
     environment.SUPABASE_DB_PASSWORD,
+    environment.SUPABASE_SECRET_KEY,
   ].filter((value) => typeof value === "string" && value !== "");
 
   for (const name of ["DATABASE_URL_APP_DAL", "PRD_DATABASE_URL_APP_DAL"]) {
@@ -237,6 +242,11 @@ export function packageRelease({
   const output = resolve(outputDirectory);
   assertReleaseDestination(sourceRoot, output);
   const hostDigest = hostConfigurationDigest(sourceRoot);
+  const mediaCleanupSource = requireFile(
+    resolve(sourceRoot, "ops/runtime/invoke-media-cleanup.mjs"),
+    "invocador de cleanup de mídia",
+    sourceRoot,
+  );
 
   const applications = [
     {
@@ -316,12 +326,21 @@ export function packageRelease({
       requireFile(resolve(destination, application.entrypoint), `${application.name} server.js`);
     }
 
+    const mediaCleanupEntrypoint = "runtime/invoke-media-cleanup.mjs";
+    mkdirSync(resolve(output, "web/runtime"), { recursive: true });
+    copyFileSync(mediaCleanupSource, resolve(output, "web", mediaCleanupEntrypoint));
+    chmodSync(resolve(output, "web", mediaCleanupEntrypoint), 0o640);
+
     assertNoSensitiveReleaseContent(output, sensitiveValues);
     const manifest = {
       applications: Object.fromEntries(
         applications.map((application) => [
           application.name,
-          { entrypoint: application.entrypoint, health: "/api/health/ready" },
+          {
+            entrypoint: application.entrypoint,
+            health: "/api/health/ready",
+            ...(application.name === "web" ? { mediaCleanupEntrypoint } : {}),
+          },
         ]),
       ),
       commit: releaseCommit,

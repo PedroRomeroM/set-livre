@@ -25,7 +25,10 @@ Famílias:
 - `owner.calendar(userId,studioIds,range)`;
 - `owner.reservations(...)`;
 - `owner.payments(...)`;
-- `admin.reviewQueue(...)`;
+- `backoffice.users(scope,filterFingerprint)`;
+- `backoffice.taxonomies(scope)`;
+- `backoffice.studios(scope)`;
+- `backoffice.studio(scope,studioId)`;
 - `admin.finance(...)`;
 - `admin.operations(...)`.
 
@@ -42,6 +45,8 @@ Famílias:
 - cursor;
 - published revision/version quando relevante;
 - environment não entra na key porque caches não cruzam runtime.
+- backoffice usa o UUID da sessão validada como scope; busca entra somente como SHA-256 normalizado,
+  nunca e-mail/nome, e cursor pertence às páginas da mesma key.
 
 ## 3. Stale defaults
 
@@ -57,31 +62,40 @@ Medir; não usar Infinity em dado operacional.
 
 ## 4. Mutation map
 
-| Command prefix        | Invalida                                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `identity.register`   | nenhuma key privada; sucesso aguarda confirmação Auth                                                                              |
-| login/callback        | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida                                       |
-| logout                | closure sem `variables`, `networkMode: "always"`; limpa integralmente o `QueryClient`, fecha o boundary e recompõe SSR             |
-| recovery              | consulta `recoveryStatus(scope)`; remove scopes antigos; senha/token/e-mail/session_id ficam fora                                  |
-| `profile.*`           | publica o `account/profile` autoritativo mascarado; limpa mutations/outros scopes privados; invalida owner overview quando existir |
-| `recipient.*`         | recipient, owner overview, public eligibility                                                                                      |
-| `studio.revision.*`   | editor, owner studios, review queue                                                                                                |
-| `studio.media.*`      | editor/media                                                                                                                       |
-| `studio.pause/resume` | owner, public list/detail, availability                                                                                            |
-| `admin.studio.*`      | review, owner, public                                                                                                              |
-| `calendar.*`          | owner calendar, public availability, quotes                                                                                        |
-| `pricing.*`           | editor, public detail, quotes                                                                                                      |
-| `addon.*`             | editor, quotes                                                                                                                     |
-| `booking.quote.*`     | quote only                                                                                                                         |
-| `booking.payment.*`   | attempt/payment, availability                                                                                                      |
-| payment webhook       | attempt, reservation, calendar, owner/renter, finance                                                                              |
-| `reservation.cancel`  | reservation, calendar, payment, payout                                                                                             |
-| payout/refund         | finance, owner/renter detail                                                                                                       |
-| taxonomy admin        | public taxonomy/list filters, editors                                                                                              |
-| account deletion      | session/all private                                                                                                                |
+| Command prefix          | Invalida                                                                                                                           |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `identity.register`     | nenhuma key privada; sucesso aguarda confirmação Auth                                                                              |
+| login/callback          | remove scopes anteriores e publica `identityQueryKeys.session(userId)`; foco da aba revalida                                       |
+| logout                  | closure sem `variables`, `networkMode: "always"`; limpa integralmente o `QueryClient`, fecha o boundary e recompõe SSR             |
+| recovery                | consulta `recoveryStatus(scope)`; remove scopes antigos; senha/token/e-mail/session_id ficam fora                                  |
+| `profile.*`             | publica o `account/profile` autoritativo mascarado; limpa mutations/outros scopes privados; invalida owner overview quando existir |
+| `recipient.*`           | recipient, owner overview, public eligibility                                                                                      |
+| `studio.revision.*`     | editor, owner studios, review queue                                                                                                |
+| `studio.media.*`        | editor/media                                                                                                                       |
+| `studio.pause/resume`   | owner, public list/detail, availability                                                                                            |
+| `backoffice.studio.*`   | fila/detalhe do scope; quando implementados, owner/public relerão a fonte por seus próprios boundaries de versão                   |
+| `backoffice.user.*`     | diretório do scope atual; PII revelada não entra no QueryCache                                                                     |
+| `backoffice.access.*`   | diretório do scope atual; remoção de acesso força nova validação da sessão                                                         |
+| `backoffice.taxonomy.*` | catálogo administrativo e, quando expostos, catálogos públicos/editores                                                            |
+| `calendar.*`            | owner calendar, public availability, quotes                                                                                        |
+| `pricing.*`             | editor, public detail, quotes                                                                                                      |
+| `addon.*`               | editor, quotes                                                                                                                     |
+| `booking.quote.*`       | quote only                                                                                                                         |
+| `booking.payment.*`     | attempt/payment, availability                                                                                                      |
+| payment webhook         | attempt, reservation, calendar, owner/renter, finance                                                                              |
+| `reservation.cancel`    | reservation, calendar, payment, payout                                                                                             |
+| payout/refund           | finance, owner/renter detail                                                                                                       |
+| taxonomy admin          | public taxonomy/list filters, editors                                                                                              |
+| account deletion        | session/all private                                                                                                                |
 
 ## 5. UX
 
+- as leituras que condicionam sessão, recovery, perfil, ativação/recebedor, editor de estúdio,
+  catálogo do editor e publicação usam `networkMode: "always"` e `retry: false`: o sinal offline não
+  pode pausar a query antes de executar a requisição com prazo limite. Falha mantém a composição
+  privada fechada e oferece tentativa explícita de leitura, também limitada. `refetchOnReconnect`
+  fica explícito para preservar a revalidação quando a rede volta, respeitando os bloqueios de
+  conflito ou comando pendente de cada painel. Isso não libera dados cacheados nem repete mutations;
 - SSR e a primeira hidratação publicam o mesmo boundary sem PII; depois do mount, um efeito sem observer privado remove a família, semeia o `initialData` autoritativo e só então libera o painel;
 - cada nova revisão de props RSC faz o boundary voltar imediatamente ao estado fechado, desmonta o observer anterior e repete remove + seed antes de renderizar a mesma identidade ou outro usuário;
 - durante refetch por foco, a identidade fica oculta em todo `fetchStatus` não ocioso, inclusive `paused` offline; o payload autoritativo é validado contra o escopo antes de entrar no cache e, se o servidor retornar outro usuário/estado anônimo, o cache privado é limpo e a rota SSR é recarregada;
@@ -95,15 +109,114 @@ Medir; não usar Infinity em dado operacional.
 - aparência possui `preferencesVersion` independente. Somente o snapshot monotônico aceito atualiza a key e o atributo allowlisted do documento; o cookie `HttpOnly` é projeção HTTP, não cache nem autoridade;
 - logout limpa integralmente o `QueryClient` antes da navegação SSR, inclusive quando a resposta é incerta;
 - cadastro, login, pedido de recovery e troca de senha chamam `mutate()` sem credenciais em `variables` e usam `networkMode: "always"`; ausência de rede produz erro terminal e limpeza da ref one-shot, nunca uma mutation pausada capaz de reenviar e-mail ou senha depois da reconexão;
-- as duas mutations de logout chamam `mutate()` sem `variables`; a closure one-shot contém somente o `expectedScope` UUID e usa `networkMode: "always"`. `getClaims` pode renovar ou manter a sessão internamente; depois dele, a classificação server-side termina antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw → `SERVICE_UNAVAILABLE`, erro ou contexto assinado ausente → `UNAUTHENTICATED`, UUID válido divergente → `SESSION_CHANGED`. Os três ramos têm zero efeitos destrutivos explícitos de logout. Qualquer desfecho terminal fecha o boundary e recompõe SSR depois de `QueryClient.clear()`;
+- as duas mutations de logout chamam `mutate()` sem `variables`; o gesto que as inicia commita sincronamente o boundary neutro com `flushSync` antes de disparar a mutation. A closure one-shot contém somente o `expectedScope` UUID e usa `networkMode: "always"`. `getClaims` pode renovar ou manter a sessão internamente; depois dele, a classificação server-side termina antes de obter explicitamente o cookie store e antes de fechar recovery, deletar cookies ou chamar `signOut`: throw → `SERVICE_UNAVAILABLE`, erro ou contexto assinado ausente → `UNAUTHENTICATED`, UUID válido divergente → `SESSION_CHANGED`. Os três ramos têm zero efeitos destrutivos explícitos de logout. Qualquer desfecho terminal recompõe SSR depois de `QueryClient.clear()`;
 - a projeção de aparência do login não pertence ao cache interativo: `get_my_profile()` recebe `AbortSignal`, expira no servidor em um segundo e usa `system` como fallback. Resultado tardio não atualiza cookie nem aciona `signOut` após a resposta;
-- login com resposta de transporte ambígua reseta e oculta o formulário, limpa integralmente o `QueryClient`, semeia apenas a sessão anônima e força `/entrar?entrada=verificar`; a resposta SSR seguinte é a única autoridade para voltar a mostrar sessão ou credenciais;
+- login com resposta de transporte ambígua reseta e oculta o formulário, limpa integralmente o `QueryClient`, semeia apenas a sessão anônima, commita sincronamente o boundary React com `flushSync` e só então força `/entrar?entrada=verificar`; nenhuma atualização de estado ocorre depois de iniciar a navegação, e a resposta SSR seguinte é a única autoridade para voltar a mostrar sessão ou credenciais;
 - troca de usuário ou divergência descartam primeiro o `MutationCache`, removem conjuntamente as famílias de perfil e sessão e só então fazem hard reload; cache público pode permanecer. Logout e resultado ambíguo de login são exceções deliberadas e limpam o `QueryClient` integralmente;
 - os read models de dono usam as keys privadas distintas `owner/private/activation/<userId>` e `owner/private/recipient/<userId>`; usuário e projeção fazem parte da identidade. Ambas usam `staleTime: 0`, refetch autoritativo em mount/foco e `retry: false`; `fetching`, pausa, erro de scope/projeção ou reseed ocultam status, elegibilidade e CTA privados;
 - `/dono` e `GET /api/owner/activation` semeiam/refazem somente `activation`, cuja projeção possui o contrato completo. `/dono/recebimentos`, `GET /api/owner/recipient` e `recipient.onboarding.start | refresh` publicam somente `recipient`, sem título, versão textual, hash ou corpo Markdown. Um DTO nunca é aceito na key da outra projeção;
 - `owner.activate` e `recipient.onboarding.*` mantêm `{ expectedScope, idempotencyKey }` em closure/ref one-shot, usam `networkMode: "always"`, não fazem optimistic update e só publicam DTO monotônico se a key/scope/projeção esperados ainda existirem;
 - `CONFLICT` e `VALIDATION_FAILED` sem `fieldErrors` desabilitam a ação até um GET autoritativo explícito e nunca repetem o POST. `VALIDATION_FAILED` com erro de campo continua no formulário e pode ser corrigido sem forçar releitura. A combinação privada exata `42501 + owner_contract_not_current` vira `409 CONFLICT` para usar esse fence; outros `42501`, inclusive bloqueios, permanecem `403 FORBIDDEN` e não são reclassificados como recuperáveis;
-- conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;\n- alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
+- conflito de estado fecha a ação até uma leitura autoritativa explícita: não há replay automático de POST;
+- alteração de perfil invalida também o status do recebedor, pois pode tornar `profileVersionSynced` divergente. Troca de sessão remove conjuntamente `identity`, `account`, `owner` e `MutationCache`; callback tardio de A nunca recria a key de A sob B;
+- tipos de estúdio usam a key privada autenticada
+  `owner/private/studio-taxonomies/<userId>/types`; tags e comodidades ativas usam
+  `owner/private/studio-taxonomies/<userId>/content`; editores usam
+  `owner/private/studio-editor/<userId>/<studioId>`. Usuário e estúdio fazem parte da identidade, e o
+  logout/troca de sessão remove conjuntamente as famílias `owner/private/studio-editor` e
+  `owner/private/studio-taxonomies`;
+- o token otimista do editor permanece ligado aos valores visíveis durante refetch em foco; update só
+  adota o token remoto após escolha explícita na comparação. Descarte mantém token independente e,
+  depois de conflito rejeitado, bloqueia todos os painéis até a releitura e a aceitação explícita do
+  editor autoritativo inteiro; só então todos os tokens avançam juntos e uma nova confirmação pode ser
+  aberta, sem rebasear silenciosamente um save pendente.
+  `STUDIO_TYPE_UNAVAILABLE` limpa a seleção arquivada e refaz a key `types` do usuário atual; erro nessa
+  releitura mantém os controles bloqueados e oferece retry somente do GET;
+- o editor começa com `initialData` validado e `staleTime: 0`, mas não renderiza nenhum valor privado
+  até o GET autoritativo do mesmo usuário/estúdio terminar em `idle` sem erro. Refetch de montagem,
+  foco ou conflito volta ao boundary neutro; erro de sessão/acesso limpa o cliente inteiro e recompõe
+  SSR. Essa recomposição é one-shot por `QueryClient`: painéis irmãos podem observar a mesma falha,
+  mas apenas o primeiro limpa o cliente e inicia o hard reload. Resultado de mutation só publica sobre
+  uma key já existente do mesmo usuário/estúdio; callback tardio depois da limpeza falha fechado e não
+  recria dados privados. Outros estúdios do mesmo dono são preservados e scopes de outro usuário são
+  removidos;
+- a verificação de identidade e autoridade para criar estúdio usa `networkMode: "always"`, inclusive
+  quando a página começa offline: conclui em erro limitado com tentativa explícita, sem ficar
+  indefinidamente pausada. O formulário só é liberado após ambas as leituras autoritativas;
+- create mantém uma única tentativa `{expectedScope, idempotencyKey, payload}` em ref e só repete a
+  mesma chave quando o resultado é ambíguo. Campos e ações concorrentes ficam bloqueados durante esse
+  retry. Criação aceita entra em estado terminal e exige navegação explícita para o editor, sem gerar
+  uma segunda chave. Update/discard seguem o mesmo contrato. Sucesso de update substitui o editor
+  autoritativo. Se o descarte excluir um estúdio inédito, o observer é desabilitado, a key exata é
+  cancelada/removida e a rota excluída é substituída pelo novo formulário; se houver publicação, o
+  editor aprovado é publicado e a fronteira coordenadora reinicializa somente o painel comercial com
+  essa revisão, eliminando valores do draft removido sem apagar edições locais em refetches ordinários;
+- conflito otimista de update faz GET do editor, conserva o formulário local e mostra comparação;
+  `Usar versão salva` troca os valores sem POST, e `Continuar com minhas alterações` exige novo submit
+  com o token recente. Conflito de descarte fecha o diálogo, descarta o comando vencido, relê o editor
+  e exige nova confirmação. `OWNER_CONTRACT_CHANGED`, `SESSION_CHANGED`, `UNAUTHENTICATED`,
+  `FORBIDDEN`, `ACCOUNT_SUSPENDED` e `NOT_FOUND` recompõem a rota SSR em vez de entrar nessa comparação;
+- conflito de taxonomia relê editor e catálogo ativo em paralelo, preserva texto e seleções ainda
+  válidas, remove somente IDs arquivados e exige novo submit. Sucesso de core, taxonomia ou conteúdo
+  publica o `StudioEditor` autoritativo e propaga seu token aos painéis irmãos sem apagar inputs
+  locais; refetch ordinário não participa desse handoff. Retry existe apenas para a mesma tentativa
+  idempotente ambígua;
+- publicação usa a key privada
+  `owner/private/studio-editor/<userId>/<studioId>/publication`, com `initialData`, `staleTime: 0`,
+  refetch autoritativo e renderização somente em `idle` sem erro. A arbitragem escolhe primeiro o maior
+  `publicationVersion` e, dentro da mesma fronteira editorial, a maior versão da revisão atual; mesma
+  versão com identidade ou conteúdo canônico divergente falha fechado, limpa o cliente e recompõe a
+  rota SSR. Isso cobre também checklist ou capacidade derivados que mudem sem incrementar esses fences,
+  sem aceitar uma projeção mista. URL e expiração assinadas não definem conteúdo, e entre projeções
+  equivalentes vence a assinatura com expiração posterior;
+- sucesso de `studio.revision.submit`, `studio.pause` ou `studio.resume` só substitui a key exata já
+  existente, remove scopes de outro usuário e invalida exatamente editor e mídia do mesmo estúdio.
+  `CONFLICT` ou `STUDIO_SUBMISSION_INCOMPLETE` conclusivo descarta o POST e exige releitura do estado
+  autoritativo; isso cobre taxonomia arquivada depois da última leitura sem classificar o 422 como retry
+  do comando. Se o checklist mudar sob os mesmos fences, a arbitragem já descrita recompõe a rota SSR em
+  vez de oferecer aceite de projeção mista. Resposta ambígua conserva ação, payload e chave idempotente
+  até o replay exato confirmar um resultado terminal, sem liberar outra transição. GETs antes ou depois
+  do commit apenas atualizam a leitura: não confirmam a tentativa nem descartam o comando. O aceite
+  `Usar estado autoritativo` pertence exclusivamente à recuperação de conflito conclusivo;
+- no backoffice, login/reautenticação mantêm e-mail/senha somente em refs efêmeras e chamam
+  `mutate()` sem variables; qualquer desfecho limpa os inputs. Login ambíguo limpa o QueryClient e
+  recompõe `/` para que a sessão server-side decida o estado. Reautenticação conclusiva publica a
+  sessão retornada somente se cache, resposta e composição preservarem scope, e-mail e versão de
+  autorização; então avisa apenas as demais abas pelo canal compartilhado da aba autora, sem disparar
+  a recomposição local que apagaria a sessão recém-publicada;
+- diretório usa uma única unidade `{query,fingerprint}` para impedir que o texto de uma busca seja
+  executado sob a key de outra. Páginas mantêm keyset/cursor no mesmo scope e nunca colocam o filtro
+  na URL;
+- comandos administrativos não fazem optimistic update. Uma resposta ambígua preserva comando,
+  inclusive quando o DTO é estruturalmente válido, mas pertence a outra tentativa do mesmo alvo.
+  Conta, acesso, taxonomia e revisão editorial validam na DAL e no cliente o
+  [eco persistido de scope/action/chave](api-contracts.md#57-adminbackoffice) antes de consumir a
+  resposta, limpar pending ou iniciar o handoff de leitura. Read model e versão RSC não substituem
+  essa confirmação. Conta/taxonomia removem o eco após validá-lo, sem ampliar o DTO do QueryCache.
+  A recuperação preserva comando,
+  payload e `idempotencyKey`, bloqueia edição incompatível e oferece repetição da mesma tentativa;
+  resposta conclusiva descarta a tentativa e invalida o read model. PII só alcança o consumidor após
+  validar a [identidade auditada da tentativa](api-contracts.md#57-adminbackoffice) contra a
+  solicitação, antes também de limpar o pending. Eco inválido não publica sucesso nem dados e mantém
+  a mesma chave/payload para replay. PII usa apenas estado React efêmero, expira em 60 segundos/aba
+  oculta e a MutationCache recebe somente o marcador redigido;
+- a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
+  `backoffice.studio(scope,studioId)`. Sem páginas iniciais, a fila executa a leitura mesmo offline
+  para oferecer erro e retry explícito limitado; reconexão continua disparando refetch.
+  O refetch passivo do detalhe também executa offline: falha preserva o snapshot confirmado,
+  apresenta aviso e bloqueia nova decisão até uma leitura interativa válida. Os bloqueios de
+  comando, confirmação e estado terminal continuam controlando o refetch automático.
+  Cada normalizer confirma `scope` e, no detalhe, `studioId`
+  antes de devolver a resposta ao TanStack Query; divergência sinaliza recomposição de sessão e nunca
+  entra na key anterior. A leitura SSR remove e resemeia a key exata antes de habilitar o observer,
+  inclusive ao voltar para um caso já visitado. Sucesso de `backoffice.studio.*` substitui somente o
+  detalhe autoritativo correspondente e invalida fila/detalhe, sem atualização otimista. Conflito
+  remove a tentativa e exige GET antes de outra decisão; `404` conclusivo cancela o observer, remove
+  a key e elimina a visão privada. Erro ambíguo de comando preserva action, payload e chave; erro de
+  leitura oferece apenas nova leitura. URL assinada é projeção efêmera: conteúdo equivalente aceita
+  somente expiração posterior, e expiração nunca participa da autoridade editorial. Não existe
+  invalidação fictícia entre processos; quando os consumidores owner/public forem implementados em
+  outra origem, observarão o novo fato pelo próprio GET autoritativo e por seus fences de versão;
 - authoritative mutation success shown immediately;
 - invalidation may run background;
 - refetch error does not reverse confirmed mutation;

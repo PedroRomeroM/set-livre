@@ -24,9 +24,7 @@ import {
   stageFeat003SensitiveValue,
   switchFeat003SessionWithoutNavigation,
 } from "../../helpers/feat-003-profile-account";
-import { gotoExpectedPage } from "../../helpers/expected-page";
-
-test.use({ screenshot: "off", trace: "off", video: "off" });
+import { expectSessionStorageValue, gotoExpectedPage } from "../../helpers/expected-page";
 
 async function expectCurrentPath(page: Parameters<typeof gotoExpectedPage>[0], expected: string) {
   await expect
@@ -301,9 +299,8 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
       },
       [...privateValuesA, ...privateValuesB],
     );
-    const transitionReload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseTransitionRequest.resolve();
-    await transitionReload;
+    await expectSessionStorageValue(page, "sl-qa-f003-scope-transition", "clear");
     await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
     await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameB);
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameA);
@@ -472,6 +469,7 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
           status: number;
         }
       | undefined;
+    const staleCommandCaptured = createDeferredSignal();
     await page.route(
       "**/api/commands",
       async (route) => {
@@ -481,13 +479,13 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
           requestBody: route.request().postData(),
           status: response.status(),
         };
+        staleCommandCaptured.resolve();
         await route.fulfill({ response });
       },
       { times: 1 },
     );
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Salvar alterações" }).click();
-    await reload;
+    await staleCommandCaptured.promise;
     if (staleCommandEvidence === undefined) {
       throw new Error("O comando stale não foi capturado antes da recomposição SSR.");
     }
@@ -517,6 +515,7 @@ test("SL-F003-E2E-004 @p0 revalida A→B no mesmo QueryClient sem publicar cache
     if (!rejected.success || rejected.data.error.code !== "SESSION_CHANGED") {
       throw new Error("O comando stale não retornou o erro público de sessão esperada.");
     }
+    await expectSessionStorageValue(page, "sl-qa-f003-stale-command-reload", "clear");
     await expect(page.getByRole("heading", { level: 1, name: "Minha conta" })).toBeVisible();
     await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(nameB);
     await expect(page.getByLabel("Resumo do perfil salvo")).not.toContainText(nameA);

@@ -1,6 +1,10 @@
 import "server-only";
 
-import { databaseMigrationHead, parseDalDatabaseUrl } from "@set-livre/contracts";
+import {
+  databaseMigrationHead,
+  databaseReadinessPoolTimeouts,
+  parseDalDatabaseUrl,
+} from "@set-livre/contracts";
 import { Pool } from "pg";
 import { z } from "zod";
 
@@ -12,11 +16,14 @@ import {
 const environmentSchema = z.object({
   DATABASE_URL_APP_DAL: z.string(),
 });
-let databaseConnection: { pool: Pool; sessionRole: string } | undefined;
+type DatabaseConnection = { pool: Pool; sessionRole: string };
+const connectionRegistry = globalThis as typeof globalThis & {
+  setLivreBackofficeReadinessConnection?: DatabaseConnection;
+};
 
 function getDatabaseConnection() {
-  if (databaseConnection !== undefined) {
-    return databaseConnection;
+  if (connectionRegistry.setLivreBackofficeReadinessConnection !== undefined) {
+    return connectionRegistry.setLivreBackofficeReadinessConnection;
   }
 
   const environment = environmentSchema.parse(process.env);
@@ -28,11 +35,12 @@ function getDatabaseConnection() {
     connectionTimeoutMillis: 1_000,
     idleTimeoutMillis: 10_000,
     max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
+    query_timeout: databaseReadinessPoolTimeouts.queryTimeoutMs,
+    statement_timeout: databaseReadinessPoolTimeouts.statementTimeoutMs,
   });
   pool.on("error", () => undefined);
-  databaseConnection = { pool, sessionRole: configuration.sessionRole };
+  const databaseConnection = { pool, sessionRole: configuration.sessionRole };
+  connectionRegistry.setLivreBackofficeReadinessConnection = databaseConnection;
 
   return databaseConnection;
 }

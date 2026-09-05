@@ -816,9 +816,11 @@ function PreparedAccountProfilePanel({ initialProfile, userId }: AccountProfileP
   const scopeTransitionGuard = useRef(false);
   const profileQuery = useQuery({
     initialData: initialProfile,
+    networkMode: "always",
     queryFn: async () => readNewestAccountProfileResult(queryClient, userId, readOwnProfile),
     queryKey,
     refetchOnMount: "always",
+    refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 30_000,

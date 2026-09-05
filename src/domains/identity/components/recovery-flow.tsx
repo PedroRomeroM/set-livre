@@ -5,7 +5,8 @@ import {
   identityRecoveryUpdatePayloadSchema,
   type IdentityRecoverySessionScope,
 } from "@set-livre/contracts";
-import { Alert, Button, Field, Input, PasswordInput, Stack } from "@set-livre/ui";
+import { Alert, Button, Field, Input, Stack } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -282,10 +283,12 @@ export function RecoveryFlow({
     [initialSessionScope],
   );
   const statusQuery = useQuery({
+    networkMode: "always",
     queryFn: async () =>
       identityRecoveryStatusForScope(await readPasswordRecoveryStatus(), initialSessionScope),
     queryKey: recoveryStatusQueryKey,
     refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,

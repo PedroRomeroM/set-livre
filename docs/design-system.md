@@ -22,7 +22,7 @@ autenticação. A FEAT-003 reutiliza essa base para a conta e acrescenta somente
 consumido pela preferência visual e pelas ações explícitas sobre documentos. Nenhuma delas antecipa
 home, dashboard ou domínio posterior.
 
-Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
+Os tokens usam prefixo `--sl-*` e cobrem cores neutras claro/escuro, estados de autenticação, tipografia, spacing, radius, altura mínima de controle, foco, sombra e larguras de conteúdo. `data-color-scheme="light|dark|system"` no elemento raiz seleciona os mesmos tokens: `light` e `dark` são explícitos; `system` acompanha `prefers-color-scheme`. O banco é canônico, `sl-color-scheme` é somente uma projeção `HttpOnly` allowlisted para a primeira pintura e a resposta autoritativa pode atualizar o atributo no cliente sem criar paleta paralela. A tinta neutra `--sl-color-ink-muted` preserva contraste AA sobre canvas/superfícies em claro e escuro; cabeçalhos escuros podem sobrescrever somente os tokens locais necessários. A identidade segue neutra enquanto PEND-007/OPEN-003 estiver aberta. Novas primitives do catálogo abaixo continuam nascendo somente com uso real e sem sistema paralelo.
 
 A superfície técnica ativa `viewport-fit=cover`, consome os quatro `safe-area-inset-*` e permite quebra de palavras somente quando necessária para preservar reflow em 390 e 320 px, texto ampliado e layout viewport de aproximadamente 160 CSS px sob zoom a 200%.
 
@@ -132,7 +132,11 @@ Nenhuma cor semântica é redefinida por tema.
 - `Field` + `Input`: `Field` associa label persistente, descrição, obrigatório e erro ao controle filho por `id`, `aria-describedby`, `aria-required` e `aria-invalid`; `Input` preserva toda a API nativa.
 - `Checkbox`: checkbox nativo com label clicável e descrição associada. O alvo completo possui no mínimo 44 px.
 - `ChoiceGroup`: grupo de radios nativos limitado ao recorte real `individual | company`, com modos controlado e não controlado mutuamente exclusivos, legend, descrição, obrigatório e erro de grupo.
-- `PasswordInput`: Client Component que preserva a API nativa, usa botão textual `Mostrar senha`/`Ocultar senha` com `aria-controls` e `aria-pressed` e recebe requisitos tipados com estado textual `Requisito`, `Pendente` ou `Atendido`.
+- `PasswordInput`: Client Component exportado pelo subpath explícito
+  `@set-livre/ui/password-input`; preserva a API nativa, usa botão textual `Mostrar senha`/`Ocultar senha`
+  com `aria-controls` e `aria-pressed` e recebe requisitos tipados com estado textual `Requisito`,
+  `Pendente` ou `Atendido`. O barrel raiz mantém somente primitives server-safe para não arrastar esse
+  boundary cliente a páginas, loading e not-found que não o consomem.
 - `Alert`: feedback de seção `status` (`role=status`) ou `error` (`role=alert`), com conteúdo atômico e significado independente de cor.
 - `Panel`, `Stack`, `PageFrame` e `AuthFrame`: superfícies e composição responsiva; `PageFrame` é o landmark `main`, aplica safe areas e limita largura, enquanto `AuthFrame` fornece um único `h1` e reflow próprio para autenticação.
 
@@ -141,6 +145,9 @@ Todos os controles têm foco visível, fonte de input de 16 px, alvo mínimo de 
 Exemplo mínimo:
 
 ```tsx
+import { Field } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
+
 <Field label="Senha" required>
   <PasswordInput autoComplete="new-password" requirements={passwordRequirements} />
 </Field>
@@ -173,6 +180,107 @@ Quando `ownerActivationCapability=unavailable`, o mesmo documento e o aviso de f
 Status de ativação e recebedor são texto factual, não badge ornamental nem simulação de gateway. Loading inicial, refetch e troca de escopo substituem toda a superfície privada por um boundary neutro; erro ambíguo conserva o último snapshot e oferece `Verificar estado atual`, sem reenviar o comando. Essa verificação fecha novamente a superfície enquanto o GET está ativo e, ao terminar, transfere foco programático ao heading do checklist no sucesso ou ao alerta seguro na falha. `Tentar novamente` reutiliza o mesmo intent e restaura o heading somente após o retry bem-sucedido. Sucesso de comando continua usando `Alert` focável, e estados bloqueado, suspenso, recusado ou com contrato/perfil divergente exibem somente a ação autorizada pelo read model.
 
 Os controles de onboarding também são gated por `recipientOnboardingCapability`. Em `local_adapter`, o notice local e o CTA compatível com `nextAction` permanecem visíveis. Em `unavailable`, ambos os CTAs de início/refresh e o notice são **ausentes**, não renderizados como disabled; o estado factual continua consultável e um `Alert` `status` (`role=status`) apresenta o título **Cadastro de recebimentos indisponível** e o corpo **A integração de recebimentos ainda não está disponível neste ambiente. O estado atual permanece somente para consulta.** A composição não inventa provider, prontidão ou ação que o servidor não autorizou.
+
+### 3.4 Extensão da FEAT-006
+
+- `ButtonLink`: âncora nativa para transições de rota com as variantes e dimensões de `Button`;
+  preserva `href`, foco e o retry do navegador sem aninhar controles interativos;
+- navegação estrutural do dono e recuperação de `not-found` usam âncoras nativas. Elas continuam
+  operáveis sem hidratação e mantêm loading/not-found server-safe, sem carregar `next/link` apenas para
+  trocar entre três URLs canônicas;
+- `Textarea`: textarea nativo que preserva toda a API HTML, herda borda, erro, disabled, foco e forced
+  colors de `Input`, possui altura mínima de 9 rem e resize vertical. O contador de descrição pertence
+  ao `Field`, não à primitive;
+- editor de estúdio: seções semânticas de identidade/endereço, grid responsivo, preview local
+  explicitamente não publicado e comparação de conflito em tabela acessível. A navegação do dono
+  reutiliza os links e estilos existentes e passa a três colunas somente quando há espaço;
+- hidratação: `StudioCorePanel` é o boundary inteiro. O servidor e o primeiro cliente exibem somente
+  `Alert` com **Preparando o editor seguro**; depois do commit, um efeito cancelável libera de uma vez o
+  formulário e o preview. Nenhum input existe antes dos handlers, evitando perda de digitação e
+  mismatch sem duplicar estado de controle;
+- o editor preserva 44 px, 320 px, tema escuro, forced colors e reflow a 160 CSS px. Erro de campo
+  permanece no `Field`; conflito/timeout/sucesso usam `Alert` e ações explícitas. Em largura móvel, o
+  cabeçalho semântico da comparação continua disponível a tecnologia assistiva e cada valor recebe
+  rótulo visual **Sua versão**/**Versão salva**, sem depender da posição da coluna;
+- depois da hidratação, uma segunda fronteira mantém formulário e preview privados fora do DOM enquanto
+  o GET autoritativo está em curso ou falha. Criação aceita, retry ambíguo, bloqueio administrativo e
+  taxonomia arquivada usam estados factuais e controles realmente desabilitados, não apenas aparência.
+
+### 3.5 Extensão da FEAT-007
+
+- taxonomias usam `fieldset`/`legend`, busca local por `Input type=search` e `Checkbox`; seleção mostra
+  contagem factual e nunca cria opção improvisada;
+- FAQ usa cards em fluxo normal e botões explícitos `Subir`, `Descer` e `Excluir`, todos com nome
+  contextual. Arrastar não é requisito e a ordem continua operável por teclado e toque;
+- regras, FAQ e vídeo ficam em um segundo formulário para não misturar intents idempotentes. A prévia
+  renderiza nós React de plain text, sem HTML arbitrário;
+- grids colapsam para uma coluna conforme o espaço disponível; iframe mantém proporção, título e
+  largura máxima. A composição passou pela mesma matriz de 320 px, alvos de 44 px, tema escuro, axe e
+  reflow a 160 CSS px.
+
+### 3.6 Composição da FEAT-031
+
+- o backoffice reutiliza `Button`, `Field`, `Input`, `PasswordInput`, `Select` e `Alert`, mas mantém
+  shell/CSS Module próprios por ser uma aplicação separada;
+- navegação mostra somente superfícies autorizadas; a ausência visual não substitui o fence do banco;
+- usuários e taxonomias usam cards em grid, badges textuais, confirmação em fluxo normal e impacto
+  factual. PII permanece em um painel temporário com `dl`, sem modal ou cache paralelo;
+- grids externos e internos usam tracks `minmax(0, 1fr)`, descendentes encolhíveis e quebra de
+  identificadores longos. Em 320 px, cada grupo vira uma coluna sem scroll horizontal; 390 px, altura
+  compacta e tema escuro preservam os mesmos controles e alvos de 44 px;
+- o shell mantém largura física de 320 px mesmo diante de e-mail operacional longo: o resumo de
+  sessão recebe largura definida no mobile, os filhos de stacks permanecem contidos e grids de uma
+  coluna conservam o mínimo explícito zero, sem acionar shrink-to-fit do navegador;
+- resposta ambígua bloqueia os campos afetados e apresenta repetição da mesma tentativa idempotente,
+  sem spinner permanente nem criação de um novo comando silencioso.
+- login, desbloqueio, busca de usuários e gestão de taxonomias reutilizam um único snapshot de
+  hidratação do backoffice. Antes do cliente estar pronto, `inert` e `fieldset disabled` fecham toda
+  interação, os formulários usam `method=post` apenas como fallback seguro e cada controle permanece
+  desabilitado; depois da hidratação, a composição visual original é mantida.
+
+### 3.7 Composição da FEAT-008
+
+- a galeria do dono reutiliza `PageFrame`, `Panel`, `Stack`, `Alert`, `Button` e `ButtonLink`; upload,
+  cards e lightbox pertencem ao CSS Module do domínio e não criam primitives globais prematuras;
+- o seletor múltiplo alimenta uma fila sequencial com estado textual por arquivo. Falha definitiva de
+  um item não interrompe os seguintes; resultado ambíguo oferece verificação explícita sem duplicar o
+  comando;
+- expiração do token de upload oferece `Renovar envio` e cria uma reserva nova; expiração de qualquer
+  thumbnail ou da imagem ampliada publica um alerta agregado e uma única ação `Renovar prévias`;
+- ordem usa botões `Subir`/`Descer`, capa e exclusão possuem nomes contextuais, e a confirmação de
+  exclusão permanece em fluxo normal. Drag nunca é requisito;
+- cards reservam a proporção persistida da prévia. A imagem abre um lightbox modal com trap de foco,
+  fechamento por Escape/backdrop e retorno ao acionador; expiração da URL apresenta recuperação;
+- hidratação, refetch, troca de escopo e conflito mantêm a superfície privada fail-closed. A matriz
+  cobre 320 px, mobile, tema escuro, teclado, axe e reflow a 200%, com alvos mínimos de 44 px.
+- anúncios sequenciais usam uma ocorrência nova da live region e incluem o nome do arquivo, evitando
+  que duas conclusões com texto semelhante sejam deduplicadas por tecnologia assistiva.
+
+### 3.8 Composição da FEAT-030
+
+- fila e detalhe permanecem no shell próprio do backoffice e reutilizam `Alert` e `Button`, sem criar
+  primitive ou sistema visual paralelo;
+- estado editorial e capacidade aparecem por texto, não apenas por cor. A comparação usa seções e
+  rótulos explícitos para candidata/publicação, mantendo leitura linear no mobile e no reflow;
+- galeria reserva a proporção persistida, limita dimensões e usa `object-fit: contain`; vídeo validado
+  possui preview `youtube-nocookie`, e paths privados nunca aparecem na composição;
+- controles permanecem operáveis por teclado e toque, com alvos mínimos de 44 px;
+- 320 px, altura compacta, tema escuro, axe e reflow a 160 CSS px fazem parte do contrato da
+  composição. Perguntas e respostas externas sem oportunidade natural de quebra permanecem contidas
+  em sua lista semântica: lista e item usam tracks explícitos `minmax(0, 1fr)`, e cada caixa textual
+  ocupa somente a largura disponível. Nenhum clipping substitui o reflow; no viewport equivalente a
+  200%, cada fragmento de texto continua visível dentro da própria caixa.
+
+As superfícies de leitura de conteúdo do estúdio (`preview`/`safePreview` do editor, `previewCard`
+da publicação e `revisionPanel` editorial) usam `font-kerning: none`. O espaçamento nominal da fonte
+mantém texto contínuo dentro da caixa também em WebKit com DejaVu Sans, cuja composição com kerning
+acumulava overflow em respostas longas. A escolha tipográfica é restrita a essas superfícies, sem
+detecção de navegador, fonte remota adicional, clipping ou alteração do conteúdo. O restante da
+interface conserva o kerning padrão, exceto a primitive `Textarea`, que também usa espaçamento nominal:
+no Chromium Linux/DejaVu, recalcular 5.000 caracteres contínuos em uma caixa estreita com kerning
+bloqueava a interação por segundos. O controle continua nativo, com o conteúdo integral, edição,
+quebra de linhas e scroll interno preservados. Grids e provas de overflow continuam ativos; os testes
+não aumentam prazos nem reduzem o tamanho do texto para acomodar a renderização.
 
 ## 4. Contratos
 

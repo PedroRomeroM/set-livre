@@ -2,6 +2,31 @@ begin;
 
 select plan(41);
 
+insert into maintenance.studio_media_cleanup_runs (
+  run_id,
+  function_slug,
+  status,
+  claimed_count,
+  deleted_count,
+  failed_count,
+  error_code,
+  started_at,
+  completed_at,
+  updated_at
+)
+values (
+  '8b000000-0000-4000-8000-000000000001',
+  'media-cleanup-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'succeeded',
+  0,
+  0,
+  0,
+  null,
+  pg_catalog.clock_timestamp() - interval '1 second',
+  pg_catalog.clock_timestamp(),
+  pg_catalog.clock_timestamp()
+);
+
 select ok(pg_catalog.to_regnamespace('audit') is not null, 'schema audit existe');
 select ok(pg_catalog.to_regnamespace('private') is not null, 'schema private existe');
 

@@ -11,8 +11,6 @@ import {
   startFeat004Recipient,
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 async function expectFeat004Reflow(page: Page) {
   await expect
     .poll(async () =>

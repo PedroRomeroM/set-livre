@@ -76,20 +76,25 @@ function isRecoverySessionSurface(pathname: string) {
 
 export async function proxy(request: NextRequest) {
   const nonce = randomUUID().replaceAll("-", "");
-  const contentSecurityPolicy = createContentSecurityPolicy(
-    nonce,
-    process.env.NODE_ENV === "development",
-  );
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   if (request.nextUrl.pathname === "/_global-error") {
-    return createGlobalErrorResponse(contentSecurityPolicy);
+    return createGlobalErrorResponse(createContentSecurityPolicy(nonce, isDevelopment));
   }
+
+  const environment = readSupabaseEnvironment();
+  const allowLoopbackSupabaseOrigin = new URL(environment.supabaseOrigin).protocol === "http:";
+  const contentSecurityPolicy = createContentSecurityPolicy(nonce, isDevelopment, {
+    allowLoopbackHttpConnectOrigins: allowLoopbackSupabaseOrigin,
+    allowLoopbackHttpImageOrigins: allowLoopbackSupabaseOrigin,
+    connectOrigins: [environment.supabaseOrigin],
+    imageOrigins: [environment.supabaseOrigin],
+  });
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
   requestHeaders.set(contentSecurityPolicyNonceHeaderName, nonce);
 
-  const environment = readSupabaseEnvironment();
   let response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set(contentSecurityPolicyHeaderName, contentSecurityPolicy);
 

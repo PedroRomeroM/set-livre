@@ -1,5 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, extname, resolve } from "node:path";
+import { dirname, extname, relative, resolve } from "node:path";
+
+import {
+  inspectPlaywrightSource,
+  inspectScenarioCoverage,
+} from "./playwright-source-contracts.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const ignoredDirectories = new Set([
@@ -72,15 +77,22 @@ for (const path of markdownFiles) {
 const playwrightFiles = walk(resolve(repositoryRoot, "tests/e2e")).filter((path) =>
   [".ts", ".tsx"].includes(extname(path)),
 );
-const prohibitedPlaywrightConstructs = [
-  { label: ".only", pattern: /\.only\s*\(/u },
-  { label: ".skip", pattern: /\.skip\s*\(/u },
-  { label: "waitForTimeout", pattern: /waitForTimeout\s*\(/u },
-];
+const implementedScenarioOwner = new Map();
 for (const path of playwrightFiles) {
   const contents = readFileSync(path, "utf8");
-  for (const { label, pattern } of prohibitedPlaywrightConstructs) {
-    if (pattern.test(contents)) errors.push(`Spec Playwright contém ${label}: ${path}`);
+  const inspection = inspectPlaywrightSource(contents, path);
+  for (const label of inspection.prohibited) {
+    errors.push(`Spec Playwright contém ${label}: ${path}`);
+  }
+  if (!/\.spec\.tsx?$/u.test(path)) continue;
+  const repositoryPath = relative(repositoryRoot, path).replaceAll("\\", "/");
+  for (const scenario of inspection.scenarios) {
+    const previous = implementedScenarioOwner.get(scenario);
+    if (previous !== undefined) {
+      errors.push(`Cenário implementado duplicado ${scenario}: ${previous} e ${repositoryPath}`);
+    } else {
+      implementedScenarioOwner.set(scenario, repositoryPath);
+    }
   }
 }
 
@@ -138,15 +150,52 @@ for (const name of featureFiles) {
   featureById.set(id, name);
   const contents = readFileSync(resolve(featureDirectory, name), "utf8");
   if (!/^# FEAT-\d{3}\b/mu.test(contents)) errors.push(`Título de feature inválido: ${name}`);
-  if (!/\|\s*Status\s*\|\s*(?:Planejada|Em andamento)\s*\|/u.test(contents)) {
+  const featureStatus = /\|\s*Status\s*\|\s*(Planejada|Em andamento)\s*\|/u.exec(contents)?.[1];
+  if (featureStatus === undefined) {
     errors.push(`Plano concluído ou sem status transitório: ${name}`);
   }
-  const scenarios = [...contents.matchAll(/\bSL-F\d{3}-E2E-\d{3}\b/gu)].map((match) => match[0]);
+  let declaredSpecs = new Set();
+  if (featureStatus === "Em andamento") {
+    declaredSpecs = new Set(
+      [...contents.matchAll(/`(tests\/e2e\/[a-z0-9_./-]+\.spec\.tsx?)`/gu)].map(
+        (match) => match[1],
+      ),
+    );
+    if (declaredSpecs.size === 0) errors.push(`Plano em andamento sem spec declarada: ${name}`);
+    for (const spec of declaredSpecs) {
+      if (!existsSync(resolve(repositoryRoot, spec))) {
+        errors.push(`Plano em andamento aponta para spec ausente: ${name} -> ${spec}`);
+      }
+    }
+  }
+  const scenarios = [...contents.matchAll(/\bSL-F\d{3}-(?:E2E|CACHE)-\d{3}\b/gu)].map(
+    (match) => match[0],
+  );
   if (scenarios.length === 0) errors.push(`Plano sem cenário E2E: ${name}`);
   for (const scenario of scenarios) {
     const previous = scenarioOwner.get(scenario);
     if (previous !== undefined) errors.push(`Cenário duplicado ${scenario}: ${previous} e ${name}`);
     else scenarioOwner.set(scenario, name);
+  }
+  if (featureStatus === "Em andamento") {
+    const prefix = `SL-F${id.slice(5)}-`;
+    const coverage = inspectScenarioCoverage({
+      declaredSpecs,
+      implementedScenarioOwner,
+      plannedScenarios: scenarios,
+      prefix,
+    });
+    for (const scenario of coverage.missing) {
+      errors.push(`Plano em andamento sem cenário implementado: ${name} -> ${scenario}`);
+    }
+    for (const { path, scenario } of coverage.misplaced) {
+      errors.push(
+        `Cenário implementado fora das specs declaradas: ${name} -> ${scenario} em ${path}`,
+      );
+    }
+    for (const scenario of coverage.unplanned) {
+      errors.push(`Spec sem cenário no plano em andamento: ${name} -> ${scenario}`);
+    }
   }
 }
 
@@ -180,9 +229,28 @@ for (const [, id, status] of roadmapEntries) {
     errors.push(`${id} concluída ainda possui plano transitório.`);
   if (status !== "Concluída" && !hasPlan)
     errors.push(`${id} ${status.toLowerCase()} não possui plano.`);
+  if (hasPlan) {
+    const plan = readFileSync(resolve(featureDirectory, featureById.get(id)), "utf8");
+    const planStatus = /\|\s*Status\s*\|\s*(Planejada|Em andamento)\s*\|/u.exec(plan)?.[1];
+    if (planStatus !== status) {
+      errors.push(`${id} diverge entre roadmap (${status}) e plano (${planStatus ?? "ausente"}).`);
+    }
+  }
+  if (status === "Concluída") {
+    const prefix = `SL-F${id.slice(5)}-`;
+    if (![...implementedScenarioOwner.keys()].some((scenario) => scenario.startsWith(prefix))) {
+      errors.push(`${id} concluída não possui cenário Playwright implementado.`);
+    }
+  }
 }
 if (roadmapIds.size !== 34)
   errors.push(`Roadmap precisa conter 34 features; encontrou ${roadmapIds.size}.`);
+for (const [scenario, path] of implementedScenarioOwner) {
+  const featureId = `FEAT-${scenario.slice(4, 7)}`;
+  if (!roadmapIds.has(featureId)) {
+    errors.push(`Cenário implementado sem feature no roadmap: ${scenario} em ${path}`);
+  }
+}
 
 const adrFiles = readdirSync(resolve(repositoryRoot, "docs/adr")).filter((name) =>
   /^ADR-\d{3}-.+\.md$/u.test(name),
@@ -211,6 +279,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    `docs:check OK — ${markdownFiles.length} documentos, ${featureFiles.length} planos, ${scenarioOwner.size} cenários planejados e ${adrFiles.length} ADRs.\n`,
+    `docs:check OK — ${markdownFiles.length} documentos, ${featureFiles.length} planos, ${scenarioOwner.size} cenários planejados, ${implementedScenarioOwner.size} implementados e ${adrFiles.length} ADRs.\n`,
   );
 }

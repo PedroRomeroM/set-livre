@@ -16,8 +16,6 @@ import {
   startFeat004Recipient,
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 async function publishRecipientOnboardingCapability(
   page: Page,
   capability: "local_adapter" | "unavailable",

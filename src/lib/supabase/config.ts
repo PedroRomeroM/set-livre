@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Buffer } from "node:buffer";
 
 const supabaseEnvironmentSchema = z.object({
   APP_ENV: z.enum(["development", "local", "production", "test"]),
@@ -6,6 +7,41 @@ const supabaseEnvironmentSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   NEXT_PUBLIC_SUPABASE_URL: z.url(),
 });
+
+const modernSupabaseSecretKeySchema = z
+  .string()
+  .min(1)
+  .max(8_192)
+  .regex(
+    /^sb_secret_[A-Za-z0-9_-]{12,}$/u,
+    "SUPABASE_SECRET_KEY precisa ser uma chave secreta server-only moderna.",
+  );
+
+const localLegacyServiceRoleKeySchema = z
+  .string()
+  .min(1)
+  .max(8_192)
+  .superRefine((value, context) => {
+    const segments = value.split(".");
+    try {
+      if (
+        segments.length !== 3 ||
+        segments.some((segment) => !/^[A-Za-z0-9_-]+$/u.test(segment)) ||
+        z
+          .object({ role: z.literal("service_role") })
+          .passthrough()
+          .parse(JSON.parse(Buffer.from(segments[1] ?? "", "base64url").toString("utf8"))).role !==
+          "service_role"
+      ) {
+        throw new Error("role inesperada");
+      }
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "SUPABASE_SECRET_KEY precisa ser uma chave secreta server-only válida.",
+      });
+    }
+  });
 
 export function readSupabaseEnvironment() {
   const environment = supabaseEnvironmentSchema.parse(process.env);
@@ -43,5 +79,19 @@ export function readSupabaseEnvironment() {
       secure: !isLocalRuntime,
     },
     supabaseOrigin: supabaseUrl.origin,
+  };
+}
+
+export function readTrustedSupabaseEnvironment() {
+  const environment = readSupabaseEnvironment();
+  const localRuntime = process.env.APP_ENV === "local" || process.env.APP_ENV === "test";
+  const secretKey = localRuntime
+    ? z
+        .union([modernSupabaseSecretKeySchema, localLegacyServiceRoleKeySchema])
+        .parse(process.env.SUPABASE_SECRET_KEY)
+    : modernSupabaseSecretKeySchema.parse(process.env.SUPABASE_SECRET_KEY);
+  return {
+    secretKey,
+    supabaseOrigin: environment.supabaseOrigin,
   };
 }

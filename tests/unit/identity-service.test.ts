@@ -220,7 +220,12 @@ describe("identity recovery service", () => {
     }
   });
 
-  it.each(["/dono", "/dono/recebimentos"] as const)(
+  it.each([
+    "/dono",
+    "/dono/recebimentos",
+    "/dono/estudios/novo",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+  ] as const)(
     "returns to the exact owner target after a successful login: %s",
     async (returnTo) => {
       const result = await loginIdentity({

@@ -1,6 +1,7 @@
 import { expect, test, type Browser, type Page, type TestInfo } from "@playwright/test";
 
 import {
+  captureFeat002AuthEmailFence,
   cleanupFeat002QaIdentity,
   confirmFeat002Registration,
   createFeat002QaIdentity,
@@ -19,8 +20,6 @@ import {
   assertExactLocalRecoverySessionClosed,
   expireExactLocalRecoveryGrant,
 } from "../../helpers/local-recovery-grant";
-
-test.use({ screenshot: "off", trace: "off", video: "off" });
 
 function createDeferredSignal() {
   let resolve: () => void = () => {
@@ -121,6 +120,32 @@ async function expectLoginFormRedactedBeforeReload(page: Page) {
     .toBe("yes");
 }
 
+async function corruptNextSuccessfulLoginPayload(page: Page) {
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      const input = args[0];
+      const requestUrl =
+        input instanceof Request ? input.url : input instanceof URL ? input.href : String(input);
+      const address = new URL(requestUrl, window.location.href);
+
+      if (address.pathname !== "/api/auth/login" || !response.ok) {
+        return response;
+      }
+
+      window.fetch = originalFetch;
+      await response.arrayBuffer();
+      return new Response("{}", {
+        headers: { "content-type": "application/json" },
+        status: response.status,
+        statusText: response.statusText,
+      });
+    };
+  });
+}
+
 test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos", async ({
   browser,
   page,
@@ -130,8 +155,8 @@ test("SL-F002-E2E-001 @p0 cadastro completo envia confirmação e aceita termos"
 
   try {
     await expectRegistrationClosedWithoutHydration(browser, testInfo);
-    const notBefore = await submitFeat002Registration(page, identity);
-    const session = await confirmFeat002Registration(page, identity, notBefore);
+    const emailFence = await submitFeat002Registration(page, identity);
+    const session = await confirmFeat002Registration(page, identity, emailFence);
 
     expect(identity.emails[0]?.subject).toBe("Confirme seu cadastro na Set Livre");
     expect(session).toMatchObject({
@@ -155,34 +180,23 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
   const identity = createFeat002QaIdentity(testInfo, "002");
 
   try {
-    const notBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    const confirmedSession = await confirmFeat002Registration(page, identity, notBefore);
+    // Date fica fixo para o cache não envelhecer 30s; timers e deadlines seguem reais.
+    await page.clock.setFixedTime(Date.now());
+    const emailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    const confirmedSession = await confirmFeat002Registration(page, identity, emailFence);
     await logoutFeat002Identity(page);
 
-    let serverPublishedLoginSession = false;
-    await page.route(
-      "**/api/auth/login",
-      async (route) => {
-        try {
-          const response = await route.fetch();
-          if (response.status() !== 200) {
-            await route.abort("failed");
-            return;
-          }
-          serverPublishedLoginSession = true;
-          await route.fulfill({ body: "{}", response });
-        } catch {
-          await route.abort("failed");
-        }
-      },
-      { times: 1 },
-    );
+    await corruptNextSuccessfulLoginPayload(page);
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
     await stageFeat002PasswordForSubmission(
       getFeat002PasswordControl(page, "Senha"),
       identity.password,
     );
     await armLoginFormRedactionObservation(page);
+    const publishedLoginSession = page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return response.request().method() === "POST" && address.pathname === "/api/auth/login";
+    });
     const publishedSessionReload = page.waitForRequest((request) => {
       const address = new URL(request.url());
       return (
@@ -194,8 +208,8 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     });
     await page.getByRole("button", { name: "Entrar" }).click();
 
+    expect((await publishedLoginSession).status()).toBe(200);
     await publishedSessionReload;
-    expect(serverPublishedLoginSession).toBe(true);
     await expectCurrentPath(page, "/entrar?entrada=verificar");
     await expectLoginFormRedactedBeforeReload(page);
     await expect(page.getByRole("button", { name: "Entrar", exact: true })).toHaveCount(0);
@@ -205,6 +219,46 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     const loggedInSession = await readFeat002AuthenticatedSession(page);
     expect(loggedInSession.userId).toBe(confirmedSession.userId);
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/session",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Sessão indisponível" }),
+        ).toContainText("Sessão indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(page.getByText(identity.email, { exact: true })).toHaveCount(0);
+        await expect(page.getByRole("textbox", { name: "E-mail" })).toHaveCount(0);
+        await expect(getFeat002PasswordControl(page, "Senha")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Entrar", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Sair", exact: true })).toHaveCount(0);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(page.getByRole("status")).toContainText("Sessão ativa", { timeout: 12_000 });
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    await page.clock.setSystemTime(Date.now());
 
     await logoutFeat002Identity(page);
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
@@ -270,19 +324,19 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
   const newPassword = `${identity.password}Z7`;
 
   try {
-    const signupNotBefore = await submitFeat002Registration(page, identity, "Pessoa física");
-    const confirmedSession = await confirmFeat002Registration(page, identity, signupNotBefore);
+    const signupEmailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    const confirmedSession = await confirmFeat002Registration(page, identity, signupEmailFence);
     await logoutFeat002Identity(page);
 
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
-    const recoveryNotBefore = new Date(Date.now() - 1_000);
+    const recoveryEmailFence = await captureFeat002AuthEmailFence(identity);
     await page.getByRole("button", { name: "Enviar instruções" }).click();
     await expect(page.getByRole("status")).toContainText(
       "Se existir uma conta para o endereço informado",
     );
 
-    const recoveryEmail = await trackFeat002AuthEmail(identity, "recovery", recoveryNotBefore);
+    const recoveryEmail = await trackFeat002AuthEmail(identity, "recovery", recoveryEmailFence);
     expect(recoveryEmail.subject).toBe("Redefina sua senha da Set Livre");
     await navigateFeat002AuthCallback(page, recoveryEmail.callbackUrl);
     await expectCurrentPath(page, "/recuperar-senha?modo=nova-senha");
@@ -297,11 +351,30 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
         window.dispatchEvent(new Event("offline"));
         window.dispatchEvent(new Event("visibilitychange"));
       });
-      await expect(page.getByRole("status")).toContainText(
-        "Verificando se o link de recuperação é válido",
-      );
-      await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/recovery/status",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Verificação indisponível" }),
+        ).toContainText("Verificação indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(newPasswordInput).toHaveCount(0);
+        await expect(confirmNewPasswordInput).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+      }
     } finally {
       await page.context().setOffline(false);
       await page.evaluate(() => {
@@ -310,6 +383,10 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     }
 
     await expect(newPasswordInput).toBeEnabled();
+    await expect(confirmNewPasswordInput).toBeEnabled();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Verificação indisponível" }),
+    ).toHaveCount(0);
     const saveNewPassword = page.getByRole("button", { name: "Salvar nova senha" });
     const recoveryStatusRefetchStarted = createDeferredSignal();
     const releaseRecoveryStatusRefetch = createDeferredSignal();
@@ -414,7 +491,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     await logoutFeat002Identity(page);
     await gotoExpectedPage(page, "/recuperar-senha", "Recupere seu acesso");
     await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
-    const expiringRecoveryNotBefore = new Date(Date.now() - 1_000);
+    const expiringRecoveryEmailFence = await captureFeat002AuthEmailFence(identity);
     await page.getByRole("button", { name: "Enviar instruções" }).click();
     await expect(page.getByRole("status")).toContainText(
       "Se existir uma conta para o endereço informado",
@@ -422,7 +499,7 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     const expiringRecoveryEmail = await trackFeat002AuthEmail(
       identity,
       "recovery",
-      expiringRecoveryNotBefore,
+      expiringRecoveryEmailFence,
     );
     await navigateFeat002AuthCallback(page, expiringRecoveryEmail.callbackUrl);
     await expectCurrentPath(page, "/recuperar-senha?modo=nova-senha");
@@ -485,8 +562,8 @@ test("SL-F002-E2E-005 @p0 returnTo externo é rejeitado com fallback literal", a
   });
 
   try {
-    const notBefore = await submitFeat002Registration(page, identity);
-    const signupEmail = await trackFeat002AuthEmail(identity, "signup", notBefore);
+    const signupEmailFence = await submitFeat002Registration(page, identity);
+    const signupEmail = await trackFeat002AuthEmail(identity, "signup", signupEmailFence);
     const adversarialCallback = new URL(signupEmail.callbackUrl);
     const callbackFragment = new URLSearchParams(adversarialCallback.hash.slice(1));
     callbackFragment.set("returnTo", `${externalOrigin}/capture`);
@@ -497,6 +574,71 @@ test("SL-F002-E2E-005 @p0 returnTo externo é rejeitado com fallback literal", a
     await expect(page.getByRole("status")).toContainText("Sessão ativa");
     identity.userId = (await readFeat002AuthenticatedSession(page)).userId;
     expect(externalRequests).toBe(0);
+  } finally {
+    await cleanupFeat002QaIdentity(identity);
+  }
+});
+
+test("SL-F002-E2E-008 @p0 login preserva o retorno privado de criação e edição de estúdio", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const identity = createFeat002QaIdentity(testInfo, "006_studio_return");
+  const targets = [
+    {
+      heading: "Novo estúdio",
+      path: "/dono/estudios/novo",
+      requestedPath: "/dono/estudios/novo",
+    },
+    {
+      heading: "Dados do estúdio",
+      path: "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+      requestedPath: "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+    },
+    {
+      heading: "Dados do estúdio",
+      path: "/dono/estudios/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/dados",
+      requestedPath: "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
+    },
+    {
+      heading: "Fotos do estúdio",
+      path: "/dono/estudios/11111111-1111-4111-8111-111111111111/midia",
+      requestedPath: "/dono/estudios/11111111-1111-4111-8111-111111111111/midia",
+    },
+  ] as const;
+
+  try {
+    const emailFence = await submitFeat002Registration(page, identity, "Pessoa física");
+    await confirmFeat002Registration(page, identity, emailFence);
+    await logoutFeat002Identity(page);
+
+    for (const [index, target] of targets.entries()) {
+      if (index > 0) {
+        await gotoExpectedPage(page, "/entrar", "Entre na sua conta");
+        await logoutFeat002Identity(page);
+      }
+
+      const navigation = await page.goto(target.requestedPath);
+      expect(navigation?.status()).toBe(200);
+      await expectCurrentPath(page, `/entrar?retorno=${encodeURIComponent(target.path)}`);
+
+      await page.getByRole("textbox", { name: "E-mail" }).fill(identity.email);
+      await stageFeat002PasswordForSubmission(
+        getFeat002PasswordControl(page, "Senha"),
+        identity.password,
+      );
+      const loginResponse = page.waitForResponse((response) => {
+        const address = new URL(response.url());
+        return response.request().method() === "POST" && address.pathname === "/api/auth/login";
+      });
+      await page.getByRole("button", { exact: true, name: "Entrar" }).click();
+
+      expect((await loginResponse).status()).toBe(200);
+      await expectCurrentPath(page, target.path);
+      await expect(
+        page.getByRole("heading", { exact: true, level: 1, name: target.heading }),
+      ).toBeVisible();
+    }
   } finally {
     await cleanupFeat002QaIdentity(identity);
   }

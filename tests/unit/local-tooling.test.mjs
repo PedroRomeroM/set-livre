@@ -12,33 +12,133 @@ import {
   verifyDatabaseArtifacts,
 } from "../../scripts/database-artifacts.mjs";
 import {
-  assertDockerPolicyOrStopRunningStack,
+  applicationDatabaseSchemas,
   assertLocalStatusOrStopRunningStack,
   assertLoopbackContainerInspections,
   assertLoopbackNetworkInspection,
   assertNoUnexpectedNextEnvironmentFiles,
+  classifySupabaseProjectStartup,
   createLocalApplicationEnvironment,
+  ensureWindowsDockerEngine,
   parseSupabaseCliError,
   parseSupabaseStatus,
+  reconcileSupabaseNetworkAfterReset,
+  runLocalMediaCleanup,
   runNextBuildWithCacheCleanup,
   runSupabase,
+  runWindowsDatabaseTests,
+  startLocalSupabase,
   supabaseLocalNetworkName,
   validateLocalDockerContext,
-  validateDockerDesktopPortBindingPolicy,
+  waitForSupabaseProjectStartup,
+  windowsPathToWslPath,
   withSupabaseLocalNetwork,
 } from "../../scripts/local-setup.mjs";
 import { hostConfigurationFiles } from "../../scripts/release.mjs";
 
+function captureWindowsDatabaseFailure({
+  containerName,
+  environment = {
+    DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+  },
+  execute,
+}) {
+  const invocations = [];
+  let thrown = "";
+  try {
+    runWindowsDatabaseTests(environment, {
+      containerName,
+      execute: (command, argumentsList, options) => {
+        invocations.push({ argumentsList, command, options });
+        return execute(command, argumentsList, options);
+      },
+      resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+    });
+  } catch (error) {
+    thrown = String(error);
+  }
+  return { invocations, thrown };
+}
+
 describe("local tooling contracts", () => {
+  const localAnonKey = `${Buffer.from('{"alg":"HS256"}').toString("base64url")}.${Buffer.from(
+    '{"role":"anon"}',
+  ).toString("base64url")}.signature`;
+  const localServiceRoleKey = `${Buffer.from('{"alg":"HS256"}').toString(
+    "base64url",
+  )}.${Buffer.from('{"role":"service_role"}').toString("base64url")}.signature`;
   const localApplicationEnvironment = {
     APP_ENV: "local",
     APP_RELEASE_SHA: "local",
     DATABASE_URL_APP_DAL:
       "postgresql://app_runtime_local:local-secret@127.0.0.1:54322/postgres?options=-c%20role%3Dapp_dal",
     NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3000",
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: "sb_publishable_local-contract",
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: localAnonKey,
     NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+    SUPABASE_SECRET_KEY: localServiceRoleKey,
   };
+
+  it("runs the real cleanup handler before local readiness and rejects ambiguous completion", async () => {
+    const requests = [];
+    const configurations = [];
+    const clientFactory = () => {
+      throw new Error("O handler falso não deve criar cliente.");
+    };
+    const createHandler = (configuration) => {
+      configurations.push(configuration);
+      return async (request) => {
+        requests.push(request);
+        return Response.json({ claimed: 0, deleted: 0, failed: 0 });
+      };
+    };
+    const runId = "8a000000-0000-4000-8000-000000000001";
+    await expect(
+      runLocalMediaCleanup(
+        {
+          API_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+          SERVICE_ROLE_KEY: localServiceRoleKey,
+        },
+        { createHandler, createSupabaseClient: clientFactory, runId },
+      ),
+    ).resolves.toEqual({ claimed: 0, deleted: 0, failed: 0 });
+
+    expect(configurations).toHaveLength(1);
+    expect(configurations[0].createSupabaseClient).toBe(clientFactory);
+    expect(configurations[0].readConfiguration()).toEqual({
+      secretKey: localServiceRoleKey,
+      url: "http://127.0.0.1:54321",
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toMatch(
+      /^http:\/\/127\.0\.0\.1:54321\/functions\/v1\/media-cleanup-[0-9a-f]{40}$/u,
+    );
+    expect(requests[0].headers.get("apikey")).toBe(localServiceRoleKey);
+    await expect(requests[0].json()).resolves.toEqual({ runId });
+
+    await expect(
+      runLocalMediaCleanup(
+        {
+          API_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+          SERVICE_ROLE_KEY: localServiceRoleKey,
+        },
+        {
+          createHandler: () => async () =>
+            Response.json({ claimed: 1, deleted: 0, failed: 1 }, { status: 503 }),
+          runId,
+        },
+      ),
+    ).rejects.toThrow("terminal saudável");
+
+    const localSetup = readFileSync(
+      new URL("../../scripts/local-setup.mjs", import.meta.url),
+      "utf8",
+    );
+    const resetStart = localSetup.indexOf("async function resetLocalEnvironment() {");
+    const cleanup = localSetup.indexOf("await runLocalMediaCleanup(values);", resetStart);
+    const readiness = localSetup.indexOf("await provisionLocalRuntime(values);", cleanup);
+    expect(cleanup).toBeGreaterThan(resetStart);
+    expect(readiness).toBeGreaterThan(cleanup);
+  });
 
   it("launches local apps only with the generated runtime contract", () => {
     const environment = createLocalApplicationEnvironment({
@@ -71,6 +171,46 @@ describe("local tooling contracts", () => {
     ).toThrow("identidade DAL local");
   });
 
+  it("requires the runtime unlock key only in the local backoffice contract", () => {
+    const backofficeEnvironment = {
+      APP_ENV: localApplicationEnvironment.APP_ENV,
+      APP_RELEASE_SHA: localApplicationEnvironment.APP_RELEASE_SHA,
+      BACKOFFICE_RUNTIME_UNLOCK_KEY: "A".repeat(43),
+      DATABASE_URL_APP_DAL: localApplicationEnvironment.DATABASE_URL_APP_DAL,
+      NEXT_PUBLIC_APP_URL: "http://127.0.0.1:3001",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      NEXT_PUBLIC_SUPABASE_URL: localApplicationEnvironment.NEXT_PUBLIC_SUPABASE_URL,
+    };
+
+    expect(
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: backofficeEnvironment,
+      }),
+    ).toMatchObject(backofficeEnvironment);
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3000",
+        localEnvironment: backofficeEnvironment,
+      }),
+    ).toThrow("exatamente o contrato runtime gerado");
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: localApplicationEnvironment,
+      }),
+    ).toThrow("exatamente o contrato runtime gerado");
+    expect(() =>
+      createLocalApplicationEnvironment({
+        expectedApplicationUrl: "http://127.0.0.1:3001",
+        localEnvironment: {
+          ...backofficeEnvironment,
+          BACKOFFICE_RUNTIME_UNLOCK_KEY: "A".repeat(42),
+        },
+      }),
+    ).toThrow("BACKOFFICE_RUNTIME_UNLOCK_KEY local possui formato inválido");
+  });
+
   it("routes development scripts through the local guard and rejects extra Next env files", () => {
     const rootManifest = JSON.parse(
       readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
@@ -88,6 +228,7 @@ describe("local tooling contracts", () => {
     );
     expect(rootManifest.scripts["build:web"]).toBe("node scripts/local-setup.mjs build-web");
     expect(rootManifest.scripts["supabase:lint"]).toBe("node scripts/local-setup.mjs lint");
+    expect(applicationDatabaseSchemas).toEqual(["public", "private", "audit"]);
     expect(backofficeManifest.scripts.dev).toBe(
       "node ../../scripts/local-setup.mjs dev-backoffice",
     );
@@ -173,7 +314,11 @@ describe("local tooling contracts", () => {
 
     expect(configuration.playwright).toEqual({
       config: [],
-      entry: ["playwright.config.ts", "tests/e2e/**/*.spec.ts"],
+      entry: [
+        "playwright.config.ts",
+        "tests/e2e/**/*.spec.ts",
+        "tests/helpers/e2e-database-preflight.ts",
+      ],
     });
   });
 
@@ -240,7 +385,9 @@ describe("local tooling contracts", () => {
       "utf8",
     );
 
-    expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(3);
+    const checkoutDefinitions = workflow.match(/uses: actions\/checkout@/gu) ?? [];
+    expect(checkoutDefinitions).toHaveLength(4);
+    expect(workflow.match(/persist-credentials: false/gu)).toHaveLength(checkoutDefinitions.length);
     expect(webUnit).toContain("User=setlivre-web");
     expect(webUnit).not.toContain("User=setlivre-backoffice");
     expect(webUnit).toContain("ConditionPathExists=/opt/set-livre/current/web/server.js");
@@ -281,6 +428,16 @@ describe("local tooling contracts", () => {
     expect(bootstrap).toContain("systemctl reset-failed set-livre-web.service || true");
     expect(bootstrap).toContain("systemctl stop set-livre-backoffice.service");
     expect(bootstrap).toContain("systemctl reset-failed set-livre-backoffice.service || true");
+    const bootstrapStopStart = bootstrap.indexOf("stop_application_services() {");
+    const bootstrapStopEnd = bootstrap.indexOf("\n}", bootstrapStopStart);
+    const bootstrapStop = bootstrap.slice(bootstrapStopStart, bootstrapStopEnd);
+    expect(bootstrapStop.indexOf("set-livre-media-cleanup.timer")).toBeGreaterThan(-1);
+    expect(bootstrapStop.indexOf("set-livre-application-start.service")).toBeGreaterThan(
+      bootstrapStop.indexOf("set-livre-media-cleanup.timer"),
+    );
+    expect(bootstrapStop.indexOf("set-livre-media-cleanup.service")).toBeGreaterThan(
+      bootstrapStop.indexOf("set-livre-application-start.service"),
+    );
     for (const unit of [webUnit, backofficeUnit]) {
       expect(unit).not.toContain("[Install]");
       expect(unit).not.toContain("WantedBy=multi-user.target");
@@ -288,13 +445,24 @@ describe("local tooling contracts", () => {
     }
     expect(applicationStartUnit).toContain("Requires=set-livre-release-recovery.service");
     expect(applicationStartUnit).toContain("After=set-livre-release-recovery.service");
+    expect(applicationStartUnit).not.toContain(
+      "Requires=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    );
+    const initialCleanup = applicationStartUnit.indexOf(
+      "ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service",
+    );
+    const applicationStart = applicationStartUnit.indexOf(
+      "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
+    );
+    expect(initialCleanup).toBeGreaterThan(-1);
+    expect(applicationStart).toBeGreaterThan(initialCleanup);
     expect(applicationStartUnit).toContain(
       "ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service",
     );
-    expect(applicationStartUnit).toContain("RemainAfterExit=yes");
+    expect(applicationStartUnit).not.toContain("RemainAfterExit=yes");
     expect(applicationStartUnit).toContain("WantedBy=multi-user.target");
     expect(recoveryUnit).toContain("ExecStart=/usr/local/sbin/set-livre-deploy --recover-services");
-    expect(recoveryUnit).toContain("TimeoutStartSec=12min");
+    expect(recoveryUnit).toContain("TimeoutStartSec=14min");
     expect(recoveryUnit).not.toContain("ConditionPathExists=");
     expect(recoveryUnit).not.toContain("RemainAfterExit=yes");
     expect(recoveryUnit).not.toContain("set-livre-application-start.service");
@@ -305,10 +473,156 @@ describe("local tooling contracts", () => {
     expect(recoveryUnit).toContain("ReadWritePaths=/etc/set-livre /opt/set-livre /run/lock");
     expect(recoveryPath).toContain("PathExists=/opt/set-livre/.activation-rollback");
     expect(recoveryPath).toContain("Unit=set-livre-release-recovery.service");
-    expect(bootstrap).toContain(
-      "systemctl disable set-livre-web.service set-livre-backoffice.service",
-    );
+    expect(bootstrap).toContain("systemctl disable \\");
+    expect(bootstrap).toContain("set-livre-media-cleanup.service");
+    expect(bootstrap).toContain("set-livre-media-cleanup.timer");
     expect(bootstrap).toContain("set-livre-application-start.service");
+  });
+
+  it("runs immutable media cleanup as a hardened scheduled web identity", () => {
+    const bootstrap = readFileSync(new URL("../../ops/bootstrap-host.sh", import.meta.url), "utf8");
+    const deploy = readFileSync(new URL("../../ops/deploy-release.sh", import.meta.url), "utf8");
+    const hostVerification = readFileSync(
+      new URL("../../ops/verify-host-contracts.sh", import.meta.url),
+      "utf8",
+    );
+    const release = readFileSync(new URL("../../scripts/release.mjs", import.meta.url), "utf8");
+    const service = readFileSync(
+      new URL("../../ops/systemd/set-livre-media-cleanup.service", import.meta.url),
+      "utf8",
+    );
+    const timer = readFileSync(
+      new URL("../../ops/systemd/set-livre-media-cleanup.timer", import.meta.url),
+      "utf8",
+    );
+
+    expect(service).toContain("User=setlivre-web");
+    expect(service).toContain("TimeoutStartSec=120s");
+    expect(service).toContain("TimeoutStopSec=10s");
+    expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/web.env");
+    expect(service).toContain("EnvironmentFile=/opt/set-livre/current/.runtime/release.env");
+    expect(service).toContain(
+      "ExecStart=/opt/node/bin/node /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(service).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
+    expect(service).toContain(
+      "AssertPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(service).toContain("AssertPathIsSymbolicLink=/opt/set-livre/current");
+    expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/web.env");
+    expect(service).toContain("AssertPathExists=/opt/set-livre/current/.runtime/release.env");
+    expect(service).toContain("AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
+    expect(service).not.toContain("bootstrap-recovery-in-progress.sha256");
+    expect(service).not.toContain("ConditionPath");
+    expect(service).toContain("After=network-online.target");
+    expect(service).not.toContain("set-livre-release-recovery.service");
+    expect(service).not.toContain("OnSuccess=");
+    expect(service).not.toContain("Authorization");
+    expect(timer).not.toContain("After=set-livre-application-start.service");
+    expect(timer).not.toContain("Requires=set-livre-application-start.service");
+    expect(timer).toContain("After=network-online.target");
+    expect(timer).toContain("Wants=network-online.target");
+    expect(timer).toContain("OnBootSec=5min");
+    const applicationStart = readFileSync(
+      new URL("../../ops/systemd/set-livre-application-start.service", import.meta.url),
+      "utf8",
+    );
+    expect(applicationStart).toContain("Requires=set-livre-release-recovery.service");
+    expect(applicationStart).toContain(
+      "ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service",
+    );
+    expect(applicationStart).not.toContain(
+      "After=set-livre-release-recovery.service set-livre-media-cleanup.service",
+    );
+    expect(applicationStart).toContain(
+      "AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256",
+    );
+    expect(applicationStart).toContain(
+      "AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
+    );
+    expect(timer).toContain("OnUnitActiveSec=10min");
+    expect(timer).toContain("Unit=set-livre-application-start.service");
+    expect(timer).not.toContain("Unit=set-livre-media-cleanup.service");
+    expect(applicationStart).not.toContain("RemainAfterExit=yes");
+    expect(applicationStart).not.toContain("OnSuccess=");
+    expect(timer).toContain("WantedBy=timers.target");
+    expect(timer).toContain(
+      "ConditionPathExists=/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs",
+    );
+    expect(timer).toContain("ConditionPathExists=!/etc/set-livre/bootstrap-in-progress.sha256");
+    expect(timer).toContain(
+      "ConditionPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256",
+    );
+
+    for (const contract of [bootstrap, deploy, hostVerification, release]) {
+      expect(contract).toContain("set-livre-media-cleanup.service");
+      expect(contract).toContain("set-livre-media-cleanup.timer");
+    }
+    expect(bootstrap).toContain("systemd-analyze verify \\");
+    expect(bootstrap).toContain("run_media_cleanup_once");
+    expect(bootstrap).toContain("systemctl start set-livre-media-cleanup.timer");
+    expect(hostVerification).toContain("preflight SSH aceitou timer de cleanup desabilitado");
+    expect(hostVerification).toContain("ativação não executou o cleanup inicial");
+    expect(hostVerification).toContain("recuperação terminal não reativou o timer de cleanup");
+    expect(hostVerification).toContain("verify_periodic_cleanup_retries_application_gate");
+    expect(hostVerification).toContain(
+      "falha transitória inicial do cleanup foi aceita como gate bem-sucedido",
+    );
+    expect(hostVerification).toContain(
+      "timer não repetiu o gate depois que o cleanup transitório se recuperou",
+    );
+    expect(release).toContain('const mediaCleanupEntrypoint = "runtime/invoke-media-cleanup.mjs"');
+    expect(deploy).not.toContain("MEDIA_CLEANUP_MARKER");
+    expect(deploy).not.toContain("media-cleanup-enabled");
+
+    const rollbackMarker = deploy.indexOf('write_rollback_marker "$previous_release"');
+    const stopSchedule = deploy.indexOf("stop_media_cleanup_schedule", rollbackMarker);
+    const stopApps = deploy.indexOf(
+      "systemctl stop set-livre-web.service set-livre-backoffice.service",
+      stopSchedule,
+    );
+    const activateLink = deploy.indexOf('activate_link "$release_directory"', stopSchedule);
+    const restartApps = deploy.indexOf(
+      "systemctl restart set-livre-web.service set-livre-backoffice.service",
+      activateLink,
+    );
+    const initialCleanup = deploy.indexOf("run_media_cleanup_once", activateLink);
+    const internalHealth = deploy.indexOf('wait_for_health "$release_sha"', initialCleanup);
+    const publicHealth = deploy.indexOf('wait_for_public_health "$release_sha"', internalHealth);
+    const startSchedule = deploy.indexOf("start_media_cleanup_schedule", initialCleanup);
+    const terminalMarkerRemoval = deploy.indexOf('rm -f -- "$ROLLBACK_MARKER"', startSchedule);
+    expect(rollbackMarker).toBeGreaterThan(-1);
+    expect(stopSchedule).toBeGreaterThan(rollbackMarker);
+    expect(stopApps).toBeGreaterThan(stopSchedule);
+    expect(activateLink).toBeGreaterThan(stopApps);
+    expect(initialCleanup).toBeGreaterThan(activateLink);
+    expect(restartApps).toBeGreaterThan(initialCleanup);
+    expect(internalHealth).toBeGreaterThan(restartApps);
+    expect(publicHealth).toBeGreaterThan(internalHealth);
+    expect(startSchedule).toBeGreaterThan(initialCleanup);
+    expect(terminalMarkerRemoval).toBeGreaterThan(startSchedule);
+    const stopScheduleDefinition = deploy.slice(
+      deploy.indexOf("stop_media_cleanup_schedule() {"),
+      deploy.indexOf("\n}", deploy.indexOf("stop_media_cleanup_schedule() {")),
+    );
+    const stopTimer = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-media-cleanup.timer",
+    );
+    const stopApplicationGate = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-application-start.service",
+    );
+    const stopCleanup = stopScheduleDefinition.indexOf(
+      "systemctl stop set-livre-media-cleanup.service",
+    );
+    expect(stopTimer).toBeGreaterThan(-1);
+    expect(stopApplicationGate).toBeGreaterThan(stopTimer);
+    expect(stopCleanup).toBeGreaterThan(stopApplicationGate);
+    expect(stopScheduleDefinition).toContain(
+      "systemctl stop set-livre-media-cleanup.timer || return 1",
+    );
+    expect(stopScheduleDefinition).toContain(
+      "systemctl stop set-livre-application-start.service || return 1",
+    );
   });
 
   it("authenticates and consumes a paired bootstrap recovery state", () => {
@@ -375,6 +689,25 @@ describe("local tooling contracts", () => {
     expect(servicesRecovery.indexOf("begin_interrupted_bootstrap_recovery")).toBeLessThan(
       servicesRecovery.indexOf("activate_recovered_link"),
     );
+    const recoveryPublicHealth = servicesRecovery.indexOf(
+      'wait_for_public_health "$recovered_release"',
+    );
+    const recoveryPhaseRemoval = servicesRecovery.indexOf(
+      'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
+      recoveryPublicHealth,
+    );
+    const recoveryTimerStart = servicesRecovery.indexOf(
+      "start_media_cleanup_schedule",
+      recoveryPhaseRemoval,
+    );
+    const recoveryMarkerRemoval = servicesRecovery.indexOf(
+      'rm -f -- "$ROLLBACK_MARKER"',
+      recoveryTimerStart,
+    );
+    expect(recoveryPublicHealth).toBeGreaterThan(-1);
+    expect(recoveryPhaseRemoval).toBeGreaterThan(recoveryPublicHealth);
+    expect(recoveryTimerStart).toBeGreaterThan(recoveryPhaseRemoval);
+    expect(recoveryMarkerRemoval).toBeGreaterThan(recoveryTimerStart);
     expect(hostVerification).toContain("privileged_regular_file_exists");
     expect(hostVerification).toContain(
       "recovery ${recovery_mode} aceitou digests divergentes no bootstrap",
@@ -977,6 +1310,9 @@ describe("local tooling contracts", () => {
     );
     expect(deploy).toContain(".runtime/environment-contract.sha256");
     expect(deploy).toContain("contrato atual dos ambientes divergiu da release staged");
+    expect(deploy).toContain('runtime_unlock_key_name = "BACKOFFICE_RUNTIME_UNLOCK_KEY"');
+    expect(deploy).toContain("{runtime_unlock_key_name},");
+    expect(hostVerification).toContain('fixture_runtime_unlock_key="$(printf');
   });
 
   it("accepts current only when it resolves to an exact SHA release root", () => {
@@ -1106,7 +1442,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v9"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v11"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1162,7 +1498,7 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum} ${runtime_digest}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v9");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v11");
     expect(hostVerification).toContain("preflight SSH aceitou drift no binário Node efetivo");
     expect(hostVerification).toContain("preflight SSH aceitou unit systemd efetiva divergente");
     expect(hostVerification).toContain(
@@ -1188,7 +1524,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
@@ -1252,16 +1588,36 @@ describe("local tooling contracts", () => {
     const serviceRecoveryStart = deploy.indexOf(
       'if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]',
     );
-    const serviceRecoveryEnd = deploy.indexOf("\nverify_only=false", serviceRecoveryStart);
+    const serviceRecoveryEnd = deploy.indexOf(
+      "\nvalidate_deployment_host_prerequisites\n",
+      serviceRecoveryStart,
+    );
     const serviceRecovery = deploy.slice(serviceRecoveryStart, serviceRecoveryEnd);
+    expect(serviceRecoveryEnd).toBeGreaterThan(serviceRecoveryStart);
+    expect(serviceRecovery.indexOf("systemctl stop set-livre-web.service")).toBeGreaterThan(-1);
+    expect(serviceRecovery.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+      serviceRecovery.indexOf("activate_recovered_link"),
+    );
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeGreaterThan(
+      serviceRecovery.indexOf("activate_recovered_link"),
+    );
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeLessThan(
+      serviceRecovery.indexOf("systemctl restart set-livre-web.service"),
+    );
+    expect(serviceRecovery.indexOf("run_media_cleanup_once")).toBeLessThan(
+      serviceRecovery.indexOf('wait_for_health "$recovered_release"'),
+    );
     expect(serviceRecovery.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
       serviceRecovery.indexOf('rm -f -- "$ROLLBACK_MARKER"'),
+    );
+    expect(serviceRecovery.indexOf('rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"')).toBeLessThan(
+      serviceRecovery.indexOf("start_media_cleanup_schedule"),
     );
     expect(deploy).toContain('lock_policy="timeout=${RECOVERY_LOCK_TIMEOUT_SECONDS}"');
     expect(serviceRecovery).not.toContain("set-livre-deploy.lock");
     expect(hostVerification).toContain("recuperação falha consumiu o marcador necessário ao retry");
     expect(hostVerification.match(/recover_services_successfully "\$release_sha"/gu)).toHaveLength(
-      5,
+      6,
     );
     expect(deploy).toContain("remove_stale_staging_directories");
     expect(deploy).toContain("remove_stale_trusted_files");
@@ -1276,6 +1632,19 @@ describe("local tooling contracts", () => {
     const rollbackStart = deploy.indexOf("rollback_activation() {");
     const rollbackEnd = deploy.indexOf("\non_exit() {", rollbackStart);
     const rollback = deploy.slice(rollbackStart, rollbackEnd);
+    expect(rollback.indexOf("systemctl stop set-livre-web.service")).toBeGreaterThan(-1);
+    expect(rollback.indexOf("systemctl stop set-livre-web.service")).toBeLessThan(
+      rollback.indexOf("recover_link_from_marker"),
+    );
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeGreaterThan(
+      rollback.indexOf("recover_link_from_marker"),
+    );
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeLessThan(
+      rollback.indexOf("systemctl restart set-livre-web.service"),
+    );
+    expect(rollback.indexOf("run_media_cleanup_once")).toBeLessThan(
+      rollback.indexOf('wait_for_health "$recovered_release"'),
+    );
     expect(rollback).toContain('wait_for_health "$recovered_release"');
     expect(rollback).toContain('wait_for_public_health "$recovered_release"');
     expect(rollback.indexOf('wait_for_public_health "$recovered_release"')).toBeLessThan(
@@ -1321,21 +1690,14 @@ describe("local tooling contracts", () => {
       previousDigestRemoved,
     );
     const bootstrapRestart = bootstrap.indexOf("systemctl restart set-livre-web.service");
+    const bootstrapMediaCleanup = bootstrap.lastIndexOf("run_media_cleanup_once", bootstrapRestart);
     const bootstrapReadiness = bootstrap.indexOf(
       'wait_for_active_public_health "$active_release_sha"',
       bootstrapRestart,
     );
-    const terminalGateCommitted = bootstrap.indexOf(
-      "bootstrap_gate_published=false",
-      bootstrapReadiness,
-    );
-    const terminalBootstrap = bootstrap.indexOf(
-      "host_configuration_published=false",
-      terminalGateCommitted,
-    );
     const recoveryPhaseDisarmed = bootstrap.indexOf(
       'rm -f -- "$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS"',
-      terminalBootstrap,
+      bootstrapReadiness,
     );
     const recoveryDisarmed = bootstrap.indexOf(
       'rm -f -- "$ROLLBACK_MARKER"',
@@ -1345,19 +1707,28 @@ describe("local tooling contracts", () => {
       'rm -f -- "$HOST_BOOTSTRAP_IN_PROGRESS"',
       recoveryDisarmed,
     );
+    const terminalGateCommitted = bootstrap.indexOf(
+      "bootstrap_gate_published=false",
+      emptyHostGateReleased,
+    );
+    const terminalBootstrap = bootstrap.indexOf(
+      "host_configuration_published=false",
+      terminalGateCommitted,
+    );
     for (const position of [
       bootstrapDigestPublished,
       recoveryArmed,
       recoveryPhaseArmed,
       previousDigestRemoved,
       bootstrapGateReleased,
+      bootstrapMediaCleanup,
       bootstrapRestart,
       bootstrapReadiness,
-      terminalGateCommitted,
-      terminalBootstrap,
       recoveryPhaseDisarmed,
       recoveryDisarmed,
       emptyHostGateReleased,
+      terminalGateCommitted,
+      terminalBootstrap,
     ]) {
       expect(position).toBeGreaterThan(-1);
     }
@@ -1366,13 +1737,21 @@ describe("local tooling contracts", () => {
     expect(recoveryArmed).toBeLessThan(recoveryPhaseArmed);
     expect(recoveryPhaseArmed).toBeLessThan(previousDigestRemoved);
     expect(previousDigestRemoved).toBeLessThan(bootstrapGateReleased);
-    expect(bootstrapGateReleased).toBeLessThan(bootstrapRestart);
+    expect(bootstrapGateReleased).toBeLessThan(bootstrapMediaCleanup);
+    expect(bootstrapMediaCleanup).toBeLessThan(bootstrapRestart);
+    const bootstrapCleanupFailure = bootstrap.slice(bootstrapMediaCleanup, bootstrapRestart);
+    expect(bootstrapCleanupFailure).toContain(
+      'publish_bootstrap_in_progress "$host_configuration_digest"',
+    );
+    expect(bootstrapCleanupFailure).not.toContain("rm -f -- /opt/set-livre/current");
+    expect(bootstrapCleanupFailure).not.toContain("$HOST_BOOTSTRAP_RECOVERY_IN_PROGRESS");
+    expect(bootstrapCleanupFailure).not.toContain("$ROLLBACK_MARKER");
     expect(bootstrapRestart).toBeLessThan(bootstrapReadiness);
-    expect(bootstrapReadiness).toBeLessThan(terminalGateCommitted);
-    expect(terminalGateCommitted).toBeLessThan(terminalBootstrap);
-    expect(terminalBootstrap).toBeLessThan(recoveryPhaseDisarmed);
+    expect(bootstrapReadiness).toBeLessThan(recoveryPhaseDisarmed);
     expect(recoveryPhaseDisarmed).toBeLessThan(recoveryDisarmed);
     expect(recoveryDisarmed).toBeLessThan(emptyHostGateReleased);
+    expect(emptyHostGateReleased).toBeLessThan(terminalGateCommitted);
+    expect(terminalGateCommitted).toBeLessThan(terminalBootstrap);
     expect(bootstrapCleanup).toContain(
       "if [[ ${bootstrap_gate_published} == true ]]; then\n    stop_application_services",
     );
@@ -1381,7 +1760,7 @@ describe("local tooling contracts", () => {
     );
     expect(
       bootstrap.match(/publish_bootstrap_in_progress "\$host_configuration_digest"/gu),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(bootstrap).toContain(
       'fail "release compatível não recuperou readiness; reenvie uma release aprovada."',
     );
@@ -1436,6 +1815,72 @@ describe("local tooling contracts", () => {
     );
   });
 
+  it("budgets the parallel Linux jobs independently", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const linuxStart = workflow.indexOf("  linux:");
+    const browserStart = workflow.indexOf("  browser:", linuxStart);
+    const qualityStart = workflow.indexOf("  quality:");
+    const windowsStart = workflow.indexOf("  windows:", qualityStart);
+    const linuxJob = workflow.slice(linuxStart, browserStart);
+    const browserJob = workflow.slice(browserStart, qualityStart);
+    const qualityJob = workflow.slice(qualityStart, windowsStart);
+
+    expect(linuxStart).toBeGreaterThan(-1);
+    expect(browserStart).toBeGreaterThan(linuxStart);
+    expect(qualityStart).toBeGreaterThan(-1);
+    expect(windowsStart).toBeGreaterThan(qualityStart);
+    expect(linuxJob).toContain("timeout-minutes: 45");
+    expect(browserJob).toContain("timeout-minutes: 30");
+    expect(qualityJob).toContain("timeout-minutes: 5");
+    expect(workflow).not.toContain("timeout-minutes: 90");
+  });
+
+  it("keeps the protected Linux context fail-closed over every prerequisite", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const qualityStart = workflow.indexOf("  quality:");
+    const windowsStart = workflow.indexOf("  windows:", qualityStart);
+    const qualityJob = workflow.slice(qualityStart, windowsStart);
+
+    expect(qualityStart).toBeGreaterThan(-1);
+    expect(windowsStart).toBeGreaterThan(qualityStart);
+    expect(qualityJob).toContain("name: Quality, local Supabase and browser gates");
+    expect(qualityJob).toContain("if: ${{ always() }}");
+    expect(qualityJob).toContain("      - linux\n      - browser");
+    expect(qualityJob).toContain("BROWSER_RESULT: ${{ needs.browser.result }}");
+    expect(qualityJob).toContain("LINUX_RESULT: ${{ needs.linux.result }}");
+    expect(qualityJob).toContain('[[ "$LINUX_RESULT" == "success" ]]');
+    expect(qualityJob).toContain('[[ "$BROWSER_RESULT" == "success" ]]');
+    expect(qualityJob).not.toContain("actions/checkout");
+  });
+
+  it("smokes the canonical SSH tunnel and rejects divergent forwarded origins", () => {
+    const workflow = readFileSync(
+      new URL("../../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+    const smokeStart = workflow.indexOf("- name: Smoke standalone Linux release");
+    const smokeEnd = workflow.indexOf("- name: Stop local Supabase", smokeStart);
+    const smokeStep = workflow.slice(smokeStart, smokeEnd);
+
+    expect(smokeStart).toBeGreaterThan(-1);
+    expect(smokeEnd).toBeGreaterThan(smokeStart);
+    expect(smokeStep).toContain(
+      "smoke_release backoffice .artifacts/release/backoffice apps/backoffice/server.js 3001 http://127.0.0.1:3001",
+    );
+    expect(smokeStep).toContain("payload.data?.authenticated !== false");
+    expect(smokeStep).toContain("assert_invalid_backoffice_origin");
+    expect(smokeStep).toContain("x-forwarded-host: attacker.example");
+    expect(smokeStep).toContain("x-forwarded-proto: https");
+    expect(smokeStep).toContain('[[ "$status" == 403 ]]');
+    expect(smokeStep).toContain('payload.error?.code !== "ORIGIN_INVALID"');
+  });
+
   it("allows manual CI and only redeploys the exact current main SHA by explicit request", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
@@ -1464,18 +1909,28 @@ describe("local tooling contracts", () => {
     expect(deployJob).not.toContain("ref: ${{ inputs.release_sha }}");
   });
 
-  it("retains Playwright traces and reports only when the browser gate fails", () => {
+  it("runs isolated Playwright shards in parallel and retains only failure evidence", () => {
     const workflow = readFileSync(
       new URL("../../.github/workflows/ci.yml", import.meta.url),
       "utf8",
     );
-    const browserStart = workflow.indexOf("- name: Full browser suite");
-    const buildStart = workflow.indexOf("- name: Build and package Linux release", browserStart);
-    const browserDelivery = workflow.slice(browserStart, buildStart);
+    const browserStart = workflow.indexOf("  browser:");
+    const qualityStart = workflow.indexOf("  quality:", browserStart);
+    const browserDelivery = workflow.slice(browserStart, qualityStart);
 
     expect(browserStart).toBeGreaterThan(-1);
-    expect(buildStart).toBeGreaterThan(browserStart);
+    expect(qualityStart).toBeGreaterThan(browserStart);
+    expect(browserDelivery).toContain("name: Playwright shard ${{ matrix.shard }}/6");
+    expect(browserDelivery).toContain("fail-fast: false");
+    expect(browserDelivery).toContain("max-parallel: 6");
+    expect(browserDelivery).toContain("shard: [1, 2, 3, 4, 5, 6]");
+    expect(browserDelivery).toContain("- name: Reset isolated local Supabase");
+    expect(browserDelivery).toContain("run: npm run supabase:reset");
     expect(browserDelivery).toContain("id: browser_suite");
+    expect(browserDelivery).toContain("run: npx playwright test --shard=${{ matrix.shard }}/6");
+    expect(browserDelivery.match(/npx playwright test --shard=/gu)).toHaveLength(1);
+    expect(browserDelivery).not.toMatch(/--shard=\d+\/\d+/u);
+    expect(browserDelivery).not.toMatch(/^\s*run: npm run test:e2e\s*$/mu);
     expect(browserDelivery).toContain(
       "if: ${{ failure() && steps.browser_suite.outcome == 'failure' }}",
     );
@@ -1487,37 +1942,9 @@ describe("local tooling contracts", () => {
     expect(browserDelivery).toContain("if-no-files-found: error");
     expect(browserDelivery).toContain("include-hidden-files: true");
     expect(browserDelivery).toContain("retention-days: 7");
-  });
-
-  it("keeps the static guard against prohibited Playwright constructs", () => {
-    const docsCheck = readFileSync(
-      new URL("../../scripts/docs-check.mjs", import.meta.url),
-      "utf8",
-    );
-
-    expect(docsCheck).toContain('walk(resolve(repositoryRoot, "tests/e2e"))');
-    expect(docsCheck).toContain("pattern: /\\.only\\s*\\(/u");
-    expect(docsCheck).toContain("pattern: /\\.skip\\s*\\(/u");
-    expect(docsCheck).toContain("pattern: /waitForTimeout\\s*\\(/u");
-    expect(docsCheck).toContain("for (const path of playwrightFiles)");
-    for (const root of [
-      ".github",
-      "apps",
-      "ops",
-      "packages",
-      "scripts",
-      "src",
-      "supabase",
-      "tests",
-    ]) {
-      expect(docsCheck).toContain(`"${root}"`);
-    }
-    expect(docsCheck).toContain('".py"');
-    for (const extension of [".conf", ".path", ".service"]) {
-      expect(docsCheck).toContain(`"${extension}"`);
-    }
-    expect(docsCheck).toContain('${"TO" + "DO"}|${"FIX" + "ME"}');
-    expect(docsCheck).toContain("for (const path of implementationFiles)");
+    expect(browserDelivery).toContain("-shard-${{ matrix.shard }}");
+    expect(browserDelivery).toContain("- name: Stop isolated local Supabase");
+    expect(browserDelivery).toContain("if: always()");
   });
 
   it("disables ambient curl configuration for every operational invocation", () => {
@@ -1577,9 +2004,10 @@ describe("local tooling contracts", () => {
     expect(
       parseSupabaseStatus(
         JSON.stringify({
-          ANON_KEY: "local-anon",
+          ANON_KEY: localAnonKey,
           API_URL: "http://127.0.0.1:54321",
           DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+          SERVICE_ROLE_KEY: localServiceRoleKey,
         }),
       ),
     ).toMatchObject({ API_URL: "http://127.0.0.1:54321" });
@@ -1616,47 +2044,106 @@ describe("local tooling contracts", () => {
     }));
 
     expect(() => assertLoopbackContainerInspections(inspections)).not.toThrow();
-    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "0.0.0.0";
-    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
-      "fora da fronteira local",
-    );
-    inspections[0].NetworkSettings.Ports["service/tcp"][0].HostIp = "127.0.0.1";
-    inspections[0].NetworkSettings.Ports["service/tcp"].push({ HostIp: "::", HostPort: "54321" });
-    expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
-      "fora da fronteira local",
-    );
-    expect(() =>
-      assertLoopbackContainerInspections(inspections, { dockerDesktopLocalOnly: true }),
-    ).not.toThrow();
+    for (const hostIp of ["0.0.0.0", "::", "::1"]) {
+      inspections[0].NetworkSettings.Ports["service/tcp"] = [{ HostIp: hostIp, HostPort: "54321" }];
+      expect(() => assertLoopbackContainerInspections(inspections)).toThrow(
+        "fora da fronteira local",
+      );
+    }
   });
 
-  it("accepts Docker Desktop IPv6 forwarding only under its native local-only policy", () => {
-    expect(() =>
-      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "local-only-port-binding" }),
-    ).not.toThrow();
-    expect(() =>
-      validateDockerDesktopPortBindingPolicy({ PortBindingBehavior: "default-port-binding" }),
-    ).toThrow("Local only");
-  });
-
-  it("stops a running Supabase stack before propagating an unverifiable Docker policy", () => {
+  it("restarts through the CLI when db reset recreates Postgres outside the canonical network", () => {
     const actions = [];
+    const environment = { DOCKER_HOST: "tcp://127.0.0.1:2375" };
 
-    expect(() =>
-      assertDockerPolicyOrStopRunningStack({
-        assertPolicy: () => {
-          actions.push("validate-policy");
-          throw new Error("política Docker ilegível");
+    expect(
+      reconcileSupabaseNetworkAfterReset({
+        assertBindings: () => {
+          actions.push("inspect");
+          throw new Error("database network drift");
         },
-        isStackRunning: () => {
-          actions.push("inspect-stack");
-          return true;
+        environment,
+        startStack: () => actions.push("start"),
+        stopStack: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("stop");
         },
-        stopStack: () => actions.push("stop-stack"),
       }),
-    ).toThrow("política Docker ilegível");
-    expect(actions).toEqual(["inspect-stack", "validate-policy", "stop-stack"]);
+    ).toBe(true);
+    expect(actions).toEqual(["inspect", "stop", "start"]);
   });
+
+  it("waits for a restored Supabase stack to become healthy without a fixed startup delay", () => {
+    const healthy = {
+      State: { Health: { Status: "healthy" }, Status: "running" },
+    };
+    const starting = {
+      State: { Health: { Status: "starting" }, Status: "running" },
+    };
+    expect(classifySupabaseProjectStartup([])).toBe("absent");
+    expect(classifySupabaseProjectStartup([healthy, starting])).toBe("starting");
+    expect(classifySupabaseProjectStartup([healthy])).toBe("ready");
+    expect(classifySupabaseProjectStartup([{ State: { Status: "restarting" } }])).toBe("starting");
+    for (const status of ["created", "paused", "removing", "exited", "dead"]) {
+      expect(classifySupabaseProjectStartup([healthy, { State: { Status: status } }])).toBe(
+        "stopped",
+      );
+    }
+    expect(
+      classifySupabaseProjectStartup([
+        healthy,
+        { State: { Health: { Status: "unhealthy" }, Status: "running" } },
+      ]),
+    ).toBe("stopped");
+
+    const states = ["starting", "starting", "ready"];
+    const pauses = [];
+    expect(
+      waitForSupabaseProjectStartup({
+        pause: (milliseconds) => pauses.push(milliseconds),
+        readState: () => states.shift(),
+      }),
+    ).toBe("ready");
+    expect(pauses).toEqual([500, 500]);
+    expect(waitForSupabaseProjectStartup({ readState: () => "absent" })).toBe("absent");
+    expect(waitForSupabaseProjectStartup({ readState: () => "stopped" })).toBe("stopped");
+    expect(() =>
+      waitForSupabaseProjectStartup({
+        maxAttempts: 2,
+        pause: () => undefined,
+        readState: () => "starting",
+      }),
+    ).toThrow("não ficou saudável");
+  });
+
+  it.each(["exited", "dead"])(
+    "stops a %s Supabase project before starting the canonical stack",
+    (status) => {
+      const actions = [];
+      const environment = { DOCKER_HOST: "tcp://127.0.0.1:2375" };
+
+      startLocalSupabase({
+        assertBindings: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("inspect");
+        },
+        ensureNetwork: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("network");
+        },
+        environment,
+        isStackRunning: () => false,
+        readState: () => classifySupabaseProjectStartup([{ State: { Status: status } }]),
+        runStart: () => actions.push("start"),
+        stopStack: (receivedEnvironment) => {
+          expect(receivedEnvironment).toBe(environment);
+          actions.push("stop");
+        },
+      });
+
+      expect(actions).toEqual(["stop", "network", "start", "inspect"]);
+    },
+  );
 
   it("stops a running Supabase stack when status or binding validation fails", () => {
     const actions = [];
@@ -1683,14 +2170,14 @@ describe("local tooling contracts", () => {
   it("accepts only the canonical local Docker contexts", () => {
     expect(
       validateLocalDockerContext({
-        contextName: "desktop-linux",
+        contextName: "set-livre-wsl",
         dockerContextOverride: undefined,
         dockerHostOverride: undefined,
-        endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine",
+        endpoint: "tcp://127.0.0.1:2375",
         engineOperatingSystem: "linux",
         platform: "win32",
       }),
-    ).toBe("npipe:////./pipe/dockerDesktopLinuxEngine");
+    ).toBe("tcp://127.0.0.1:2375");
     expect(
       validateLocalDockerContext({
         contextName: "default",
@@ -1701,6 +2188,60 @@ describe("local tooling contracts", () => {
         platform: "linux",
       }),
     ).toBe("unix:///var/run/docker.sock");
+  });
+
+  it("maps only absolute Windows paths into the dedicated WSL mount", () => {
+    expect(windowsPathToWslPath("C:\\Users\\thefe\\Set Livre\\schema.sql")).toBe(
+      "/mnt/c/Users/thefe/Set Livre/schema.sql",
+    );
+    expect(windowsPathToWslPath("D:/work/supabase/config.toml")).toBe(
+      "/mnt/d/work/supabase/config.toml",
+    );
+    expect(() => windowsPathToWslPath("supabase/config.toml")).toThrow("precisa ser absoluto");
+    expect(() => windowsPathToWslPath("C:\\unsafe\0path")).toThrow("é inválido");
+  });
+
+  it("starts the dedicated Docker service only on Windows with a sanitized launcher", () => {
+    const invocations = [];
+    expect(
+      ensureWindowsDockerEngine({
+        environment: { PATH: "trusted", PRIVATE_VALUE: "must-not-cross" },
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command, options });
+          return { status: 0, stderr: "", stdout: "" };
+        },
+        platform: "win32",
+      }),
+    ).toBe(true);
+    expect(invocations).toHaveLength(1);
+    expect(invocations[0]).toMatchObject({
+      argumentsList: [
+        "--distribution",
+        "SetLivreDocker",
+        "--user",
+        "root",
+        "--exec",
+        "/usr/bin/systemctl",
+        "start",
+        "docker.service",
+      ],
+      command: "wsl.exe",
+      options: { env: { PATH: "trusted" }, windowsHide: true },
+    });
+    expect(
+      ensureWindowsDockerEngine({
+        execute: () => {
+          throw new Error("Linux must not launch WSL");
+        },
+        platform: "linux",
+      }),
+    ).toBe(false);
+    expect(() =>
+      ensureWindowsDockerEngine({
+        execute: () => ({ status: 1, stderr: "private detail", stdout: "" }),
+        platform: "win32",
+      }),
+    ).toThrow("não iniciou o Docker Engine local esperado");
   });
 
   it("rejects remote Docker selectors before a destructive local command", () => {
@@ -1735,6 +2276,22 @@ describe("local tooling contracts", () => {
     expect(() =>
       validateLocalDockerContext({
         ...localContext,
+        contextName: "default",
+        endpoint: "npipe:////./pipe/docker_engine",
+        platform: "win32",
+      }),
+    ).toThrow("daemon local permitido");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
+        contextName: "set-livre-wsl",
+        endpoint: "tcp://0.0.0.0:2375",
+        platform: "win32",
+      }),
+    ).toThrow("daemon local permitido");
+    expect(() =>
+      validateLocalDockerContext({
+        ...localContext,
         engineOperatingSystem: "windows",
       }),
     ).toThrow("containers Linux");
@@ -1744,9 +2301,10 @@ describe("local tooling contracts", () => {
     expect(() =>
       parseSupabaseStatus(
         JSON.stringify({
-          ANON_KEY: "cloud-anon",
+          ANON_KEY: localAnonKey,
           API_URL: "https://project.supabase.co",
           DB_URL: "postgresql://postgres:secret@db.example.com:5432/postgres",
+          SERVICE_ROLE_KEY: localServiceRoleKey,
         }),
       ),
     ).toThrow("endpoint local");
@@ -1763,10 +2321,15 @@ describe("local tooling contracts", () => {
 
   it("pipes Supabase stderr and emits only its redacted structured failure", () => {
     let invocationOptions;
+    const invocations = [];
     let thrown;
     try {
-      runSupabase(["test", "db", "--local"], {
-        execute: (_command, _argumentsList, options) => {
+      runSupabase(["db", "dump", "--file", "C:\\Users\\thefe\\schema.sql"], {
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command });
+          if (argumentsList.at(-1) === "--version") {
+            return { status: 0, stderr: "", stdout: "2.116.0\n" };
+          }
           invocationOptions = options;
           return {
             status: 1,
@@ -1776,14 +2339,173 @@ describe("local tooling contracts", () => {
             stdout: "",
           };
         },
+        platform: "win32",
         resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+        root: "C:\\Users\\thefe\\set-livre",
       });
     } catch (error) {
       thrown = String(error);
     }
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]?.command).toBe("wsl.exe");
+    expect(invocations[1]?.argumentsList).toContain("SetLivreDocker");
+    expect(invocations[1]?.argumentsList).toContain("/usr/bin/supabase");
+    expect(invocations[1]?.argumentsList).toContain("/mnt/c/Users/thefe/set-livre");
+    expect(invocations[1]?.argumentsList).toContain("/mnt/c/Users/thefe/schema.sql");
     expect(invocationOptions?.stdio).toEqual(["ignore", "inherit", "pipe"]);
     expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
     expect(thrown).not.toContain("raw-secret");
+  });
+
+  it("runs Windows pgTAP without bind mounts and always removes the container", () => {
+    const invocations = [];
+    runWindowsDatabaseTests(
+      { DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres" },
+      {
+        containerName: "set-livre-pgtap-test",
+        execute: (command, argumentsList, options) => {
+          invocations.push({ argumentsList, command, options });
+          return { status: 0, stderr: "", stdout: "" };
+        },
+        resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+      },
+    );
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "rm",
+    ]);
+    expect(invocations[0]?.argumentsList).not.toContain("-v");
+    expect(invocations[0]?.argumentsList).not.toContain("--mount");
+    expect(invocations[0]?.argumentsList).not.toContain("local-password");
+    expect(invocations[0]?.options.env).toMatchObject({
+      PGDATABASE: "postgres",
+      PGHOST: "supabase_db_set-livre",
+      PGPASSWORD: "local-password",
+      PGPORT: "5432",
+      PGUSER: "postgres",
+    });
+    expect(invocations[1]?.argumentsList[2]).toBe("set-livre-pgtap-test:/tests");
+    expect(invocations[2]?.options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+  });
+
+  it("preserves redacted pgTAP diagnostics and removes a failed Windows runner", () => {
+    const { invocations, thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-failure",
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr:
+                "0010_studio_publication_workflow.sql:994: ERROR: pointer invalid\n" +
+                "postgresql://postgres:database-secret@127.0.0.1/postgres " +
+                "password=database-secret PGPASSWORD=database-secret",
+              stdout: "Failed 1 subtest",
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "rm",
+    ]);
+    expect(thrown).toContain("0010_studio_publication_workflow.sql:994");
+    expect(thrown).toContain("Failed 1 subtest");
+    expect(thrown).toContain("[stderr]");
+    expect(thrown).toContain("[stdout]");
+    expect(thrown).toContain("postgresql://[REDACTED]@127.0.0.1/postgres");
+    expect(thrown).toContain("password=[REDACTED]");
+    expect(thrown).toContain("PGPASSWORD=[REDACTED]");
+    expect(thrown).not.toContain("database-secret");
+  });
+
+  it("reads redacted container logs when Docker attach loses a failed pgTAP diagnostic", () => {
+    const { invocations, thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-log-fallback",
+      execute: (_command, argumentsList) => {
+        if (argumentsList[0] === "start") return { status: 1, stderr: "", stdout: "" };
+        if (argumentsList[0] === "logs") {
+          return {
+            status: 0,
+            stderr: "",
+            stdout:
+              "0010_studio_publication_workflow.sql:1810: ERROR: immutable\n" +
+              "PGPASSWORD=local-password",
+          };
+        }
+        return { status: 0, stderr: "", stdout: "" };
+      },
+    });
+
+    expect(invocations.map(({ argumentsList }) => argumentsList[0])).toEqual([
+      "create",
+      "cp",
+      "start",
+      "logs",
+      "rm",
+    ]);
+    expect(thrown).toContain("0010_studio_publication_workflow.sql:1810");
+    expect(thrown).toContain("PGPASSWORD=[REDACTED]");
+    expect(thrown).not.toContain("local-password");
+  });
+
+  it("redacts the known pgTAP password in raw, escaped and encoded diagnostics", () => {
+    const password = "segredo 漢字 com espaço, aspas \\\"' e %/&";
+    const encodedPassword = encodeURIComponent(password);
+    const escapedPassword = JSON.stringify(password).slice(1, -1);
+    const { thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-redaction",
+      environment: {
+        DB_URL: `postgresql://postgres:${encodedPassword}@127.0.0.1:54322/postgres`,
+      },
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr: [
+                `password = ${password}`,
+                JSON.stringify({ PGPASSWORD: password }),
+                `encoded=${encodedPassword}`,
+                `postgresql://postgres:${encodedPassword}@127.0.0.1/postgres`,
+              ].join("\n"),
+              stdout: "Failed 1 subtest",
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    expect(thrown).toContain("[REDACTED]");
+    expect(thrown).not.toContain(password);
+    expect(thrown).not.toContain(encodedPassword);
+    expect(thrown).not.toContain(escapedPassword);
+    expect(thrown).not.toContain("漢字");
+  });
+
+  it("keeps independently bounded stderr and stdout evidence", () => {
+    const stderrHead = "STDERR-SENTINEL-BEGIN";
+    const stderrTail = "STDERR-SENTINEL-END";
+    const stdoutHead = "STDOUT-SENTINEL-BEGIN";
+    const stdoutTail = "STDOUT-SENTINEL-END";
+    const { thrown } = captureWindowsDatabaseFailure({
+      containerName: "set-livre-pgtap-bounded-diagnostics",
+      execute: (_command, argumentsList) =>
+        argumentsList[0] === "start"
+          ? {
+              status: 1,
+              stderr: `${stderrHead}\n${"e".repeat(40_000)}\n${stderrTail}`,
+              stdout: `${stdoutHead}\n${"o".repeat(40_000)}\n${stdoutTail}`,
+            }
+          : { status: 0, stderr: "", stdout: "" },
+    });
+
+    for (const evidence of [stderrHead, stderrTail, stdoutHead, stdoutTail]) {
+      expect(thrown).toContain(evidence);
+    }
+    expect(thrown).toContain("[stderr truncado; início e fim preservados]");
+    expect(thrown).toContain("[stdout truncado; início e fim preservados]");
   });
 
   it("normalizes and validates the tracked schema dump", () => {

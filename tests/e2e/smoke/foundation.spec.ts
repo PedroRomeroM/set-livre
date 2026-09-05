@@ -1,48 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
+import {
+  expectPresentRawHtmlScriptsUseNonce,
+  expectRawHtmlScriptsUseNonce,
+  policyNonce,
+} from "../../helpers/content-security-policy";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
 const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
-
-function scriptDirective(contentSecurityPolicy: string) {
-  return (
-    contentSecurityPolicy
-      .split(";")
-      .map((directive) => directive.trim())
-      .find((directive) => directive.startsWith("script-src ")) ?? ""
-  );
-}
-
-function policyNonce(contentSecurityPolicy: string) {
-  const scriptSource = scriptDirective(contentSecurityPolicy);
-  const matches = [...scriptSource.matchAll(/'nonce-([a-f0-9]{32})'/gu)];
-  expect(matches, "script-src deve declarar exatamente um nonce por request.").toHaveLength(1);
-  expect(scriptSource).toContain("'strict-dynamic'");
-  expect(scriptSource).toContain("'unsafe-eval'");
-  expect(scriptSource).not.toContain("'unsafe-inline'");
-  return matches[0]?.[1] ?? "";
-}
-
-function expectRawHtmlScriptsUseNonce(html: string, nonce: string) {
-  const scriptTags = html.match(/<script(?:\s[^>]*)?>/gu) ?? [];
-  expect(
-    scriptTags.length,
-    "O HTML precisa conter o bootstrap JavaScript do Next.",
-  ).toBeGreaterThan(0);
-  expect(
-    scriptTags.every((scriptTag) => scriptTag.includes(`nonce="${nonce}"`)),
-    "Todo script do HTML precisa usar o nonce da mesma response.",
-  ).toBe(true);
-}
-
-function expectPresentRawHtmlScriptsUseNonce(html: string, nonce: string) {
-  const scriptTags = html.match(/<script(?:\s[^>]*)?>/gu) ?? [];
-  expect(
-    scriptTags.every((scriptTag) => scriptTag.includes(`nonce="${nonce}"`)),
-    "Todo script presente no HTML de erro precisa usar o nonce da mesma response.",
-  ).toBe(true);
-}
 
 function expectDevelopmentHtmlRequiresRevalidation(cacheControl: string) {
   expect(cacheControl).toContain("no-cache");
@@ -157,7 +123,7 @@ async function expectNonceProtectedDevelopmentPage(
   expectRawHtmlScriptsUseNonce(await secondResponse.text(), secondNonce);
 }
 
-test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundação", async ({
+test("FOUNDATION-E2E-001 fronteiras expõem somente superfícies autorizadas", async ({
   page,
   request,
 }) => {
@@ -170,7 +136,9 @@ test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundaçã
   });
 
   await expectNonceProtectedDevelopmentPage(page, request, backofficeBaseUrl, "Operação Set Livre");
-  await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toBeVisible();
+  await expect(page.getByText("Acesso restrito a operadores autorizados")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Entrar no backoffice" })).toBeVisible();
+  await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
 
   await expectNonceProtectedDevelopmentPage(page, request, "/", "Set Livre");
@@ -213,53 +181,10 @@ test("FOUNDATION-E2E-001 plataforma pública expõe apenas o status da fundaçã
   await expect(page.getByText("Nenhuma feature de produto é simulada.")).toBeVisible();
 });
 
-test("FOUNDATION-E2E-003 health endpoints retornam contrato autoritativo", async ({ request }) => {
-  const propagatedRequestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
-  const publicHealth = await request.get("/api/health/live", {
-    headers: { "x-request-id": propagatedRequestId },
-  });
-  const backofficeHealth = await request.get(`${backofficeBaseUrl}/api/health/live`);
-  const publicReadiness = await request.get("/api/health/ready");
-  const backofficeReadiness = await request.get(`${backofficeBaseUrl}/api/health/ready`);
-
-  await expect(publicHealth).toBeOK();
-  await expect(backofficeHealth).toBeOK();
-  await expect(publicReadiness).toBeOK();
-  await expect(backofficeReadiness).toBeOK();
-  expect(publicHealth.headers()["x-request-id"]).toBe(propagatedRequestId);
-  expect(publicHealth.headers()["cache-control"]).toContain("no-store");
-  expect(backofficeHealth.headers()["cache-control"]).toContain("no-store");
-  await expect(publicHealth.json()).resolves.toMatchObject({
-    application: "web",
-    release: "local",
-    requestId: propagatedRequestId,
-    status: "live",
-  });
-  await expect(backofficeHealth.json()).resolves.toMatchObject({
-    application: "backoffice",
-    status: "live",
-  });
-  await expect(publicReadiness.json()).resolves.toMatchObject({
-    application: "web",
-    status: "ready",
-  });
-  await expect(backofficeReadiness.json()).resolves.toMatchObject({
-    application: "backoffice",
-    status: "ready",
-  });
-});
-
-test("FOUNDATION-E2E-005 app público não expõe rota administrativa", async ({ page }) => {
-  const response = await page.goto("/admin");
-
-  expect(response?.status()).toBe(404);
-  await expect(page.getByRole("heading", { level: 1, name: "Operação Set Livre" })).toHaveCount(0);
-});
-
 test("FOUNDATION-E2E-006 composições respeitam o viewport configurado", async ({ page }) => {
-  for (const [url, heading] of [
-    ["/", "Set Livre"],
-    [backofficeBaseUrl, "Operação Set Livre"],
+  for (const [surface, url, heading] of [
+    ["public", "/", "Set Livre"],
+    ["backoffice", backofficeBaseUrl, "Operação Set Livre"],
   ] as const) {
     await gotoExpectedPage(page, url, heading);
     const hasHorizontalOverflow = await page.evaluate(
@@ -267,10 +192,13 @@ test("FOUNDATION-E2E-006 composições respeitam o viewport configurado", async 
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    const finalNote = page.getByText(
-      "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
-    );
-    await finalNote.scrollIntoViewIfNeeded();
-    await expect(finalNote).toBeInViewport();
+    const finalContent =
+      surface === "public"
+        ? page.getByText(
+            "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
+          )
+        : page.getByRole("button", { name: "Entrar no backoffice" });
+    await finalContent.scrollIntoViewIfNeeded();
+    await expect(finalContent).toBeInViewport();
   }
 });

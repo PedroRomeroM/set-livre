@@ -5,16 +5,8 @@ import {
   type CurrentLegalDocuments,
   type IdentityRegistrationPayload,
 } from "@set-livre/contracts";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  ChoiceGroup,
-  Field,
-  Input,
-  PasswordInput,
-  Stack,
-} from "@set-livre/ui";
+import { Alert, Button, Checkbox, ChoiceGroup, Field, Input, Stack } from "@set-livre/ui";
+import { PasswordInput } from "@set-livre/ui/password-input";
 import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";

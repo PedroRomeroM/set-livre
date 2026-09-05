@@ -1,0 +1,271 @@
+.queueGrid,
+.comparisonGrid,
+.mediaGrid {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+}
+
+.queueCard,
+.revisionPanel,
+.section,
+.decisionPanel {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 1rem;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+  background: var(--sl-color-surface);
+  border: 1px solid var(--sl-color-border);
+  border-radius: var(--sl-radius-lg);
+}
+
+.queueGrid > *,
+.comparisonGrid > *,
+.mediaGrid > *,
+.queueCard > *,
+.revisionPanel > *,
+.section > *,
+.decisionPanel > *,
+.queueHeader > *,
+.sectionHeader > *,
+.actions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.revisionPanel {
+  font-kerning: none;
+}
+
+.queueHeader,
+.sectionHeader,
+.actions {
+  display: flex;
+  min-width: 0;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.queueCard h2,
+.revisionPanel h2,
+.section h2,
+.section h3,
+.decisionPanel h2,
+.queueCard p,
+.revisionPanel p,
+.section p,
+.decisionPanel p,
+.checklist,
+.plainList {
+  margin: 0;
+}
+
+.muted,
+.metadata {
+  color: var(--sl-color-ink-muted);
+}
+
+.metadata {
+  font-size: 0.875rem;
+}
+
+.badge {
+  display: inline-flex;
+  min-height: 1.75rem;
+  align-items: center;
+  padding-inline: 0.625rem;
+  color: var(--sl-color-ink);
+  background: var(--sl-color-surface-muted);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.badge[data-state="disabled"] {
+  color: var(--sl-color-danger-ink);
+}
+
+.definitionList {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(8rem, auto) minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.definitionList > *,
+.definitionList dt,
+.definitionList dd {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.definitionList dt {
+  color: var(--sl-color-ink-muted);
+  font-weight: 650;
+}
+
+.definitionList dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.faqList {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.faqItem {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.faqQuestion,
+.faqAnswer {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.faqQuestion {
+  color: var(--sl-color-ink-muted);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.mediaFigure {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.mediaViewport {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  height: clamp(10rem, 60vh, 32rem);
+  min-width: 0;
+  place-items: center;
+  overflow: hidden;
+  background: var(--sl-color-surface-muted);
+  border: 1px solid var(--sl-color-border);
+  border-radius: var(--sl-radius-md);
+}
+
+.mediaViewport > img,
+.mediaViewport > .mediaPlaceholder {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.mediaFigure figcaption {
+  color: var(--sl-color-ink-muted);
+  font-size: 0.8125rem;
+}
+
+.videoPreview {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.videoFrame {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--sl-color-surface-muted);
+  border: 1px solid var(--sl-color-border);
+  border-radius: var(--sl-radius-md);
+}
+
+.videoFrame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.videoFallback {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  align-items: center;
+}
+
+.checklist,
+.plainList {
+  display: grid;
+  gap: 0.5rem;
+  padding-left: 1.25rem;
+}
+
+.checklist li[data-complete="false"] {
+  color: var(--sl-color-danger-ink);
+}
+
+.decisionOptions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.75rem;
+}
+
+.empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--sl-color-ink-muted);
+  background: var(--sl-color-surface);
+  border: 1px dashed var(--sl-color-border-strong);
+  border-radius: var(--sl-radius-lg);
+}
+
+@media (max-width: 44rem) {
+  .queueGrid,
+  .comparisonGrid,
+  .mediaGrid,
+  .definitionList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .definitionList dd + dt {
+    margin-top: 0.5rem;
+  }
+
+  .actions > * {
+    flex: 1 1 100%;
+  }
+}

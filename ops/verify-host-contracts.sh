@@ -5,7 +5,7 @@ REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPOSITORY_ROOT
 readonly PRODUCTION_SUPABASE_URL="https://oirvvnojgkzdppkdvhej.supabase.co"
 readonly PRODUCTION_PUBLIC_APP_URL="https://147.15.97.227"
-readonly PRODUCTION_BACKOFFICE_APP_URL="https://ops.setlivre.com"
+readonly PRODUCTION_BACKOFFICE_APP_URL="http://127.0.0.1:3001"
 readonly INSTALLED_DEPLOY_SSH_COMMAND="/usr/local/sbin/set-livre-deploy-ssh"
 readonly INSTALLED_DEPLOY_LOCK="/usr/local/sbin/set-livre-deploy-lock"
 readonly FORCED_COMMAND_SUDOERS="/etc/sudoers.d/set-livre-host-contracts"
@@ -662,6 +662,8 @@ sudo install -o root -g root -m 0644 \
 for systemd_unit in \
   set-livre-web.service \
   set-livre-backoffice.service \
+  set-livre-media-cleanup.service \
+  set-livre-media-cleanup.timer \
   set-livre-application-start.service \
   set-livre-release-recovery.service \
   set-livre-release-recovery.path; do
@@ -671,6 +673,7 @@ done
 sudo systemctl daemon-reload
 sudo systemctl enable \
   set-livre-application-start.service \
+  set-livre-media-cleanup.timer \
   set-livre-release-recovery.path
 
 printf 'deploy-lock-target\n' > "$temporary_directory/deploy-lock-target"
@@ -693,12 +696,206 @@ for protected_entrypoint in \
     || fail "alvo externo do symlink de lock foi alterado."
 done
 sudo rm -f -- /run/lock/set-livre-deploy.lock
+
+verify_periodic_cleanup_retries_application_gate() (
+  local probe_state="/run/set-livre-host-contract-retry"
+  local recovery_unit="set-livre-host-contract-recovery.service"
+  local cleanup_unit="set-livre-host-contract-media-cleanup.service"
+  local application_unit="set-livre-host-contract-application-start.service"
+  local timer_unit="set-livre-host-contract-media-cleanup.timer"
+  local recovery_unit_path="/run/systemd/system/${recovery_unit}"
+  local cleanup_unit_path="/run/systemd/system/${cleanup_unit}"
+  local application_unit_path="/run/systemd/system/${application_unit}"
+  local timer_unit_path="/run/systemd/system/${timer_unit}"
+  local cleanup_source="$temporary_directory/host-contract-cleanup.sh"
+  local recovery_source="$temporary_directory/${recovery_unit}"
+  local cleanup_unit_source="$temporary_directory/${cleanup_unit}"
+  local application_unit_source="$temporary_directory/${application_unit}"
+  local timer_unit_source="$temporary_directory/${timer_unit}"
+  local application_state blocker attempts retry_observed terminal_state_observed
+
+  # Invocada indiretamente pelo trap local do probe.
+  # shellcheck disable=SC2317,SC2329
+  cleanup_systemd_retry_probe() {
+    sudo systemctl stop \
+      "$timer_unit" "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo systemctl reset-failed \
+      "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo rm -f -- \
+      "$timer_unit_path" "$application_unit_path" "$cleanup_unit_path" "$recovery_unit_path"
+    sudo systemctl daemon-reload >/dev/null 2>&1 || true
+    sudo rm -rf --one-file-system -- "$probe_state"
+  }
+
+  for path in \
+    "$probe_state" \
+    "$recovery_unit_path" \
+    "$cleanup_unit_path" \
+    "$application_unit_path" \
+    "$timer_unit_path"; do
+    ! privileged_path_exists "$path" \
+      || fail "estado residual impede o probe de retry periódico: ${path}."
+  done
+  trap cleanup_systemd_retry_probe EXIT
+
+  cat > "$cleanup_source" <<'CLEANUP_PROBE'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+readonly state=/run/set-livre-host-contract-retry
+readonly attempts_file="${state}/cleanup-attempts"
+attempts=0
+if [[ -f ${attempts_file} && ! -L ${attempts_file} ]]; then
+  read -r attempts < "$attempts_file"
+  [[ ${attempts} =~ ^[0-9]+$ ]] || exit 70
+fi
+attempts=$((attempts + 1))
+printf '%s\n' "$attempts" > "${attempts_file}.next"
+mv --force -- "${attempts_file}.next" "$attempts_file"
+(( attempts > 1 ))
+CLEANUP_PROBE
+  cat > "$recovery_source" <<'RECOVERY_PROBE'
+[Unit]
+Description=Set Livre host-contract recovery probe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+RECOVERY_PROBE
+  cat > "$cleanup_unit_source" <<'CLEANUP_UNIT_PROBE'
+[Unit]
+Description=Set Livre host-contract media cleanup probe
+
+[Service]
+Type=oneshot
+ExecStart=/run/set-livre-host-contract-retry/cleanup.sh
+CLEANUP_UNIT_PROBE
+
+  sed \
+    -e "s/set-livre-release-recovery.service/${recovery_unit}/g" \
+    -e "s/set-livre-media-cleanup.service/${cleanup_unit}/g" \
+    -e "s#/etc/set-livre/bootstrap-in-progress.sha256#${probe_state}/bootstrap-in-progress.sha256#g" \
+    -e "s#/etc/set-livre/bootstrap-recovery-in-progress.sha256#${probe_state}/bootstrap-recovery-in-progress.sha256#g" \
+    -e "s#ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service#ExecStart=/usr/bin/touch ${probe_state}/applications-started#" \
+    "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
+    > "$application_unit_source"
+  sed \
+    -e "s#/opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs#${probe_state}/cleanup.sh#g" \
+    -e "s#/etc/set-livre/bootstrap-in-progress.sha256#${probe_state}/bootstrap-in-progress.sha256#g" \
+    -e "s#/etc/set-livre/bootstrap-recovery-in-progress.sha256#${probe_state}/bootstrap-recovery-in-progress.sha256#g" \
+    -e 's/^OnBootSec=5min$/OnActiveSec=100ms/' \
+    -e 's/^OnUnitActiveSec=10min$/OnUnitActiveSec=200ms/' \
+    -e 's/^AccuracySec=30s$/AccuracySec=1ms/' \
+    -e "s/^Unit=set-livre-application-start.service$/Unit=${application_unit}/" \
+    "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.timer" \
+    > "$timer_unit_source"
+
+  grep --fixed-strings --line-regexp "Unit=${application_unit}" "$timer_unit_source" >/dev/null \
+    || fail "timer do probe não preservou o gate de aplicação como alvo."
+  if grep --fixed-strings --line-regexp 'RemainAfterExit=yes' "$application_unit_source" \
+    >/dev/null; then
+    fail "gate do probe permaneceu ativo e não pode receber retries periódicos."
+  fi
+
+  sudo install -d -o root -g root -m 0700 "$probe_state"
+  sudo install -o root -g root -m 0755 "$cleanup_source" "${probe_state}/cleanup.sh"
+  sudo install -o root -g root -m 0644 "$recovery_source" "$recovery_unit_path"
+  sudo install -o root -g root -m 0644 "$cleanup_unit_source" "$cleanup_unit_path"
+  sudo install -o root -g root -m 0644 "$application_unit_source" "$application_unit_path"
+  sudo install -o root -g root -m 0644 "$timer_unit_source" "$timer_unit_path"
+  sudo systemd-analyze verify \
+    "$recovery_unit_path" \
+    "$cleanup_unit_path" \
+    "$application_unit_path" \
+    "$timer_unit_path"
+  sudo systemctl daemon-reload
+
+  for blocker in bootstrap-in-progress.sha256 bootstrap-recovery-in-progress.sha256; do
+    sudo rm -f -- \
+      "${probe_state}/cleanup-attempts" \
+      "${probe_state}/applications-started"
+    sudo systemctl stop "$timer_unit" >/dev/null 2>&1 || true
+    sudo systemctl reset-failed \
+      "$application_unit" "$cleanup_unit" "$recovery_unit" \
+      >/dev/null 2>&1 || true
+    sudo install -o root -g root -m 0600 /dev/null "${probe_state}/${blocker}"
+    sudo systemctl start "$timer_unit"
+    /usr/bin/sleep 0.25
+    [[ $(sudo systemctl show --property=ActiveState --value "$timer_unit") == inactive ]] \
+      || fail "timer do probe ignorou o blocker ${blocker}."
+    if sudo systemctl start "$application_unit" >/dev/null 2>&1; then
+      fail "gate de aplicação iniciou durante o blocker ${blocker}."
+    fi
+    ! privileged_path_exists "${probe_state}/cleanup-attempts" \
+      || fail "cleanup iniciou durante o blocker ${blocker}."
+    ! privileged_path_exists "${probe_state}/applications-started" \
+      || fail "apps iniciaram durante o blocker ${blocker}."
+    sudo rm -f -- "${probe_state}/${blocker}"
+  done
+
+  sudo rm -f -- \
+    "${probe_state}/cleanup-attempts" \
+    "${probe_state}/applications-started"
+  sudo systemctl reset-failed \
+    "$application_unit" "$cleanup_unit" "$recovery_unit" \
+    >/dev/null 2>&1 || true
+  if sudo systemctl start "$application_unit" >/dev/null 2>&1; then
+    fail "falha transitória inicial do cleanup foi aceita como gate bem-sucedido."
+  fi
+  attempts="$(sudo cat -- "${probe_state}/cleanup-attempts")"
+  [[ ${attempts} == 1 ]] \
+    || fail "gate inicial não executou exatamente uma tentativa falha de cleanup."
+  ! privileged_path_exists "${probe_state}/applications-started" \
+    || fail "apps iniciaram depois da tentativa inicial falha de cleanup."
+  [[ $(sudo systemctl show --property=ActiveState --value "$application_unit") == failed ]] \
+    || fail "gate inicial não permaneceu failed após a falha de cleanup."
+
+  sudo systemctl start "$timer_unit"
+  application_state=""
+  retry_observed=false
+  terminal_state_observed=false
+  for _ in {1..100}; do
+    if privileged_regular_file_exists "${probe_state}/applications-started"; then
+      attempts="$(sudo cat -- "${probe_state}/cleanup-attempts")"
+      if [[ ${attempts} =~ ^[0-9]+$ ]] && (( attempts >= 2 )); then
+        retry_observed=true
+        # O último ExecStart publica o efeito antes de o systemd registrar o estado
+        # terminal da oneshot. O marcador prova o efeito; este snapshot é a fence
+        # que prova que o mesmo gate já voltou ao estado reativável.
+        application_state="$(
+          sudo systemctl show --property=ActiveState,Result "$application_unit"
+        )"
+        if grep --fixed-strings --line-regexp 'ActiveState=inactive' \
+          <<< "$application_state" >/dev/null \
+          && grep --fixed-strings --line-regexp 'Result=success' \
+            <<< "$application_state" >/dev/null; then
+          terminal_state_observed=true
+          break
+        fi
+      fi
+    fi
+    /usr/bin/sleep 0.05
+  done
+  [[ ${retry_observed} == true ]] \
+    || fail "timer não repetiu o gate depois que o cleanup transitório se recuperou."
+  [[ ${terminal_state_observed} == true ]] \
+    || fail "gate repetido não terminou com sucesso em estado reativável."
+  sudo systemctl is-active --quiet "$timer_unit" \
+    || fail "timer periódico não permaneceu ativo após recuperar os apps."
+
+  printf 'Retry periódico do gate após cleanup transitório verificado pelo systemd.\n'
+)
+
 sudo systemd-analyze verify \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-web.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-backoffice.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.service" \
+  "$REPOSITORY_ROOT/ops/systemd/set-livre-media-cleanup.timer" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-application-start.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.service" \
   "$REPOSITORY_ROOT/ops/systemd/set-livre-release-recovery.path"
+verify_periodic_cleanup_retries_application_gate
 
 archive="$temporary_directory/host-contract-release.tar.gz"
 LC_ALL=C tar --hard-dereference --sort=name --mtime='@0' \
@@ -719,12 +916,20 @@ sudo install -o root -g setlivre -m 0640 "$temporary_directory/host-config.sha25
 write_fixture_environment() {
   local destination="$1"
   local app_url="$2"
+  local runtime_unlock_key="${3:-}"
+  local supabase_secret_key="${4:-}"
   {
     printf 'APP_ENV=production\n'
+    if [[ -n ${runtime_unlock_key} ]]; then
+      printf 'BACKOFFICE_RUNTIME_UNLOCK_KEY=%s\n' "$runtime_unlock_key"
+    fi
     printf 'DATABASE_URL_APP_DAL=postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:ci-password@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%%20role%%3Dapp_dal\n'
     printf 'NEXT_PUBLIC_APP_URL=%s\n' "$app_url"
     printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ci_contract_key\n'
     printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$PRODUCTION_SUPABASE_URL"
+    if [[ -n ${supabase_secret_key} ]]; then
+      printf 'SUPABASE_SECRET_KEY=%s\n' "$supabase_secret_key"
+    fi
   } > "$destination"
 }
 
@@ -739,8 +944,12 @@ fixture_runtime_environment_digest() {
     printf '\0'
   } | sha256sum | cut --delimiter=' ' --fields=1
 }
-write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL"
-write_fixture_environment "$temporary_directory/backoffice.env" "$PRODUCTION_BACKOFFICE_APP_URL"
+fixture_supabase_secret_key="sb_secret_ci_server_contract_key"
+write_fixture_environment "$temporary_directory/web.env" "$PRODUCTION_PUBLIC_APP_URL" "" \
+  "$fixture_supabase_secret_key"
+fixture_runtime_unlock_key="$(printf 'A%.0s' {1..43})"
+write_fixture_environment "$temporary_directory/backoffice.env" \
+  "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
 runtime_environment_digest="$(
   fixture_runtime_environment_digest \
     "$temporary_directory/web.env" "$temporary_directory/backoffice.env"
@@ -892,8 +1101,51 @@ if [[ ${1:-} == "is-active" && ${2:-} == "--quiet" && ${3:-} == "nginx.service" 
 fi
 state="${SET_LIVRE_TEST_STATE:?}"
 printf '%s\n' "$*" >> "$state/systemctl.log"
+if [[ "$*" == 'stop set-livre-web.service set-livre-backoffice.service' ]]; then
+  if [[ ${phase} == stop-apps && ! -e "$state/stop-apps-once" ]]; then
+    touch "$state/stop-apps-once"
+    exit 1
+  fi
+  touch "$state/apps-stopped"
+  rm -f -- "$state/cleanup-ready"
+fi
+if [[ "$*" == 'start set-livre-media-cleanup.service' ]]; then
+  if [[ ! -e "$state/apps-stopped" ]]; then
+    touch "$state/cleanup-with-apps-running"
+    exit 1
+  fi
+  release="$(basename -- "$(readlink --canonicalize-existing /opt/set-livre/current)")"
+  printf 'cleanup-start %s\n' "$release" >> "$state/activation.log"
+fi
+if [[ "$*" == 'restart set-livre-web.service set-livre-backoffice.service' ]]; then
+  release="$(basename -- "$(readlink --canonicalize-existing /opt/set-livre/current)")"
+  if [[ ! -e "$state/apps-stopped" || ! -f "$state/cleanup-ready" \
+    || $(< "$state/cleanup-ready") != "$release" ]]; then
+    touch "$state/apps-before-cleanup"
+    exit 1
+  fi
+fi
+if [[ ${1:-} == "stop" && " $* " == *" set-livre-media-cleanup.timer "* ]]; then
+  rm -f -- "$state/media-cleanup-timer-active"
+fi
+if [[ ${1:-} == "start" && ${2:-} == "set-livre-media-cleanup.timer" ]]; then
+  if [[ -e /etc/set-livre/bootstrap-in-progress.sha256 \
+    || -L /etc/set-livre/bootstrap-in-progress.sha256 \
+    || -e /etc/set-livre/bootstrap-recovery-in-progress.sha256 \
+    || -L /etc/set-livre/bootstrap-recovery-in-progress.sha256 ]]; then
+    touch "$state/media-cleanup-timer-skipped"
+    exit 0
+  fi
+  touch "$state/media-cleanup-timer-active"
+fi
 if [[ ${1:-} == "restart" && ${phase} == "services" && ! -e "$state/services-once" ]]; then
   touch "$state/services-once"
+  exit 1
+fi
+if [[ ${1:-} == "start" && ${2:-} == "set-livre-media-cleanup.service" \
+  && (${phase} == "media-cleanup-always" \
+    || (${phase} == "media-cleanup" && ! -e "$state/media-cleanup-once")) ]]; then
+  touch "$state/media-cleanup-once"
   exit 1
 fi
 if [[ ${1:-} == "restart" && ${phase} == "signal" && ! -e "$state/signal-once" ]]; then
@@ -908,6 +1160,14 @@ if [[ ${1:-} == "restart" \
   touch "$sigkill_marker"
   kill -KILL "$PPID"
   /usr/bin/sleep 0.1
+fi
+if [[ "$*" == 'start set-livre-media-cleanup.service' ]]; then
+  printf '%s\n' "$release" > "$state/cleanup-ready"
+  printf 'cleanup-succeeded %s\n' "$release" >> "$state/activation.log"
+fi
+if [[ "$*" == 'restart set-livre-web.service set-livre-backoffice.service' ]]; then
+  rm -f -- "$state/apps-stopped" "$state/cleanup-ready"
+  printf 'apps-start %s\n' "$release" >> "$state/activation.log"
 fi
 SYSTEMCTL
 
@@ -980,6 +1240,10 @@ cat > "$fake_bin/mv" <<'MOVE'
 set -Eeuo pipefail
 state="${SET_LIVRE_TEST_STATE:?}"
 destination="${!#}"
+if [[ ${destination} == "/opt/set-livre/current" && ! -e "$state/apps-stopped" ]]; then
+  touch "$state/link-with-apps-running"
+  exit 1
+fi
 if [[ ${SET_LIVRE_TEST_PHASE:-} == "symlink" \
   && ${destination} == "/opt/set-livre/current" \
   && ! -e "$state/symlink-once" ]]; then
@@ -1126,7 +1390,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v9 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v11 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 sudo cp /etc/nginx/sites-available/set-livre "$temporary_directory/effective-nginx-site"
@@ -1210,11 +1474,23 @@ grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacio
   || fail "preflight SSH recusou enablement systemd por motivo inesperado."
 sudo systemctl enable set-livre-application-start.service
 
+sudo systemctl disable set-livre-media-cleanup.timer
+if preflight_media_cleanup_enablement_output="$(
+  sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
+    "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null 2>&1
+)"; then
+  fail "preflight SSH aceitou timer de cleanup desabilitado."
+fi
+grep --fixed-strings 'units efetivas do systemd divergiram dos arquivos operacionais instalados' \
+  <<< "$preflight_media_cleanup_enablement_output" >/dev/null \
+  || fail "preflight SSH recusou enablement do cleanup por motivo inesperado."
+sudo systemctl enable set-livre-media-cleanup.timer
+
 preflight_recovered_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_recovered_output} == set-livre-deploy-ready-v9 ]] \
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v11 ]] \
   || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {
@@ -1225,9 +1501,11 @@ package_candidate() {
   candidate_backoffice_environment="$temporary_directory/backoffice-${candidate_sha}.env"
   rm -rf -- "$candidate_directory"
   mkdir -p \
-    "$candidate_directory/web" \
+    "$candidate_directory/web/runtime" \
     "$candidate_directory/backoffice/apps/backoffice"
   install -m 0644 /dev/null "$candidate_directory/web/server.js"
+  install -m 0644 "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
+    "$candidate_directory/web/runtime/invoke-media-cleanup.mjs"
   install -m 0644 /dev/null "$candidate_directory/backoffice/apps/backoffice/server.js"
   # Prova que o produtor materializa inodes compartilhados sem relaxar o extrator.
   ln -- "$candidate_directory/web/server.js" \
@@ -1243,8 +1521,10 @@ package_candidate() {
     --create --file=- --directory "$candidate_directory" . \
     | gzip --best --no-name > "$candidate_archive"
   candidate_checksum="$(sha256sum "$candidate_archive" | cut -d ' ' -f 1)"
-  write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL"
-  write_fixture_environment "$candidate_backoffice_environment" "$PRODUCTION_BACKOFFICE_APP_URL"
+  write_fixture_environment "$candidate_web_environment" "$PRODUCTION_PUBLIC_APP_URL" "" \
+    "$fixture_supabase_secret_key"
+  write_fixture_environment "$candidate_backoffice_environment" \
+    "$PRODUCTION_BACKOFFICE_APP_URL" "$fixture_runtime_unlock_key"
   candidate_runtime_environment_digest="$(
     fixture_runtime_environment_digest \
       "$candidate_web_environment" "$candidate_backoffice_environment"
@@ -1421,14 +1701,32 @@ assert_current_release() {
     || fail "marcador de rollback permaneceu depois de estado terminal."
 }
 
+assert_cleanup_activation_order() {
+  local violation
+  for violation in cleanup-with-apps-running apps-before-cleanup link-with-apps-running; do
+    [[ ! -e "$test_state/$violation" ]] \
+      || fail "ordem insegura de ativação detectada: ${violation}."
+  done
+}
+
 recover_services_successfully() {
   local expected="$1"
+  rm -f -- \
+    "$test_state/media-cleanup-timer-active" \
+    "$test_state/media-cleanup-timer-skipped"
   sudo env \
     PATH="$fake_bin:$PATH" \
     SET_LIVRE_TEST_PHASE=success \
     SET_LIVRE_TEST_STATE="$test_state" \
     bash "$REPOSITORY_ROOT/ops/deploy-release.sh" --recover-services
   assert_current_release "$expected"
+  assert_cleanup_activation_order
+  grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
+    "$test_state/systemctl.log" >/dev/null \
+    || fail "recuperação terminal não reativou o timer de cleanup."
+  [[ -e ${test_state}/media-cleanup-timer-active \
+    && ! -e ${test_state}/media-cleanup-timer-skipped ]] \
+    || fail "recuperação terminal aceitou timer condicionado como se estivesse ativo."
   ! privileged_path_exists /etc/set-livre/bootstrap-in-progress.sha256 \
     || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }
@@ -1444,6 +1742,7 @@ run_expected_failure() {
   if invoke_candidate "$candidate_sha" "$phase"; then
     fail "falha injetada em ${phase} foi aceita como sucesso."
   fi
+  assert_cleanup_activation_order
   if [[ -z ${expected_current} ]]; then
     ! privileged_path_exists /opt/set-livre/current \
       || fail "primeira ativação falha deixou release ativa."
@@ -1459,6 +1758,9 @@ run_expected_failure() {
 }
 
 initial_failure_sha="$(printf '0%.0s' {1..40})"
+run_expected_failure "$initial_failure_sha" media-cleanup ""
+! grep --quiet '^apps-start ' "$test_state/activation.log" \
+  || fail "primeira ativação iniciou apps apesar do cleanup falho."
 run_expected_failure "$initial_failure_sha" services ""
 
 stale_staging_sha="$(printf 'd%.0s' {1..40})"
@@ -1498,6 +1800,24 @@ grep --fixed-strings 'contrato atual dos ambientes divergiu da release staged' \
   || fail "reuso com contrato de runtime divergente falhou por motivo inesperado."
 invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate
 assert_current_release "$release_sha"
+assert_cleanup_activation_order
+cmp --silent -- "$REPOSITORY_ROOT/ops/runtime/invoke-media-cleanup.mjs" \
+  /opt/set-livre/current/web/runtime/invoke-media-cleanup.mjs \
+  || fail "release ativa não contém o invocador de cleanup revisado."
+for expected_stop in \
+  'stop set-livre-media-cleanup.timer' \
+  'stop set-livre-application-start.service' \
+  'stop set-livre-media-cleanup.service'; do
+  grep --fixed-strings --line-regexp "$expected_stop" \
+    "$test_state/systemctl.log" >/dev/null \
+    || fail "ativação não bloqueou toda a cadeia periódica: ${expected_stop}."
+done
+grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.service' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "ativação não executou o cleanup inicial."
+grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
+  "$test_state/systemctl.log" >/dev/null \
+  || fail "ativação não reativou o timer de cleanup."
 ! privileged_path_exists "$stale_staging_directory" \
   || fail "staging residual validado não foi removido antes da ativação."
 [[ $(sudo stat --format '%i' /opt/set-livre/current/web/server.js) \
@@ -1519,7 +1839,9 @@ package_candidate "$staged_tamper_sha"
 upload_candidate "$staged_tamper_sha"
 invoke_candidate_through_forced_command "$staged_tamper_sha" "$candidate_checksum"
 printf 'adulteração entre stage e activate\n' \
-  | sudo tee "/opt/set-livre/releases/${staged_tamper_sha}/web/server.js" >/dev/null
+  | sudo tee \
+    "/opt/set-livre/releases/${staged_tamper_sha}/web/runtime/invoke-media-cleanup.mjs" \
+    >/dev/null
 if staged_tamper_output="$(
   invoke_candidate_through_forced_command \
     "$staged_tamper_sha" "$candidate_checksum" success activate 2>&1
@@ -1595,6 +1917,20 @@ run_expected_failure "$(printf '2%.0s' {1..40})" symlink "$release_sha"
 run_expected_failure "$(printf '3%.0s' {1..40})" services "$release_sha"
 run_expected_failure "$(printf '4%.0s' {1..40})" internal-health "$release_sha"
 run_expected_failure "$(printf '5%.0s' {1..40})" public-health "$release_sha"
+run_expected_failure "$(printf 'f%.0s' {1..40})" media-cleanup "$release_sha"
+! grep --quiet "^apps-start $(printf 'f%.0s' {1..40})$" "$test_state/activation.log" \
+  || fail "candidata iniciou apps apesar do cleanup falho."
+grep --quiet "^apps-start ${release_sha}$" "$test_state/activation.log" \
+  || fail "rollback não reiniciou a release anterior após cleanup bem-sucedido."
+run_expected_failure "$(printf 'f%.0s' {1..40})" media-cleanup-always "$release_sha" retained
+! grep --quiet '^apps-start ' "$test_state/activation.log" \
+  || fail "cleanup falho na candidata e no rollback permitiu iniciar apps."
+[[ -e "$test_state/apps-stopped" ]] \
+  || fail "cleanup falho no rollback não manteve apps parados."
+recover_services_successfully "$release_sha"
+run_expected_failure "$(printf 'f%.0s' {1..40})" stop-apps "$release_sha"
+! grep --quiet "^cleanup-start $(printf 'f%.0s' {1..40})$" "$test_state/activation.log" \
+  || fail "falha ao parar apps permitiu trocar o link e executar cleanup da candidata."
 rollback_public_sha="$(printf 'e%.0s' {1..40})"
 run_expected_failure "$rollback_public_sha" rollback-public-health "$release_sha" retained
 [[ -e "$test_state/rollback-public-health-observed" ]] \

@@ -11,6 +11,13 @@ import {
   resolveAccountLoginReturnTarget,
 } from "../../src/domains/identity/components/login-session-transition";
 
+const studioEditorReturnTarget =
+  "/dono/estudios/11111111-1111-4111-8111-111111111111/dados" as const;
+const studioMediaReturnTarget =
+  "/dono/estudios/11111111-1111-4111-8111-111111111111/midia" as const;
+const studioPublicationReturnTarget =
+  "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao" as const;
+
 describe("ambiguous login session transition", () => {
   it.each([
     "AUTH_SESSION_RECHECK_REQUIRED",
@@ -30,7 +37,7 @@ describe("ambiguous login session transition", () => {
     },
   );
 
-  it("redacts ephemeral credentials, form and caches before the authoritative reload", () => {
+  it("redacts client state and closes the boundary before the authoritative reload", () => {
     const calls: string[] = [];
     const handled = handleAmbiguousLoginTransportError(
       new IdentityApiError("RESPONSE_INVALID", "Erro seguro."),
@@ -47,8 +54,83 @@ describe("ambiguous login session transition", () => {
     expect(calls).toEqual([
       "clear-ref",
       "redact-form",
-      "hide-session-boundary",
       "clear-cache",
+      "hide-session-boundary",
+      "reload-ssr",
+    ]);
+  });
+
+  it("still reloads authoritatively when private cache redaction throws", () => {
+    const cacheError = new Error("cache clear failed");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => calls.push("hide-session-boundary"),
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => {
+          calls.push("clear-cache");
+          throw cacheError;
+        },
+        reloadAuthoritativeSession: () => calls.push("reload-ssr"),
+      }),
+    ).toThrow(cacheError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "clear-cache",
+      "hide-session-boundary",
+      "reload-ssr",
+    ]);
+  });
+
+  it("keeps the client fail-closed when the browser rejects the reload request", () => {
+    const reloadError = new Error("reload rejected");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => calls.push("hide-session-boundary"),
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => calls.push("clear-cache"),
+        reloadAuthoritativeSession: () => {
+          calls.push("reload-ssr");
+          throw reloadError;
+        },
+      }),
+    ).toThrow(reloadError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "clear-cache",
+      "hide-session-boundary",
+      "reload-ssr",
+    ]);
+  });
+
+  it("still reloads authoritatively when closing the React boundary throws", () => {
+    const transitionError = new Error("boundary transition failed");
+    const calls: string[] = [];
+
+    expect(() =>
+      handleAmbiguousLoginTransportError(new IdentityApiError("RESPONSE_INVALID", "Erro seguro."), {
+        beginSessionTransition: () => {
+          calls.push("hide-session-boundary");
+          throw transitionError;
+        },
+        clearEphemeralCredentials: () => calls.push("clear-ref"),
+        hideAndResetCredentialForm: () => calls.push("redact-form"),
+        redactPrivateCaches: () => calls.push("clear-cache"),
+        reloadAuthoritativeSession: () => calls.push("reload-ssr"),
+      }),
+    ).toThrow(transitionError);
+    expect(calls).toEqual([
+      "clear-ref",
+      "redact-form",
+      "clear-cache",
+      "hide-session-boundary",
       "reload-ssr",
     ]);
   });
@@ -73,8 +155,8 @@ describe("ambiguous login session transition", () => {
     expect(calls).toEqual([
       "clear-ref",
       "redact-form",
-      "hide-session-boundary",
       "clear-cache",
+      "hide-session-boundary",
       "reload-ssr",
     ]);
   });
@@ -117,14 +199,32 @@ describe("ambiguous login session transition", () => {
     expect(loginSessionVerificationPath("/dono/recebimentos")).toBe(
       "/entrar?entrada=verificar&retorno=%2Fdono%2Frecebimentos",
     );
+    expect(loginSessionVerificationPath("/dono/estudios/novo")).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2Fnovo",
+    );
+    expect(loginSessionVerificationPath(studioEditorReturnTarget)).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fdados",
+    );
+    expect(loginSessionVerificationPath(studioMediaReturnTarget)).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fmidia",
+    );
+    expect(loginSessionVerificationPath(studioPublicationReturnTarget)).toBe(
+      "/entrar?entrada=verificar&retorno=%2Fdono%2Festudios%2F11111111-1111-4111-8111-111111111111%2Fpublicacao",
+    );
   });
 
-  it.each(["/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"] as const)(
-    "accepts the exact login return target %s",
-    (target) => {
-      expect(resolveAccountLoginReturnTarget(target)).toBe(target);
-    },
-  );
+  it.each([
+    "/conta",
+    "/conta/seguranca",
+    "/dono",
+    "/dono/recebimentos",
+    "/dono/estudios/novo",
+    studioEditorReturnTarget,
+    studioMediaReturnTarget,
+    studioPublicationReturnTarget,
+  ] as const)("accepts the exact login return target %s", (target) => {
+    expect(resolveAccountLoginReturnTarget(target)).toBe(target);
+  });
 
   it.each([
     "https://attacker.example/dono",
@@ -132,6 +232,22 @@ describe("ambiguous login session transition", () => {
     "/dono?next=https://attacker.example",
     "/dono/../conta",
     "/dono%2Frecebimentos",
+    "/dono/estudios/not-a-uuid/dados",
+    "/dono/estudios/not-a-uuid/midia",
+    `${studioEditorReturnTarget}?next=https://attacker.example`,
+    `${studioEditorReturnTarget}#private`,
+    `${studioMediaReturnTarget}?next=https://attacker.example`,
+    `${studioPublicationReturnTarget}?next=https://attacker.example`,
+    `${studioPublicationReturnTarget}#private`,
+    `${studioPublicationReturnTarget}/../dados`,
+    "/dono/estudios/11111111-1111-4111-8111-111111111111%2Fdados",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados/../novo",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111\\dados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/midia",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/publicacao",
+    "/dono/estudios/not-a-uuid/publicacao",
+    "https://attacker.example/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao",
     ["/dono"],
     undefined,
   ])("rejects a non-allowlisted login return target: %s", (target) => {
@@ -149,6 +265,7 @@ describe("ambiguous login session transition", () => {
     );
 
     expect(loginMutation).toContain("handleAmbiguousLoginTransportError(error");
+    expect(loginMutation).toContain("beginSessionTransition: onSessionTransition");
     expect(loginMutation).toContain("pendingLogin.current = undefined;");
     expect(loginMutation).toContain("hideAndResetLoginCredentialForm(formRef.current);");
     expect(loginMutation).toContain(

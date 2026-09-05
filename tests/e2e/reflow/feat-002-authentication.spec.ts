@@ -8,8 +8,6 @@ import {
 } from "../../helpers/feat-002-authentication";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
-test.use({ screenshot: "off", trace: "off", video: "off" });
-
 function createDeferredSignal() {
   let resolve: () => void = () => {
     throw new Error("O sinal assíncrono do cenário de reflow não foi inicializado.");

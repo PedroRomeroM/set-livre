@@ -40,6 +40,14 @@ describe("API route facade", () => {
     expect(() => assertTrustedRequestOrigin(hostileRequestHost)).toThrow("origem");
   });
 
+  it("normalizes valid route UUIDs and rejects invalid identifiers", async () => {
+    const { canonicalRouteUuid } = await import("../../src/lib/server/api-route");
+    expect(canonicalRouteUuid("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")).toBe(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+    expect(canonicalRouteUuid("not-a-uuid")).toBeNull();
+  });
+
   it("requires proxy-authenticated host and protocol in production", async () => {
     const { assertTrustedRequestOrigin } = await import("../../src/lib/server/api-route");
     process.env.APP_ENV = "production";
@@ -120,6 +128,37 @@ describe("API route facade", () => {
     expect(response.status).toBe(503);
     expect(serialized).not.toContain("sensitive");
     expect(serialized).not.toContain("postgresql");
+  });
+
+  it("publishes the publication action and incomplete-submission error through allowlists", async () => {
+    const { ApiRouteError, apiErrorResponse, writeSafeOperationalEvent } =
+      await import("../../src/lib/server/api-route");
+    const requestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    expect(() =>
+      writeSafeOperationalEvent({
+        action: "studio.publication.read",
+        durationMs: 12.4,
+        event: "studio.request",
+        outcome: "accepted",
+        requestId,
+        status: 200,
+      }),
+    ).not.toThrow();
+    expect(output.mock.calls.map(([chunk]) => String(chunk)).join("\n")).toContain(
+      '"action":"studio.publication.read"',
+    );
+
+    const response = apiErrorResponse(
+      new ApiRouteError(422, "STUDIO_SUBMISSION_INCOMPLETE", "Complete os campos obrigatórios."),
+      requestId,
+    );
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "STUDIO_SUBMISSION_INCOMPLETE", requestId },
+    });
+    output.mockRestore();
   });
 
   it("trusts only one proxy-authenticated network address in production", async () => {

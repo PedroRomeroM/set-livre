@@ -3,13 +3,14 @@ import { resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
-import { safeE2EEnvironment as safeEnvironment } from "./tests/helpers/e2e-environment";
+import { readSafeE2EEnvironment } from "./tests/helpers/e2e-environment";
 import {
   createPlaywrightNextCommand,
   createPlaywrightWebServerEnvironmentOverlay,
 } from "./tests/helpers/playwright-web-server";
 
 const repositoryRoot = import.meta.dirname;
+const safeEnvironment = readSafeE2EEnvironment();
 const publicBaseUrl = safeEnvironment.publicBaseUrl;
 const backofficeBaseUrl = safeEnvironment.backofficeBaseUrl;
 const browserProcessEnvironment = createBrowserProcessEnvironment(process.env);
@@ -19,14 +20,14 @@ const applicationEnvironment = (appUrl: string) => ({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: safeEnvironment.supabaseAnonKey,
   NEXT_PUBLIC_SUPABASE_URL: safeEnvironment.supabaseUrl,
 });
-const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
-  process.env,
-  applicationEnvironment(publicBaseUrl),
-);
-const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(
-  process.env,
-  applicationEnvironment(backofficeBaseUrl),
-);
+const publicWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env, {
+  ...applicationEnvironment(publicBaseUrl),
+  SUPABASE_SECRET_KEY: safeEnvironment.supabaseSecretKey,
+});
+const backofficeWebServerEnvironment = createPlaywrightWebServerEnvironmentOverlay(process.env, {
+  ...applicationEnvironment(backofficeBaseUrl),
+  BACKOFFICE_RUNTIME_UNLOCK_KEY: safeEnvironment.backofficeRuntimeUnlockKey,
+});
 const posixGracefulWebServerShutdown = {
   gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
 } satisfies {
@@ -43,6 +44,14 @@ export default defineConfig({
   outputDir: ".artifacts/test-results",
   preserveOutput: "failures-only",
   projects: [
+    {
+      name: "contract-chromium",
+      testMatch: /contract\/.*\.spec\.ts/,
+      use: {
+        browserName: "chromium",
+        viewport: { height: 900, width: 1440 },
+      },
+    },
     {
       name: "desktop-chromium",
       testMatch: /(?:smoke|regression)\/.*\.spec\.ts/,

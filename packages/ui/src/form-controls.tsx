@@ -105,6 +105,12 @@ export function Select({ className, ...selectProps }: SelectProps) {
   );
 }
 
+export type TextareaProps = ComponentPropsWithRef<"textarea">;
+
+export function Textarea({ className, ...textareaProps }: TextareaProps) {
+  return <textarea {...textareaProps} className={joinClassNames(styles.textarea, className)} />;
+}
+
 export type CheckboxProps = Omit<ComponentPropsWithRef<"input">, "children" | "type"> & {
   description?: ReactNode;
   label: ReactNode;

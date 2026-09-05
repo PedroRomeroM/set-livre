@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -47,6 +48,60 @@ describe("identity session security", () => {
     expect(() => readSupabaseEnvironment()).toThrow("origens HTTP IPv4 literais");
     vi.unstubAllEnvs();
   });
+
+  it("accepts a dedicated server secret and rejects a publishable key at the trusted boundary", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://setlivre.example");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "sb_publishable_public_contract_key");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://supabase.setlivre.example");
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_secret_server_only_contract_key");
+    const { readTrustedSupabaseEnvironment } = await import("../../src/lib/supabase/config");
+
+    expect(readTrustedSupabaseEnvironment()).toEqual({
+      secretKey: "sb_secret_server_only_contract_key",
+      supabaseOrigin: "https://supabase.setlivre.example",
+    });
+    vi.stubEnv("SUPABASE_SECRET_KEY", "sb_publishable_public_contract_key");
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("server-only");
+    const anonJwt = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url"),
+      "synthetic-signature",
+    ].join(".");
+    vi.stubEnv("SUPABASE_SECRET_KEY", anonJwt);
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("server-only");
+    const legacyServiceRoleJwt = [
+      Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url"),
+      "synthetic-signature",
+    ].join(".");
+    vi.stubEnv("SUPABASE_SECRET_KEY", legacyServiceRoleJwt);
+    expect(() => readTrustedSupabaseEnvironment()).toThrow("moderna");
+    vi.unstubAllEnvs();
+  });
+
+  it.each(["local", "test"] as const)(
+    "accepts the Supabase CLI service_role key only in the exact %s runtime",
+    async (appEnvironment) => {
+      const legacyServiceRoleJwt = [
+        Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url"),
+        Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url"),
+        "synthetic-signature",
+      ].join(".");
+      vi.stubEnv("APP_ENV", appEnvironment);
+      vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://127.0.0.1:3000");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "local-anon-key");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+      vi.stubEnv("SUPABASE_SECRET_KEY", legacyServiceRoleJwt);
+      const { readTrustedSupabaseEnvironment } = await import("../../src/lib/supabase/config");
+
+      expect(readTrustedSupabaseEnvironment()).toEqual({
+        secretKey: legacyServiceRoleJwt,
+        supabaseOrigin: "http://127.0.0.1:54321",
+      });
+      vi.unstubAllEnvs();
+    },
+  );
 
   it.each(["development", "production"] as const)(
     "rejects plaintext Auth origins in %s",
@@ -123,7 +178,13 @@ describe("identity mutation cache security", () => {
     expect(content.match(/mutation\.mutate\(\);/gu)).toHaveLength(2);
     expect(content).toContain("pendingRecoveryEmail.current = undefined;");
     expect(content).toContain("pendingRecoveryPassword.current = undefined;");
-    expect(content.match(/networkMode: "always"/gu)).toHaveLength(2);
+    const credentialMutations = content.split("const mutation = useMutation").slice(1);
+    expect(credentialMutations).toHaveLength(2);
+    for (const declaration of credentialMutations) {
+      const submitStart = declaration.indexOf("function submit");
+      expect(submitStart).toBeGreaterThan(0);
+      expect(declaration.slice(0, submitStart)).toContain('networkMode: "always"');
+    }
     expect(content).not.toMatch(/mutation\.mutate\((?:parsed\.data|password|email)/u);
   });
 
@@ -199,6 +260,16 @@ describe("identity mutation cache security", () => {
     expect(content).toContain("observedScopeChanged");
     expect(content).toContain("identitySessionForScope(await readIdentitySession(), sessionScope)");
     expect(content).toContain("sessionQuery.error instanceof IdentitySessionScopeChangedError");
+    expect(content).toContain('import { flushSync } from "react-dom";');
+    const committedTransition = content.slice(
+      content.indexOf("const beginSessionTransition = useCallback"),
+      content.indexOf("const sessionScope ="),
+    );
+    expect(committedTransition).toContain("flushSync(() => {");
+    expect(committedTransition.indexOf("flushSync(() => {")).toBeLessThan(
+      committedTransition.indexOf("setSessionTransitionStarted(true);"),
+    );
+    expect(content.match(/onSessionTransition=\{beginSessionTransition\}/gu)).toHaveLength(2);
     expect(content).toContain("setSessionTransitionStarted(true);");
     expect(content).toContain("queryClient.clear();");
     expect(content).toContain(
@@ -255,7 +326,7 @@ describe("identity mutation cache security", () => {
     );
     const specs = [
       "tests/e2e/critical/feat-002-authentication.spec.ts",
-      "tests/e2e/regression/feat-002-authentication.spec.ts",
+      "tests/e2e/contract/feat-002-authentication.spec.ts",
       "tests/e2e/reflow/feat-002-authentication.spec.ts",
     ]
       .map((fileName) => readFileSync(resolve(process.cwd(), fileName), "utf8"))
@@ -263,10 +334,13 @@ describe("identity mutation cache security", () => {
 
     expect(helper).toContain("const staging = await control.evaluate(");
     expect(helper).toContain("element.ownerDocument.defaultView?.HTMLInputElement");
-    expect(helper).toContain('element.name !== "password"');
-    expect(helper).toContain('element.name !== "confirmPassword"');
+    expect(helper).toContain(
+      'allowedControlNames: readonly string[] = ["password", "confirmPassword"]',
+    );
+    expect(helper).toContain("!input.allowedControlNames.includes(element.name)");
+    expect(helper).toContain("{ allowedControlNames: [...allowedControlNames], secret: password }");
     expect(helper).toMatch(/element\.form\.addEventListener\(\s*"formdata"/u);
-    expect(helper).toContain("event.formData.set(name, secret);");
+    expect(helper).toContain("event.formData.set(name, input.secret);");
     expect(helper).toContain("{ once: true }");
     expect(helper).not.toMatch(/\.value\s*=\s*(?:password|secret)/u);
     expect(helper).not.toContain("Object.getOwnPropertyDescriptor");

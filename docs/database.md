@@ -13,21 +13,36 @@
 - Índices não estruturais exigem evidência.
 - Schema snapshot e tipos são gerados.
 
-### 1.1 Estado implementado até a FEAT-004
+### 1.1 Estado versionado atual
 
-A árvore possui a baseline inicial `20260824000100` e a migration append-only
-`20260828174500_default_production_dal_role`, que é o head atual. Antes do primeiro deploy, enquanto o
-projeto Supabase de produção ainda não possuía migrations, tabelas ou usuários da aplicação, as 16
-migrations locais de construção foram consolidadas uma única vez pelo squash oficial schema-only do
-Supabase CLI. O preâmbulo versionado preserva roles globais e ACLs de banco, que não fazem parte do
-dump de schema. Quatro suítes pgTAP cobrem baseline/isolamento, identidade e núcleo legal, perfil e
-dono/recebedor.
+A árvore versionada começa na baseline `20260824000100`, define a role de produção em
+`20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
+migrations append-only. A migration mais recente deste recorte é
+`20260905190840_bind_studio_command_results`, criada depois de
+`20260905163830_renew_media_cleanup_replay_leases`; uma feature nova nunca é inserida antes de uma
+migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
+ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
+consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
+preserva roles globais e ACLs de banco, que não fazem parte do dump de schema. O runner executa setup
+idempotente e suítes pgTAP para baseline/isolamento, identidade/legal, perfil, dono/recebedor,
+estúdios, mídia, publicação e backoffice; as quantidades são derivadas pelos gates, não documentadas.
 
 A baseline implementada inclui:
 
 - schemas `private` e `audit`, `app_dal NOLOGIN NOINHERIT`, grants mínimos e RLS;
 - identidade mínima, termos/aceites, recovery one-shot e perfil privado;
 - autoridade do dono, estado do recebedor, idempotência e correlação de auditoria;
+- núcleo de estúdio/revisão, taxonomias ativas, conteúdo comercial, concorrência otimista, ownership e
+  descarte seguro;
+- mídia privada cuja finalização é serializada antes do processamento externo e cuja reserva persistida
+  é terminalizada como `superseded` antes de um conflito de revisão autorizar nova preparação,
+  liberando a quota sem depender da versão corrente;
+- workflow editorial do dono com checklist autoritativo, revisão pendente imutável, pausa/retomada,
+  idempotência, outbox mínima e versão de publicação independente;
+- usuários administrativos, binding curto de sessão, papéis `support/reviewer/admin`, PII temporária,
+  taxonomias versionadas, revisão/moderação editorial, idempotência e auditoria redigida;
+- relógio lógico monotônico no binding administrativo e nos dez pares `created_at/updated_at` do
+  domínio, preservado no banco mesmo quando o relógio de parede do host sofre uma correção regressiva;
 - read models públicos `security invoker` sob `auth.uid()`;
 - comandos privados `security definer` com `search_path = ''`;
 - `app_runtime_production NOLOGIN` preparado para ativação administrativa e limite de dez conexões;
@@ -65,7 +80,9 @@ expand/contract. O deploy mantém a barreira mais forte: depois do `db push` e a
 validar o login, o provisionador exige que o maior head remoto seja exatamente o head compilado pelo
 candidato. Assim, compatibilidade operacional não permite publicar schema divergente.
 
-`npm run supabase:lint` executa o linter oficial com warnings fatais. `npm run supabase:generate`
+`npm run supabase:lint` executa o linter oficial com warnings fatais sobre os schemas próprios
+`public`, `private` e `audit`; extensões de terceiros, incluindo pgTAP, não são atribuídas à aplicação.
+`npm run supabase:generate`
 recria o snapshot SQL e os tipos em temporários irmãos, valida o formato e publica por rename
 atômico. `npm run test:db` executa pgTAP e compara ambos com a geração atual. Falha preserva os
 arquivos rastreados anteriores e não deixa saída parcial.
@@ -119,6 +136,7 @@ create schema if not exists audit;
 | `tax_id_masked`              | text        | generated; revela somente os dois DVs                                  |
 | `additional_document_masked` | text        | generated; revela somente os dois últimos caracteres                   |
 | `profile_version`            | bigint      | versão otimista monotônica, inicia em zero                             |
+| `account_version`            | bigint      | versão independente do status da conta, inicia em zero                 |
 | `completed_at`               | timestamptz | nulo enquanto os dados pessoais crus são nulos; imutável após concluir |
 | `created_at`                 | timestamptz | UTC                                                                    |
 | `updated_at`                 | timestamptz | UTC, mantido por trigger                                               |
@@ -154,12 +172,53 @@ Nome, telefone e documentos continuam canônicos em `profiles`; esta tabela não
 ### 4.3 `platform_roles`
 
 - `user_id`;
-- `role`: `reviewer/support/finance/admin`;
+- `role`: `support/reviewer/admin` no recorte implementado;
 - `granted_by`;
 - `created_at`;
 - PK `(user_id, role)`.
 
-Sem escrita pelo browser.
+Sem escrita pelo browser. `reviewer` é consumido exclusivamente pela revisão editorial; `finance`
+continua ausente até sua feature proprietária. O primeiro
+admin usa o bootstrap privado one-shot; depois disso, somente admin com autenticação recente altera
+papéis, e a salvaguarda transacional mantém ao menos um admin ativo. Um trigger em toda concessão ou
+revogação incrementa `profiles.account_version`; essa versão opaca invalida sessão/clientes sem publicar
+o conjunto de papéis no browser. Uma concessão nova exige `profiles.status = 'active'` e
+`completed_at` preenchido na própria função transacional; revogações permanecem disponíveis para
+reduzir privilégios mesmo quando a conta perdeu elegibilidade.
+
+#### `private.backoffice_sessions`
+
+Binding por `auth_session_id`, usuário, abertura, último uso, expiração absoluta e fechamento. A
+sessão expira após 30 minutos de inatividade ou oito horas, respeita a sessão Auth canônica e exige
+login feito nos últimos cinco minutos para gestão de papéis. Remoção de todos os papéis ou suspensão
+fecha bindings existentes. `private.backoffice_session_context(..., p_required_role,
+p_require_strong_authentication, p_touch_activity)` exige `support`, `reviewer` ou `admin` na própria
+fachada; `admin` substitui os dois papéis operacionais somente por regra explícita. O valor especial
+`backoffice` valida apenas a existência de algum papel para abrir/reler a sessão. O último argumento separa
+revalidação passiva de atividade real: `get_backoffice_session` passa `false`, enquanto leituras
+operacionais e comandos passam `true`. A revalidação passiva mantém `FOR SHARE` na binding: leituras
+simultâneas da mesma sessão não se serializam, mas fechamento concorrente ainda espera o snapshot
+terminar. Caminhos que renovam `last_seen_at` preservam `FOR UPDATE`.
+
+#### `private.backoffice_command_requests`
+
+Ledger idempotente por ator + chave. Guarda action, hash de payload, alvo e hash do resultado
+autoritativo. Para revelação de PII, não guarda valor nem hash reutilizável: conserva somente versões
+canônicas de perfil/Auth para recusar replay stale. RLS fica habilitada sem policy e sem grant web.
+Confirmações de status, papéis, taxonomias e decisão de estúdio acrescentam `action`,
+`idempotencyKey` e `scope` lidos da tentativa persistida, após a verificação do resultado canônico.
+Esses campos não alteram os hashes históricos do resultado; o hash do payload continua vinculando
+a chave à intenção completa, incluindo papel, motivo e versão esperada. DAL e consumidor validam
+essa identidade antes de aceitar a confirmação, conforme o contrato HTTP abaixo.
+`private.reveal_backoffice_user_pii` compõe o eco de tentativa pela action desse ledger e pela
+chave/motivo do evento `audit.events` bem-sucedido do mesmo ator/alvo, tanto na primeira execução
+quanto no replay. A unicidade existente de ação/alvo/chave limita essa leitura; não há novo índice,
+coluna nem cópia de PII. Evento ausente ou motivo divergente falha fechado. O `request_id` de um
+replay pode mudar sem alterar a identidade auditada. O contrato HTTP fica em
+[`api-contracts.md`](api-contracts.md#57-adminbackoffice).
+Essa alteração de JSON é incompatível com o consumidor estrito anterior: rollback exige código
+compatível com o eco auditado ou nova migration corretiva forward-only, nunca remoção manual dos
+campos nem edição da migration aplicada.
 
 ### 4.4 `terms_versions`
 
@@ -185,41 +244,48 @@ Sem escrita pelo browser.
 
 ### 4.6 Taxonomias
 
-`studio_types`, `amenities`, `tags`:
+O recorte implementado possui `studio_types`, `tags` e `amenities`, todos com:
 
 - UUID;
 - nome;
 - slug;
-- descrição curta;
 - `active`;
 - `sort_order`;
 - timestamps;
 - slug único.
 
-Browser lê ativos; somente backoffice altera via comando.
+Quatro tipos, oito tags e oito comodidades mínimas são seedados deterministicamente. Browser
+autenticado recebe somente opções ativas para novas escolhas por `list_active_studio_types()` e
+`list_active_studio_taxonomies()`. As policies também conservam legíveis tipo, tags e comodidades
+arquivados quando são referenciados por revisão pertencente ao `auth.uid()`, permitindo abrir o
+histórico sem expor esses itens a outro dono nem aceitá-los em nova mutação. Escrita direta permanece
+revogada. A administração da FEAT-031 usa funções privadas somente para `admin`, versão otimista e
+retorno com contagem de uso. Criar/editar incrementa `taxonomy_version`; arquivar remove novas escolhas
+sem apagar relações históricas, e reativar preserva o histórico.
 
 ### 4.7 `studios`
 
-| Coluna                  | Tipo/Regra                |
-| ----------------------- | ------------------------- |
-| `id`                    | uuid PK                   |
-| `owner_user_id`         | FK profile, not null      |
-| `status`                | check de ciclo            |
-| `published_revision_id` | FK revision null          |
-| `draft_revision_id`     | FK revision null          |
-| `timezone`              | default America/Sao_Paulo |
-| `reservations_enabled`  | boolean                   |
-| `disabled_reason`       | text null                 |
-| `created_at/updated_at` | timestamptz               |
-| `paused_at/disabled_at` | timestamptz null          |
+| Coluna                  | Tipo/Regra                 |
+| ----------------------- | -------------------------- |
+| `id`                    | uuid PK                    |
+| `owner_user_id`         | FK owner profile, not null |
+| `status`                | check de ciclo             |
+| `published_revision_id` | FK revision null           |
+| `draft_revision_id`     | FK revision null           |
+| `publication_version`   | bigint positivo, default 1 |
+| `created_at/updated_at` | timestamptz                |
 
-A FK circular revisão↔estúdio é criada em etapas de migration.
+As FKs de ponteiro são criadas depois das duas tabelas. Um constraint trigger com autoridade interna
+prova ao fim de cada instrução atômica que existe ao menos um ponteiro e que ambos pertencem ao mesmo
+estúdio. O índice parcial garante no máximo uma revisão `draft` por estúdio. A fronteira editorial
+incrementa `publication_version` exatamente uma vez quando status ou ponteiros mudam, deriva
+`changes_pending` ao abrir candidata sobre uma revisão publicada e rejeita saltos de estado ou versão.
 
 ### 4.8 `studio_revisions`
 
 Campos públicos versionados:
 
-- `id`, `studio_id`, `revision_number`;
+- `id`, `studio_id`, `revision_number`, `revision_version`;
 - `status`;
 - `name` 2–120;
 - `description` 20–5000;
@@ -228,14 +294,14 @@ Campos públicos versionados:
 - `state` = PR;
 - `postal_code`;
 - `capacity` 1–500;
-- `rules_text` até 5000;
-- `youtube_video_id` null;
 - `studio_type_id`;
-- `submitted_at`, `reviewed_at`, `reviewed_by`, `review_notes`;
+- `usage_rules` plain text, aparado e limitado a 5.000 caracteres;
+- `youtube_video_id` nulo ou ID allowlisted de 11 caracteres;
 - timestamps;
 - unique `(studio_id, revision_number)`.
 
-Uma revisão submetida/aprovada/rejeitada é imutável por trigger/comando.
+Somente `draft` pode ser atualizada ou removida, e cada atualização incrementa exatamente
+`revision_version`. Revisão `pending`, `approved`, `rejected` ou `superseded` é imutável por trigger.
 
 ### 4.9 Relações da revisão
 
@@ -243,31 +309,180 @@ Uma revisão submetida/aprovada/rejeitada é imutável por trigger/comando.
 - `studio_revision_tags(revision_id, tag_id)`;
 - `studio_faqs(id, revision_id, question, answer, position)`;
 - unique de posição por revisão;
-- limites de 20 FAQs e 20 tags validados no comando.
+- limites de 20 FAQs, 20 tags e 20 comodidades validados no comando;
+- trigger impede escrita nas relações de revisão não draft;
+- ao abrir draft a partir de uma revisão aprovada, colunas, tags, comodidades e FAQs são clonadas na
+  mesma transação antes da alteração solicitada.
+
+RLS permite leitura dessas relações somente ao dono da revisão; grants autenticados são apenas por
+coluna e toda escrita direta permanece revogada. Os comandos privados revalidam taxonomia ativa,
+ownership, fence otimista e idempotência; auditoria registra somente contagens, versão e presença de
+vídeo, nunca regras ou FAQ.
 
 ### 4.10 `studio_media`
 
-- `id`;
-- `studio_id`;
-- `revision_id`;
-- `storage_bucket`;
-- `storage_path`;
-- `mime_type`;
-- `byte_size`;
-- `width`, `height`;
-- `checksum_sha256`;
-- `position`;
-- `is_cover`;
-- `status`: `uploaded/ready/rejected/deleted`;
-- `uploaded_by`;
-- timestamps.
+- identidade: `id`, `studio_id`, `prepared_revision_id`, `uploaded_by`;
+- objeto: bucket privado fixo, `storage_path` original e `preview_storage_path` WebP;
+- declaração: MIME, bytes e SHA-256 opcional recebidos antes do upload;
+- verificação: MIME, bytes, dimensões e SHA-256 autoritativos;
+- ciclo: `pending_upload/ready/rejected/delete_pending/deleted`, primeira emissão confirmada do token,
+  código de rejeição e timestamps;
+- cleanup: instante elegível, tentativas, claim/lease cercado por token, backoff e resultado terminal.
+
+`studio_revision_media(revision_id, media_id, position, is_cover)` mantém a associação versionada. A
+mesma mídia pode permanecer na revisão publicada e no novo draft; posição é contínua de 1 a 20 e o
+índice único parcial admite no máximo uma capa por revisão.
 
 Constraints:
 
-- uma capa ativa por revisão (índice único parcial estrutural);
-- posição única;
-- 1–20 por revisão via comando;
-- path namespaced pelo owner/studio/revision.
+- original e prévia possuem paths únicos e derivados do namespace owner/studio/revision/media;
+- declaração e fatos verificados permanecem imutáveis depois de preenchidos;
+- transições de estado seguem somente o ciclo permitido;
+- relação só pode ser alterada em revisão draft e referencia mídia `ready` do mesmo estúdio;
+- mídia `ready` referenciada por revisão `pending` ou `approved` não pode entrar em `delete_pending`;
+  a exclusão do agregado usa um fence privado da transação/backend, agenda os objetos e elimina o
+  fence por cascade junto do estúdio;
+- no máximo 20 associações ou candidatos pendentes por revisão, sob lock; `rejected` deixa a quota
+  imediatamente, mesmo quando a revisão avançou durante a verificação, porque a transição terminal é
+  cercada por `media_id/studio_id/prepared_revision_id/uploaded_by`, mas preserva o objeto até a janela
+  segura de cleanup;
+- candidato `pending_upload` expirado não consome cota e não pode ser finalizado; renovação cria nova
+  identidade, enquanto o objeto anterior segue para cleanup;
+- remover a última associação agenda o par de objetos para cleanup em vez de apagar linha do Storage.
+
+`confirm_studio_media_upload_token` e `reject_unsigned_studio_media_upload` compartilham o advisory lock
+da mídia e liquidam a fronteira após a chamada externa: confirmação grava a primeira emissão;
+compensação grava `upload_token_signing_failed`, libera cota e agenda cleanup imediato somente quando
+nenhuma emissão foi confirmada. O helper genérico de rejeição continua revogado do `app_dal`, e nenhuma
+transação ou conexão permanece presa durante o Storage.
+
+As tabelas não concedem ao browser paths nem escrita direta. O dono elegível lê o JSON estrito apenas
+pela rotina privada do DAL. A única leitura adicional em `storage.objects` é a policy da FEAT-030:
+`authenticated` pode ler um objeto `ready` somente quando `auth.uid()` + `session_id` correspondem a
+uma binding ativa com `reviewer/admin` e a relação pertence à submissão `pending` ainda apontada ou à
+revisão `published` escolhida para moderação/restauração pelo admin. Um draft não submetido nunca
+qualifica. `storage.allow_only_operation('storage.object.sign_many')` limita essa policy à assinatura
+em lote usada pelo servidor; listagem e download autenticado direto continuam sem linhas. Isso permite
+criar URL assinada curta sem liberar listagem ou assinatura arbitrária. O `app_dal` recebe `execute`
+somente no read model, prepare, begin/renew/release do
+claim, fachadas terminalizadoras cercadas e ordem/capa/exclusão. Candidato, replay e mutações internas
+não são invocáveis diretamente. A manutenção expõe ao `service_role` apenas as fachadas RPC estreitas do
+cleanup; `maintenance` permanece inacessível diretamente e nenhuma role da aplicação alcança `net`.
+Cron, `pg_net` e Vault não fazem parte desse fluxo.
+
+`private.studio_media_finalize_claims(owner_user_id, idempotency_key)` é uma única tabela privada que
+registra hash e identidade imutável do comando, revisão esperada, `media_id` único, request mais recente,
+lease de 30 segundos e resultado terminal. Ela não referencia `studios` nem `studio_media`: o tombstone
+sobrevive ao cleanup da identidade mutável e recusa para sempre outra chave sobre a mesma mídia; somente
+a remoção canônica do usuário encerra esse escopo. RLS fica habilitada sem policy e nenhuma role de API
+recebe grant de tabela.
+
+`begin_studio_media_finalize_claim` persiste a chave antes de Storage/Sharp e só devolve o candidato
+validado junto do token cercado. A mesma chave ativa aguarda, com a conexão já devolvida ao pool; lease
+expirada permite takeover com token novo. Outra chave aguarda somente enquanto a primeira está ativa e,
+depois, recebe conflito determinístico. Replay terminal devolve o ledger ou a rejeição persistida sem
+reabrir trabalho externo. O orçamento de 30 segundos cobre até quatro segundos de fila, quinze de
+processamento e margem transacional; o serviço exige ao menos 22 segundos antes de entrar na fila.
+
+Antes do upload da prévia, `renew_studio_media_finalize_claim` estende atomicamente por 30 segundos uma
+lease ainda vigente; token expirado ou substituído não pode ressuscitar. Como o download, Sharp e upload
+compartilham deadline absoluto de 15 segundos, essa janela impede takeover entre a renovação e o commit
+terminal. Begin e fachadas claimed obedecem à ordem global advisory da idempotência → dono → claim →
+revisão/mídia. As fachadas recebem apenas token, request e fatos verificados: owner, estúdio, revisão,
+chave e mídia são derivados da linha sob lock. Finalização grava mídia, associação, ledger e terminal na
+mesma transação; rejeição faz o mesmo com o tombstone correspondente. O DAL libera somente o token atual
+em `finally`; token anterior não afeta takeover. A assinatura das URLs acontece depois dessa liberação,
+sem manter conexão PostgreSQL durante fila, download, Sharp, Storage ou signing.
+
+`maintenance.studio_media_cleanup_runs` registra `run_id`, slug imutável, estado e contagens terminais,
+sem paths ou secrets. `maintenance.studio_media_cleanup_run_items` registra o pertencimento histórico
+imutável de cada mídia ou probe ao run que a reclamou, sem grant para roles da aplicação. O resultado
+só transita de pendente para `deleted` ou `failed`; reutilizar a lease em outro run nunca reatribui o
+item histórico. A criação entra diretamente em `running`; a conclusão é somente
+`succeeded`/`failed`, com replay idêntico e fechamento obrigatório `claimed = deleted + failed`.
+O claim serializa chamadas com o mesmo token por advisory lock transacional antes de ler reservas.
+Assim, um retry cuja primeira transação ainda está confirmando relê o lote e suas tentativas, sem
+reservar outro lote; tokens distintos continuam concorrentes com `SKIP LOCKED`.
+Quando já existe pertencimento histórico, o claim retorna o conjunto original inteiro: membros
+terminais têm somente `mediaId` e `outcome`, e pendentes ainda cercados pelo mesmo token conservam
+paths e tentativa somente depois de renovar atomicamente sua lease de 15 minutos sob lock de linha,
+em ordem estável. O token é revalidado no lock; outro run pula a linha durante a transação e encontra
+a reserva renovada depois do commit. Essa renovação não aumenta tentativas nem muda o instante do
+pertencimento histórico, e também cobre probes. A remoção do token mutável na conclusão não apaga resultados nem autoriza um novo
+lote no mesmo run. O worker contabiliza terminais sem repetir efeitos; lease reassumida por outro
+run bloqueia o replay antigo, mantendo a recuperação por abandono abaixo.
+Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
+ou falha sem sucesso posterior. Ao abrir um novo
+run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu
+`running` além desse limite. As contagens são derivadas exclusivamente do pertencimento histórico do
+run; itens ainda pendentes viram `failed` antes da agregação, preservando
+`claimed = deleted + failed`. Claims e completion tokens mutáveis continuam representando somente o
+estado operacional atual da mídia ou probe; leases vencidos continuam
+elegíveis ao claim seguinte e um sucesso posterior restaura readiness sem edição manual. O canário de deploy usa objetos reais e somente uma
+execução terminal saudável libera a ativação da release; a VM deriva o slug periódico do próprio SHA
+ativo.
+
+#### 4.10.1 Workflow editorial da FEAT-009
+
+`public.studio_review_events` registra fatos `submitted | approved | rejected` por estúdio e revisão.
+O motivo existe somente na rejeição, uma revisão recebe no máximo um fato de cada tipo e uma única
+decisão terminal. `submitted` exige a candidata `pending`, ainda apontada e em estado editorial de
+revisão, com o próprio dono como ator. Uma decisão exige ator não nulo, submissão anterior da mesma
+revisão e `approved | rejected` já refletido na revisão. O dono só pode originar `submitted`; update arbitrário é rejeitado e a única
+mutação interna aceita é anonimizar o ator quando a identidade for removida. A remoção física fica
+restrita ao owner canônico para limpeza transacional de fixtures/contas, sem grant runtime. Cada fato
+recebe `event_sequence bigint identity` única; o read model ordena por essa sequência causal, nunca por
+`occurred_at` ou UUID, e nenhuma role runtime recebe acesso à sequence.
+
+`private.studio_command_requests` continua sendo o único ledger idempotente de estúdio e inclui
+`studio.revision.submit | studio.pause | studio.resume` na allowlist canônica. A PK
+`(owner_user_id, idempotency_key)`, os hashes do payload/resultado e a referência da revisão fazem o
+replay convergir enquanto o resultado autoritativo permanecer idêntico; resultado posterior divergente
+falha como stale e chave reutilizada com payload diferente falha como conflito. Não existe ledger nem
+coluna paralela para duplicar `publication_version`: a versão factual da transição fica na auditoria. A
+tabela usa RLS sem policy e nenhuma role runtime recebe acesso direto.
+
+O submit trava owner/chave, revalida e mantém locks compartilhados determinísticos no tipo, tags e
+comodidades ativos e só então trava estúdio/revisão. Um fence compara as relações antes e depois desses
+locks; arquivamento concorrente espera a submissão concluir, enquanto item já inativo produz
+`studio_submission_incomplete` sem efeito parcial. Depois disso, o comando exige revisão draft atual e
+checklist completo, muda a revisão para `pending`, registra evento, outbox, ledger e auditoria na mesma
+transação e preserva a revisão publicada durante uma reapreciação. O checklist também denuncia
+taxonomia arquivada e exige ao menos uma mídia `ready`, exatamente uma capa e nenhum upload pendente não
+expirado. Pausa e retomada usam `publication_version`; preservam os ponteiros e derivam `published` ou
+`changes_pending` conforme o candidato privado ainda exista.
+
+Os FKs de `studio_review_events` e `email_outbox` para estúdio e revisão usam cascade exclusivamente
+para acompanhar a exclusão do agregado nunca publicado. Assim, descartar a correção criada após uma
+primeira rejeição remove eventos e intenção pendente na mesma transação. O comando nunca exclui um
+estúdio com `published_revision_id`; nesse caso, preserva o histórico e volta ao ponteiro aprovado.
+
+#### 4.10.2 Decisão e moderação da FEAT-030
+
+`studios.disabled_from_status` guarda exclusivamente `published | changes_pending | paused` enquanto o
+estúdio está `disabled`; fora desse estado permanece nulo. A constraint de ponteiros exige publicação
+vigente e conserva a candidata quando a origem era `changes_pending`. Assim, restaurar usa o fato
+persistido, nunca inferência por ponteiro, auditoria ou evento.
+
+`private.list_backoffice_studio_reviews(...)` deriva a fila diretamente de estúdio, ponteiros, revisão e
+sequência causal do evento; pagina por `(event_sequence, studio_id)` e não cria tabela de casos.
+`private.get_backoffice_studio_review(..., p_touch_activity)` escolhe a candidata somente quando ela
+permanece `pending`; em moderação/restauração escolhe exclusivamente `published_revision_id`, sem
+projetar draft privado. O argumento booleano é obrigatório na DAL e permite que polling passivo execute
+a mesma revalidação de binding/papel sem atualizar `last_seen_at`; a chamada operacional usa `true`.
+Depois compõe publicação, checklist, capacidades e paths de mídia somente para assinatura server-side.
+`private.execute_backoffice_studio_command(...)` decide
+ou modera sob lock de estúdio/revisões, fence de versão e ledger idempotente. Aprovação/rejeição usam o
+ID exato da candidata; desativação/restauração exigem admin. Evento editorial, outbox e auditoria entram
+na mesma transação. Aprovação também bloqueia as taxonomias referenciadas e recalcula o checklist antes
+da primeira transição; arquivamento posterior à submissão falha sem publicação, ledger ou fence residual.
+A rejeição clona dados centrais, taxonomias, FAQ e relações de mídia para novo draft sem copiar o objeto
+físico.
+
+Transições temporárias de status de revisão usam `private.studio_review_transition_fences`, vinculadas à
+transação e ao backend, para satisfazer as invariantes dos triggers. O comando remove o fence antes do
+retorno e os testes exigem zero resíduo. Toda alteração de status ou ponteiro continua incrementando
+`publication_version` pelo trigger canônico.
 
 ### 4.11 `owner_payment_recipients`
 
@@ -567,7 +782,12 @@ Snapshot:
 
 ### 4.31 E-mail
 
-`email_outbox`:
+Na FEAT-009, `email_outbox` nasce deliberadamente mínima para a intenção
+`studio.review.submitted`: `studio_id`, `revision_id`, audiência allowlisted
+`studio_reviewers`, deduplicação única, estado `pending` e timestamp. RLS permanece habilitada sem
+policy e sem grants runtime; trigger exige que a mesma revisão possua o evento `submitted`.
+
+A FEAT-029 amplia essa mesma fonte canônica, sem criar outbox paralela, para o contrato operacional:
 
 - id;
 - template_key;
@@ -612,9 +832,49 @@ Snapshot:
 - ip_hash;
 - metadata redigida.
 
-Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.contract_renewed` e `recipient.status_transitioned`. `request_id` correlaciona a request HTTP e `idempotency_key` identifica a tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna privada para replay e não entra em log operacional, DTO ou metadata; payload, requisito bruto, provider e referência externa também não entram na metadata.
+Na FEAT-006, a allowlist acrescenta `studio.created`, `studio.revision_updated` e
+`studio.draft_discarded`; a FEAT-009 acrescenta `studio.revision_submitted`, `studio.paused` e
+`studio.resumed`. `request_id` correlaciona a request HTTP e `idempotency_key` identifica a
+tentativa lógica; a unicidade é `(action, target_id, idempotency_key)`, portanto request ID não
+deduplica domínio. A FK de `actor_user_id` usa `on delete set null`, preservando o fato; o índice
+parcial sobre o ator sustenta a FK sem criar acesso público. A chave idempotente permanece coluna
+privada para replay e não entra em log operacional, DTO de leitura ou metadata; o envelope de comando
+devolve somente a chave da própria tentativa validada. Conteúdo e endereço do estúdio,
+payload, requisito bruto, provider e referência externa também não entram na metadata.
 
 ### 4.34 Idempotência e jobs
+
+Implementado para a FEAT-006, `private.studio_command_requests` usa
+`(owner_user_id, idempotency_key)` como PK e guarda somente action, hashes SHA-256 do payload e do
+resultado JSON exato, IDs e versão resultante ou o tombstone de exclusão. Não replica nome, descrição
+ou endereço. Cada fachada trava a chave lógica, revalida a autoridade corrente antes do replay e
+reconstrói o resultado: hash divergente falha fechado como resultado stale, nunca retorna o estado
+atual como se fosse a resposta original.
+
+`private.bind_studio_command_result(uuid, uuid, jsonb)` vincula o resultado bruto à linha dessa
+mesma PK e retorna somente `{ action, idempotencyKey, result }`. Action e chave vêm do ledger,
+nunca do JSON recebido. A allowlist contém as 13 actions persistidas atuais; somente
+`studio.media.prepare/finalize` viram `studio.media.upload.prepare/finalize` no envelope. As outras
+11 mantêm seus nomes. O hash canônico de `result` deve ser igual ao `result_hash` persistido;
+`result_payload`, quando presente para mídia, também precisa estar íntegro e ser igual ao resultado.
+Nulos, linha ausente, action desconhecida ou divergência falham sem devolver dado, com
+`XX000:studio_command_result_mismatch`. Esse erro interno preserva a incerteza da tentativa no
+serviço; não autoriza tratá-la como conflito definitivo ou trocar a chave após possível commit.
+
+A função é `VOLATILE` para enxergar a gravação da fachada mutante recebida como terceiro argumento
+no mesmo `SELECT`; falha do binding aborta também essa mutação. Na finalização de mídia, a releitura
+pode ocorrer após o commit, sobre o ledger imutável da tentativa. O binding acontece antes de
+assinar upload/previews, sem alterar hashes, payloads ou funções mutantes existentes. Seu único
+grant runtime é `EXECUTE` para `app_dal`, registrado na allowlist consumida pelo readiness; mantém
+owner `postgres` e `security definer` com `search_path = ''`. O servidor passa o usuário da sessão
+autoritativa já validada; o helper não substitui a autorização da fachada nem oferece leitura ao
+browser ou a `service_role`.
+
+Os três comandos editoriais reutilizam esse ledger conforme o
+[workflow da FEAT-009](#4101-workflow-editorial-da-feat-009); não criam tabela, versão nem payload
+paralelos.
+
+Planejado para domínios futuros, `private.idempotency_keys`:
 
 `private.idempotency_keys`:
 
@@ -631,7 +891,7 @@ Na FEAT-004, a tabela é append-only e aceita somente `owner.activated`, `owner.
 
 ## 5. Read models
 
-Implementados nas FEAT-002/003/004:
+Implementados nas FEAT-002/003/004/006/007/008/009:
 
 - `public.get_current_legal_terms()`: retorna somente `id`, tipo, versão, título, Markdown, hash, origem e vigência atuais; `anon` e `authenticated` podem executar;
 - `public.get_own_identity_context()`: retorna 0/1 linha com usuário, tipo de pessoa, status e conclusão derivada; somente `authenticated` pode executar;
@@ -640,6 +900,20 @@ Implementados nas FEAT-002/003/004:
 - `public.get_current_owner_contract()`: retorna exclusivamente a versão vigente de `owner_contract` para `authenticated`; `anon` não recebe `EXECUTE` nem leitura dessa espécie jurídica;
 - `public.get_owner_activation_status()`: não recebe UUID, filtra `auth.uid()` e retorna 21 colunas, incluindo o contrato completo necessário exclusivamente à leitura/aceite em `/dono`;
 - `public.get_owner_recipient_status()`: não recebe UUID, filtra `auth.uid()`, repete o `scope` e retorna 16 colunas com somente a referência mínima do contrato, status internos, requisitos allowlisted, próxima ação, versões e elegibilidade derivada; nunca retorna título, versão textual, hash, corpo Markdown, PII, provider ou referência externa.
+- `public.list_active_studio_types()`: retorna somente `id`, nome e ordem dos tipos ativos para
+  `authenticated`;
+- `public.list_active_studio_taxonomies()`: retorna somente `id`, nome e ordem de tags e comodidades
+  ativas para `authenticated`;
+- `public.get_owner_studio_editor(uuid)`: retorna 0/1 editor do próprio `auth.uid()`, escolhe o draft
+  atual ou a revisão publicada, preserva descritores de tipo, tags e comodidades históricas arquivadas
+  e nunca revela a existência do estúdio de outro dono; tanto a função quanto o RLS exigem ainda
+  conta ativa, perfil completo, autoridade de dono ativa e aceite íntegro do `owner_contract` vigente.
+- `private.get_owner_studio_media(uuid, uuid)`: recebe a identidade autenticada do DAL e o estúdio,
+  retorna somente a galeria versionada do dono elegível e conserva o path privado no servidor para
+  assinatura de prévias; nenhuma URL ou permissão arbitrária de Storage é concedida ao browser.
+- `private.get_owner_studio_publication(uuid, uuid)`: recebe a identidade já autenticada do DAL e o
+  estúdio, retorna 0/1 estado editorial estrito do próprio dono, checklist, revisão atual/publicada,
+  último fato de review e capacidades derivadas; paths privados de capa não atravessam a API.
 
 A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | privacy`; o contrato do dono permanece numa leitura autenticada separada.
 
@@ -649,23 +923,31 @@ A FEAT-004 preserva `public.get_current_legal_terms()` em exatamente `terms | pr
 - `public.get_studio_detail(uuid, date)`;
 - `public.get_studio_availability(uuid, date, date)`;
 - `public.get_reservation_quote(...)`;
-- `public.list_active_taxonomies()`.
 
 ### Autenticados planejados
 
 - `public.list_my_reservations(...)`;
 - `public.get_my_reservation(uuid)`;
 - `public.list_owner_studios(...)`;
-- `public.get_owner_studio_editor(uuid)`;
 - `public.get_owner_calendar(...)`;
 - `public.list_owner_reservations(...)`;
 - `public.list_owner_payments(...)`;
 
+### Backoffice/private implementados
+
+- `private.list_backoffice_users(...)` usa busca server-side somente por prefixo de e-mail ou UUID
+  exato e paginação keyset por `created_at + id`, devolvendo somente e-mail mascarado, status e versão
+  opaca, sem papéis; nome bruto não participa do filtro e permanece exclusivo da revelação auditada;
+- `private.get_backoffice_user_access(...)` exige admin e compõe no servidor uma única conta com seus
+  papéis, status e elegibilidade de perfil para a rota de detalhe;
+- `private.list_backoffice_taxonomies(...)` exige admin e devolve versão + contagem de uso.
+- `private.list_backoffice_studio_reviews(...)` exige reviewer/admin e devolve fila keyset; somente
+  admin recebe linhas de moderação/desativação;
+- `private.get_backoffice_studio_review(...)` exige reviewer/admin e devolve o detalhe editorial; casos
+  sem candidata pendente e estúdios desabilitados são exclusivos de admin.
+
 ### Backoffice/private planejados
 
-- `private.list_review_queue(...)`;
-- `private.get_review_case(uuid)`;
-- `private.list_admin_users(...)`;
 - `private.list_admin_payments(...)`;
 - `private.get_operational_overview(...)`.
 
@@ -675,7 +957,7 @@ Listas crescentes usam paginação **keyset** e retornam `items + nextCursor`. O
 
 ## 6. Comandos privados principais
 
-Implementados nas FEAT-002/003/004:
+Implementados:
 
 - `private.create_signup_legal_intent(uuid, uuid, text, uuid, jsonb)`: retorna o token opaco usado somente como metadata transitória do signup; SQLSTATE `23514` identifica versão jurídica stale;
 - `private.issue_identity_recovery_context(uuid, uuid, timestamptz)`: valida `auth.sessions` e cria atomicamente binding, scope opaco e grant de 15 minutos;
@@ -691,18 +973,37 @@ Implementados nas FEAT-002/003/004:
 - `private.activate_owner(uuid, uuid, uuid, uuid, text)`: recebe `user_id`, versão do contrato, `idempotency_key`, `request_id` e hash do user-agent em campos distintos; sob lock do perfil, cria/renova a autoridade e o aceite de forma idempotente, registra a correlação real e retorna a projeção completa de ativação;
 - `private.prepare_owner_recipient_operation(uuid, text, uuid)`: sob ordem global de locks, reserva `start | refresh`, sequência e versão do perfil antes de qualquer chamada ao adapter;
 - `private.apply_owner_recipient_operation(uuid, uuid, uuid, text, text, text, text[])`: recebe `user_id`, operação, `request_id`, provider, referência, status e requisitos; aplica somente a operação preparada ainda vigente, recusa resultado tardio/divergente e registra a transição redigida. A chave idempotente continua vinculada à operação reservada, sem ocupar o campo de correlação.
+- as fachadas FEAT-006/007 criam, atualizam, descartam e leem revisões, taxonomia e conteúdo de
+  estúdio sob autoridade do dono, versão otimista e idempotência;
+- as fachadas FEAT-008 preparam e liquidam autorização de upload, cercam finalização externa,
+  reordenam, definem capa, removem associações e operam cleanup sem manter transação durante Storage;
+- `private.get_owner_studio_publication(...)`, `private.submit_studio_revision(...)`,
+  `private.pause_studio(...)` e `private.resume_studio(...)` compõem a fronteira editorial da
+  FEAT-009; somente `app_dal` executa essas assinaturas;
+- `private.open/get/close_backoffice_session(...)` vinculam a sessão Auth ao banco; GET passivo não
+  renova a janela de inatividade;
+- `private.get_backoffice_user_access(...)` expõe papéis, status e completude do perfil somente à
+  composição server-only de um alvo para admin revalidado;
+- `private.set_backoffice_user_status(...)` e `private.reveal_backoffice_user_pii(...)` atendem
+  `support/admin`, com versão e auditoria;
+- `private.set_backoffice_user_role(...)` deriva somente uma das seis actions explícitas de
+  concessão/revogação `support/reviewer/admin`, compara `expectedAccountVersion`, exige admin com
+  autenticação recente, aceita novas concessões somente para conta ativa com perfil completo e
+  protege o último admin ativo;
+- `private.upsert_backoffice_taxonomy(...)` e `private.transition_backoffice_taxonomy(...)` exigem
+  admin, versão otimista e preservação histórica; a transição deriva o estado da action explícita.
+- `private.execute_backoffice_studio_command(...)` deriva `approve/reject/disable/restore` da action
+  allowlisted, exige versão e revisão esperadas, serializa a decisão e registra ledger/audit/outbox.
 
 Planejados por suas features proprietárias:
 
-- studio/revision/media;
-- review;
 - calendar;
 - pricing/addons;
 - quote/attempt/hold;
 - webhook/payment/reservation;
 - cancellation/refund;
 - payout;
-- admin/taxonomy/fiscal;
+- admin financeiro/fiscal;
 - privacy/export/delete.
 
 Detalhados em `api-contracts.md`.
@@ -736,11 +1037,20 @@ Conceder somente:
 
 ### 8.1 Perfis
 
-Usuário lê somente as colunas seguras necessárias aos read models invoker do próprio perfil; `tax_id` e `additional_document` crus permanecem sem grant. Não há grant de escrita. Aceites e preferências usam policy própria pelo mesmo `auth.uid()`; a leitura anônima continua limitada a Termos e Privacidade. `owner_profiles` e `owner_payment_recipients` usam policies próprias pelo mesmo `auth.uid()` e grants apenas nas colunas da projeção segura. Os testes materializam usuários A/B e comprovam que perfil, preferências, aceites, autoridade e recebedor não atravessam ownership. As fixtures adicionais com metadata owner/admin continuam apenas `authenticated`: a metadata não concede autoridade, leitura alheia, escrita direta ou execução privada. A autoridade de dono nasce exclusivamente em `owner_profiles`; `platform_roles` continua pertencendo à FEAT-031. Os estados `private.signup_legal_intents`, `private.identity_recovery_grants`, `private.identity_recovery_sessions`, `private.owner_activation_requests`, `private.owner_recipient_operations` e `audit.events` mantêm RLS sem policy e zero grants para as roles web; o pgTAP falha se essa fronteira for ampliada.
+Usuário lê somente as colunas seguras necessárias aos read models invoker do próprio perfil; `tax_id` e `additional_document` crus permanecem sem grant. Não há grant de escrita. Aceites e preferências usam policy própria pelo mesmo `auth.uid()`; a leitura anônima continua limitada a Termos e Privacidade. `owner_profiles` e `owner_payment_recipients` usam policies próprias pelo mesmo `auth.uid()` e grants apenas nas colunas da projeção segura. Os testes materializam usuários A/B e comprovam que perfil, preferências, aceites, autoridade e recebedor não atravessam ownership. Metadata Auth nunca concede autoridade de dono ou papel operacional: essas autoridades nascem exclusivamente em `owner_profiles` e `platform_roles`. Os estados `private.signup_legal_intents`, `private.identity_recovery_grants`, `private.identity_recovery_sessions`, `private.owner_activation_requests`, `private.owner_recipient_operations`, `private.backoffice_sessions`, `private.backoffice_command_requests`, `public.platform_roles` e `audit.events` mantêm RLS sem policy e zero grants para as roles web; o pgTAP falha se essa fronteira for ampliada.
 
 ### 8.2 Estúdios
 
-Dono lê seus estúdios/revisões/configurações. Público lê somente read models de publicado. Não conceder select público direto em revisões.
+Dono autenticado recebe `select` somente nas colunas allowlisted de seus próprios estúdios e revisões.
+Além de `auth.uid()`, as policies e `get_owner_studio_editor` derivam no banco a elegibilidade canônica:
+conta ativa, perfil completo, `owner_profiles.status = active` e aceite cujo hash corresponde ao
+`owner_contract` vigente. Suspensão, perfil incompleto, bloqueio do dono ou expiração do contrato
+retornam zero linhas também em acesso direto pela Data API. Outro dono igualmente obtém zero linhas.
+`anon`, `service_role` e `app_dal` não recebem acesso às tabelas; a DAL executa somente as funções
+privadas da allowlist. Eventos de review, outbox e ledger editorial também mantêm RLS sem policy e
+zero grants runtime. As policies de tipo, tags e comodidades permitem item ativo ou referência histórica do dono
+elegível, enquanto os read models de seleção continuam filtrando somente ativos. Conteúdo ainda não
+aprovado não possui read model público.
 
 ### 8.3 Reservas
 
@@ -756,7 +1066,15 @@ Upload permitido somente por URL assinada. Leitura pública de mídia passa por 
 
 ## 9. Índices estruturais iniciais
 
-Implementados até a FEAT-004: PKs, FKs, uniques de `(kind, version)`, `(request_id, terms_version_id)`, `request_id` da intenção, chaves de ativação/operação e sequência, GiST de vigência jurídica e B-trees usadas pelos purges obrigatórios. `audit.events` possui índice parcial estrutural em `actor_user_id` para sua FK. `user_preferences`, `owner_profiles` e `owner_payment_recipients` usam suas PKs/FKs 1:1; CPF/CNPJ não recebe índice ou unique. Nenhum índice alheio aos caminhos implementados foi criado por antecipação.
+Implementados até a FEAT-009: além dos índices anteriores, `studios.owner_user_id`, os dois ponteiros
+de revisão não nulos, a FK de tipo, as FKs reversas de tag/comodidade/mídia e os uniques
+`(studio_id, revision_number)`, de um único draft ativo, posição da FAQ, path de objeto, posição e capa
+por revisão. A fila de cleanup possui índice parcial por elegibilidade; `studio_media` também indexa as
+FKs nullable, `uploaded_by` e a referência privada do ledger idempotente. O workflow editorial
+indexa a timeline por `(studio_id, event_sequence desc)`, ator, revisão, decisão terminal e a
+referência de revisão do ledger; uniques sustentam evento/tipo, decisão terminal e deduplicação da
+outbox. Todos sustentam FK,
+invariante ou claim ordenado; nenhum índice de busca pública foi antecipado.
 
 Permitidos sem `EXPLAIN` adicional porque sustentam invariantes/FKs/cursor definido:
 

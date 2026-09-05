@@ -125,6 +125,9 @@ A FEAT-003 completa `profiles` com nome, telefone E.164, CPF/CNPJ, documento adi
 
 `user_preferences` é configuração 1:1 criada com o perfil, limitada a `system/light/dark` e versionada separadamente. Aparência e identidade não incrementam a versão uma da outra.
 
+`account_version` é o fence independente do status `active/suspended`. Suspender uma conta não altera
+`profile_version`; qualquer comando privado continua revalidando o status canônico.
+
 A leitura da conta usa `public.get_my_profile()` como read model `security invoker`, sem argumento de usuário e sempre filtrado por `auth.uid()`. Os comandos privados usam uma projeção interna sem grant runtime para devolver o mesmo estado mascarado; essa projeção não transfere autoridade nem constitui read model.
 
 ### 4.2 Dono e recebedor
@@ -135,7 +138,42 @@ A leitura da conta usa `public.get_my_profile()` como read model `security invok
 
 ### 4.3 Estúdio
 
-`studios.owner_user_id` é `not null`. Uma conta pode possuir vários estúdios. Não existe membership nesta versão.
+`studios.owner_user_id` referencia a autoridade em `owner_profiles` e é `not null`. Uma conta pode
+possuir vários estúdios; não existe membership nesta versão. O registro operacional guarda somente
+estado e os ponteiros `published_revision_id`/`draft_revision_id`; todo conteúdo editável fica em
+`studio_revisions`.
+
+Um estúdio possui ao menos um dos ponteiros e no máximo um draft. O ponteiro sempre referencia uma
+revisão do próprio estúdio. A primeira criação gera estúdio + revisão 1/draft atomicamente. Atualizar
+draft incrementa `revision_version`; editar uma revisão aprovada sem draft cria o próximo
+`revision_number` e preserva a aprovada. Descartar o único draft remove o estúdio ainda inédito;
+descartar um draft sobre publicação volta ao ponteiro aprovado sem alterar histórico público.
+
+`draft_revision_id` é o ponteiro histórico para a candidata editorial atual, não uma autorização de
+escrita. Ele aponta para `draft` enquanto editável e permanece apontando para a mesma revisão quando a
+submissão a torna `pending`. Nesse estado, revisão, taxonomias, FAQ e associações de mídia são
+imutáveis. A FEAT-030 decide essa candidata: aprovação move o ponteiro publicado e limpa a candidata;
+rejeição registra motivo em evento editorial próprio e cria uma nova candidata `draft` a partir do
+conteúdo rejeitado, sem usar `audit.events` como read model de produto.
+
+Se essa primeira correção for descartada antes de qualquer aprovação, continua valendo a regra do
+agregado inédito: o estúdio, suas revisões, eventos editoriais e intenções de e-mail são removidos na
+mesma transação. A auditoria e o ledger terminal de idempotência permanecem como evidência operacional.
+
+Toda mutação revalida no banco perfil ativo/completo, dono ativo e aceite vigente de
+`owner_contract`, inclusive em replay idempotente. O navegador envia somente conteúdo e o fence
+`{expectedRevisionId, expectedRevisionVersion}`; status, número e ownership nunca vêm do cliente. O
+ledger compara hashes do payload e do resultado original: replay devolve exatamente a resposta
+registrada ou falha fechado quando uma mudança posterior impede reconstruí-la.
+
+Tipo arquivado continua legível somente ao dono de revisão que o referencia, preservando o histórico.
+Ele não reaparece na lista ativa e nenhuma nova mutação pode selecioná-lo.
+
+Regras de uso e YouTube ID pertencem à revisão. Tags, comodidades e FAQ ordenada são relações filhas
+do mesmo `revision_id`; só uma revisão draft pode alterá-las. Taxonomia precisa estar ativa no instante
+do comando, e uma corrida de arquivamento falha sem efeito parcial. Ao editar conteúdo aprovado sem
+draft, a nova revisão clona integralmente esse conjunto antes de aplicar a mudança, preservando a
+fonte pública aprovada.
 
 ### 4.4 Reserva
 
@@ -143,7 +181,19 @@ A leitura da conta usa `public.get_my_profile()` como read model `security invok
 
 ### 4.5 Backoffice
 
-Papéis são globais e não alteram ownership. Ação administrativa passa por função específica e auditoria.
+Papéis são globais e não alteram ownership. A FEAT-031 materializa somente `support` e `admin`:
+support opera contas e PII justificada; admin também gerencia papéis e taxonomias. Claims/metadata Auth
+não concedem papel. O primeiro admin nasce por bootstrap privado one-shot e o último admin ativo não
+pode ser suspenso ou removido.
+
+Uma sessão operacional é a interseção entre sessão Auth canônica, perfil ativo/concluído, papel atual e
+`private.backoffice_sessions`. A binding expira por inatividade/tempo absoluto e é fechada quando a
+conta perde todos os papéis ou é suspensa. Alterar papel exige autenticação recente.
+
+Listas de usuário contêm e-mail mascarado; PII crua continua nas fontes canônicas Auth/`profiles` e é
+uma resposta efêmera, motivada e auditada, não um novo read model persistido. Comandos administrativos
+usam versão esperada, idempotência e auditoria. Taxonomia usada nunca é apagada: `active=false` bloqueia
+novas seleções, preserva referências e incrementa `taxonomy_version`.
 
 ## 5. Estado de estúdio
 
@@ -166,16 +216,31 @@ published → changes_pending | paused | disabled
 changes_pending → published | paused | disabled
 paused → published | changes_pending | disabled
 rejected → pending_review
-disabled → published | paused (somente admin)
+disabled → published | changes_pending | paused (somente admin)
 ```
 
 Regras:
 
 - `published_revision_id` pode existir em `published`, `changes_pending`, `paused`, `disabled`;
+- `disabled_from_status` existe somente em `disabled` e registra exatamente `published`,
+  `changes_pending` ou `paused`; restauração usa esse fato e o limpa na mesma transação;
+- `draft_revision_id` e `published_revision_id`, quando presentes, são diferentes e pertencem ao
+  próprio estúdio;
+- estúdio ainda inédito aponta para exatamente um draft; descartar esse draft remove a entidade;
 - primeira aprovação é obrigatória;
 - rejeitar alteração não remove revisão pública;
+- rejeitar marca a candidata submetida como `rejected` e cria uma nova revisão `draft` completa,
+  clonando campos, taxonomias, FAQ e relações de mídia para que somente o dono faça a correção;
 - pausa não cancela reservas;
-- disabled bloqueia novas ações e exige auditoria.
+- `paused` preserva os dois ponteiros. Retomar deriva `changes_pending` quando a candidata apontada
+  está `pending`; caso contrário deriva `published`, preserva a candidata privada e mantém uma
+  candidata `draft` completa disponível para submissão;
+- uma candidata só entra em `pending` com tipo, tags e comodidades ainda ativos sob lock transacional;
+  arquivamento anterior bloqueia o submit e arquivamento concorrente espera a decisão atômica;
+- a timeline editorial usa uma sequência causal monotônica do banco; `occurred_at` descreve o fato,
+  mas não decide qual review é o mais recente;
+- disabled bloqueia novas ações de produto, preserva ponteiros e exige auditoria; apenas admin pode
+  desativar/restaurar, enquanto reviewer decide somente candidatas pendentes.
 
 ## 6. Estado de revisão
 
@@ -185,7 +250,14 @@ Regras:
 - `rejected`;
 - `superseded`.
 
-Somente draft pode ser editada. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com motivo. Aprovação marca revisão anterior como superseded.
+Somente draft pode ser editada ou removida; o trigger exige incremento exato de
+`revision_version`. Ao enviar, fica imutável. Correção após envio cria nova draft ou admin rejeita com
+motivo. Aprovação marca revisão anterior como superseded.
+
+Eventos editoriais são append-only e referenciam estúdio, revisão, ator, tipo e instante. O motivo de
+rejeição vive nesse histórico próprio; auditoria continua registrando quem executou a ação, mas não é
+fonte da mensagem exibida ao dono. Append-only vale durante a vida do agregado; a exclusão canônica de
+um estúdio nunca publicado remove seus filhos por cascade, sem permitir deleção isolada de evento.
 
 ## 7. Estado de tentativa/hold
 

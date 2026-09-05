@@ -5,6 +5,7 @@ import { Alert, Button, Stack } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   clearIdentityAndAccountQueryCache,
@@ -33,8 +34,10 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
   const [sessionTransitionStarted, setSessionTransitionStarted] = useState(false);
   const sessionQuery = useQuery({
     initialData: initialSession,
+    networkMode: "always",
     queryFn: async () => identitySessionForScope(await readIdentitySession(), userId),
     queryKey,
+    refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 30_000,
@@ -151,7 +154,9 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
             loading={logoutMutation.isPending}
             loadingLabel="Saindo"
             onClick={() => {
-              setSessionTransitionStarted(true);
+              flushSync(() => {
+                setSessionTransitionStarted(true);
+              });
               logoutMutation.mutate();
             }}
             variant="secondary"

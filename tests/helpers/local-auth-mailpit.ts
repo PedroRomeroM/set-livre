@@ -18,6 +18,13 @@ const mailpitMessageIdsSchema = z
   .min(1)
   .max(200)
   .refine((messageIds) => new Set(messageIds).size === messageIds.length);
+const localAuthEmailFenceSchema = z.strictObject({
+  existingMessageIds: z
+    .array(mailpitMessageIdSchema)
+    .max(200)
+    .refine((messageIds) => new Set(messageIds).size === messageIds.length),
+  recipientEmail: qaAuthEmailSchema,
+});
 const localAuthEmailTypeSchema = z.enum(["recovery", "signup"]);
 const mailpitTimestampSchema = z
   .string()
@@ -56,10 +63,11 @@ export type LocalAuthEmail = {
   subject: string;
 };
 
+export type LocalAuthEmailFence = z.infer<typeof localAuthEmailFenceSchema>;
+
 export type FindLocalAuthEmailInput = {
   emailType: LocalAuthEmailType;
-  notBefore: Date;
-  recipientEmail: string;
+  fence: LocalAuthEmailFence;
 };
 
 type WaitForLocalAuthEmailInput = FindLocalAuthEmailInput & {
@@ -81,18 +89,18 @@ export function assertQaAuthEmail(value: string) {
 }
 
 function assertEmailQuery(input: FindLocalAuthEmailInput) {
-  const recipientEmail = assertQaAuthEmail(input.recipientEmail);
   const emailType = localAuthEmailTypeSchema.safeParse(input.emailType);
-  const notBeforeEpoch = input.notBefore.getTime();
+  const fence = localAuthEmailFenceSchema.safeParse(input.fence);
 
-  if (!emailType.success || !Number.isFinite(notBeforeEpoch)) {
+  if (!emailType.success || !fence.success) {
     throw new Error("A consulta de e-mail Auth local é inválida.");
   }
 
   return {
     emailType: emailType.data,
-    notBeforeEpoch,
-    recipientEmail,
+    existingMessageIds: new Set(fence.data.existingMessageIds),
+    fence: fence.data,
+    recipientEmail: fence.data.recipientEmail,
   };
 }
 
@@ -285,6 +293,26 @@ function mailpitMessageUrl(messageId: string) {
   return new URL(`/api/v1/message/${encodeURIComponent(messageId)}`, LOCAL_MAILPIT_ORIGIN);
 }
 
+export async function captureLocalAuthEmailFence(
+  input: { recipientEmail: string },
+  fetchImpl: MailpitFetch = defaultMailpitFetch,
+): Promise<LocalAuthEmailFence> {
+  const recipientEmail = assertQaAuthEmail(input.recipientEmail);
+  const search = await requestMailpitJson(
+    mailpitSearchUrl(recipientEmail),
+    mailpitSearchSchema,
+    fetchImpl,
+  );
+  const existingMessageIds = search.messages
+    .filter((message) => message.To.some((mailbox) => mailbox.Address === recipientEmail))
+    .map((message) => message.ID);
+  const fence = localAuthEmailFenceSchema.safeParse({ existingMessageIds, recipientEmail });
+  if (!fence.success) {
+    throw contractError();
+  }
+  return fence.data;
+}
+
 async function deleteLocalAuthMessageIds(messageIds: readonly string[], fetchImpl: MailpitFetch) {
   const parsedMessageIds = mailpitMessageIdsSchema.safeParse(messageIds);
   if (!parsedMessageIds.success) {
@@ -322,7 +350,7 @@ export async function findLocalAuthEmailOnce(
   const summaries = search.messages
     .filter(
       (message) =>
-        Date.parse(message.Created) >= query.notBeforeEpoch &&
+        !query.existingMessageIds.has(message.ID) &&
         message.To.some((mailbox) => mailbox.Address === query.recipientEmail),
     )
     .sort((left, right) => Date.parse(right.Created) - Date.parse(left.Created));
@@ -378,8 +406,7 @@ export async function waitForLocalAuthEmail(
         found = await findLocalAuthEmailOnce(
           {
             emailType: query.emailType,
-            notBefore: new Date(query.notBeforeEpoch),
-            recipientEmail: query.recipientEmail,
+            fence: query.fence,
           },
           fetchImpl,
         );

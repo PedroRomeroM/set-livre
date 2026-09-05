@@ -19,15 +19,18 @@ teste apenas para espelhar detalhes internos sem risco demonstrado.
 1. Fazer commit e push somente depois dos gates locais aplicáveis.
 2. Abrir PR não draft para `main`.
 3. Aguardar todos os checks obrigatórios em estado terminal e verde.
-4. Comentar `@codex review` e registrar o horário da solicitação.
-5. Esperar pelo menos 60 minutos reais antes de avaliar o resultado.
+4. Comentar `@codex review` e registrar o horário da solicitação e o SHA candidato.
+5. Consultar o comentário-resumo do Codex em intervalos de 10 minutos até ele registrar `Completed`
+   para o SHA candidato e o gatilho manual atual, sem outra execução sobreposta ainda em andamento.
 
-Timeout, interrupção, ausência de resposta ou indisponibilidade externa são inconclusivos. Nenhum
-deles equivale a aprovação.
+O primeiro comentário, uma reação ou um review de SHA anterior não encerra a espera. Sessenta minutos
+sem `Completed` é um alerta operacional para investigar a execução, mas não é timeout de aprovação: o
+polling continua. Interrupção, ausência de resposta ou indisponibilidade externa são inconclusivas.
+Nenhuma delas equivale a aprovação.
 
 ## 3. Superfícies de review
 
-Depois da espera, inspecionar todas as superfícies disponíveis:
+Depois do estado terminal, inspecionar todas as superfícies disponíveis:
 
 - reviews formais;
 - comentários gerais do PR;
@@ -49,11 +52,26 @@ Qualquer push invalida o review anterior:
 1. executar novamente os gates afetados e os obrigatórios de candidato;
 2. fazer commit e push;
 3. comentar novamente `@codex review`;
-4. esperar mais 60 minutos completos;
+4. repetir o polling de 10 minutos até `Completed` no novo SHA exato;
 5. reinspecionar todas as superfícies.
 
 O ciclo termina somente quando o Codex declarar explicitamente não ter encontrado problema relevante
 no SHA atual, todos os checks estiverem verdes e não houver conversa pendente.
+
+### 4.1 Revisão geral final
+
+Depois de satisfazer essas condições e antes do merge, solicitar uma execução adicional no mesmo SHA
+com escopo holístico explícito:
+
+```text
+@codex review Faça uma revisão final holística de todo o diff deste PR contra main, incluindo
+interações entre commits e features, segurança, lógica, testes, documentação e CI/deploy.
+```
+
+Essa execução segue o mesmo polling até `Completed`, a mesma inspeção de superfícies e precisa também
+declarar explicitamente que não encontrou problema relevante. Qualquer finding exige correção, novo
+SHA e reinício integral dos ciclos, incluindo uma nova revisão geral final. Um review incremental
+limpo não substitui esta última leitura integrada do PR.
 
 Depois dessas três condições, o agente publica pela credencial confiável do mantenedor o commit status
 `Codex review contract` no SHA atual, com `target_url` apontando para a resposta limpa. Workflows têm

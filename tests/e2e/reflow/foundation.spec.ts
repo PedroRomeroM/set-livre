@@ -6,9 +6,9 @@ const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
 
 test("FOUNDATION-E2E-011 zoom 200% preserva reflow nos dois apps", async ({ page }) => {
-  for (const [url, heading] of [
-    [publicBaseUrl, "Set Livre"],
-    [backofficeBaseUrl, "Operação Set Livre"],
+  for (const [surface, url, heading] of [
+    ["public", publicBaseUrl, "Set Livre"],
+    ["backoffice", backofficeBaseUrl, "Operação Set Livre"],
   ] as const) {
     await gotoExpectedPage(page, url, heading);
 
@@ -37,12 +37,15 @@ test("FOUNDATION-E2E-011 zoom 200% preserva reflow nos dois apps", async ({ page
         visualViewportWidth: 160,
       });
 
-    const finalNote = page.getByText(
-      "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
-    );
+    const finalContent =
+      surface === "public"
+        ? page.getByText(
+            "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
+          )
+        : page.getByRole("button", { name: "Entrar no backoffice" });
     await expect
       .poll(async () =>
-        finalNote.evaluate((element) => {
+        finalContent.evaluate((element) => {
           window.scrollTo(0, document.documentElement.scrollHeight);
           const bounds = element.getBoundingClientRect();
 

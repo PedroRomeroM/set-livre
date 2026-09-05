@@ -3,6 +3,87 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      amenities: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          taxonomy_version: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          taxonomy_version?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          taxonomy_version?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      email_outbox: {
+        Row: {
+          audience_key: string;
+          created_at: string;
+          deduplication_key: string;
+          id: string;
+          revision_id: string;
+          status: string;
+          studio_id: string;
+          template_key: string;
+        };
+        Insert: {
+          audience_key: string;
+          created_at?: string;
+          deduplication_key: string;
+          id?: string;
+          revision_id: string;
+          status?: string;
+          studio_id: string;
+          template_key: string;
+        };
+        Update: {
+          audience_key?: string;
+          created_at?: string;
+          deduplication_key?: string;
+          id?: string;
+          revision_id?: string;
+          status?: string;
+          studio_id?: string;
+          template_key?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "email_outbox_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "email_outbox_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       owner_payment_recipients: {
         Row: {
           created_at: string;
@@ -86,8 +167,45 @@ export type Database = {
           },
         ];
       };
+      platform_roles: {
+        Row: {
+          created_at: string;
+          granted_by: string | null;
+          role: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          granted_by?: string | null;
+          role: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          granted_by?: string | null;
+          role?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "platform_roles_granted_by_fkey";
+            columns: ["granted_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "platform_roles_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
+          account_version: number;
           additional_document: string | null;
           additional_document_masked: string | null;
           completed_at: string | null;
@@ -103,6 +221,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          account_version?: number;
           additional_document?: string | null;
           additional_document_masked?: string | null;
           completed_at?: string | null;
@@ -118,6 +237,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          account_version?: number;
           additional_document?: string | null;
           additional_document_masked?: string | null;
           completed_at?: string | null;
@@ -130,6 +250,536 @@ export type Database = {
           status?: string;
           tax_id?: string | null;
           tax_id_masked?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      studio_faqs: {
+        Row: {
+          answer: string;
+          created_at: string;
+          id: string;
+          position: number;
+          question: string;
+          revision_id: string;
+          updated_at: string;
+        };
+        Insert: {
+          answer: string;
+          created_at?: string;
+          id?: string;
+          position: number;
+          question: string;
+          revision_id: string;
+          updated_at?: string;
+        };
+        Update: {
+          answer?: string;
+          created_at?: string;
+          id?: string;
+          position?: number;
+          question?: string;
+          revision_id?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_faqs_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_media: {
+        Row: {
+          actual_mime_type: string | null;
+          actual_size_bytes: number | null;
+          checksum_sha256: string | null;
+          cleanup_after: string | null;
+          cleanup_attempts: number;
+          cleanup_claim_token: string | null;
+          cleanup_claimed_at: string | null;
+          cleanup_last_completed_token: string | null;
+          cleanup_last_error_code: string | null;
+          cleanup_last_succeeded: boolean | null;
+          cleanup_next_attempt_at: string | null;
+          declared_checksum_sha256: string | null;
+          declared_mime_type: string;
+          declared_size_bytes: number;
+          delete_requested_at: string | null;
+          deleted_at: string | null;
+          finalized_at: string | null;
+          height: number | null;
+          id: string;
+          prepared_at: string;
+          prepared_revision_id: string | null;
+          preview_storage_path: string;
+          rejected_at: string | null;
+          rejection_code: string | null;
+          status: string;
+          storage_bucket: string;
+          storage_path: string;
+          studio_id: string | null;
+          updated_at: string;
+          upload_expires_at: string;
+          upload_token_issued_at: string | null;
+          uploaded_by: string;
+          width: number | null;
+        };
+        Insert: {
+          actual_mime_type?: string | null;
+          actual_size_bytes?: number | null;
+          checksum_sha256?: string | null;
+          cleanup_after?: string | null;
+          cleanup_attempts?: number;
+          cleanup_claim_token?: string | null;
+          cleanup_claimed_at?: string | null;
+          cleanup_last_completed_token?: string | null;
+          cleanup_last_error_code?: string | null;
+          cleanup_last_succeeded?: boolean | null;
+          cleanup_next_attempt_at?: string | null;
+          declared_checksum_sha256?: string | null;
+          declared_mime_type: string;
+          declared_size_bytes: number;
+          delete_requested_at?: string | null;
+          deleted_at?: string | null;
+          finalized_at?: string | null;
+          height?: number | null;
+          id?: string;
+          prepared_at?: string;
+          prepared_revision_id?: string | null;
+          preview_storage_path: string;
+          rejected_at?: string | null;
+          rejection_code?: string | null;
+          status?: string;
+          storage_bucket?: string;
+          storage_path: string;
+          studio_id?: string | null;
+          updated_at?: string;
+          upload_expires_at: string;
+          upload_token_issued_at?: string | null;
+          uploaded_by: string;
+          width?: number | null;
+        };
+        Update: {
+          actual_mime_type?: string | null;
+          actual_size_bytes?: number | null;
+          checksum_sha256?: string | null;
+          cleanup_after?: string | null;
+          cleanup_attempts?: number;
+          cleanup_claim_token?: string | null;
+          cleanup_claimed_at?: string | null;
+          cleanup_last_completed_token?: string | null;
+          cleanup_last_error_code?: string | null;
+          cleanup_last_succeeded?: boolean | null;
+          cleanup_next_attempt_at?: string | null;
+          declared_checksum_sha256?: string | null;
+          declared_mime_type?: string;
+          declared_size_bytes?: number;
+          delete_requested_at?: string | null;
+          deleted_at?: string | null;
+          finalized_at?: string | null;
+          height?: number | null;
+          id?: string;
+          prepared_at?: string;
+          prepared_revision_id?: string | null;
+          preview_storage_path?: string;
+          rejected_at?: string | null;
+          rejection_code?: string | null;
+          status?: string;
+          storage_bucket?: string;
+          storage_path?: string;
+          studio_id?: string | null;
+          updated_at?: string;
+          upload_expires_at?: string;
+          upload_token_issued_at?: string | null;
+          uploaded_by?: string;
+          width?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_media_prepared_revision_id_fkey";
+            columns: ["prepared_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_media_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_media_uploaded_by_fkey";
+            columns: ["uploaded_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_review_events: {
+        Row: {
+          actor_user_id: string | null;
+          event_sequence: number;
+          event_type: string;
+          id: string;
+          occurred_at: string;
+          rejection_reason: string | null;
+          revision_id: string;
+          studio_id: string;
+        };
+        Insert: {
+          actor_user_id?: string | null;
+          event_sequence?: never;
+          event_type: string;
+          id?: string;
+          occurred_at?: string;
+          rejection_reason?: string | null;
+          revision_id: string;
+          studio_id: string;
+        };
+        Update: {
+          actor_user_id?: string | null;
+          event_sequence?: never;
+          event_type?: string;
+          id?: string;
+          occurred_at?: string;
+          rejection_reason?: string | null;
+          revision_id?: string;
+          studio_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_review_events_actor_user_id_fkey";
+            columns: ["actor_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_review_events_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_review_events_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_amenities: {
+        Row: {
+          amenity_id: string;
+          revision_id: string;
+        };
+        Insert: {
+          amenity_id: string;
+          revision_id: string;
+        };
+        Update: {
+          amenity_id?: string;
+          revision_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_amenities_amenity_id_fkey";
+            columns: ["amenity_id"];
+            isOneToOne: false;
+            referencedRelation: "amenities";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_amenities_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_media: {
+        Row: {
+          created_at: string;
+          is_cover: boolean;
+          media_id: string;
+          position: number;
+          revision_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          is_cover?: boolean;
+          media_id: string;
+          position: number;
+          revision_id: string;
+        };
+        Update: {
+          created_at?: string;
+          is_cover?: boolean;
+          media_id?: string;
+          position?: number;
+          revision_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_media_media_id_fkey";
+            columns: ["media_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_media";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_media_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revision_tags: {
+        Row: {
+          revision_id: string;
+          tag_id: string;
+        };
+        Insert: {
+          revision_id: string;
+          tag_id: string;
+        };
+        Update: {
+          revision_id?: string;
+          tag_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revision_tags_revision_id_fkey";
+            columns: ["revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revision_tags_tag_id_fkey";
+            columns: ["tag_id"];
+            isOneToOne: false;
+            referencedRelation: "tags";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_revisions: {
+        Row: {
+          address_complement: string | null;
+          capacity: number;
+          city: string;
+          created_at: string;
+          description: string;
+          id: string;
+          name: string;
+          neighborhood: string;
+          postal_code: string;
+          revision_number: number;
+          revision_version: number;
+          state: string;
+          status: string;
+          street: string;
+          street_number: string;
+          studio_id: string;
+          studio_type_id: string;
+          updated_at: string;
+          usage_rules: string;
+          youtube_video_id: string | null;
+        };
+        Insert: {
+          address_complement?: string | null;
+          capacity: number;
+          city: string;
+          created_at?: string;
+          description: string;
+          id?: string;
+          name: string;
+          neighborhood: string;
+          postal_code: string;
+          revision_number: number;
+          revision_version?: number;
+          state: string;
+          status?: string;
+          street: string;
+          street_number: string;
+          studio_id: string;
+          studio_type_id: string;
+          updated_at?: string;
+          usage_rules?: string;
+          youtube_video_id?: string | null;
+        };
+        Update: {
+          address_complement?: string | null;
+          capacity?: number;
+          city?: string;
+          created_at?: string;
+          description?: string;
+          id?: string;
+          name?: string;
+          neighborhood?: string;
+          postal_code?: string;
+          revision_number?: number;
+          revision_version?: number;
+          state?: string;
+          status?: string;
+          street?: string;
+          street_number?: string;
+          studio_id?: string;
+          studio_type_id?: string;
+          updated_at?: string;
+          usage_rules?: string;
+          youtube_video_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_revisions_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_revisions_studio_type_id_fkey";
+            columns: ["studio_type_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_types";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      studio_types: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          taxonomy_version: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          taxonomy_version?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          taxonomy_version?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      studios: {
+        Row: {
+          created_at: string;
+          disabled_from_status: string | null;
+          draft_revision_id: string | null;
+          id: string;
+          owner_user_id: string;
+          publication_version: number;
+          published_revision_id: string | null;
+          status: string;
+          updated_at: string;
+        };
+        Insert: {
+          created_at?: string;
+          disabled_from_status?: string | null;
+          draft_revision_id?: string | null;
+          id?: string;
+          owner_user_id: string;
+          publication_version?: number;
+          published_revision_id?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          disabled_from_status?: string | null;
+          draft_revision_id?: string | null;
+          id?: string;
+          owner_user_id?: string;
+          publication_version?: number;
+          published_revision_id?: string | null;
+          status?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studios_draft_revision_id_fkey";
+            columns: ["draft_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studios_owner_user_id_fkey";
+            columns: ["owner_user_id"];
+            isOneToOne: false;
+            referencedRelation: "owner_profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "studios_published_revision_id_fkey";
+            columns: ["published_revision_id"];
+            isOneToOne: false;
+            referencedRelation: "studio_revisions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tags: {
+        Row: {
+          active: boolean;
+          created_at: string;
+          id: string;
+          name: string;
+          slug: string;
+          sort_order: number;
+          taxonomy_version: number;
+          updated_at: string;
+        };
+        Insert: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name: string;
+          slug: string;
+          sort_order?: number;
+          taxonomy_version?: number;
+          updated_at?: string;
+        };
+        Update: {
+          active?: boolean;
+          created_at?: string;
+          id?: string;
+          name?: string;
+          slug?: string;
+          sort_order?: number;
+          taxonomy_version?: number;
           updated_at?: string;
         };
         Relationships: [];
@@ -255,6 +905,34 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      begin_studio_media_cleanup_run: {
+        Args: { p_function_slug: string; p_run_id: string };
+        Returns: Json;
+      };
+      claim_studio_media_cleanup: {
+        Args: { p_claim_token: string; p_limit: number };
+        Returns: Json;
+      };
+      complete_studio_media_cleanup: {
+        Args: {
+          p_claim_token: string;
+          p_error_code: string;
+          p_media_id: string;
+          p_succeeded: boolean;
+        };
+        Returns: Json;
+      };
+      complete_studio_media_cleanup_run: {
+        Args: {
+          p_claimed: number;
+          p_deleted: number;
+          p_error_code: string;
+          p_failed: number;
+          p_run_id: string;
+          p_status: string;
+        };
+        Returns: Json;
+      };
       get_current_legal_terms: {
         Args: never;
         Returns: {
@@ -351,6 +1029,47 @@ export type Database = {
           requirements: string[];
           reservations_eligible: boolean;
           scope: string;
+        }[];
+      };
+      get_owner_studio_editor: {
+        Args: { p_studio_id: string };
+        Returns: {
+          address_complement: string;
+          amenities: Json;
+          capacity: number;
+          city: string;
+          description: string;
+          draft_revision_id: string;
+          faqs: Json;
+          has_draft: boolean;
+          name: string;
+          neighborhood: string;
+          postal_code: string;
+          published_revision_id: string;
+          revision_id: string;
+          revision_number: number;
+          revision_status: string;
+          revision_version: number;
+          scope: string;
+          state: string;
+          street: string;
+          street_number: string;
+          studio_id: string;
+          studio_status: string;
+          studio_type_id: string;
+          studio_type_name: string;
+          tags: Json;
+          usage_rules: string;
+          youtube_video_id: string;
+        }[];
+      };
+      list_active_studio_taxonomies: { Args: never; Returns: Json };
+      list_active_studio_types: {
+        Args: never;
+        Returns: {
+          id: string;
+          name: string;
+          sort_order: number;
         }[];
       };
     };

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertProductionDeploymentContract,
   assertSupabasePublishableKey,
+  assertSupabaseSecretKey,
   forceProductionRoleDisabled,
   provisionProductionRole,
   productionRoleActivationMode,
@@ -137,10 +138,11 @@ function productionProvisioningAdminQuery({
 
 describe("production role provisioning", () => {
   const fixedCoordinates = {
-    PRODUCTION_BACKOFFICE_APP_URL: "https://ops.setlivre.com",
+    PRODUCTION_BACKOFFICE_APP_URL: "http://127.0.0.1:3001",
     PRODUCTION_PUBLIC_APP_URL: "https://147.15.97.227",
     PRODUCTION_SUPABASE_URL: "https://oirvvnojgkzdppkdvhej.supabase.co",
     PRODUCTION_VM_HOST: "147.15.97.227",
+    PRD_SUPABASE_SECRET_KEY: "sb_secret_production-contract-key",
   };
 
   it("derives explicit TLS admin and restricted runtime connections", () => {
@@ -183,7 +185,7 @@ describe("production role provisioning", () => {
         SUPABASE_DB_PASSWORD: "admin-secret",
         SUPABASE_PROJECT_REF: projectRef,
       }),
-    ).toThrow("role e o projeto");
+    ).toThrow("identidade e as coordenadas canônicas");
 
     expect(() =>
       productionRoleConnections({
@@ -194,7 +196,7 @@ describe("production role provisioning", () => {
         SUPABASE_DB_PASSWORD: "admin-secret",
         SUPABASE_PROJECT_REF: projectRef,
       }),
-    ).toThrow("pooler session exato");
+    ).toThrow("identidade e as coordenadas canônicas");
   });
 
   it("fails closed when a public production coordinate drifts", () => {
@@ -227,6 +229,15 @@ describe("production role provisioning", () => {
     );
     expect(() => assertSupabasePublishableKey(serviceRoleJwt)).toThrow("chave privilegiada");
     expect(() => assertSupabasePublishableKey("synthetic-anon-value")).toThrow("formato inválido");
+  });
+
+  it("accepts only the dedicated Supabase secret-key class for trusted server operations", () => {
+    expect(() => assertSupabaseSecretKey("sb_secret_production-contract-key")).not.toThrow();
+    expect(() => assertSupabaseSecretKey("sb_publishable_public-contract-key")).toThrow(
+      "secret dedicada",
+    );
+    expect(() => assertSupabaseSecretKey("synthetic-secret")).toThrow("formato inválido");
+    expect(() => assertSupabaseSecretKey("a.b.c")).toThrow("secret dedicada");
   });
 
   it("confirms the configured publishable key against the exact production project", async () => {
@@ -700,7 +711,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v9" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
     const httpsProbe = deployJob.slice(publicHttps, runtimeEnvironment);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
@@ -708,6 +719,11 @@ describe("production role provisioning", () => {
     expect(httpsProbe).toContain("User-agent: *\\nDisallow: /");
     expect(httpsProbe).toContain("X-Robots-Tag: noindex, nofollow, noarchive, nosnippet");
     const runtimeStep = deployJob.slice(runtimeEnvironment, releaseInspection);
+    expect(runtimeStep).toContain(
+      "BACKOFFICE_RUNTIME_UNLOCK_KEY: ${{ secrets.BACKOFFICE_RUNTIME_UNLOCK_KEY }}",
+    );
+    expect(runtimeStep).toContain('[[ "$BACKOFFICE_RUNTIME_UNLOCK_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]]');
+    expect(runtimeStep).toContain("printf 'BACKOFFICE_RUNTIME_UNLOCK_KEY=%s\\n'");
     expect(runtimeStep).toContain("runtime_digest");
     expect(runtimeStep).toContain("sha256sum");
     expect(runtimeStep).toContain('echo "digest=$runtime_digest" >> "$GITHUB_OUTPUT"');

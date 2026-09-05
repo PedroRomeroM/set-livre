@@ -88,18 +88,34 @@ describe("identity contracts", () => {
     "/conta?userId=11111111-1111-4111-8111-111111111111",
     "/entrar?sessao=ativa&next=https://attacker.example",
     "/entrar%3Fsessao%3Dativa",
+    "/dono/estudios/not-a-uuid/dados",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados?next=https://attacker.example",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao?next=https://attacker.example",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao#private",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao/../dados",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111%2Fdados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/dados",
+    "/dono/estudios/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/publicacao",
+    "/dono/estudios/not-a-uuid/publicacao",
     "\\\\attacker.example\\account",
     undefined,
   ])("fails closed for a non-allowlisted returnTo: %s", (candidate) => {
     expect(resolveAuthenticatedReturnTo(candidate)).toBe("/entrar?sessao=ativa");
   });
 
-  it.each(["/entrar?sessao=ativa", "/conta", "/conta/seguranca", "/dono", "/dono/recebimentos"])(
-    "preserves the exact authenticated surface: %s",
-    (destination) => {
-      expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);
-    },
-  );
+  it.each([
+    "/entrar?sessao=ativa",
+    "/conta",
+    "/conta/seguranca",
+    "/dono",
+    "/dono/recebimentos",
+    "/dono/estudios/novo",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/dados",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/midia",
+    "/dono/estudios/11111111-1111-4111-8111-111111111111/publicacao",
+  ])("preserves the exact authenticated surface: %s", (destination) => {
+    expect(resolveAuthenticatedReturnTo(destination)).toBe(destination);
+  });
 
   it("limits callback types and token length", () => {
     const base = {

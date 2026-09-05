@@ -44,9 +44,9 @@ test("FOUNDATION-E2E-007 @a11y backoffice não possui violações axe", async ({
 });
 
 test("FOUNDATION-E2E-009 @a11y conteúdo aceita texto ampliado a 200%", async ({ page }) => {
-  for (const [url, heading] of [
-    [publicBaseUrl, "Set Livre"],
-    [backofficeBaseUrl, "Operação Set Livre"],
+  for (const [surface, url, heading] of [
+    ["public", publicBaseUrl, "Set Livre"],
+    ["backoffice", backofficeBaseUrl, "Operação Set Livre"],
   ] as const) {
     await gotoExpectedPage(page, url, heading);
     await page.evaluate(() => {
@@ -58,10 +58,13 @@ test("FOUNDATION-E2E-009 @a11y conteúdo aceita texto ampliado a 200%", async ({
     );
     expect(hasHorizontalOverflow).toBe(false);
 
-    const finalNote = page.getByText(
-      "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
-    );
-    await finalNote.scrollIntoViewIfNeeded();
-    await expect(finalNote).toBeInViewport();
+    const finalContent =
+      surface === "public"
+        ? page.getByText(
+            "Esta tela comprova somente a fundação técnica. Nenhuma feature de produto é simulada.",
+          )
+        : page.getByRole("button", { name: "Entrar no backoffice" });
+    await finalContent.scrollIntoViewIfNeeded();
+    await expect(finalContent).toBeInViewport();
   }
 });

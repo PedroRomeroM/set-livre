@@ -1,13 +1,13 @@
 # Infraestrutura, ambientes e deploy
 
-Esta é a fonte canônica da operação técnica. Decisões ficam nos ADRs 014, 019, 020 e 021; resultados
+Esta é a fonte canônica da operação técnica. Decisões ficam nos ADRs 014, 019, 020, 021 e 023; resultados
 de uma execução pertencem ao check, deployment ou PR que os produziu.
 
 ## Contrato vigente
 
 | Componente        | Contrato                                                                                       |
 | ----------------- | ---------------------------------------------------------------------------------------------- |
-| desenvolvimento   | Windows nativo, Node 24.18, npm 11.19 e Supabase local em Docker Desktop                       |
+| desenvolvimento   | Windows nativo; Docker Engine oficial em WSL2 dedicado; Supabase local em loopback             |
 | produção de dados | Supabase Cloud `oirvvnojgkzdppkdvhej`, `sa-east-1`, sem branches remotas nesta fase            |
 | produção web      | Oracle E2 Micro Always Free-eligible x86_64, Ubuntu 24.04, 50 GB, IP reservado `147.15.97.227` |
 | origem web        | `https://147.15.97.227`, com indexação bloqueada até o go-live                                 |
@@ -21,7 +21,7 @@ local. `main` representa produção e só recebe mudanças pelo [ciclo obrigató
 
 ```mermaid
 flowchart LR
-    DEV[Windows + Supabase local] --> PR[Pull request]
+    DEV[Windows + WSL2 Docker Engine + Supabase local] --> PR[Pull request]
     PR --> CI[GitHub Actions Linux + Windows]
     CI --> MAIN[main aprovada]
     MAIN --> ART[Standalone Linux x86_64 por SHA]
@@ -50,22 +50,39 @@ o segundo mecanismo de deploy.
 
 `npm run local:setup` inicia a stack oficial da Supabase CLI, recria o banco e grava três arquivos
 ignorados: `.env.local`, `apps/backoffice/.env.local` e `.env.e2e.local`. O login DAL local é exclusivo,
-assume `app_dal` e não aceita host diferente de `127.0.0.1`.
+assume `app_dal` e não aceita host diferente de `127.0.0.1`. A mesma execução gera uma chave base64url
+de 32 bytes para `BACKOFFICE_RUNTIME_UNLOCK_KEY`, compartilhada somente entre o ambiente privado do
+backoffice e o runner E2E; ela nunca é versionada.
 
 O banco local contém somente dados QA descartáveis. Não há firewall customizado: a própria fronteira
-Docker é validada como local antes e depois de iniciar a stack, além de nunca reutilizar credencial ou
-dado de produção. Consulte [development.md](development.md).
+Docker é validada como local antes e depois de iniciar a stack. A distro `SetLivreDocker` hospeda
+somente o Engine oficial; o CLI Windows usa o contexto `set-livre-wsl` para
+`tcp://127.0.0.1:2375`. O wrapper inicia o serviço sob demanda, enquanto os timeouts oficiais de oito
+horas da distro e da VM WSL evitam interrupção durante uma jornada de desenvolvimento sem manter tarefa
+agendada.
+Aplicações e testes continuam nativos no Windows e nunca reutilizam credencial ou dado de produção.
+O runner Playwright reutiliza um pool PostgreSQL administrativo e um DAL por processo, com uma conexão
+e lease exclusivo por operação. Isso preserva transações no mesmo cliente e impede que conexões locais
+descartáveis esgotem o intervalo de portas efêmeras do Windows durante a suíte multibrowser.
+Consulte [development.md](development.md).
 
 ## CI e proteção de branch
 
-O workflow `.github/workflows/ci.yml` contém três jobs:
+O workflow `.github/workflows/ci.yml` contém cinco definições de job; a matriz Playwright expande uma
+delas em seis runners:
 
-1. **Quality, local Supabase and browser gates**: gates estáticos, Vitest, reset e pgTAP local, suíte
-   Playwright completa, build, pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação,
-   falhas e recuperação do instalador, além do smoke standalone Linux x86_64;
-2. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
-3. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
-   de `main`, sempre depois dos dois jobs verdes e quando `PRD_DEPLOY_ENABLED=true`.
+1. **Linux quality and release contracts**: gates estáticos, Vitest, reset e pgTAP local, build,
+   pacote, `actionlint`, prova dos contratos Nginx/systemd/SSH, ativação, falhas e recuperação do
+   instalador, além do smoke standalone Linux x86_64;
+2. **Playwright shard N/6**: seis runners Ubuntu simultâneos, cada um com checkout, dependências,
+   Supabase local e servidores próprios, cobrindo em conjunto a matriz Playwright completa uma única
+   vez;
+3. **Quality, local Supabase and browser gates**: agregador protegido que sempre inspeciona os
+   resultados anteriores e só termina verde quando o job Linux e toda a matriz Playwright retornam
+   exatamente `success`;
+4. **Windows native contracts**: contratos TypeScript/Vitest e build/pacote no ambiente Windows;
+5. **Deploy production**: em push de `main` ou recuperação manual explicitamente cercada ao SHA atual
+   de `main`, sempre depois dos dois contexts protegidos verdes e quando `PRD_DEPLOY_ENABLED=true`.
 
 `workflow_dispatch` permite repetir manualmente os dois gates sem fabricar commit quando o evento do
 GitHub não cria uma check suite. Por padrão ele não publica produção. O único opt-in de recuperação
@@ -76,11 +93,20 @@ reprova a execução antes dos gates e mantém o job de produção omitido. O ch
 
 Workflows de pull request não recebem secrets de produção e o checkout remove a credencial Git depois
 da clonagem. Cada gate relevante possui step próprio; Actions externas são oficiais e fixadas por SHA.
-Quando a suíte Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
-e vídeos em um artifact identificado pela execução; runs verdes não acumulam evidência redundante.
-Os dois primeiros nomes são contexts obrigatórios da branch protection. O terceiro context,
-`Codex review contract`, não é um job: uma credencial confiável o publica somente depois do ciclo de
-review limpo descrito em [review-deploy-cycle.md](review-deploy-cycle.md).
+Quando um shard Playwright falha, o CI preserva por sete dias somente seu relatório, traces, screenshots
+e vídeos em um artifact identificado também pelo shard; runs verdes não acumulam evidência redundante.
+Os seis shards rodam simultaneamente em VMs descartáveis distintas. Cada runner recria sua própria stack
+Supabase e conserva `workers: 1`, portanto nenhuma fixture, porta, banco ou servidor destrutivo é
+compartilhado entre shards. `fail-fast: false` deixa os seis chegarem a estado terminal e exporem todas
+as falhas da rodada. O job Linux estrutural também roda em paralelo com a matriz; seus orçamentos são 45
+minutos para contratos Linux, 30 para cada shard e 5 para o agregador.
+
+O context obrigatório `Quality, local Supabase and browser gates` é esse agregador mínimo e usa
+`always()` apenas para observar resultados terminais: `failure`, `cancelled` e `skipped` são rejeitados,
+e somente `success` simultâneo de Linux e da matriz o aprova. `Windows native contracts` permanece o
+segundo context obrigatório da branch protection. O terceiro context, `Codex review contract`, não é um
+job: uma credencial confiável o publica somente depois do ciclo de review limpo descrito em
+[review-deploy-cycle.md](review-deploy-cycle.md).
 
 ## Release e deploy
 
@@ -139,14 +165,32 @@ SHA ocupa `/opt/set-livre/releases/<sha>` junto aos ambientes e à identidade do
 termina antes da primeira migration e a ativação posterior recalcula os bytes da árvore, relê checksum,
 manifesto, metadados e digest do host dessa mesma raiz root-owned, sem aceitar novos uploads. O link
 `/opt/set-livre/current` só é aceito quando resolve exatamente para essa raiz SHA, nunca para um filho;
-só então sua troca ativa a unidade inteira, reinicia os serviços e exige readiness interno e
-HTTPS público. Um marcador root-only preserva o alvo anterior até o commit do health; traps restauram
+só então o instalador interrompe timer, gate, cleanup e ambos os aplicativos, troca o link, exige
+sucesso do cleanup inicial da candidata e reinicia os serviços para provar readiness interno e
+HTTPS público. Rollback e recovery seguem a mesma ordem: apps parados antes de restaurar o link e
+cleanup da release recuperada aprovado antes de reiniciá-los. Falha ao interromper a cadeia impede
+a troca do link; cleanup falho não permite iniciar a release correspondente. Um marcador root-only
+preserva o alvo anterior até o commit do health; traps restauram
 esse alvo em erro, `HUP`, `INT` ou `TERM`. No boot, web e backoffice são units estáticas, sem vínculo
 direto com `multi-user.target`; somente `set-livre-application-start.service` pertence ao boot e exige que
-`set-livre-release-recovery.service` termine com sucesso antes de iniciá-las. A mesma recovery unit é
+`set-livre-release-recovery.service` termine com sucesso; em seguida, o próprio gate inicia
+sincronamente a oneshot `set-livre-media-cleanup.service` e somente depois inicia os aplicativos. A
+oneshot não declara ordenação de volta para a recovery, pois deploy e recovery também a invocam
+sincronamente e essa aresta criaria espera circular. Assim ela sempre lê o symlink já estabilizado pelo
+control plane que a chamou. Suas pré-condições de release, ambientes e ausência do blocker principal
+usam assertions do systemd; o próprio gate de aplicação também exige ausência das duas fases do
+bootstrap. Qualquer ausência, corrupção ou fase residual falha a inicialização dos aplicativos, em vez
+de pular silenciosamente o cleanup. A fase durável de recovery bloqueia o timer periódico, mas não a
+oneshot controlada. Fora das transições, o timer ativa `set-livre-application-start.service` a cada dez
+minutos; o gate sem `RemainAfterExit` executa `cleanup → apps` e volta a inativo. Assim uma falha
+transitória do cleanup no boot mantém os apps parados e a próxima ativação do timer repete o gate por
+inteiro, sem `OnSuccess`, chamada assíncrona ou aresta circular. Deploy e bootstrap interrompem, nessa
+ordem, timer, gate e cleanup antes de trocar estado. Isso restaura o ledger antes de concluir um boot
+frio. A mesma recovery unit é
 disparada pela path unit quando existe marcador. O lock root-only compartilhado é aberto sem seguir
 links, validado pelo descritor e preservado por toda a operação; recovery aguarda por no máximo cinco minutos,
-depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de doze minutos. Ela
+depende de `network-online.target` e `nginx.service` e recebe do systemd uma janela de quatorze minutos,
+incluindo espera pelo lock, parada dos serviços, cleanup e tentativas limitadas de health. Ela
 pode iniciar os apps internamente para provar health sem depender do gate e, portanto, sem ciclo de
 units. Uma fase root-only adicional é publicada antes de remover o blocker do bootstrap e permanece até
 o readiness terminal. Se a recuperação recebe `SIGKILL`, seu `ExecStopPost` interrompe os apps e, no
@@ -181,7 +225,11 @@ aceita o head compilado de uma release enquanto ele existir no histórico aplica
 release anterior durante a ativação, mas o deploy exige que o maior head remoto corresponda exatamente
 ao candidato antes de publicar. O gate de PR também recusa `databaseMigrationHead` diferente da
 migration mais recente, impedindo que um schema forward-only seja aplicado antes de detectar o contrato
-compilado obsoleto. Alterações destrutivas exigem backup e recuperação comprovada.
+compilado obsoleto. O migration guard compara a árvore candidata com a base aplicada: cada migration de
+`main` precisa continuar presente e idêntica em bytes, e toda migration nova precisa ter timestamp
+posterior ao maior timestamp dessa base. A topologia intermediária dos commits não altera esse contrato;
+conflitos entre branches são resolvidos na árvore final antes do merge. Alterações destrutivas exigem
+backup e recuperação comprovada.
 
 ## Host Oracle
 
@@ -426,6 +474,10 @@ explícito e defesa para conexões diretas, mas isso não é autoridade na produ
 encaminhar opções arbitrárias do startup packet. A migration append-only configura `role=app_dal`
 exatamente para esse login no database `postgres`; uma sessão nova recebe a role pelo PostgreSQL e o
 readiness valida setting, `session_user`, role efetiva e membership antes da ativação.
+O parser compartilhado aceita somente a coordenada local
+`app_runtime_local@127.0.0.1:54322/postgres` sem TLS ou a coordenada de produção acima com usuário e
+project ref exatos, `sslmode=verify-full` e uma única opção `role=app_dal`; qualquer outra role, host,
+porta, banco ou combinação de parâmetros falha fechado.
 
 O contrato exige `sslmode=verify-full`. `app_runtime_production` tem limite total de dez conexões, sem
 inherit, superuser, criação, replicação, bypass RLS, TEMP ou objetos próprios. Sua única ACL direta é
@@ -451,8 +503,15 @@ Nova execução retoma a mesma credencial, evitando invalidar o cache de autenti
 role já tem `LOGIN`, o caminho normal é estritamente de validação: secret divergente falha antes da VM
 sem alterar a credencial que sustenta a release vigente. Rotação futura exige mudança operacional
 própria com duas credenciais/identidades durante a transição, comprovação e retirada da anterior; não
-faz parte do deploy normal. Os pools usam `4 + 1 + 1 = 6` entre comandos e readiness dos dois apps,
-deixando quatro slots do limite dez para verificação de deploy, recuperação e variação operacional.
+faz parte do deploy normal. Os pools usam `2 + 1 + 2 + 1 = 6`: comandos e readiness do app público,
+seguidos pelo DAL e readiness do backoffice. Os quatro slots restantes do limite dez ficam reservados
+para verificação de deploy, recuperação e variação operacional. Cada processo conserva seus pools em
+um registro global tipado, para que bundles ou recompilações do Next não dupliquem conexões além desse
+orçamento.
+O `statement_timeout` permanece em dois segundos para comandos e um segundo para readiness. O timeout
+da chamada do driver termina um segundo depois em cada caso; essa ordem evita a corrida entre cliente
+e servidor, preserva o erro PostgreSQL e oferece margem apenas à fila curta do pool e ao transporte,
+sem ampliar o tempo de execução autorizado para SQL.
 
 Antes de definir a senha, o provisionador exige a fronteira gerenciada aprovada pela baseline. `pg_net`
 fica desabilitado; qualquer `USAGE/CREATE` efetivo de `app_dal` em schema não sistêmico diferente de
@@ -479,6 +538,31 @@ A CA pública oficial do Supabase fica versionada em
 `807025AD50D4ED219D2C9C7D299C004F824EB00CF7F65AFEF607D07B72E6CAFA` e a validade termina em
 2031-04-26; substituição exige obter a nova CA no dashboard, conferir emissor/fingerprint, testar a
 conexão real e trocar repositório e host no mesmo release.
+
+O deploy aplica o schema do backoffice, mas nunca escolhe silenciosamente uma pessoa como primeiro
+admin. Depois que o responsável indicar uma conta ativa com perfil concluído, o operador PostgreSQL
+autorizado chama uma única vez
+`private.bootstrap_first_platform_admin(p_user_id => ..., p_request_id => ..., p_idempotency_key => ...)`
+e comprova `platform_roles` + `audit.events`; `insert` direto é proibido. Enquanto não houver host de
+go-live, o runtime usa `NEXT_PUBLIC_APP_URL=http://127.0.0.1:3001` e o acesso humano abre
+`ssh -N -L 127.0.0.1:3001:127.0.0.1:3001 ubuntu@147.15.97.227`, então navega para
+`http://127.0.0.1:3001`. O processo remoto continua em loopback, sem virtual host Nginx; `Host` e
+`Origin` precisam coincidir exatamente. Os headers `x-forwarded-host` e `x-forwarded-proto` que o
+próprio Next normaliza precisam corresponder exatamente a `127.0.0.1:3001` e `http`; qualquer valor
+divergente é recusado.
+
+Cada aplicação recebe somente seu segredo necessário. O EnvironmentFile do backoffice contém
+`BACKOFFICE_RUNTIME_UNLOCK_KEY`, uma chave base64url de 43 caracteres mantida no environment protegido
+`production`. O web contém `SUPABASE_SECRET_KEY`, recuperada e mascarada de forma efêmera pela
+Management API durante o job confiável, para assinar paths já autorizados e operar o Storage sem dar
+grants ao browser. O workflow valida formato/quebras de linha, transporta os arquivos separados do
+artifact e o instalador publica cada um como `root:<grupo-da-aplicação> 0640`; segredo de uma aplicação
+é recusado no arquivo da outra. A chave do backoffice vira cookie HttpOnly assinado de cinco minutos;
+os candidatos efêmeros do contrato de host reproduzem exatamente esse conjunto obrigatório de chaves,
+para que o laboratório Linux valide o mesmo envelope aceito em produção.
+Nenhum dos valores entra em bundle, release, log ou browser storage. O preflight
+`set-livre-deploy-ready-v11` distingue hosts que já validam esse contrato dos instaladores anteriores
+antes de qualquer upload ou migration.
 
 ## HTTPS por IP e DNS adiado
 
@@ -527,8 +611,115 @@ Secrets do environment `production`:
 
 - `SUPABASE_ACCESS_TOKEN`;
 - `SUPABASE_DB_PASSWORD`;
+- `BACKOFFICE_RUNTIME_UNLOCK_KEY`;
 - `PRD_DATABASE_URL_APP_DAL`;
 - `VM_SSH_PRIVATE_KEY`.
+
+Depois do `db push`, o workflow executa o seed declarativo de buckets e exige `studio-media` privado,
+limite exato de 15 MiB e apenas JPEG/PNG/WebP/AVIF. Em seguida publica uma Edge Function imutável
+`media-cleanup-<SHA>`; ausência ou drift do bucket interrompe a entrega antes de habilitar a aplicação.
+A fonte canônica dessa Function é TypeScript estrito (`index.ts` e `cleanup-core.ts`). O Deno 2.9.5
+fica fixado no lockfile npm e o `npm run typecheck` executa `deno check` diretamente nesse grafo em
+Linux e Windows; assim o CI preserva a política que recusa Actions externas e copia o diretório sem
+renomear ou trocar extensões antes do deploy.
+
+O cleanup de mídia não adiciona segredo ao GitHub. No começo do job, o workflow usa o
+`SUPABASE_ACCESS_TOKEN` já protegido para ler pela Management API exatamente a secret key moderna
+`default`, mascara-a e grava-a em arquivo efêmero `0600`; ela alimenta o preflight, o EnvironmentFile
+web e o canário, e é truncada/removida em `always()`. Depois das migrations e da publicação da Function
+candidata, `npm run production:media-cleanup` cria objetos canário reais, invoca a candidata diretamente
+por HTTPS com `apikey` — sem duplicar a secret key moderna em `Authorization` —, exige remoção de ambos
+pela Storage API e comprova cada ausência somente por `404/NoSuchKey`, além de conferir a execução terminal vinculada
+ao slug no ledger durável. A retenção preserva a candidata e a Function correspondente à release ainda
+ativa, identificada pelo health público de liveness, antes de reduzir o conjunto a quatro versões
+imutáveis. Resposta negada, contrato ambíguo, chave legada, ACL excedente, timeout, contagem que não
+fecha ou cleanup com falha interrompe o deploy sem imprimir credenciais. Uma única Function mutável
+legada `media-cleanup` é aposentada somente depois desse canário; cardinalidade ou estado ambíguo
+bloqueia a entrega.
+
+Um advisory lock de sessão impede dois configuradores de manipular o canário simultaneamente. Antes do
+novo probe, checkpoints `prepared` ou `queued` abandonados há 30 minutos são removidos pela Storage API,
+com ausência estrita comprovada para os dois paths, e só depois terminalizados como `probe_abandoned`.
+Queda entre remoção e atualização do banco deixa o mesmo checkpoint repetível; erro `400`, `404` com
+outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
+
+O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
+depois de 30 minutos, a primeira execução com outra identidade o fecha como
+`cleanup_run_abandoned`. O replay relê o lote original pelo ledger: resultados já persistidos entram
+nas contagens sem repetir Storage ou conclusão de item, e somente os membros pendentes ainda pertencentes
+ao token recebem paths, após renovar a lease sob lock de linha e revalidar a identidade. Isso impede
+takeover enquanto o replay remove objetos, sem aumentar tentativas ou reescrever o histórico.
+Mesmo com todos os itens concluídos, o mesmo run não reclama um novo lote.
+Falha histórica permanece falha; lease transferida a outro run mantém o replay fail-closed, sem tocar
+objetos alheios, até a recuperação por abandono. Cada claim registra antes um item imutável no ledger
+do run; o fechamento
+deriva esse conjunto histórico, marca como failed qualquer item ainda pendente e mantém sempre
+`claimed = deleted + failed`. Claims e completion tokens em mídia e probes são apenas o estado
+operacional atual. O claim seguinte pode reassumir leases vencidos sem apagar o pertencimento anterior,
+e o sucesso posterior é a única forma de restaurar readiness. A ausência de qualquer sucesso terminal
+nos últimos 30 minutos também degrada readiness, cobrindo falhas que acontecem antes de o worker
+conseguir abrir o ledger. A
+ativação normal, a recuperação de uma ativação interrompida, o rollback e o bootstrap com release
+compatível executam a oneshot do slug da release ativa antes dos health checks internos e público; o
+timer de dez minutos só volta depois dessa prova. No recovery, a fase durável do bootstrap é removida
+antes de iniciar o timer, e o rollback só é consumido depois de comprovar que o timer ficou ativo. Se a
+oneshot falhar durante um bootstrap compatível, o symlink da release, o blocker autenticado e os
+marcadores de recovery permanecem íntegros para nova tentativa, com os serviços parados. Não existe
+edição manual do banco como procedimento operacional.
+
+Cada invocação da Function reclama no máximo dois itens sequenciais. A leitura do corpo de entrada
+tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
+do corpo da resposta, limitado a 64 KiB. Abertura, claim, conclusão de item e fechamento admitem no
+máximo uma segunda tentativa com os mesmos parâmetros e identidade, dentro desses prazos.
+O claim serializado no banco relê a reserva após
+perda de resposta; se as duas tentativas forem inconclusivas, o worker não sela contagens inventadas
+e responde erro sem totais, preservando o run para replay ou recuperação por abandono.
+Se ambas as respostas de conclusão de algum item se perderem, uma única releitura do lote original
+confere identidade, cardinalidade e resultados terminais persistidos, sem repetir Storage. Resultado
+pendente, membro ausente/duplicado/trocado ou releitura indisponível deixa o run inconclusivo e
+replayable, com erro sem totais; não transforma incerteza em `failed`. O mesmo vale para uma abertura
+cuja segunda resposta permanece inconclusiva. Um replay de abertura já terminal reproduz o resultado
+sem reclamar outro lote. Se as duas respostas de fechamento se perderem, a RPC de abertura existente
+relê uma única vez o mesmo UUID/slug: somente estado terminal com status, contagens e código de erro
+exatamente iguais confirma o resultado. Falha persistida continua falha; resposta running, divergente
+ou indisponível nunca vira sucesso.
+O orçamento inclui 5s de entrada, duas aberturas e dois claims de 5s, mais dois itens de até 20s
+(remoção de 10s e duas confirmações de 5s), totalizando 65s. A releitura de itens dispõe de até 5s:
+o I/O de trabalho soma 70s, com 20s de margem até seu limite de 90s. Fechamento, replay e releitura
+terminal usam até 15s adicionais: 85s de I/O total, com 15s de margem até o envelope de 100s para
+despacho, parsing e processamento. O teste de orçamento inclui overhead fora do I/O; uma suspensão
+arbitrariamente longa ainda falha fechada, não amplia o limite.
+Desconexão cancela novos claims e remoções, mas não cancela as confirmações idempotentes de item:
+elas precisam reconciliar um commit cuja resposta se perdeu antes de derivar as contagens do run.
+Continuam sujeitas ao deadline de RPC e ao orçamento de trabalho; não há repetição da remoção física.
+Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
+run e sua releitura terminal têm deadline próprio de 5s por chamada dentro da janela até 100s,
+inclusive se o chamador desconectar. A abertura inicial continua cancelável; somente a releitura após
+iniciar o fechamento pertence à finalização. Desconexão que impeça a releitura dos itens ou
+esgotamento do orçamento que impeça confirmar o ledger preserva
+o resultado inconclusivo, sem selar contagens estimadas.
+Falhas comprovadas continuam contabilizadas e o resultado só é saudável depois da confirmação
+do ledger. Indisponibilidade ou resposta ambígua do próprio ledger permanece fail-closed e usa a
+recuperação de runs abandonados descrita acima, sem fabricar confirmação.
+
+Invocador da release e canário aguardam no máximo 110s, incluindo o JSON da resposta; a oneshot de
+cleanup tem `TimeoutStartSec=120s` e `TimeoutStopSec=10s`. Esses limites preservam margem abaixo dos
+[150s mínimos de wall clock e idle timeout do Supabase](https://supabase.com/docs/guides/functions/limits)
+e da lease de claim de 15 minutos. O configurador mantém 15s para as demais chamadas HTTP e para
+Storage, também incluindo o corpo. O lote menor preserva tempo de finalização sem paralelizar mutações
+ou introduzir scheduler adicional; o timer continua com intervalo de dez minutos.
+O gate `set-livre-application-start.service` permanece sem timeout próprio: para `Type=oneshot`, o
+[systemd desabilita o timeout de startup por padrão](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml#L529-L537),
+sem herdar os 90s usuais do manager. A oneshot de cleanup e a recovery conservam seus limites explícitos.
+
+O teto inicial é de 12 mídias por hora (24 objetos, pois cada item remove original e prévia).
+Uma galeria máxima de 20 fotos exige dez ciclos: até 100 minutos mais a duração da última execução
+depois da elegibilidade, sem outras entradas ou falhas. Esse limite privilegia o fechamento seguro de
+um lote na baseline de baixo volume, não promete esvaziar a fila numa única invocação. Readiness mede
+sucesso terminal recente e runs falhos/travados, não exige fila vazia; portanto a remoção de uma galeria
+não impede novos ciclos nem a saúde entre lotes. O claim ordena por elegibilidade e ID. Antes de admitir
+volume sustentado acima de 12 mídias elegíveis/h, é necessário medir entradas, idade do backlog e tempo
+de drenagem e rever capacidade; aumentar apenas o timeout não resolve saturação.
 
 O publishable key e a host key SSH são públicos por natureza. Antes de builds e migrations, o preflight
 recusa caracteres de controle, espaço, aspas ou barra invertida na URL DAL bruta, antes de normalizar a
@@ -545,10 +736,11 @@ Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `a
 indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige o HTTPS
 público operacional, e build, scan, archive determinístico, ambientes e staging validado na VM precisam
 terminar antes do primeiro `db push`. O instalador da VM também
-aceita exclusivamente o formato moderno
-`sb_publishable_`; `sb_secret_`, JWT legado `service_role` e qualquer JWT genérico são recusados antes de
-alcançar bundle ou artifact. Senhas, access token, URL DAL e chave SSH privada nunca entram em logs,
-artifacts ou documentação.
+aceita exclusivamente o formato moderno `sb_publishable_` no campo público; `sb_secret_`, JWT legado
+`service_role` e qualquer JWT genérico são recusados nessa posição antes de alcançar bundle ou
+artifact. A fronteira server-only do web aceita `sb_secret_` em produção e o JWT `service_role`
+somente no runtime local/teste gerado pelo CLI. Senhas, access token, URL DAL e chave SSH privada
+nunca entram em logs, artifacts ou documentação.
 
 ## Operação e capacidade
 

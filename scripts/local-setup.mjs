@@ -3,14 +3,16 @@ import { Buffer } from "node:buffer";
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
 
 import { Client } from "pg";
+import { createClient } from "@supabase/supabase-js";
 
 import { databaseMigrationHead } from "../packages/contracts/src/database-contract.ts";
+import { createCleanupRequestHandler } from "../supabase/functions/media-cleanup/index.ts";
 
 import { generateDatabaseArtifacts, verifyDatabaseArtifacts } from "./database-artifacts.mjs";
 
@@ -30,7 +32,7 @@ const localApplicationContracts = Object.freeze({
     workingDirectory: ".",
   }),
 });
-const localRuntimeEnvironmentNames = Object.freeze([
+const commonLocalRuntimeEnvironmentNames = Object.freeze([
   "APP_ENV",
   "APP_RELEASE_SHA",
   "DATABASE_URL_APP_DAL",
@@ -38,7 +40,15 @@ const localRuntimeEnvironmentNames = Object.freeze([
   "NEXT_PUBLIC_SUPABASE_ANON_KEY",
   "NEXT_PUBLIC_SUPABASE_URL",
 ]);
-const localRuntimeEnvironmentNameSet = new Set(localRuntimeEnvironmentNames);
+const backofficeLocalRuntimeEnvironmentNames = Object.freeze([
+  ...commonLocalRuntimeEnvironmentNames,
+  "BACKOFFICE_RUNTIME_UNLOCK_KEY",
+]);
+const webLocalRuntimeEnvironmentNames = Object.freeze([
+  ...commonLocalRuntimeEnvironmentNames,
+  "SUPABASE_SECRET_KEY",
+]);
+export const applicationDatabaseSchemas = Object.freeze(["public", "private", "audit"]);
 const inheritedOperationalEnvironmentNames = Object.freeze([
   "CI",
   "COMSPEC",
@@ -112,14 +122,35 @@ function assertPublicSupabaseKey(value) {
   }
 }
 
+function assertServerSupabaseKey(value) {
+  if (typeof value !== "string" || value === "" || value.length > 8_192) {
+    throw new Error("SUPABASE_SECRET_KEY local possui formato inválido.");
+  }
+  const segments = value.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !jwtSegmentPattern.test(segment))) {
+    throw new Error("SUPABASE_SECRET_KEY local não é uma chave server-only válida.");
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(segments[1], "base64url").toString("utf8"));
+    if (payload?.role !== "service_role") throw new Error("role inesperada");
+  } catch {
+    throw new Error("SUPABASE_SECRET_KEY local precisa usar a role service_role.");
+  }
+}
+
 function assertLocalApplicationEnvironment(localEnvironment, expectedApplicationUrl) {
   if (localEnvironment === null || typeof localEnvironment !== "object") {
     throw new Error("O ambiente local da aplicação é inválido.");
   }
+  const expectedNames =
+    expectedApplicationUrl === localApplicationContracts.backoffice.expectedApplicationUrl
+      ? backofficeLocalRuntimeEnvironmentNames
+      : webLocalRuntimeEnvironmentNames;
+  const expectedNameSet = new Set(expectedNames);
   const unexpectedNames = Object.keys(localEnvironment).filter(
-    (name) => !localRuntimeEnvironmentNameSet.has(name),
+    (name) => !expectedNameSet.has(name),
   );
-  const missingNames = localRuntimeEnvironmentNames.filter(
+  const missingNames = expectedNames.filter(
     (name) =>
       typeof localEnvironment[name] !== "string" ||
       localEnvironment[name] === "" ||
@@ -137,7 +168,16 @@ function assertLocalApplicationEnvironment(localEnvironment, expectedApplication
   if (localEnvironment.NEXT_PUBLIC_SUPABASE_URL !== "http://127.0.0.1:54321") {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL não corresponde ao Supabase local.");
   }
+  if (
+    expectedNames === backofficeLocalRuntimeEnvironmentNames &&
+    !/^[A-Za-z0-9_-]{43}$/u.test(localEnvironment.BACKOFFICE_RUNTIME_UNLOCK_KEY)
+  ) {
+    throw new Error("BACKOFFICE_RUNTIME_UNLOCK_KEY local possui formato inválido.");
+  }
   assertPublicSupabaseKey(localEnvironment.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  if (expectedNames === webLocalRuntimeEnvironmentNames) {
+    assertServerSupabaseKey(localEnvironment.SUPABASE_SECRET_KEY);
+  }
 
   let dalDatabaseUrl;
   try {
@@ -175,7 +215,7 @@ export function createLocalApplicationEnvironment({
       environment[name] = value;
     }
   }
-  for (const name of localRuntimeEnvironmentNames) environment[name] = validated[name];
+  for (const name of Object.keys(validated)) environment[name] = validated[name];
   return environment;
 }
 
@@ -353,11 +393,15 @@ export async function runNextBuildWithCacheCleanup({
 
 const localDockerContracts = {
   linux: new Map([["default", "unix:///var/run/docker.sock"]]),
-  win32: new Map([
-    ["default", "npipe:////./pipe/docker_engine"],
-    ["desktop-linux", "npipe:////./pipe/dockerDesktopLinuxEngine"],
-  ]),
+  win32: new Map([["set-livre-wsl", "tcp://127.0.0.1:2375"]]),
 };
+const windowsDockerDistribution = "SetLivreDocker";
+const windowsSupabaseCliPath = "/usr/bin/supabase";
+const windowsWslEnvironment = Object.freeze([
+  "HOME=/root",
+  "LANG=C.UTF-8",
+  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+]);
 export const supabaseLocalNetworkName = "set-livre-loopback";
 const supabaseLocalProjectId = "set-livre";
 const loopbackBindingOption = "com.docker.network.bridge.host_binding_ipv4";
@@ -389,42 +433,6 @@ function assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride) 
   }
 }
 
-export function validateDockerDesktopPortBindingPolicy(settings) {
-  if (settings?.PortBindingBehavior !== "local-only-port-binding") {
-    throw new Error(
-      "Docker Desktop precisa usar Port binding behavior = Local only para o Supabase local.",
-    );
-  }
-}
-
-export function assertDockerPolicyOrStopRunningStack({ assertPolicy, isStackRunning, stopStack }) {
-  const stackIsRunning = isStackRunning();
-  try {
-    assertPolicy();
-  } catch (error) {
-    if (stackIsRunning) stopStack();
-    throw error;
-  }
-  return stackIsRunning;
-}
-
-function assertDockerDesktopPortBindingPolicy(environment, platform) {
-  if (platform !== "win32") return false;
-  const appData = environment.APPDATA;
-  if (typeof appData !== "string" || !isAbsolute(appData)) {
-    throw new Error("APPDATA não permite validar a política local do Docker Desktop.");
-  }
-  try {
-    validateDockerDesktopPortBindingPolicy(
-      JSON.parse(readFileSync(resolve(appData, "Docker", "settings-store.json"), "utf8")),
-    );
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("Port binding behavior")) throw error;
-    throw new Error("Não foi possível validar a política local do Docker Desktop.");
-  }
-  return true;
-}
-
 export function assertLoopbackNetworkInspection(inspections) {
   const inspection =
     Array.isArray(inspections) && inspections.length === 1 ? inspections[0] : undefined;
@@ -439,10 +447,7 @@ export function assertLoopbackNetworkInspection(inspections) {
   }
 }
 
-export function assertLoopbackContainerInspections(
-  inspections,
-  { dockerDesktopLocalOnly = false } = {},
-) {
+export function assertLoopbackContainerInspections(inspections) {
   if (!Array.isArray(inspections) || inspections.length === 0) {
     throw new Error("Nenhum container Supabase local em execução foi encontrado.");
   }
@@ -458,10 +463,7 @@ export function assertLoopbackContainerInspections(
       for (const binding of bindings) {
         const hostIp = binding?.HostIp;
         const hostPort = binding?.HostPort;
-        if (
-          typeof hostPort !== "string" ||
-          (hostIp !== "127.0.0.1" && !(dockerDesktopLocalOnly && hostIp === "::"))
-        ) {
+        if (typeof hostPort !== "string" || hostIp !== "127.0.0.1") {
           throw new Error("Um container Supabase publicou porta fora da fronteira local.");
         }
         const addresses = publishedPorts.get(hostPort) ?? new Set();
@@ -510,10 +512,11 @@ function ensureSupabaseLoopbackNetwork(environment) {
   );
 }
 
-function supabaseProjectContainerIds(environment) {
+function supabaseProjectContainerIds(environment, { includeStopped = false } = {}) {
   return runDocker(
     [
       "ps",
+      ...(includeStopped ? ["--all"] : []),
       "--filter",
       `label=com.supabase.cli.project=${supabaseLocalProjectId}`,
       "--format",
@@ -523,6 +526,74 @@ function supabaseProjectContainerIds(environment) {
   )
     .split("\n")
     .filter(Boolean);
+}
+
+export function classifySupabaseProjectStartup(inspections) {
+  if (!Array.isArray(inspections)) {
+    throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+  }
+  if (inspections.length === 0) return "absent";
+  let hasStartingContainer = false;
+  for (const inspection of inspections) {
+    const status = inspection?.State?.Status;
+    const health = inspection?.State?.Health?.Status;
+    if (typeof status !== "string" || (health !== undefined && typeof health !== "string")) {
+      throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+    }
+    if (["created", "paused", "removing", "exited", "dead"].includes(status)) {
+      return "stopped";
+    }
+    if (status === "restarting") {
+      hasStartingContainer = true;
+      continue;
+    }
+    if (status !== "running") {
+      throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+    }
+    if (health === "unhealthy") return "stopped";
+    if (health === "starting") {
+      hasStartingContainer = true;
+      continue;
+    }
+    if (health !== undefined && health !== "healthy") {
+      throw new Error("O Docker retornou um estado inválido para a stack Supabase local.");
+    }
+  }
+  return hasStartingContainer ? "starting" : "ready";
+}
+
+const supabaseStartupWaitBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+export function waitForSupabaseProjectStartup({
+  maxAttempts = 90,
+  pause = (milliseconds) => Atomics.wait(supabaseStartupWaitBuffer, 0, 0, milliseconds),
+  readState,
+} = {}) {
+  if (typeof readState !== "function" || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error("A espera da stack Supabase local recebeu configuração inválida.");
+  }
+  let state = readState();
+  if (state === "absent" || state === "stopped") return state;
+  for (let attempt = 0; state === "starting" && attempt < maxAttempts; attempt += 1) {
+    pause(500);
+    state = readState();
+    if (state === "absent") {
+      throw new Error("A stack Supabase local desapareceu durante a inicialização.");
+    }
+    if (state === "stopped") return state;
+  }
+  if (state !== "ready") {
+    throw new Error("A stack Supabase local não ficou saudável após o Docker Engine iniciar.");
+  }
+  return state;
+}
+
+function supabaseProjectStartupState(environment) {
+  const containerIds = supabaseProjectContainerIds(environment, { includeStopped: true });
+  if (containerIds.length === 0) return "absent";
+  return classifySupabaseProjectStartup(
+    JSON.parse(runDocker(["inspect", ...containerIds], environment)),
+  );
 }
 
 function supabaseProjectContainersAreRunning(environment) {
@@ -535,15 +606,13 @@ function assertSupabaseProjectStopped(environment) {
   }
 }
 
-function assertSupabaseLoopbackBindings(environment, platform = process.platform) {
+function assertSupabaseLoopbackBindings(environment) {
   const containerIds = supabaseProjectContainerIds(environment);
-  const dockerDesktopLocalOnly = assertDockerDesktopPortBindingPolicy(environment, platform);
   assertLoopbackNetworkInspection(
     JSON.parse(runDocker(["network", "inspect", supabaseLocalNetworkName], environment)),
   );
   assertLoopbackContainerInspections(
     JSON.parse(runDocker(["inspect", ...containerIds], environment)),
-    { dockerDesktopLocalOnly },
   );
 }
 
@@ -570,10 +639,96 @@ export function validateLocalDockerContext({
   return endpoint;
 }
 
+export function windowsPathToWslPath(value) {
+  if (typeof value !== "string" || value.includes("\0")) {
+    throw new Error("O caminho Windows para o WSL é inválido.");
+  }
+  const match = /^([A-Za-z]):[\\/](.+)$/u.exec(value);
+  if (match === null) throw new Error("O caminho Windows para o WSL precisa ser absoluto.");
+  return `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll("\\", "/")}`;
+}
+
+function mapWindowsArgumentToWsl(value) {
+  if (/^[A-Za-z]:[\\/]/u.test(value)) return windowsPathToWslPath(value);
+  const assignment = /^([^=]+=)([A-Za-z]:[\\/].+)$/u.exec(value);
+  return assignment === null ? value : `${assignment[1]}${windowsPathToWslPath(assignment[2])}`;
+}
+
+function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot) {
+  return [
+    "--distribution",
+    windowsDockerDistribution,
+    "--user",
+    "root",
+    "--cd",
+    windowsPathToWslPath(root),
+    "--exec",
+    "/usr/bin/env",
+    "-i",
+    ...windowsWslEnvironment,
+    windowsSupabaseCliPath,
+    ...argumentsList.map(mapWindowsArgumentToWsl),
+  ];
+}
+
+function localWslLauncherEnvironment(environment) {
+  const launcher = {};
+  for (const name of [
+    "PATH",
+    "Path",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR",
+  ]) {
+    const value = environment[name];
+    if (typeof value === "string" && value !== "") launcher[name] = value;
+  }
+  return launcher;
+}
+
+export function ensureWindowsDockerEngine({
+  environment = process.env,
+  execute = spawnSync,
+  platform = process.platform,
+} = {}) {
+  if (platform !== "win32") return false;
+  const result = execute(
+    "wsl.exe",
+    [
+      "--distribution",
+      windowsDockerDistribution,
+      "--user",
+      "root",
+      "--exec",
+      "/usr/bin/systemctl",
+      "start",
+      "docker.service",
+    ],
+    {
+      encoding: "utf8",
+      env: localWslLauncherEnvironment(environment),
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
+  if (result.error !== undefined || result.status !== 0) {
+    throw new Error(
+      `A distro ${windowsDockerDistribution} não iniciou o Docker Engine local esperado.`,
+    );
+  }
+  return true;
+}
+
 export function assertLocalDockerDaemon(environment = process.env, platform = process.platform) {
   const dockerHostOverride = environment.DOCKER_HOST;
   const dockerContextOverride = environment.DOCKER_CONTEXT;
   assertDockerOverridesAbsent(dockerHostOverride, dockerContextOverride);
+  ensureWindowsDockerEngine({ environment, platform });
 
   const contextName = runDocker(["context", "show"], environment);
   if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(contextName)) {
@@ -626,17 +781,47 @@ export function runSupabase(
     capture = false,
     execute = spawnSync,
     network = false,
+    platform = process.platform,
     resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+    root = repositoryRoot,
   } = {},
 ) {
   const localDockerEnvironment = resolveLocalDockerEnvironment();
   const commandArguments = network ? withSupabaseLocalNetwork(argumentsList) : argumentsList;
-  const result = execute(process.execPath, [supabaseCliPath, ...commandArguments], {
-    cwd: repositoryRoot,
+  let executable = process.execPath;
+  let executableArguments = [supabaseCliPath, ...commandArguments];
+  let invocationEnvironment = localDockerEnvironment;
+
+  if (platform === "win32") {
+    executable = "wsl.exe";
+    invocationEnvironment = localWslLauncherEnvironment(localDockerEnvironment);
+    const version = execute(executable, windowsWslSupabaseArguments(["--version"], root), {
+      cwd: root,
+      encoding: "utf8",
+      env: invocationEnvironment,
+      maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    if (
+      version.error !== undefined ||
+      version.status !== 0 ||
+      (version.stdout ?? "").trim() !== supabasePackage.version
+    ) {
+      throw new Error(
+        `A distro ${windowsDockerDistribution} precisa da Supabase CLI ${supabasePackage.version}.`,
+      );
+    }
+    executableArguments = windowsWslSupabaseArguments(commandArguments, root);
+  }
+
+  const result = execute(executable, executableArguments, {
+    cwd: root,
     encoding: "utf8",
-    env: localDockerEnvironment,
+    env: invocationEnvironment,
     maxBuffer: 128 * 1024 * 1024,
     stdio: ["ignore", capture ? "pipe" : "inherit", "pipe"],
+    windowsHide: platform === "win32",
   });
   if (result.error !== undefined || result.status !== 0) {
     const status = result.status === null ? "sem código" : `código ${result.status}`;
@@ -649,6 +834,190 @@ export function runSupabase(
   return result.stdout ?? "";
 }
 
+const pgProveImage = "public.ecr.aws/supabase/pg_prove:3.36";
+const pgTapDiagnosticLimit = 16_384;
+
+function knownSecretVariants(secrets) {
+  const variants = new Set();
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || secret === "" || secret === "[REDACTED]") continue;
+    const encoded = encodeURIComponent(secret);
+    const jsonEscaped = JSON.stringify(secret).slice(1, -1);
+    for (const variant of [
+      secret,
+      encoded,
+      encoded.replaceAll(/%[0-9A-F]{2}/gu, (match) => match.toLowerCase()),
+      encoded.replaceAll("%20", "+"),
+      jsonEscaped,
+    ]) {
+      if (variant !== "") variants.add(variant);
+    }
+  }
+  return [...variants].sort((left, right) => right.length - left.length);
+}
+
+function redactDiagnostic(rawDiagnostic, secrets = []) {
+  let redacted = String(rawDiagnostic ?? "");
+  for (const secret of knownSecretVariants(secrets)) {
+    redacted = redacted.replaceAll(secret, "[REDACTED]");
+  }
+  return redacted
+    .replaceAll(/postgres(?:ql)?:\/\/[^\s@]+@/giu, "postgresql://[REDACTED]@")
+    .replaceAll(
+      /((?:"(?:PGPASSWORD|password)"|'(?:PGPASSWORD|password)'|\b(?:PGPASSWORD|password)\b)\s*(?:=|:)\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/giu,
+      (_match, prefix, value) => {
+        const quote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+        return `${prefix}${quote}[REDACTED]${quote}`;
+      },
+    )
+    .trim();
+}
+
+function truncateDiagnosticStream(redacted, label) {
+  if (redacted.length <= pgTapDiagnosticLimit) return redacted;
+  const marker = `\n...[${label} truncado; início e fim preservados]...\n`;
+  const available = pgTapDiagnosticLimit - marker.length;
+  const headLength = Math.ceil(available / 2);
+  const tailLength = Math.floor(available / 2);
+  return `${redacted.slice(0, headLength)}${marker}${redacted.slice(-tailLength)}`;
+}
+
+function formatPgTapDiagnostic({ errorMessage, stderr, stdout }, secrets) {
+  return [
+    ["stderr", stderr],
+    ["stdout", stdout],
+    ["runner-error", errorMessage],
+  ]
+    .map(([label, raw]) => {
+      const redacted = redactDiagnostic(raw, secrets);
+      return redacted === "" ? "" : `[${label}]\n${truncateDiagnosticStream(redacted, label)}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function runWindowsDatabaseTests(
+  values,
+  {
+    containerName = `set-livre-pgtap-${process.pid}-${randomUUID()}`,
+    execute = spawnSync,
+    resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+  } = {},
+) {
+  const databaseUrl = new URL(values.DB_URL);
+  const databasePassword = decodeURIComponent(databaseUrl.password);
+  const diagnosticSecrets = [databasePassword, databaseUrl.password];
+  const environment = {
+    ...resolveLocalDockerEnvironment(),
+    PGDATABASE: decodeURIComponent(databaseUrl.pathname.slice(1)),
+    PGHOST: `supabase_db_${supabaseLocalProjectId}`,
+    PGPASSWORD: databasePassword,
+    PGPORT: "5432",
+    PGUSER: decodeURIComponent(databaseUrl.username),
+  };
+  const invoke = (argumentsList, { label, readLogsOnEmptyFailure = false }) => {
+    const result = execute("docker", argumentsList, {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 128 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.error !== undefined || result.status !== 0) {
+      const status = result.status === null ? "sem código" : `código ${result.status}`;
+      let diagnostic = formatPgTapDiagnostic(
+        {
+          errorMessage: result.error?.message,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        },
+        diagnosticSecrets,
+      );
+      if (diagnostic === "" && readLogsOnEmptyFailure) {
+        const logs = execute("docker", ["logs", containerName], {
+          encoding: "utf8",
+          env: environment,
+          maxBuffer: 128 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        diagnostic = formatPgTapDiagnostic(
+          {
+            errorMessage: logs.error?.message,
+            stderr: logs.stderr,
+            stdout: logs.stdout,
+          },
+          diagnosticSecrets,
+        );
+      }
+      const suffix = diagnostic === "" ? "" : `\n${diagnostic}`;
+      throw new Error(`${label} falhou no runner pgTAP efêmero do Windows (${status}).${suffix}`);
+    }
+    return result.stdout ?? "";
+  };
+
+  let containerCreated = false;
+  let failure;
+  try {
+    invoke(
+      [
+        "create",
+        "--name",
+        containerName,
+        "--network",
+        supabaseLocalNetworkName,
+        "-e",
+        "PGHOST",
+        "-e",
+        "PGPORT",
+        "-e",
+        "PGUSER",
+        "-e",
+        "PGPASSWORD",
+        "-e",
+        "PGDATABASE",
+        "-w",
+        "/tests",
+        pgProveImage,
+        "pg_prove",
+        "--ext",
+        ".pg",
+        "--ext",
+        ".sql",
+        "-r",
+        "/tests",
+      ],
+      { label: "A criação" },
+    );
+    containerCreated = true;
+    invoke(
+      ["cp", `${resolve(repositoryRoot, "supabase/tests")}${sep}.`, `${containerName}:/tests`],
+      { label: "A cópia dos testes" },
+    );
+    invoke(["start", "--attach", containerName], {
+      label: "A execução dos testes SQL",
+      readLogsOnEmptyFailure: true,
+    });
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (containerCreated) {
+      try {
+        invoke(["rm", "--force", containerName], { label: "A limpeza" });
+      } catch (cleanupError) {
+        failure ??= cleanupError;
+      }
+    }
+  }
+  if (failure !== undefined) throw failure;
+}
+
+function runDatabaseTests(values) {
+  if (process.platform === "win32") {
+    runWindowsDatabaseTests(values);
+    return;
+  }
+  runSupabase(["test", "db", "--local"], { network: true });
+}
+
 export function parseSupabaseCliError(rawError) {
   if (typeof rawError !== "string" || rawError.trim() === "") return undefined;
   const lines = rawError.trim().split(/\r?\n/u).reverse();
@@ -657,7 +1026,7 @@ export function parseSupabaseCliError(rawError) {
       const payload = JSON.parse(line);
       const message = payload?.error?.message ?? payload?.message;
       if (typeof message === "string" && message !== "") {
-        return message.replaceAll(/postgres(?:ql)?:\/\/[^\s@]+@/giu, "postgresql://[REDACTED]@");
+        return redactDiagnostic(message);
       }
     } catch {
       // A CLI mistura progresso textual e um erro JSON final; somente o JSON é seguro para diagnóstico.
@@ -681,11 +1050,13 @@ function assertLocalEndpoint(value, label, protocol, port) {
 
 export function parseSupabaseStatus(rawStatus) {
   const values = JSON.parse(rawStatus);
-  for (const name of ["ANON_KEY", "API_URL", "DB_URL"]) {
+  for (const name of ["ANON_KEY", "API_URL", "DB_URL", "SERVICE_ROLE_KEY"]) {
     if (typeof values[name] !== "string" || values[name] === "") {
       throw new Error(`Supabase local não retornou ${name}.`);
     }
   }
+  assertPublicSupabaseKey(values.ANON_KEY);
+  assertServerSupabaseKey(values.SERVICE_ROLE_KEY);
 
   const apiUrl = assertLocalEndpoint(values.API_URL, "API_URL", "http:", "54321");
   if (
@@ -941,6 +1312,56 @@ async function provisionLocalRuntime(values) {
   return { dalDatabaseUrl: dalDatabaseUrl.toString(), databaseMarker };
 }
 
+function isHealthyLocalCleanupResult(value) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).sort().join("\0") === "claimed\0deleted\0failed" &&
+    Number.isSafeInteger(value.claimed) &&
+    value.claimed >= 0 &&
+    Number.isSafeInteger(value.deleted) &&
+    value.deleted >= 0 &&
+    value.failed === 0 &&
+    value.claimed === value.deleted
+  );
+}
+
+export async function runLocalMediaCleanup(
+  values,
+  {
+    createHandler = createCleanupRequestHandler,
+    createSupabaseClient = createClient,
+    runId = randomUUID(),
+  } = {},
+) {
+  const functionSlug = `media-cleanup-${databaseMigrationHead.padEnd(40, "0")}`;
+  const handler = createHandler({
+    createSupabaseClient,
+    readConfiguration: () => ({ secretKey: values.SERVICE_ROLE_KEY, url: values.API_URL }),
+  });
+  const response = await handler(
+    new Request(`${values.API_URL}/functions/v1/${functionSlug}`, {
+      body: JSON.stringify({ runId }),
+      headers: {
+        apikey: values.SERVICE_ROLE_KEY,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    }),
+  );
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error("O cleanup local não retornou JSON terminal válido.");
+  }
+  if (response.status !== 200 || !isHealthyLocalCleanupResult(result)) {
+    throw new Error("O cleanup local não comprovou uma execução terminal saudável.");
+  }
+  return result;
+}
+
 async function verifyProductionRoleStartupAssumption(values) {
   const runtimePassword = randomBytes(32).toString("base64url");
   const administratorUrl = new URL(values.DB_URL);
@@ -1000,13 +1421,19 @@ async function verifyProductionRoleStartupAssumption(values) {
   }
 }
 
-function applicationEnvironment(values, dalDatabaseUrl, appUrl) {
+function applicationEnvironment(values, dalDatabaseUrl, appUrl, backofficeRuntimeUnlockKey) {
   return [
     "APP_ENV=local",
     "APP_RELEASE_SHA=local",
+    ...(backofficeRuntimeUnlockKey === undefined
+      ? []
+      : [`BACKOFFICE_RUNTIME_UNLOCK_KEY=${backofficeRuntimeUnlockKey}`]),
     `NEXT_PUBLIC_APP_URL=${appUrl}`,
     `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
     `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
+    ...(appUrl === localApplicationContracts.web.expectedApplicationUrl
+      ? [`SUPABASE_SECRET_KEY=${values.SERVICE_ROLE_KEY}`]
+      : []),
     `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
     "",
   ].join("\n");
@@ -1017,9 +1444,13 @@ async function resetLocalEnvironment() {
   startLocalSupabase();
   process.stdout.write("Reaplicando migrations e seed...\n");
   runSupabase(["db", "reset", "--local"], { capture: true, network: true });
+  reconcileSupabaseNetworkAfterReset();
   const values = localStatus();
+  process.stdout.write("Executando o cleanup local real...\n");
+  await runLocalMediaCleanup(values);
   process.stdout.write("Provisionando a role DAL local...\n");
   const { dalDatabaseUrl, databaseMarker } = await provisionLocalRuntime(values);
+  const backofficeRuntimeUnlockKey = randomBytes(32).toString("base64url");
 
   await Promise.all([
     writePrivateEnvironment(
@@ -1028,7 +1459,12 @@ async function resetLocalEnvironment() {
     ),
     writePrivateEnvironment(
       resolve(repositoryRoot, "apps/backoffice/.env.local"),
-      applicationEnvironment(values, dalDatabaseUrl, "http://127.0.0.1:3001"),
+      applicationEnvironment(
+        values,
+        dalDatabaseUrl,
+        "http://127.0.0.1:3001",
+        backofficeRuntimeUnlockKey,
+      ),
     ),
     writePrivateEnvironment(
       resolve(repositoryRoot, ".env.e2e.local"),
@@ -1036,9 +1472,11 @@ async function resetLocalEnvironment() {
         "E2E_ALLOW_LOCAL=1",
         "E2E_BASE_URL=http://127.0.0.1:3000",
         "E2E_BACKOFFICE_URL=http://127.0.0.1:3001",
+        `BACKOFFICE_RUNTIME_UNLOCK_KEY=${backofficeRuntimeUnlockKey}`,
         `E2E_DATABASE_MARKER=${databaseMarker}`,
         `NEXT_PUBLIC_SUPABASE_URL=${values.API_URL}`,
         `NEXT_PUBLIC_SUPABASE_ANON_KEY=${values.ANON_KEY}`,
+        `SUPABASE_SECRET_KEY=${values.SERVICE_ROLE_KEY}`,
         `DATABASE_URL_APP_DAL=${dalDatabaseUrl}`,
         `E2E_DATABASE_URL=${values.DB_URL}`,
         "",
@@ -1053,28 +1491,50 @@ function stopScopedSupabaseStack(environment = assertLocalDockerDaemon()) {
   assertSupabaseProjectStopped(environment);
 }
 
-function startLocalSupabase() {
-  const environment = assertLocalDockerDaemon();
-  const stackIsRunning = assertDockerPolicyOrStopRunningStack({
-    assertPolicy: () => assertDockerDesktopPortBindingPolicy(environment, process.platform),
-    isStackRunning: () => supabaseProjectContainersAreRunning(environment),
-    stopStack: () => stopScopedSupabaseStack(environment),
+export function startLocalSupabase({
+  assertBindings = assertSupabaseLoopbackBindings,
+  ensureNetwork = ensureSupabaseLoopbackNetwork,
+  environment = assertLocalDockerDaemon(),
+  isStackRunning = supabaseProjectContainersAreRunning,
+  readState = supabaseProjectStartupState,
+  runStart = () => runSupabase(["start"], { capture: true, network: true }),
+  stopStack = stopScopedSupabaseStack,
+} = {}) {
+  const stackState = waitForSupabaseProjectStartup({
+    readState: () => readState(environment),
   });
-  if (stackIsRunning) {
+  if (stackState === "stopped") {
+    stopStack(environment);
+  } else if (stackState === "ready") {
     try {
-      assertSupabaseLoopbackBindings(environment);
+      assertBindings(environment);
     } catch {
-      stopScopedSupabaseStack(environment);
+      stopStack(environment);
     }
   }
-  assertDockerDesktopPortBindingPolicy(environment, process.platform);
-  ensureSupabaseLoopbackNetwork(environment);
+  ensureNetwork(environment);
   try {
-    runSupabase(["start"], { capture: true, network: true });
-    assertSupabaseLoopbackBindings(environment);
+    runStart();
+    assertBindings(environment);
   } catch (error) {
-    if (supabaseProjectContainersAreRunning(environment)) stopScopedSupabaseStack(environment);
+    if (isStackRunning(environment)) stopStack(environment);
     throw error;
+  }
+}
+
+export function reconcileSupabaseNetworkAfterReset({
+  assertBindings = assertSupabaseLoopbackBindings,
+  environment = assertLocalDockerDaemon(),
+  startStack = startLocalSupabase,
+  stopStack = stopScopedSupabaseStack,
+} = {}) {
+  try {
+    assertBindings(environment);
+    return false;
+  } catch {
+    stopStack(environment);
+    startStack();
+    return true;
   }
 }
 
@@ -1109,20 +1569,34 @@ export async function main(command = "reset") {
     return;
   }
 
-  localStatus();
-  if (command === "generate-schema") {
+  const values = localStatus();
+  if (command === "cleanup") {
+    await runLocalMediaCleanup(values);
+    process.stdout.write("Cleanup local concluído em estado terminal saudável.\n");
+  } else if (command === "generate-schema") {
     await generateDatabaseArtifacts(runSupabase, { schema: true, types: false });
   } else if (command === "generate-types") {
     await generateDatabaseArtifacts(runSupabase, { schema: false, types: true });
   } else if (command === "generate") {
     await generateDatabaseArtifacts(runSupabase);
   } else if (command === "lint") {
-    runSupabase(["db", "lint", "--local", "--level", "warning", "--fail-on", "warning"], {
-      network: true,
-    });
+    runSupabase(
+      [
+        "db",
+        "lint",
+        "--local",
+        "--schema",
+        applicationDatabaseSchemas.join(","),
+        "--level",
+        "warning",
+        "--fail-on",
+        "warning",
+      ],
+      { network: true },
+    );
   } else if (command === "test") {
-    runSupabase(["test", "db", "--local"], { network: true });
-    await verifyProductionRoleStartupAssumption(localStatus());
+    runDatabaseTests(values);
+    await verifyProductionRoleStartupAssumption(values);
     await verifyDatabaseArtifacts(runSupabase);
     process.stdout.write("Testes SQL e artefatos gerados estão consistentes.\n");
   } else {

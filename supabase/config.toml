@@ -48,8 +48,17 @@ port = 54324
 enabled = true
 file_size_limit = "15MiB"
 
+[storage.buckets.studio-media]
+public = false
+file_size_limit = "15MiB"
+allowed_mime_types = ["image/jpeg", "image/png", "image/webp", "image/avif"]
+
 [storage.s3_protocol]
 enabled = false
+
+[functions.media-cleanup]
+verify_jwt = false
+entrypoint = "./functions/media-cleanup/index.ts"
 
 [auth]
 enabled = true

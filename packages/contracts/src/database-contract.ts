@@ -1,11 +1,20 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260828174500" as const;
+export const databaseMigrationHead = "20260905190840" as const;
+export const databaseCommandPoolTimeouts = Object.freeze({
+  queryTimeoutMs: 3_000,
+  statementTimeoutMs: 2_000,
+});
+export const databaseReadinessPoolTimeouts = Object.freeze({
+  queryTimeoutMs: 2_000,
+  statementTimeoutMs: 1_000,
+});
+const databaseProductionPoolerHost = "aws-0-sa-east-1.pooler.supabase.com" as const;
+const databaseProductionProjectRef = "oirvvnojgkzdppkdvhej" as const;
 
-const privilegedRoleNames = new Set(["postgres", "service_role", "supabase_admin"]);
-const roleNamePattern = /^[a-z_][a-z0-9_]{0,62}$/u;
-const supabasePoolerHostPattern = /^aws-\d+-[a-z0-9-]+\.pooler\.supabase\.com$/u;
-const supabasePoolerUserPattern = /^(?<role>[a-z_][a-z0-9_]{0,62})\.(?<projectRef>[a-z]{20})$/u;
+const localRuntimeRole = "app_runtime_local";
+const productionRuntimeRole = "app_runtime_production";
+const productionPoolerUser = `${productionRuntimeRole}.${databaseProductionProjectRef}`;
 const allowedConnectionParameters = new Set(["options", "sslmode"]);
 const rawControlCharacterPattern = /[\u0000-\u001f\u007f]/u;
 const rawEnvironmentFileSyntaxPattern = /['"\\ ]/u;
@@ -28,11 +37,6 @@ const normalizedDalDatabaseUrlSchema = z.url().superRefine((value, context) => {
     return;
   }
 
-  const poolerUser = supabasePoolerUserPattern.exec(username);
-  const sessionRole = poolerUser?.groups?.role ?? username;
-  if (!roleNamePattern.test(sessionRole) || privilegedRoleNames.has(sessionRole)) {
-    context.addIssue({ code: "custom", message: "A conexão DAL usa uma role privilegiada." });
-  }
   if (password === "") {
     context.addIssue({ code: "custom", message: "A conexão DAL exige senha." });
   }
@@ -43,23 +47,33 @@ const normalizedDalDatabaseUrlSchema = z.url().superRefine((value, context) => {
     context.addIssue({ code: "custom", message: "A conexão DAL não aceita fragmento." });
   }
 
-  const isLoopback = parsed.hostname === "127.0.0.1";
+  const isLocal = parsed.hostname === "127.0.0.1";
   const sslModes = parsed.searchParams.getAll("sslmode");
-  if (!isLoopback && (sslModes.length !== 1 || sslModes[0] !== "verify-full")) {
-    context.addIssue({ code: "custom", message: "A conexão DAL remota exige TLS verify-full." });
-  }
-  if (poolerUser !== null) {
-    if (!supabasePoolerHostPattern.test(parsed.hostname) || parsed.port !== "5432") {
+  if (isLocal) {
+    if (username !== localRuntimeRole || parsed.port !== "54322" || database !== "postgres") {
       context.addIssue({
         code: "custom",
-        message: "A conexão Supavisor DAL exige o pooler oficial em modo de sessão.",
+        message: "A conexão DAL local não usa a identidade e as coordenadas canônicas.",
       });
     }
-  } else if (parsed.hostname.endsWith(".pooler.supabase.com")) {
-    context.addIssue({
-      code: "custom",
-      message: "A conexão Supavisor DAL exige o project ref no usuário.",
-    });
+    if (sslModes.length !== 0) {
+      context.addIssue({ code: "custom", message: "A conexão DAL local não aceita sslmode." });
+    }
+  } else {
+    if (
+      username !== productionPoolerUser ||
+      parsed.hostname !== databaseProductionPoolerHost ||
+      parsed.port !== "5432" ||
+      database !== "postgres"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "A conexão DAL remota não usa a identidade e as coordenadas canônicas.",
+      });
+    }
+    if (sslModes.length !== 1 || sslModes[0] !== "verify-full") {
+      context.addIssue({ code: "custom", message: "A conexão DAL remota exige TLS verify-full." });
+    }
   }
 
   const options = parsed.searchParams.getAll("options");
@@ -87,11 +101,11 @@ const dalDatabaseUrlSchema = z
 
 export function parseDalDatabaseUrl(value: unknown) {
   const connectionString = dalDatabaseUrlSchema.parse(value);
-  const username = decodeURIComponent(new URL(connectionString).username);
-  const poolerUser = supabasePoolerUserPattern.exec(username);
+  const parsed = new URL(connectionString);
+  const local = parsed.hostname === "127.0.0.1";
   return {
     connectionString,
-    projectRef: poolerUser?.groups?.projectRef,
-    sessionRole: poolerUser?.groups?.role ?? username,
+    projectRef: local ? undefined : databaseProductionProjectRef,
+    sessionRole: local ? localRuntimeRole : productionRuntimeRole,
   };
 }

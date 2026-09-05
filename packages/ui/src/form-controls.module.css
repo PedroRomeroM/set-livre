@@ -6,8 +6,10 @@
 
 .label,
 .legend {
+  min-width: 0;
   color: var(--sl-color-ink-strong);
   font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
 .required {
@@ -35,7 +37,8 @@
 }
 
 .input,
-.select {
+.select,
+.textarea {
   display: block;
   width: 100%;
   min-width: 0;
@@ -48,6 +51,13 @@
   font: inherit;
   font-size: 1rem;
   line-height: 1.3;
+}
+
+.textarea {
+  min-height: 9rem;
+  font-kerning: none;
+  line-height: 1.55;
+  resize: vertical;
 }
 
 .selectFrame {
@@ -85,18 +95,21 @@
   opacity: 0.68;
 }
 
-.input::placeholder {
+.input::placeholder,
+.textarea::placeholder {
   color: var(--sl-color-ink-muted);
   opacity: 1;
 }
 
 .input:hover:not(:disabled),
-.select:hover:not(:disabled) {
+.select:hover:not(:disabled),
+.textarea:hover:not(:disabled) {
   border-color: var(--sl-color-brand-strong);
 }
 
 .input:focus-visible,
 .select:focus-visible,
+.textarea:focus-visible,
 .checkboxControl:focus-visible,
 .choiceControl:focus-visible {
   outline: 2px solid var(--sl-color-focus);
@@ -105,12 +118,14 @@
 }
 
 .input[aria-invalid="true"],
-.select[aria-invalid="true"] {
+.select[aria-invalid="true"],
+.textarea[aria-invalid="true"] {
   border-color: var(--sl-color-danger);
 }
 
 .input:disabled,
-.select:disabled {
+.select:disabled,
+.textarea:disabled {
   cursor: not-allowed;
   opacity: 0.68;
 }
@@ -222,12 +237,14 @@
 @media (forced-colors: active) {
   .input,
   .select,
+  .textarea,
   .choice {
     border-color: CanvasText;
   }
 
   .input:focus-visible,
   .select:focus-visible,
+  .textarea:focus-visible,
   .checkboxControl:focus-visible,
   .choiceControl:focus-visible {
     outline-color: Highlight;

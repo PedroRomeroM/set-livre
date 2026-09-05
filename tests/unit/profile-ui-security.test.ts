@@ -146,6 +146,10 @@ describe("profile UI privacy guards", () => {
     expect(mutation.lastIndexOf("queryClient.clear();")).toBeLessThan(
       mutation.indexOf('window.location.replace("/entrar")'),
     );
+    expect(content).toContain('import { flushSync } from "react-dom";');
+    expect(mutation.indexOf("flushSync(() => {")).toBeLessThan(
+      mutation.indexOf("setSessionTransitionStarted(true);"),
+    );
     expect(mutation.indexOf("setSessionTransitionStarted(true);")).toBeLessThan(
       mutation.indexOf("logoutMutation.mutate();"),
     );

@@ -29,9 +29,11 @@ O contrato técnico completo está em [`AGENTS.md`](AGENTS.md).
 
 ## Desenvolvimento local
 
-Requisitos: Windows 11, Node `24.18.0`, npm `11.19.0` e Docker Desktop em Linux containers.
-O Docker Desktop usa port binding `Local only`; os comandos Supabase validam essa política, a bridge e
-as portas publicadas antes de liberar o ambiente destrutivo.
+Requisitos: Windows 11, Node `24.18.0`, npm `11.19.0`, WSL2 e Docker CLI/Engine `29.7.2`.
+Somente o daemon roda na distro dedicada `SetLivreDocker`; aplicação, Vitest e Playwright continuam
+nativos no Windows. O contexto `set-livre-wsl` aponta exclusivamente para `127.0.0.1:2375`, e os
+comandos Supabase iniciam o serviço sob demanda e validam esse endpoint, a bridge e as portas
+publicadas antes de liberar o ambiente destrutivo. Docker Desktop não faz parte do ambiente suportado.
 
 ```powershell
 npm ci
@@ -87,13 +89,13 @@ docs/              contratos vivos, ADRs, roadmap e runbooks
 
 ## Documentação
 
-O índice canônico é [`docs/README.md`](docs/README.md). Planos de features são transitórios: depois de
-merge e deploy, o arquivo correspondente em `docs/features/` é removido e os contratos duráveis ficam
-nos documentos de domínio e testes.
+O índice canônico é [`docs/README.md`](docs/README.md). O ciclo de vida dos planos transitórios e a
+regra de fonte canônica seguem o
+[`ADR-015`](docs/adr/ADR-015-living-documentation-and-qa.md).
 
 ## Entrega
 
 Todo PR destinado a `main` segue [`docs/review-deploy-cycle.md`](docs/review-deploy-cycle.md): checks,
-`@codex review`, espera mínima real de 60 minutos, correções e novos ciclos até review explicitamente
-limpo no SHA atual. Depois do merge, Supabase, VM Oracle e health público são acompanhados até estado
-terminal.
+`@codex review`, polling a cada 10 minutos até `Completed` no SHA exato, correções e novos ciclos até
+review explicitamente limpo. Sessenta minutos sem conclusão são um alerta operacional, nunca
+aprovação. Depois do merge, Supabase, VM Oracle e health público são acompanhados até estado terminal.

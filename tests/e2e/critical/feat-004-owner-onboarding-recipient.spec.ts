@@ -17,8 +17,7 @@ import {
   startFeat004Recipient,
 } from "../../helpers/feat-004-owner-onboarding-recipient";
 import { switchFeat003SessionWithoutNavigation } from "../../helpers/feat-003-profile-account";
-
-test.use({ screenshot: "off", trace: "off", video: "off" });
+import { expectSessionStorageValue } from "../../helpers/expected-page";
 
 function deferredSignal() {
   let resolve: () => void = () => {
@@ -58,6 +57,45 @@ test("SL-F004-E2E-001 @p0 ativa dono somente após aceite explícito do contrato
     ).toBeVisible();
     const checkbox = page.getByRole("checkbox", { name: /Li e aceito o Contrato do Dono/iu });
     await expect(checkbox).not.toBeChecked();
+
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/owner/activation",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Área do dono indisponível" }),
+        ).toContainText("Área do dono indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(checkbox).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Ativar perfil de dono" })).toHaveCount(0);
+        await assertFeat004PrivateValuesAbsent(page);
+        expect(ownerCommandRequests).toBe(0);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(checkbox).toBeVisible({ timeout: 12_000 });
+    await expect(checkbox).not.toBeChecked();
+    expect(ownerCommandRequests).toBe(0);
 
     await page.getByRole("button", { name: "Ativar perfil de dono" }).click();
     await expect(checkbox).toHaveAttribute("aria-invalid", "true");
@@ -158,6 +196,48 @@ test("SL-F004-E2E-002 @p0 inicia adapter local e publica somente o estado penden
     const result = await startFeat004Recipient(page);
     expect(result.requirements).toEqual(["identity_review"]);
     await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toBeVisible();
+    await expect(page.getByText("Análise de identidade", { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/owner/recipient",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Área do dono indisponível" }),
+        ).toContainText("Área do dono indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toHaveCount(
+          0,
+        );
+        await expect(page.getByText("Análise de identidade", { exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Atualizar status" })).toHaveCount(0);
+        await assertFeat004PrivateValuesAbsent(page);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toBeVisible({
+      timeout: 12_000,
+    });
     await expect(page.getByText("Análise de identidade", { exact: true })).toBeVisible();
     await assertFeat004PrivateValuesAbsent(page);
   } finally {
@@ -326,13 +406,12 @@ test("SL-F004-E2E-005 @p0 fecha A antes de publicar B e preserva o estado de B",
       window.dispatchEvent(new Event("visibilitychange"));
     });
     await getCaptured.promise;
-    const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
     releaseGet.resolve();
     await expect(
       page.getByText("Validando o estado privado da área do dono…", { exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("heading", { level: 3, name: "Em análise local" })).toHaveCount(0);
-    await reload;
+    await expectSessionStorageValue(page, "sl-qa-f004-owner-scope-transition", "clear");
     await expect(
       page.getByRole("heading", { level: 1, name: "Cadastro de recebimentos" }),
     ).toBeVisible();
