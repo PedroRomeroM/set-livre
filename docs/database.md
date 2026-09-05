@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260903061604_expose_backoffice_access_eligibility`, criada depois de
-`20260901185454_feat_030_backoffice_studio_review`; uma feature nova nunca é inserida antes de uma
+`20260905123458_serialize_media_cleanup_claim_replay`, criada depois de
+`20260903061604_expose_backoffice_access_eligibility`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -386,6 +386,9 @@ imutável de cada mídia ou probe ao run que a reclamou, sem grant para roles da
 só transita de pendente para `deleted` ou `failed`; reutilizar a lease em outro run nunca reatribui o
 item histórico. A criação entra diretamente em `running`; a conclusão é somente
 `succeeded`/`failed`, com replay idêntico e fechamento obrigatório `claimed = deleted + failed`.
+O claim serializa chamadas com o mesmo token por advisory lock transacional antes de ler reservas.
+Assim, um retry cuja primeira transação ainda está confirmando relê o lote e suas tentativas, sem
+reservar outro lote; tokens distintos continuam concorrentes com `SKIP LOCKED`.
 Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo
 ou falha sem sucesso posterior. Ao abrir um novo
 run, o banco terminaliza como `cleanup_run_abandoned` qualquer execução diferente que permaneceu

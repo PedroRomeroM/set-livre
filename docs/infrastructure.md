@@ -662,8 +662,11 @@ edição manual do banco como procedimento operacional.
 
 Cada invocação da Function reclama no máximo quatro itens sequenciais. A leitura do corpo de entrada
 tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
-do corpo da resposta, limitado a 64 KiB. O retry de conclusão de item permanece limitado a uma segunda
-tentativa. Desconexão cancela novas remoções, mas não cancela essas confirmações idempotentes de item:
+do corpo da resposta, limitado a 64 KiB. Claim e conclusão de item admitem no máximo uma segunda
+tentativa com o mesmo token, dentro desses prazos. O claim serializado no banco relê a reserva após
+perda de resposta; se as duas tentativas forem inconclusivas, o worker não sela contagens inventadas
+e responde erro sem totais, preservando o run para replay ou recuperação por abandono.
+Desconexão cancela novos claims e remoções, mas não cancela as confirmações idempotentes de item:
 elas precisam reconciliar um commit cuja resposta se perdeu antes de derivar as contagens do run.
 Continuam sujeitas ao deadline de RPC e ao orçamento de trabalho; não há repetição da remoção física.
 Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do

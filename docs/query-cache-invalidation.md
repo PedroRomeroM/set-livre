@@ -185,7 +185,9 @@ Medir; não usar Infinity em dado operacional.
   validar `scope` e `userId` contra a solicitação, usa apenas estado React efêmero, expira em 60
   segundos/aba oculta e a MutationCache recebe somente o marcador redigido;
 - a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
-  `backoffice.studio(scope,studioId)`. Cada normalizer confirma `scope` e, no detalhe, `studioId`
+  `backoffice.studio(scope,studioId)`. Sem páginas iniciais, a fila executa a leitura mesmo offline
+  para oferecer erro e retry explícito limitado; reconexão continua disparando refetch.
+  Cada normalizer confirma `scope` e, no detalhe, `studioId`
   antes de devolver a resposta ao TanStack Query; divergência sinaliza recomposição de sessão e nunca
   entra na key anterior. A leitura SSR remove e resemeia a key exata antes de habilitar o observer,
   inclusive ao voltar para um caso já visitado. Sucesso de `backoffice.studio.*` substitui somente o

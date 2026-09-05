@@ -184,7 +184,7 @@ describe("cleanup HTTP and ledger deadlines", () => {
 
   it.each([
     [begin, 5_000, "cleanup_run_begin_failed"],
-    [claim, 5_000, "cleanup_claim_failed"],
+    [claim, 10_000, "cleanup_claim_failed"],
     [complete, 40_000, "cleanup_item_complete_failed"],
     [finish, 5_000, "cleanup_run_complete_failed"],
   ])(
@@ -200,6 +200,9 @@ describe("cleanup HTTP and ledger deadlines", () => {
       const response = await responsePromise;
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({ errorCode });
+      if (stage === claim) {
+        expect(probe.calls.map(({ name }) => name)).toEqual([begin, claim, claim]);
+      }
       if (stage === complete) {
         expect(probe.calls.filter(({ name }) => name === complete)).toHaveLength(8);
         expect(probe.calls.at(-1).parameters).toMatchObject({ p_status: "failed", p_failed: 4 });
@@ -207,6 +210,98 @@ describe("cleanup HTTP and ledger deadlines", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it.each(["headers", "body"])(
+    "replays a committed claim after losing its response %s without acquiring another batch",
+    async (stage) => {
+      vi.useFakeTimers();
+      let claimed = false;
+      let attempts = 0;
+      const outcomes = new Map();
+      const probe = harness(({ name, value, parameters }) => {
+        if (name === claim) {
+          claimed = true;
+          attempts += 1;
+          if (attempts === 1) {
+            if (stage === "headers") throw new TypeError("Connection closed after commit");
+            return slowBody(null, null).response;
+          }
+        }
+        if (name === complete) {
+          outcomes.set(parameters.p_media_id, parameters.p_succeeded);
+        }
+        if (name === finish) {
+          const deleted = [...outcomes.values()].filter(Boolean).length;
+          if (
+            parameters.p_claimed !== (claimed ? items.length : 0) ||
+            parameters.p_deleted !== deleted ||
+            parameters.p_failed !== items.length - deleted
+          ) {
+            return Response.json(
+              { code: "40001", message: "Run membership mismatch" },
+              {
+                status: 409,
+              },
+            );
+          }
+        }
+        return Response.json(value);
+      });
+      const responsePromise = probe.handler(request());
+      await probe.firstRpc;
+      await vi.advanceTimersByTimeAsync(5_000);
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ claimed: 4, deleted: 4, failed: 0 });
+      const claims = probe.calls.filter(({ name }) => name === claim);
+      expect(claims).toHaveLength(2);
+      expect(claims[1].parameters).toEqual(claims[0].parameters);
+      expect(claims[1].parameters).toEqual({ p_claim_token: runId, p_limit: 4 });
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(4);
+      expect(outcomes.size).toBe(4);
+      expect(probe.calls.filter(({ name }) => name === finish)).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("leaves unknown claim membership replayable after two lost responses without reporting zeros", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const probe = harness(({ name, value }) => {
+      if (name === claim && ++attempts <= 2) return slowBody(null, null).response;
+      return Response.json(value);
+    });
+    const responsePromise = probe.handler(request());
+    await probe.firstRpc;
+    await vi.advanceTimersByTimeAsync(10_000);
+    const response = await responsePromise;
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ errorCode: "cleanup_claim_failed" });
+    expect(probe.calls.map(({ name }) => name)).toEqual([begin, claim, claim]);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const replay = await probe.handler(request());
+    expect(replay.status).toBe(200);
+    await expect(replay.json()).resolves.toEqual({ claimed: 4, deleted: 4, failed: 0 });
+    expect(probe.calls.filter(({ name }) => name === claim)).toHaveLength(3);
+    expect(probe.calls.filter(({ name }) => name === finish)).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not claim again or seal unknown totals after caller disconnect", async () => {
+    const controller = new AbortController();
+    const probe = harness(({ name, value }) => {
+      if (name === claim) {
+        controller.abort();
+        throw new TypeError("Connection closed after claim commit");
+      }
+      return Response.json(value);
+    });
+    const response = await probe.handler(request({ signal: controller.signal }));
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ errorCode: "cleanup_claim_failed" });
+    expect(probe.calls.map(({ name }) => name)).toEqual([begin, claim]);
+  });
 
   it("stops work at 90s and still confirms the failed ledger in its reserved window", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });

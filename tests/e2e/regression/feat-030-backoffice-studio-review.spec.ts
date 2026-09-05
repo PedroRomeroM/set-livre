@@ -599,6 +599,87 @@ test("SL-F030-E2E-013 @p1 fila recupera carga inicial e página incremental pres
   }
 });
 
+test("SL-F030-E2E-016 @p1 fila inicialmente offline recupera leitura sem evento online", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const admin = createFeat030Operator(testInfo, "016_offline_queue");
+  let owner: Feat030Owner | undefined;
+  let queueUnavailable = true;
+  let queueReads = 0;
+  let commandPosts = 0;
+  try {
+    const pending = await provisionFeat030PendingStudio(
+      page,
+      testInfo,
+      "016_offline_queue",
+      "3016",
+    );
+    owner = pending.owner;
+    await provisionAndLoginFeat030Operator(page, admin, "admin", "030016");
+    await expect(page.getByRole("button", { name: "Sair", exact: true })).toBeEnabled();
+
+    await page.route("**/api/studios", async (route) => {
+      queueReads += 1;
+      if (queueUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        commandPosts += 1;
+      }
+    });
+
+    // The mounted provider is on /usuarios: no queue observer or cached page exists yet.
+    // Keep HTTP/session checks available, but put TanStack offline before mounting the queue.
+    await page.evaluate(() => {
+      document.documentElement.dataset.qaFeat030Network = "offline";
+      window.addEventListener("online", () => {
+        document.documentElement.dataset.qaFeat030Network = "online";
+      });
+      window.dispatchEvent(new Event("offline"));
+    });
+    await page
+      .getByRole("navigation", { name: "Backoffice", exact: true })
+      .getByRole("link", { name: "Estúdios", exact: true })
+      .click();
+    await expect(page.getByRole("heading", { level: 1, name: "Estúdios" })).toBeVisible();
+    await expect(page.getByText("A fila não pôde ser carregada", { exact: true })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Carregando estúdios…" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("article")).toHaveCount(0);
+    await expect(page.getByText("Nenhum estúdio exige ação agora.", { exact: true })).toHaveCount(
+      0,
+    );
+    // Strict Mode may cancel the first mount's read; only the explicit recovery
+    // below must add exactly one read after the error has settled.
+    expect(queueReads).toBeGreaterThan(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat030Network)).toBe(
+      "offline",
+    );
+
+    queueUnavailable = false;
+    const readsBeforeRetry = queueReads;
+    const retry = page.getByRole("button", { name: "Tentar carregar novamente", exact: true });
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    const confirmedCard = page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: pending.name, exact: true }) });
+    await expect(confirmedCard.getByRole("link", { name: "Abrir revisão" })).toBeVisible();
+    await expect(page.getByText("A fila não pôde ser carregada", { exact: true })).toHaveCount(0);
+    expect(queueReads).toBe(readsBeforeRetry + 1);
+    expect(commandPosts).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat030Network)).toBe(
+      "offline",
+    );
+  } finally {
+    await page.unroute("**/api/studios");
+    await cleanupFeat030Scenario(page, { operators: [admin], owner });
+  }
+});
+
 test("SL-F030-E2E-015 @p0 rota cobre loading, erro recuperável, 404 e descarte terminal", async ({
   page,
 }, testInfo) => {

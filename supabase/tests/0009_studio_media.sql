@@ -420,7 +420,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(103);
+select plan(104);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -5049,6 +5049,79 @@ select matches(
   ),
   '^40001:studio_media_cleanup_claim_conflict$',
   'token alheio não atravessa o fencing de conclusão do cleanup'
+);
+
+do $block$
+declare
+  first_pid integer;
+  replay_pid integer;
+  wait_until timestamptz := pg_catalog.clock_timestamp() + interval '5 seconds';
+  replay_waited boolean := false;
+begin
+  -- Reuse only the two committed cleanup fixtures after their distinct-token assertions.
+  perform result
+  from extensions.dblink_get_result('feat008_cleanup_a') as drained(result jsonb);
+  perform result
+  from extensions.dblink_get_result('feat008_cleanup_b') as drained(result jsonb);
+  perform extensions.dblink_exec('feat008_cleanup_a', $remote$
+    update public.studio_media
+    set cleanup_claimed_at = pg_catalog.clock_timestamp() - interval '16 minutes'
+    where id in (
+      '89000000-0000-4000-8000-000000000101',
+      '89000000-0000-4000-8000-000000000102'
+    )
+  $remote$);
+  select pid into first_pid
+  from extensions.dblink('feat008_cleanup_a', 'select pg_catalog.pg_backend_pid()')
+    as connection(pid integer);
+  select pid into replay_pid
+  from extensions.dblink('feat008_cleanup_b', 'select pg_catalog.pg_backend_pid()')
+    as connection(pid integer);
+  perform extensions.dblink_exec('feat008_cleanup_a', 'begin');
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_cleanup_first_uncommitted', result
+  from extensions.dblink('feat008_cleanup_a', $remote$
+    select public.claim_studio_media_cleanup(
+      '82300000-0000-4000-8000-000000000243', 1
+    )
+  $remote$) as claimed(result jsonb);
+  perform extensions.dblink_send_query('feat008_cleanup_b', $remote$
+    select public.claim_studio_media_cleanup(
+      '82300000-0000-4000-8000-000000000243', 1
+    )
+  $remote$);
+  loop
+    replay_waited := first_pid = any(pg_catalog.pg_blocking_pids(replay_pid));
+    exit when replay_waited
+      or extensions.dblink_is_busy('feat008_cleanup_b') = 0
+      or pg_catalog.clock_timestamp() >= wait_until;
+    perform pg_catalog.pg_sleep(0.01);
+  end loop;
+  perform extensions.dblink_exec('feat008_cleanup_a', 'commit');
+  insert into feat008_concurrency_results (label, result)
+  values ('feat008_cleanup_replay_waited', pg_catalog.to_jsonb(replay_waited));
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_cleanup_overlapping_replay', result
+  from extensions.dblink_get_result('feat008_cleanup_b') as claimed(result jsonb);
+  perform result
+  from extensions.dblink_get_result('feat008_cleanup_b') as drained(result jsonb);
+end;
+$block$;
+
+select ok(
+  (select result = 'true'::jsonb from feat008_concurrency_results
+    where label = 'feat008_cleanup_replay_waited')
+    and (select result from feat008_concurrency_results
+      where label = 'feat008_cleanup_first_uncommitted') = (
+      select result from feat008_concurrency_results
+      where label = 'feat008_cleanup_overlapping_replay'
+    )
+    and (
+      select pg_catalog.count(*) = 1
+      from public.studio_media
+      where cleanup_claim_token = '82300000-0000-4000-8000-000000000243'
+    ),
+  'claim sobreposto com mesmo token espera o commit e relê o lote sem aumentar tentativas ou membros'
 );
 
 do $block$

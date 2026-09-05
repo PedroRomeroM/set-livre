@@ -246,9 +246,9 @@ function terminalResult(claimed: number, deleted: number, failed: number): Clean
 
 export class CleanupRunError extends Error {
   readonly errorCode: string;
-  readonly result: CleanupResult;
+  readonly result: CleanupResult | null;
 
-  constructor(errorCode: string, result: CleanupResult, options?: ErrorOptions) {
+  constructor(errorCode: string, result: CleanupResult | null, options?: ErrorOptions) {
     super(errorCode, options);
     this.name = "CleanupRunError";
     this.errorCode = errorCode;
@@ -387,7 +387,13 @@ export async function runStudioMediaCleanup(
   try {
     rawClaim = await dependencies.claim({ batchSize, ...context });
   } catch {
-    return completeRun(dependencies, context, terminalResult(0, 0, 0), "cleanup_claim_failed");
+    try {
+      rawClaim = await dependencies.claim({ batchSize, ...context });
+    } catch (cause) {
+      // A lost response does not prove that the claim transaction rolled back.
+      // Keep the run replayable; never seal it with invented zero membership.
+      throw new CleanupRunError("cleanup_claim_failed", null, { cause });
+    }
   }
 
   let claim: CleanupClaim;

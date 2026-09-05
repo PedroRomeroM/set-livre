@@ -145,8 +145,17 @@ function terminalResponse(result: CleanupResult, status: number, errorCode?: str
 function failureResponse(
   errorCode: string,
   status = 503,
-  result: CleanupResult = { claimed: 0, deleted: 0, failed: 0 },
+  result: CleanupResult | null = { claimed: 0, deleted: 0, failed: 0 },
 ): Response {
+  if (result === null) {
+    return Response.json(
+      { errorCode },
+      {
+        headers: { "cache-control": "no-store" },
+        status,
+      },
+    );
+  }
   return terminalResponse(result, status, errorCode);
 }
 
@@ -441,7 +450,7 @@ export function createCleanupRequestHandler({
       return terminalResponse(result, 200);
     } catch (error) {
       if (error instanceof CleanupRunError) {
-        return terminalResponse(error.result, 503, error.errorCode);
+        return failureResponse(error.errorCode, 503, error.result);
       }
       return failureResponse("service_unavailable");
     }

@@ -39,12 +39,14 @@ export function StudioReviewQueue({ session }: { session: AuthenticatedSession }
   >({
     getNextPageParam: (page) => page.nextCursor,
     initialPageParam: null as string | null,
+    networkMode: "always",
     queryFn: ({ pageParam, signal }) =>
       listBackofficeStudioReviewsClient(
         { expectedScope: session.scope, query: { cursor: pageParam } },
         signal,
       ),
     queryKey: backofficeQueryKeys.studios(session.scope),
+    refetchOnReconnect: true,
     retry: false,
     retryOnMount: false,
   });

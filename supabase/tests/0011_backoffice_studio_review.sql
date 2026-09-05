@@ -634,7 +634,7 @@ select ok(
   'manifesto do Storage fixa policy, role, comando, operação e helper security-definer'
 );
 select ok(
-  private.check_readiness('20260903061604'),
+  private.check_readiness('20260905123458'),
   'readiness reconhece a migration e preserva os grants exatos'
 );
 
@@ -645,7 +645,7 @@ create policy feat030_unexpected_storage_download
   to authenticated
   using (bucket_id = 'studio-media');
 select ok(
-  not private.check_readiness('20260903061604'),
+  not private.check_readiness('20260905123458'),
   'readiness falha fechado quando uma policy extra amplia operações do Storage'
 );
 rollback to savepoint storage_policy_widening;
@@ -654,7 +654,7 @@ release savepoint storage_policy_widening;
 savepoint storage_helper_grant_widening;
 grant execute on function private.can_sign_backoffice_studio_media(text) to anon;
 select ok(
-  not private.check_readiness('20260903061604'),
+  not private.check_readiness('20260905123458'),
   'readiness falha fechado quando o helper autenticado ganha grant adicional'
 );
 rollback to savepoint storage_helper_grant_widening;
@@ -663,26 +663,26 @@ release savepoint storage_helper_grant_widening;
 savepoint editorial_table_grant_widening;
 grant select on table public.studio_review_events to authenticated;
 select ok(
-  not private.check_readiness('20260903061604'),
+  not private.check_readiness('20260905123458'),
   'readiness falha fechado com grant web de tabela editorial sem acesso direto'
 );
 rollback to savepoint editorial_table_grant_widening;
 release savepoint editorial_table_grant_widening;
 select ok(
-  private.check_readiness('20260903061604'),
+  private.check_readiness('20260905123458'),
   'readiness volta a verde após rollback do grant editorial de tabela'
 );
 
 savepoint editorial_column_grant_widening;
 grant select (preview_storage_path) on table public.studio_media to authenticated;
 select ok(
-  not private.check_readiness('20260903061604'),
+  not private.check_readiness('20260905123458'),
   'readiness falha fechado com grant web de coluna privada de mídia'
 );
 rollback to savepoint editorial_column_grant_widening;
 release savepoint editorial_column_grant_widening;
 select ok(
-  private.check_readiness('20260903061604'),
+  private.check_readiness('20260905123458'),
   'readiness volta a verde após rollback do grant editorial de coluna'
 );
 
@@ -693,13 +693,13 @@ create policy feat030_unexpected_studio_review_event_select
   to authenticated
   using (true);
 select ok(
-  not private.check_readiness('20260903061604'),
+  not private.check_readiness('20260905123458'),
   'readiness falha fechado com policy web editorial adicional'
 );
 rollback to savepoint editorial_policy_widening;
 release savepoint editorial_policy_widening;
 select ok(
-  private.check_readiness('20260903061604'),
+  private.check_readiness('20260905123458'),
   'readiness volta a verde após rollback da policy editorial adicional'
 );
 
@@ -2995,7 +2995,7 @@ reset role;
 revoke app_dal from postgres granted by current_user;
 
 select ok(
-  private.check_readiness('20260903061604'),
+  private.check_readiness('20260905123458'),
   'readiness final permanece verde após os cenários completos'
 );
 

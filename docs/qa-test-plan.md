@@ -356,6 +356,8 @@ Os cenários `SL-F030-E2E-*` cobrem:
   bloqueio da decisão e renovação; conflito seguido de releitura `503/404` e `404` direto do comando,
   ambos descartando formulário, mídia e snapshot antes da nova leitura;
 - recuperação da carga inicial e da próxima página da fila sem descartar itens já confirmados;
+- `SL-F030-E2E-016` inicia a fila offline, exige erro sem cards ou falso estado vazio e recupera
+  o item real por nova leitura explícita, sem evento online nem comando;
 - loading, erro inicial recuperável e 404 contextual da rota; 404 conclusivo em refetch elimina o
   detalhe privado anterior e impede nova decisão;
 - ausência de `/admin` no aplicativo público;
