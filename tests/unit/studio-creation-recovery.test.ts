@@ -84,6 +84,51 @@ describe("studio creation recovery", () => {
     expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({ state: "empty" });
   });
 
+  it("releases an explicitly finished creation only for its exact resolved attempt", () => {
+    const { storage } = memoryStorage();
+    const pending = { command, createdStudioId: null, version: 1 } as const;
+    const resolved = { ...pending, createdStudioId: studioTestIds.studioId };
+    const finish = () =>
+      consumeResolvedStudioCreation(
+        storage,
+        studioTestIds.userId,
+        studioTestIds.studioId,
+        command.idempotencyKey,
+      );
+
+    writeStudioCreationRecovery(storage, pending);
+    expect(finish()).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: pending,
+      state: "found",
+    });
+
+    const replacement = {
+      ...resolved,
+      command: { ...command, idempotencyKey: "44444444-4444-4444-8444-444444444444" },
+    };
+    writeStudioCreationRecovery(storage, replacement);
+    expect(finish()).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: replacement,
+      state: "found",
+    });
+
+    const otherOwner = {
+      ...resolved,
+      command: { ...command, expectedScope: studioTestIds.otherUserId },
+    };
+    writeStudioCreationRecovery(storage, otherOwner);
+    writeStudioCreationRecovery(storage, resolved);
+    expect(finish()).toBe(true);
+    expect(finish()).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({ state: "empty" });
+    expect(readStudioCreationRecovery(storage, studioTestIds.otherUserId)).toEqual({
+      record: otherOwner,
+      state: "found",
+    });
+  });
+
   it("retains the original pending command when confirmation exceeds quota and retries its persistence", () => {
     const { storage } = memoryStorage();
     const pending = { command, createdStudioId: null, version: 1 } as const;

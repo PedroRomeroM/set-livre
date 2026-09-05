@@ -15,6 +15,9 @@ where uploaded_by = '8f000000-0000-4000-8000-000000000008';
 delete from auth.users
 where id = '8f000000-0000-4000-8000-000000000008';
 
+delete from maintenance.studio_media_cleanup_runs
+where run_id = '82300000-0000-4000-8000-000000000243'
+  and function_slug = 'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 drop table if exists private.feat008_concurrency_fixtures;
 create table private.feat008_concurrency_fixtures (
   label text primary key,
@@ -420,7 +423,7 @@ revoke all on function private.feat008_create_owner(uuid, text, text, integer)
 revoke all on function private.feat008_explain_json(text)
   from public, anon, authenticated, service_role, app_dal;
 
-select plan(109);
+select plan(113);
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -4203,6 +4206,11 @@ select public.complete_studio_media_cleanup(
   '8d000000-0000-4000-8000-000000000470',
   '8d000000-0000-4000-8000-000000000460', true, null
 );
+reset role;
+update public.studio_media
+set cleanup_claimed_at = pg_catalog.clock_timestamp() - interval '16 minutes'
+where id = '8d000000-0000-4000-8000-000000000461';
+set local role service_role;
 select pg_catalog.set_config('set_livre.test.f008_partial_replay',
   public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000470', 2)::text, true);
 reset role;
@@ -4217,6 +4225,17 @@ select ok(
   and (select cleanup_attempts = 1 from public.studio_media
     where id = '8d000000-0000-4000-8000-000000000461'),
   'replay parcial inclui conclusão histórica e somente o item pendente mantém paths/tentativa'
+);
+select ok(
+  (select cleanup_claimed_at > pg_catalog.clock_timestamp() - interval '1 minute'
+    and cleanup_attempts = 1
+    from public.studio_media where id = '8d000000-0000-4000-8000-000000000461')
+  and (select item.claimed_at < media.cleanup_claimed_at
+    from maintenance.studio_media_cleanup_run_items as item
+    join public.studio_media as media on media.id = item.media_id
+    where item.run_id = '8d000000-0000-4000-8000-000000000470'
+      and item.item_kind = 'media' and item.media_id = '8d000000-0000-4000-8000-000000000461'),
+  'replay renova lease expirada antes de devolver paths sem alterar tentativa ou origem histórica'
 );
 set local role service_role;
 select public.complete_studio_media_cleanup(
@@ -4259,6 +4278,62 @@ select is(
 );
 rollback to savepoint cleanup_interrupted_replay;
 release savepoint cleanup_interrupted_replay;
+
+savepoint cleanup_probe_lease_replay;
+select public.begin_studio_media_cleanup_run(
+  '8d000000-0000-4000-8000-000000000480',
+  'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+);
+insert into maintenance.studio_media_cleanup_probes (
+  run_id, media_id, storage_path, preview_storage_path, status,
+  cleanup_claim_token, cleanup_claimed_at, prepared_at
+)
+select fixture.run_id, fixture.media_id,
+  pg_catalog.format('owners/%s/studios/%s/revisions/%s/%s.webp',
+    fixture.run_id, fixture.run_id, fixture.run_id, fixture.media_id),
+  pg_catalog.format('owners/%s/studios/%s/revisions/%s/%s.preview.webp',
+    fixture.run_id, fixture.run_id, fixture.run_id, fixture.media_id),
+  'queued', fixture.run_id, pg_catalog.clock_timestamp() - interval '16 minutes',
+  pg_catalog.clock_timestamp() - interval '20 minutes'
+from (values ('8d000000-0000-4000-8000-000000000480'::uuid,
+  '8d000000-0000-4000-8000-000000000481'::uuid)) as fixture(run_id, media_id);
+set local role service_role;
+select pg_catalog.set_config('set_livre.test.f008_probe_lease_replay',
+  public.claim_studio_media_cleanup('8d000000-0000-4000-8000-000000000480', 1)::text, true);
+reset role;
+select ok(
+  pg_catalog.current_setting('set_livre.test.f008_probe_lease_replay')::jsonb
+    #>> '{items,0,mediaId}' = '8d000000-0000-4000-8000-000000000481'
+  and (select probe.cleanup_claimed_at > pg_catalog.clock_timestamp() - interval '1 minute'
+      and item.claimed_at < probe.cleanup_claimed_at and item.outcome is null
+    from maintenance.studio_media_cleanup_probes as probe
+    join maintenance.studio_media_cleanup_run_items as item
+      on item.run_id = probe.run_id and item.item_kind = 'probe' and item.media_id = probe.media_id
+    where probe.run_id = '8d000000-0000-4000-8000-000000000480'),
+  'replay de probe também renova a reserva sem reescrever o pertencimento histórico'
+);
+select ok(
+  private.feat008_capture_error($command$
+    update maintenance.studio_media_cleanup_probes
+    set cleanup_claimed_at = cleanup_claimed_at - interval '1 minute'
+    where run_id = '8d000000-0000-4000-8000-000000000480'
+  $command$) = '23514:studio_media_cleanup_probe_transition_invalid'
+  and private.feat008_capture_error($command$
+    update maintenance.studio_media_cleanup_probes
+    set cleanup_claimed_at = cleanup_claimed_at + interval '1 minute',
+      cleanup_claim_token = '8d000000-0000-4000-8000-000000000482'
+    where run_id = '8d000000-0000-4000-8000-000000000480'
+  $command$) = '23514:studio_media_cleanup_probe_transition_invalid'
+  and private.feat008_capture_error($command$
+    update maintenance.studio_media_cleanup_probes
+    set cleanup_claimed_at = cleanup_claimed_at + interval '1 minute',
+      storage_path = 'altered.webp'
+    where run_id = '8d000000-0000-4000-8000-000000000480'
+  $command$) = '23514:studio_media_cleanup_probe_immutable',
+  'renovação de probe não permite retroceder prazo, transferir token ou alterar paths'
+);
+rollback to savepoint cleanup_probe_lease_replay;
+release savepoint cleanup_probe_lease_replay;
 
 savepoint cleanup_failed_health;
 set local role service_role;
@@ -5183,6 +5258,15 @@ begin
   from extensions.dblink('feat008_cleanup_b', 'select pg_catalog.pg_backend_pid()')
     as connection(pid integer);
   perform extensions.dblink_exec('feat008_cleanup_a', 'begin');
+  -- Only a committed fixture: do not call the ledger API while this pgTAP
+  -- transaction owns its global advisory lock for unrelated lifecycle assertions.
+  perform extensions.dblink_exec('feat008_cleanup_a', $remote$
+    insert into maintenance.studio_media_cleanup_runs (run_id, function_slug, status, started_at)
+    values (
+      '82300000-0000-4000-8000-000000000243',
+      'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'running', pg_catalog.clock_timestamp()
+    )
+  $remote$);
   insert into feat008_concurrency_results (label, result)
   select 'feat008_cleanup_first_uncommitted', result
   from extensions.dblink('feat008_cleanup_a', $remote$
@@ -5227,6 +5311,48 @@ select ok(
       where cleanup_claim_token = '82300000-0000-4000-8000-000000000243'
     ),
   'claim sobreposto com mesmo token espera o commit e relê o lote sem aumentar tentativas ou membros'
+);
+
+do $block$
+begin
+  perform extensions.dblink_exec('feat008_cleanup_a', $remote$
+    update public.studio_media
+    set cleanup_claimed_at = pg_catalog.clock_timestamp() - interval '16 minutes'
+    where cleanup_claim_token = '82300000-0000-4000-8000-000000000243'
+  $remote$);
+  perform extensions.dblink_exec('feat008_cleanup_a', 'begin');
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_cleanup_renewed_replay', result
+  from extensions.dblink('feat008_cleanup_a', $remote$
+    select public.claim_studio_media_cleanup('82300000-0000-4000-8000-000000000243', 1)
+  $remote$) as claimed(result jsonb);
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_cleanup_during_renewal', result
+  from extensions.dblink('feat008_cleanup_b', $remote$
+    select public.claim_studio_media_cleanup('82300000-0000-4000-8000-000000000244', 100)
+  $remote$) as claimed(result jsonb);
+  perform extensions.dblink_exec('feat008_cleanup_a', 'commit');
+  insert into feat008_concurrency_results (label, result)
+  select 'feat008_cleanup_after_renewal', result
+  from extensions.dblink('feat008_cleanup_b', $remote$
+    select public.claim_studio_media_cleanup('82300000-0000-4000-8000-000000000245', 100)
+  $remote$) as claimed(result jsonb);
+end;
+$block$;
+select ok(
+  (select result from feat008_concurrency_results where label = 'feat008_cleanup_renewed_replay')
+    = (select result from feat008_concurrency_results where label = 'feat008_cleanup_first_uncommitted')
+  and not exists (
+    select 1 from feat008_concurrency_results as competing,
+      lateral pg_catalog.jsonb_array_elements(competing.result -> 'items') as item(value)
+    where competing.label in ('feat008_cleanup_during_renewal', 'feat008_cleanup_after_renewal')
+      and item.value ->> 'mediaId' = (select result #>> '{items,0,mediaId}'
+        from feat008_concurrency_results where label = 'feat008_cleanup_renewed_replay')
+  )
+  and exists (select 1 from public.studio_media
+    where cleanup_claim_token = '82300000-0000-4000-8000-000000000243'
+      and cleanup_claimed_at > pg_catalog.clock_timestamp() - interval '1 minute'),
+  'outro token não reclama o membro expirado durante a renovação nem depois do commit do replay'
 );
 
 do $block$
@@ -5388,6 +5514,9 @@ revoke app_dal from postgres granted by current_user;
 select * from finish();
 rollback;
 
+delete from maintenance.studio_media_cleanup_runs
+where run_id = '82300000-0000-4000-8000-000000000243'
+  and function_slug = 'media-cleanup-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 drop table if exists private.feat008_concurrency_fixtures;
 delete from audit.events
 where actor_user_id = '8f000000-0000-4000-8000-000000000008'

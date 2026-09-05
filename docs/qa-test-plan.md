@@ -188,6 +188,10 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   reload reconcilia a mesma chave sem duplicar, e uma nova criação só começa após o consumo seguro;
 - `SL-F006-E2E-025` inicia a fronteira de criação offline, exige erro recuperável sem formulário
   privado, revalida o acesso por tentativa explícita e cria um único estúdio;
+- `SL-F006-E2E-026` resolve uma criação após perda real da resposta, descarta o estúdio em outra aba,
+  visita o 404 e encerra explicitamente a resolução obsoleta. Não há comando no encerramento; somente
+  o envio posterior cria outro estúdio com chave distinta. `023/024` não oferecem essa ação enquanto
+  a confirmação não for durável;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -277,6 +281,10 @@ Os cenários `SL-F031-E2E-*` cobrem:
   rejeitam metadata inválida antes do consumo. `0007_backoffice_users_taxonomy.sql` compara
   confirmações novas/replays com o ledger real e prova hashes históricos intactos, novo requestId
   sem nova tentativa e conflito ao trocar o papel na mesma chave;
+- `SL-F031-E2E-037`, em `feat-031-protected-layout-recovery.spec.ts`, provoca timeout real da leitura
+  DAL do layout, exige fallback ancestral sem conteúdo privado, prova uma nova consulta no retry e
+  recupera após liberar o lock. Revogar o papel durante a falha mantém o acesso fechado no retry;
+  axe, teclado e ausência de overflow cobrem a composição de erro;
 - ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
   explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
   diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;
@@ -336,6 +344,9 @@ anterior, token stale, conflito definitivo entre chaves, ausência de sessão pr
 com begin sobreposto às fachadas claimed de finalize e reject via `dblink`, além de contagens de
 abandono, backoff e heartbeat do cleanup. A regressão do ledger prova que o run A conserva seu item e
 fecha `1/0/1` mesmo depois de o run B reassumir a lease e concluir o mesmo objeto com `1/1/0`.
+Replay renova a reserva de mídia e probe antes de devolver paths, preservando tentativas e histórico;
+duas conexões provam que outro token não captura a mídia durante nem após essa renovação. O lifecycle
+do probe continua recusando retrocesso do prazo, troca de token e alteração de paths.
 
 ## Matriz da FEAT-009
 

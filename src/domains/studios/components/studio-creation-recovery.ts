@@ -103,10 +103,15 @@ export function consumeResolvedStudioCreation(
   storage: StudioCreationRecoveryStorage | undefined,
   userId: string,
   studioId: string,
+  idempotencyKey?: string,
 ) {
   if (storage === undefined) return false;
   const current = readStudioCreationRecovery(storage, userId);
-  if (current.state !== "found" || current.record.createdStudioId !== studioId) {
+  if (
+    current.state !== "found" ||
+    current.record.createdStudioId !== studioId ||
+    (idempotencyKey !== undefined && current.record.command.idempotencyKey !== idempotencyKey)
+  ) {
     return false;
   }
   try {

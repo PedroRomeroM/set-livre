@@ -480,6 +480,8 @@ function CreateStudioForm({
   const typesQuery = useStudioTypes(initialTypes, userId);
   const pendingCommand = useRef<CreateCommand>(undefined);
   const recoveryInitialized = useRef(false);
+  const creationForm = useRef<HTMLFormElement>(null);
+  const focusNewCreation = useRef(false);
   const [creationRecovery, setCreationRecovery] = useState<StudioCreationRecoveryState>({
     status: "checking",
   });
@@ -678,6 +680,48 @@ function CreateStudioForm({
     typesQuery.fetchStatus === "fetching" ||
     typesQuery.isError;
 
+  useEffect(() => {
+    if (!focusNewCreation.current || formLocked) return;
+    const nameInput = creationForm.current?.elements.namedItem("name");
+    if (nameInput instanceof HTMLInputElement) {
+      nameInput.focus();
+      focusNewCreation.current = false;
+    }
+  }, [accessQuery.fetchStatus, formLocked]);
+
+  function startAnotherCreation() {
+    const command = pendingCommand.current;
+    if (
+      creationRecovery.status !== "resolved" ||
+      mutation.isPending ||
+      command === undefined ||
+      command.expectedScope !== userId
+    ) {
+      return;
+    }
+    if (
+      !consumeResolvedStudioCreation(
+        resolveStudioCreationRecoveryStorage(window),
+        userId,
+        creationRecovery.studioId,
+        command.idempotencyKey,
+      )
+    ) {
+      setCreationRecovery({
+        problem:
+          "Não foi possível encerrar esta criação com segurança. Recarregue a página para conferir a tentativa salva nesta aba.",
+        status: "blocked",
+      });
+      return;
+    }
+    pendingCommand.current = undefined;
+    mutation.reset();
+    setFieldErrors({});
+    setFormState(emptyFormState);
+    focusNewCreation.current = true;
+    setCreationRecovery({ status: "ready" });
+  }
+
   if (boundaryTransitionRequired || accessQuery.fetchStatus !== "idle") {
     return <Alert>Validando sua sessão e seu cadastro de dono antes de criar o estúdio…</Alert>;
   }
@@ -732,7 +776,7 @@ function CreateStudioForm({
 
   return (
     <div className={styles.editorLayout}>
-      <form className={styles.form} noValidate onSubmit={submit}>
+      <form className={styles.form} noValidate onSubmit={submit} ref={creationForm}>
         <StudioTypesFeedback
           loading={typesQuery.fetchStatus === "fetching"}
           onRetry={() => void typesQuery.refetch()}
@@ -747,12 +791,18 @@ function CreateStudioForm({
         {creationRecovery.status === "resolved" ? (
           <Alert title="Estúdio salvo" variant="status">
             <Stack space={3}>
-              <span>Rascunho criado. Abra o editor canônico para continuar.</span>
+              <span>
+                A criação anterior foi confirmada. Abra o editor ou inicie outro cadastro. Iniciar
+                outro cadastro não altera nem exclui o estúdio anterior.
+              </span>
               <Button
                 onClick={() => router.push(`/dono/estudios/${creationRecovery.studioId}/dados`)}
                 variant="secondary"
               >
                 Abrir editor criado
+              </Button>
+              <Button onClick={startAnotherCreation} variant="secondary">
+                Iniciar outro cadastro
               </Button>
             </Stack>
           </Alert>

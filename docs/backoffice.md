@@ -29,6 +29,16 @@ Acesso:
 - papéis são mantidos no Server Component e não entram no DTO de sessão ou lista enviado ao browser;
 - nenhum service role no browser.
 
+Falha inesperada na leitura de acesso do layout protegido é capturada por `app/error.tsx`, acima de
+`(protected)/layout.tsx`. O fallback neutro substitui também a shell e a navegação, descarta o
+QueryCache privado e não exibe a mensagem técnica do erro. `Tentar novamente` usa o `retry()` nativo
+do Next.js para refazer o RSC, não apenas limpar o erro com `reset()`. O layout dinâmico reexecuta
+Auth e DAL antes de montar qualquer composição privada: nova falha mantém o fallback; sessão ou
+papel revogado encaminha ao login sem restaurar conteúdo do cache. A mesma fronteira cobre as
+leituras de entrada `/` e `/entrar`; o erro localizado da revisão editorial continua restrito ao
+detalhe e não substitui a proteção ancestral. Antes da hidratação, o retry fica desabilitado; sem
+JavaScript, há orientação para habilitá-lo e recarregar.
+
 O polling de sessão tem limite de 120 leituras por minuto por operador e sessão Auth, derivados de
 `scope` e `authSessionId` autoritativos, nunca de identidade declarada em headers ou cookies. Antes da
 autenticação, uma fachada de 600 requisições por minuto por rede limita o custo agregado; visitantes e

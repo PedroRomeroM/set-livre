@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260905144332_bind_backoffice_command_attempts`, criada depois de
-`20260905144153_replay_completed_cleanup_members`; uma feature nova nunca é inserida antes de uma
+`20260905163830_renew_media_cleanup_replay_leases`, criada depois de
+`20260905144332_bind_backoffice_command_attempts`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -405,7 +405,10 @@ Assim, um retry cuja primeira transação ainda está confirmando relê o lote e
 reservar outro lote; tokens distintos continuam concorrentes com `SKIP LOCKED`.
 Quando já existe pertencimento histórico, o claim retorna o conjunto original inteiro: membros
 terminais têm somente `mediaId` e `outcome`, e pendentes ainda cercados pelo mesmo token conservam
-paths e tentativa. A remoção do token mutável na conclusão não apaga resultados nem autoriza um novo
+paths e tentativa somente depois de renovar atomicamente sua lease de 15 minutos sob lock de linha,
+em ordem estável. O token é revalidado no lock; outro run pula a linha durante a transação e encontra
+a reserva renovada depois do commit. Essa renovação não aumenta tentativas nem muda o instante do
+pertencimento histórico, e também cobre probes. A remoção do token mutável na conclusão não apaga resultados nem autoriza um novo
 lote no mesmo run. O worker contabiliza terminais sem repetir efeitos; lease reassumida por outro
 run bloqueia o replay antigo, mantendo a recuperação por abandono abaixo.
 Readiness exige um sucesso terminal nos últimos 30 minutos e reprova execução travada nesse intervalo

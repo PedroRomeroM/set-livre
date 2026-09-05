@@ -329,6 +329,139 @@ test("SL-F006-E2E-009 @p1 criação concluída entra em estado terminal antes de
   }
 });
 
+test("SL-F006-E2E-026 @p1 criação resolvida descartada em outra aba permite novo cadastro explícito sem duplicar", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, "026_stale_resolved_creation");
+  const submittedCommands: Array<z.infer<typeof studioCreateCommandSchema>> = [];
+  let createdStudioId: string | undefined;
+  let otherTab: Page | undefined;
+  try {
+    await provisionFeat006Owner(page, identity, "026");
+    const userId = z.uuid().parse(identity.userId);
+    const storageKey = `set-livre:studio-create:v1:${userId}`;
+    const readRecovery = () =>
+      page.evaluate((key) => {
+        const value = window.sessionStorage.getItem(key);
+        return value === null ? null : (JSON.parse(value) as unknown);
+      }, storageKey);
+    page.on("request", (request) => {
+      if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") {
+        return;
+      }
+      const command = studioCreateCommandSchema.safeParse(request.postDataJSON());
+      if (command.success) submittedCommands.push(command.data);
+    });
+    await fillFeat006Core(page);
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const result = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+          await response.json(),
+        ).data;
+        expect(result.idempotencyKey).toBe(command.idempotencyKey);
+        expect(result.result.scope).toBe(userId);
+        createdStudioId = result.result.studioId;
+        // Only the real response is lost; the production command has already committed.
+        await route.abort("failed");
+      },
+      { times: 1 },
+    );
+
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    await expect(
+      page.getByText("Não foi possível conectar. Verifique sua internet e tente novamente."),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Iniciar outro cadastro" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toBeDisabled();
+    expect(await readRecovery()).toEqual({
+      command: submittedCommands[0],
+      createdStudioId: null,
+      version: 1,
+    });
+    expect(submittedCommands).toHaveLength(1);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    const studioId = z.uuid().parse(createdStudioId);
+    const resolved = { command: submittedCommands[0], createdStudioId: studioId, version: 1 };
+    expect(await readRecovery()).toEqual(resolved);
+    expect(submittedCommands).toHaveLength(2);
+    expect(submittedCommands[1]).toEqual(submittedCommands[0]);
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(1);
+
+    // Same real login, separate tab storage: consuming the editor here cannot clear the first tab.
+    otherTab = await page.context().newPage();
+    await otherTab.goto(`/dono/estudios/${studioId}/dados`);
+    await expect(otherTab.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    expect(
+      await otherTab.evaluate((key) => window.sessionStorage.getItem(key), storageKey),
+    ).toBeNull();
+    const discardResponse = otherTab.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/commands" &&
+        studioDraftDiscardCommandSchema.safeParse(response.request().postDataJSON()).success,
+    );
+    await otherTab.getByRole("button", { name: "Descartar rascunho" }).click();
+    await otherTab.getByRole("button", { name: "Confirmar descarte" }).click();
+    const discarded = await discardResponse;
+    expect(discarded.status()).toBe(200);
+    expect(
+      apiSuccessSchema(studioCommandResultSchema(studioDraftDiscardResultSchema)).parse(
+        await discarded.json(),
+      ).data.result,
+    ).toMatchObject({ scope: userId, studioDeleted: true, studioId });
+    await expect(otherTab.getByText("Rascunho descartado", { exact: true })).toBeVisible();
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(0);
+    expect(await readRecovery()).toEqual(resolved);
+
+    await page.getByRole("button", { name: "Abrir editor criado" }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Estúdio não encontrado" }),
+    ).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toHaveCount(0);
+    await page.getByRole("link", { name: "Criar outro estúdio" }).click();
+    await expect(page).toHaveURL(/\/dono\/estudios\/novo$/u);
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeDisabled();
+    expect(await readRecovery()).toEqual(resolved);
+    expect(submittedCommands).toHaveLength(2);
+
+    const startAnother = page.getByRole("button", { name: "Iniciar outro cadastro" });
+    await expect(startAnother).toBeEnabled();
+    await startAnother.click();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeFocused();
+    expect(await readRecovery()).toBeNull();
+    expect(submittedCommands).toHaveLength(2);
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(0);
+    await expectNoHorizontalOverflow(page);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+    expect(submittedCommands).toHaveLength(2);
+
+    await fillFeat006Core(page, { name: "Estúdio QA após descarte em outra aba" });
+    const newEditor = await createFeat006StudioThroughUi(page);
+    expect(newEditor.studioId).not.toBe(studioId);
+    expect(submittedCommands).toHaveLength(3);
+    expect(submittedCommands[2]?.idempotencyKey).not.toBe(submittedCommands[0]?.idempotencyKey);
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(1);
+    expect((await readFeat006StudioEvidence(newEditor.studioId)).revisions).toHaveLength(1);
+    await expect.poll(readRecovery).toBeNull();
+  } finally {
+    if (otherTab !== undefined) await closeFeat006PageBeforeCleanup(otherTab);
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
 test("SL-F006-E2E-010 @p1 retry ambíguo congela campos e reutiliza o payload original", async ({
   page,
 }, testInfo) => {
@@ -870,6 +1003,7 @@ async function expectCreationStorageRecovery(
     await expect(page.getByText("Estúdio salvo", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Abrir editor criado" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Iniciar outro cadastro" })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
     expect(submittedCommands).toHaveLength(failedConfirmations);
     for (const command of submittedCommands) expect(command).toEqual(submittedCommands[0]);

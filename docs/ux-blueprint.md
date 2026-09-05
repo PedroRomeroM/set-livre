@@ -281,7 +281,11 @@ Editor de estúdio:
 - descartar exige confirmação: remove o cadastro ainda inédito ou somente o draft quando há publicação.
   A revisão aprovada nunca é alterada pelo editor; depois do descarte, os campos centrais e comerciais
   voltam juntos aos valores publicados, sem conservar estado local da revisão removida;
-- criação aceita não reabilita o formulário: mostra estado terminal e ação única para abrir o editor.
+- criação aceita não reabilita o formulário automaticamente: mostra estado terminal para abrir o
+  editor ou `Iniciar outro cadastro`. A segunda ação encerra somente a resolução confirmada do mesmo
+  usuário, estúdio e chave nesta aba, sem excluir o estúdio nem enviar outro comando; limpa os campos
+  e move o foco ao nome. Também permite sair de uma resolução cujo estúdio foi descartado em outra
+  aba. Tentativa pendente, confirmação não durável ou identidade divergente continua bloqueada.
   Estúdio `disabled` é somente leitura. Tipo arquivado permanece identificável no histórico, mas salvar
   exige escolher uma opção ativa;
 - a mesma rota inclui conteúdo comercial da revisão: dois seletores com busca local para tags e
