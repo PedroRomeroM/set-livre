@@ -138,34 +138,33 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           const style = getComputedStyle(element);
           const section = element.closest("section");
           const fragmentTolerance = 1;
-          const fragmentSampleSize = 32;
-          const paintedFragmentsOutside: Array<{
+          const paintedCharactersOutside: Array<{
             bottom: number;
             left: number;
             right: number;
             top: number;
           }> = [];
-          let paintedFragmentCount = 0;
+          let paintedCharacterCount = 0;
           let paintedLeft = Number.POSITIVE_INFINITY;
           let paintedRight = Number.NEGATIVE_INFINITY;
           const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
           let textNode = walker.nextNode();
           while (textNode !== null) {
             const value = textNode.textContent ?? "";
-            for (let start = 0; start < value.length; start += fragmentSampleSize) {
+            for (let start = 0; start < value.length; start += 1) {
               const range = document.createRange();
               range.setStart(textNode, start);
-              range.setEnd(textNode, Math.min(start + fragmentSampleSize, value.length));
+              range.setEnd(textNode, start + 1);
               for (const fragment of range.getClientRects()) {
                 if (fragment.width === 0 && fragment.height === 0) continue;
-                paintedFragmentCount += 1;
+                paintedCharacterCount += 1;
                 paintedLeft = Math.min(paintedLeft, fragment.left);
                 paintedRight = Math.max(paintedRight, fragment.right);
                 if (
                   fragment.left < rectangle.left - fragmentTolerance ||
                   fragment.right > rectangle.right + fragmentTolerance
                 ) {
-                  paintedFragmentsOutside.push({
+                  paintedCharactersOutside.push({
                     bottom: fragment.bottom,
                     left: fragment.left,
                     right: fragment.right,
@@ -202,15 +201,15 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             elementLeft: rectangle.left,
             elementRight: rectangle.right,
             overflowWrap: style.overflowWrap,
-            paintedFragmentCount,
-            paintedFragmentsOutside: paintedFragmentsOutside.slice(0, 16),
+            paintedCharacterCount,
+            paintedCharactersOutside: paintedCharactersOutside.slice(0, 16),
             paintedLeft,
             paintedRight,
             scrollWidth: element.scrollWidth,
             textFits:
               element.clientWidth > 0 &&
-              paintedFragmentCount > 0 &&
-              paintedFragmentsOutside.length === 0 &&
+              paintedCharacterCount > 0 &&
+              paintedCharactersOutside.length === 0 &&
               rectangle.left >= 0 &&
               rectangle.right <= viewportWidth &&
               (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
