@@ -72,6 +72,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
           },
         ],
         usageRules: feat030ExtremeTextFixture.usageRules,
+        version: envelope.data.candidateRevision.version + 1,
       };
       const detail = backofficeStudioReviewDetailSchema.parse({
         ...envelope.data,
@@ -94,84 +95,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       page.getByText(feat030ExtremeTextFixture.taxonomyName, { exact: true }),
     ).toHaveCount(2);
 
-    const faqWrapEvidence = [];
-    for (const text of [faqQuestion, faqAnswer]) {
-      for (const alignment of ["start", "end"] as const) {
-        await text.evaluate((element, block) => {
-          element.scrollIntoView({ block, inline: "nearest" });
-        }, alignment);
-        await expect(text).toBeInViewport();
-        await page.evaluate(
-          () =>
-            new Promise<void>((resolve) => {
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-            }),
-        );
-        faqWrapEvidence.push(
-          await text.evaluate((element, block) => {
-            if (!(element instanceof HTMLElement)) {
-              throw new Error("O texto do FAQ não expõe uma caixa HTML mensurável.");
-            }
-            const rectangle = element.getBoundingClientRect();
-            const style = getComputedStyle(element);
-            const section = element.closest("section");
-            const clippingAncestors: Array<{
-              className: string | null;
-              overflowX: string;
-              tag: string;
-            }> = [];
-            let current: HTMLElement | null = element;
-            while (current !== null) {
-              const overflowX = getComputedStyle(current).overflowX;
-              if (overflowX === "clip" || overflowX === "hidden") {
-                clippingAncestors.push({
-                  className: current.getAttribute("class"),
-                  overflowX,
-                  tag: current.tagName,
-                });
-              }
-              if (current === section) break;
-              current = current.parentElement;
-            }
-            const viewportWidth = document.documentElement.clientWidth;
-            const scrollingElement = document.scrollingElement;
-            if (scrollingElement === null) {
-              throw new Error("O documento não expõe o elemento rolável canônico.");
-            }
-            scrollingElement.scrollLeft = viewportWidth;
-            const horizontalOffset = scrollingElement.scrollLeft;
-            scrollingElement.scrollLeft = 0;
-            return {
-              alignment: block,
-              bodyScrollWidth: document.body.scrollWidth,
-              clientWidth: element.clientWidth,
-              clippingAncestors,
-              documentScrollWidth: document.documentElement.scrollWidth,
-              elementLeft: rectangle.left,
-              elementRight: rectangle.right,
-              horizontalOffset,
-              overflowWrap: style.overflowWrap,
-              scrollWidth: element.scrollWidth,
-              contractSatisfied:
-                element.clientWidth > 0 &&
-                rectangle.left >= 0 &&
-                rectangle.right <= viewportWidth &&
-                (style.overflowWrap === "anywhere" || style.wordBreak === "break-all") &&
-                clippingAncestors.length === 0 &&
-                document.body.scrollWidth <= viewportWidth &&
-                document.documentElement.scrollWidth <= viewportWidth &&
-                horizontalOffset === 0,
-              viewportWidth,
-              wordBreak: style.wordBreak,
-            };
-          }, alignment),
-        );
-      }
-    }
-    expect(
-      faqWrapEvidence.every((text) => text.contractSatisfied),
-      JSON.stringify(faqWrapEvidence, null, 2),
-    ).toBe(true);
+    await page.evaluate(() => document.fonts.ready);
 
     const approve = page.getByRole("button", { name: "Aprovar e publicar" });
     await approve.scrollIntoViewIfNeeded();
@@ -208,7 +132,7 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
     await expect(skipLink).toBeVisible();
 
     const layout = await page.evaluate(
-      ({ safeArea, verifiedWrappedTexts }) => {
+      ({ safeArea }) => {
         const clientWidth = document.documentElement.clientWidth;
         const measuredElements = [...document.querySelectorAll("body *")].map((element) => {
           const rectangle = element.getBoundingClientRect();
@@ -221,7 +145,6 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             scrollWidth: element.scrollWidth,
             tag: element.tagName,
             text: textContent.slice(0, 80),
-            verifiedByWrapContract: verifiedWrappedTexts.includes(textContent),
           };
         });
         const skipLinkElement = document.querySelector<HTMLAnchorElement>(
@@ -264,12 +187,9 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
             naturalWidth: image.naturalWidth,
             objectFit: getComputedStyle(image).objectFit,
           })),
-          unverifiedInternalOverflowing: measuredElements
+          internalOverflowing: measuredElements
             .filter(
-              (element) =>
-                element.clientWidth > 0 &&
-                element.scrollWidth > element.clientWidth &&
-                !element.verifiedByWrapContract,
+              (element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth,
             )
             .slice(0, 16),
           overflowing: measuredElements
@@ -306,16 +226,12 @@ test("SL-F030-E2E-008 @p1 confirmação permanece operável no reflow de 160x360
       },
       {
         safeArea: simulatedSafeArea,
-        verifiedWrappedTexts: [
-          feat030ExtremeTextFixture.faqQuestion,
-          feat030ExtremeTextFixture.faqAnswer,
-        ],
       },
     );
     const layoutEvidence = JSON.stringify(layout, null, 2);
     expect(layout.bodyFits, layoutEvidence).toBe(true);
     expect(layout.documentFits, layoutEvidence).toBe(true);
-    expect(layout.unverifiedInternalOverflowing, layoutEvidence).toEqual([]);
+    expect(layout.internalOverflowing, layoutEvidence).toEqual([]);
     expect(layout.overflowing).toEqual([]);
     expect(layout.skipLink).not.toBeNull();
     expect(layout.skipLink?.fits, layoutEvidence).toBe(true);

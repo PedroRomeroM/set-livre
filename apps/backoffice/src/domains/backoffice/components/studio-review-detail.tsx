@@ -585,6 +585,7 @@ export function StudioReviewDetail({
       </section>
       <div className={reviewStyles.comparisonGrid}>
         <StudioReviewRevisionPanel
+          key={`candidate:${detail.candidateRevision.id}:${detail.candidateRevision.version}`}
           label={detail.reviewState === "reviewPending" ? "Versão candidata" : "Versão moderada"}
           loadMedia={interactive}
           onMediaStateChange={(key, state) =>
@@ -596,6 +597,7 @@ export function StudioReviewDetail({
         {detail.publishedRevision === null ||
         detail.publishedRevision.id === detail.candidateRevision.id ? null : (
           <StudioReviewRevisionPanel
+            key={`published:${detail.publishedRevision.id}:${detail.publishedRevision.version}`}
             label="Versão pública vigente"
             loadMedia={interactive}
             onMediaStateChange={(key, state) =>

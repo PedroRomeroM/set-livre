@@ -333,15 +333,10 @@ Os cenários `SL-F030-E2E-*` cobrem:
   360 configura os recuos simulados de `safe-area` antes do foco, como em uma viewport já
   estabelecida, comprova que um inset superior de 59 px mantém o link integralmente oculto sem foco e
   verifica depois do foco tanto a caixa quanto os limites subpixel crus do texto do link em relação à
-  caixa de conteúdo. Pergunta e resposta homogêneas sem oportunidades naturais de quebra são
-  posicionadas pelo início e pelo fim no viewport; em cada posição, o contrato exige caixa contida,
-  regra computada de quebra, ausência de clipping na hierarquia local e impossibilidade real de rolar o
-  documento horizontalmente. A largura rolável local continua registrada apenas como diagnóstico para
-  esses dois blocos: depois de uma longa suíte, o WebKit pode conservar `scrollWidth` e geometria de
-  `Range` anteriores após substituir conteúdo muito alto. Os demais elementos continuam sujeitos à
-  lista global de overflow interno, enquanto documento, corpo e caixas permanecem sujeitos às provas
-  globais de largura. Assim, a prova cobre o comportamento observável nas duas extremidades sem aceitar
-  uma métrica de layout stale como falso positivo.
+  caixa de conteúdo. Uma versão autoritativa nova substitui o painel com descrição, regras, taxonomias e
+  FAQ homogêneas sem oportunidades naturais de quebra. A identidade DOM acompanha revisão e versão;
+  depois da estabilização das fontes, todos os elementos continuam sujeitos às provas globais de caixa e
+  overflow interno, e corpo e documento precisam permanecer sem qualquer largura rolável adicional.
 
 O helper cria identidades `support/reviewer/admin`, dono, estúdio, candidata, publicação e mídia reais
 no Supabase local. As decisões P0 atravessam UI, Auth, Storage, API, DAL e banco. O teardown fecha as
