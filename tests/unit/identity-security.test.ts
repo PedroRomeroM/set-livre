@@ -178,7 +178,13 @@ describe("identity mutation cache security", () => {
     expect(content.match(/mutation\.mutate\(\);/gu)).toHaveLength(2);
     expect(content).toContain("pendingRecoveryEmail.current = undefined;");
     expect(content).toContain("pendingRecoveryPassword.current = undefined;");
-    expect(content.match(/networkMode: "always"/gu)).toHaveLength(2);
+    const credentialMutations = content.split("const mutation = useMutation").slice(1);
+    expect(credentialMutations).toHaveLength(2);
+    for (const declaration of credentialMutations) {
+      const submitStart = declaration.indexOf("function submit");
+      expect(submitStart).toBeGreaterThan(0);
+      expect(declaration.slice(0, submitStart)).toContain('networkMode: "always"');
+    }
     expect(content).not.toMatch(/mutation\.mutate\((?:parsed\.data|password|email)/u);
   });
 

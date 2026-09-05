@@ -90,6 +90,10 @@ de o browser solicitar a releitura SSR; a fronteira visual fail-closed é commit
 `flushSync` antes dessa solicitação, e nenhuma atualização React ocorre depois que a navegação começa.
 O cenário P0 exige a requisição de documento e o resultado autoritativo nos três engines.
 
+Os cenários `SL-F002-E2E-002/003`, `SL-F003-E2E-009` e `SL-F004-E2E-001/002` exercitam
+leitura offline, erro recuperável, nova tentativa real e reconexão sem expor a composição privada.
+Sessão e perfil também provam reconexão com cache ainda fresco, sem adiantar os deadlines de rede.
+
 ## Segurança do E2E
 
 Antes de qualquer mutação, os helpers exigem:
@@ -125,6 +129,8 @@ compartilhado apenas durante aquela execução e não exige ausência da própri
 Antes de cada ação que dispara Supabase Auth, o helper captura no Mailpit os IDs já existentes para o
 destinatário QA exato. O polling aceita somente um ID novo com callback do tipo esperado; `Created`
 ordena mensagens dentro do próprio Mailpit, mas nunca é comparado ao relógio do processo Windows.
+O cadastro da fixture exige o POST real com status `202` e contrato de resposta válido antes da
+asserção visual de confirmação; o prazo dessa asserção não substitui o deadline HTTP da aplicação.
 Assim, drift entre Windows e WSL2 não produz falso timeout nem relaxa destinatário, callback ou cleanup.
 Os servidores Playwright usam
 `APP_ENV=test`: somente os buckets de rede compartilhados do login e do desbloqueio local recebem
@@ -190,6 +196,10 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   reload reconcilia a mesma chave sem duplicar, e uma nova criação só começa após o consumo seguro;
 - `SL-F006-E2E-025` inicia a fronteira de criação offline, exige erro recuperável sem formulário
   privado, revalida o acesso por tentativa explícita e cria um único estúdio;
+- `SL-F006-E2E-027`, `SL-F007-E2E-012` e `SL-F009-E2E-018` comprovam que montagem/foco offline
+  executam as leituras limitadas do editor, tipos, catálogo dependente e publicação, sem exibir conteúdo
+  privado cacheado. Retry offline precisa iniciar outro GET; restauração do transporte recupera a
+  leitura sem POST e sem depender de um evento `online`;
 - `SL-F006-E2E-026` resolve uma criação após perda real da resposta, descarta o estúdio em outra aba,
   visita o 404 e encerra explicitamente a resolução obsoleta. Não há comando no encerramento; somente
   o envio posterior cria outro estúdio com chave distinta. `023/024` não oferecem essa ação enquanto
@@ -395,6 +405,9 @@ Os cenários `SL-F030-E2E-*` cobrem:
 - recuperação da carga inicial e da próxima página da fila sem descartar itens já confirmados;
 - `SL-F030-E2E-016` inicia a fila offline, exige erro sem cards ou falso estado vazio e recupera
   o item real por nova leitura explícita, sem evento online nem comando;
+- `SL-F030-E2E-018` mantém a sessão administrativa real disponível, falha somente o GET passivo
+  com TanStack offline e exige aviso, snapshot confirmado preservado e decisão bloqueada. Um GET
+  interativo recupera o caso sem evento online nem comando;
 - loading, erro inicial recuperável e 404 contextual da rota; 404 conclusivo em refetch elimina o
   detalhe privado anterior e impede nova decisão;
 - ausência de `/admin` no aplicativo público;

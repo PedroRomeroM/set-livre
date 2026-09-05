@@ -90,6 +90,12 @@ Medir; não usar Infinity em dado operacional.
 
 ## 5. UX
 
+- as leituras que condicionam sessão, recovery, perfil, ativação/recebedor, editor de estúdio,
+  catálogo do editor e publicação usam `networkMode: "always"` e `retry: false`: o sinal offline não
+  pode pausar a query antes de executar a requisição com prazo limite. Falha mantém a composição
+  privada fechada e oferece tentativa explícita de leitura, também limitada. `refetchOnReconnect`
+  fica explícito para preservar a revalidação quando a rede volta, respeitando os bloqueios de
+  conflito ou comando pendente de cada painel. Isso não libera dados cacheados nem repete mutations;
 - SSR e a primeira hidratação publicam o mesmo boundary sem PII; depois do mount, um efeito sem observer privado remove a família, semeia o `initialData` autoritativo e só então libera o painel;
 - cada nova revisão de props RSC faz o boundary voltar imediatamente ao estado fechado, desmonta o observer anterior e repete remove + seed antes de renderizar a mesma identidade ou outro usuário;
 - durante refetch por foco, a identidade fica oculta em todo `fetchStatus` não ocioso, inclusive `paused` offline; o payload autoritativo é validado contra o escopo antes de entrar no cache e, se o servidor retornar outro usuário/estado anônimo, o cache privado é limpo e a rota SSR é recarregada;
@@ -197,6 +203,9 @@ Medir; não usar Infinity em dado operacional.
 - a fila editorial usa `backoffice.studios(scope)` com páginas keyset; o detalhe usa
   `backoffice.studio(scope,studioId)`. Sem páginas iniciais, a fila executa a leitura mesmo offline
   para oferecer erro e retry explícito limitado; reconexão continua disparando refetch.
+  O refetch passivo do detalhe também executa offline: falha preserva o snapshot confirmado,
+  apresenta aviso e bloqueia nova decisão até uma leitura interativa válida. Os bloqueios de
+  comando, confirmação e estado terminal continuam controlando o refetch automático.
   Cada normalizer confirma `scope` e, no detalhe, `studioId`
   antes de devolver a resposta ao TanStack Query; divergência sinaliza recomposição de sessão e nunca
   entra na key anterior. A leitura SSR remove e resemeia a key exata antes de habilitar o observer,

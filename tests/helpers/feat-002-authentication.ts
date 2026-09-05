@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   apiSuccessSchema,
+  identityRegisterResultSchema,
   identitySessionSchema,
   type IdentitySession,
 } from "@set-livre/contracts";
@@ -193,7 +194,16 @@ export async function submitFeat002Registration(
   await expect(personTypeChoice).toBeChecked();
 
   const emailFence = await captureFeat002AuthEmailFence(identity);
-  await page.getByRole("button", { name: "Criar conta" }).click();
+  // Await the real command before checking the UI; rendering has a separate assertion budget.
+  const [registrationResponse] = await Promise.all([
+    page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return address.pathname === "/api/auth/register" && response.request().method() === "POST";
+    }),
+    page.getByRole("button", { name: "Criar conta" }).click(),
+  ]);
+  expect(registrationResponse.status()).toBe(202);
+  apiSuccessSchema(identityRegisterResultSchema).parse(await registrationResponse.json());
   await expect(page.getByRole("status")).toContainText("Confira seu e-mail");
   return emailFence;
 }

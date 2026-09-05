@@ -295,8 +295,10 @@ function PreparedLoginPanel({
   const sessionQueryKey = useMemo(() => identityQueryKeys.session(sessionScope), [sessionScope]);
   const sessionQuery = useQuery({
     initialData: initialSession,
+    networkMode: "always",
     queryFn: async () => identitySessionForScope(await readIdentitySession(), sessionScope),
     queryKey: sessionQueryKey,
+    refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 30_000,

@@ -29,6 +29,130 @@ import {
   uploadFeat008Photos,
 } from "../../helpers/feat-008-studio-media";
 
+test("SL-F007-E2E-012 @p1 conteúdo offline recupera o editor compartilhado e depois as taxonomias", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const identity = createFeat007QaIdentity(testInfo, "012_offline_content");
+  let editorUnavailable = true;
+  let taxonomiesUnavailable = true;
+  let editorReads = 0;
+  let taxonomyReads = 0;
+  let commandPosts = 0;
+  try {
+    const editor = await provisionFeat007Studio(page, identity, "712");
+    // Reuse the creation boundary's subscription hook; do not block SSR or Auth transport.
+    await page.addInitScript(() => {
+      const addEventListener = window.addEventListener.bind(window);
+      addEventListener("online", () => {
+        document.documentElement.dataset.qaFeat007Network = "online";
+      });
+      Object.defineProperty(window, "addEventListener", {
+        configurable: true,
+        value(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+          options?: boolean | AddEventListenerOptions,
+        ) {
+          addEventListener(type, listener, options);
+          if (type === "offline") {
+            window.addEventListener = addEventListener;
+            document.documentElement.dataset.qaFeat007Network = "offline";
+            window.dispatchEvent(new Event("offline"));
+          }
+        },
+      });
+    });
+    await page.route(`**/api/owner/studios/${editor.studioId}`, async (route) => {
+      editorReads += 1;
+      if (editorUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    await page.route("**/api/studio-taxonomies", async (route) => {
+      taxonomyReads += 1;
+      if (taxonomiesUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        commandPosts += 1;
+      }
+    });
+
+    const navigation = await page.reload({ waitUntil: "domcontentloaded" });
+    expect(navigation?.status()).toBe(200);
+    const editorError = page
+      .getByRole("alert")
+      .filter({ hasText: "Não foi possível verificar o conteúdo comercial" });
+    const retryEditor = page.getByRole("button", {
+      name: "Verificar conteúdo comercial novamente",
+      exact: true,
+    });
+    await expect(editorError).toBeVisible();
+    expect(editorReads).toBeGreaterThan(0);
+    expect(taxonomyReads).toBe(0);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toHaveCount(
+      0,
+    );
+
+    // Refetch through the sibling observer: fixing only the core observer must not pass.
+    const readsBeforeFailure = editorReads;
+    await expect(retryEditor).toBeEnabled();
+    await retryEditor.click();
+    await expect.poll(() => editorReads).toBe(readsBeforeFailure + 1);
+    await expect(editorError).toBeVisible();
+    expect(taxonomyReads).toBe(0);
+
+    editorUnavailable = false;
+    const readsBeforeRecovery = editorReads;
+    await retryEditor.click();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+      editor.revision.name,
+    );
+    await expect(editorError).toHaveCount(0);
+    expect(editorReads).toBe(readsBeforeRecovery + 1);
+    const taxonomyError = page
+      .getByRole("alert")
+      .filter({ hasText: "Não foi possível atualizar as taxonomias" });
+    const retryTaxonomies = page.getByRole("button", {
+      name: "Tentar carregar novamente",
+      exact: true,
+    });
+    await expect(taxonomyError).toBeVisible();
+    // The dependent query must start automatically after the real editor GET succeeds offline.
+    expect(taxonomyReads).toBeGreaterThan(0);
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
+    await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toHaveCount(0);
+
+    const taxonomyReadsBeforeFailure = taxonomyReads;
+    await expect(retryTaxonomies).toBeEnabled();
+    await retryTaxonomies.click();
+    await expect.poll(() => taxonomyReads).toBe(taxonomyReadsBeforeFailure + 1);
+    await expect(taxonomyError).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toHaveCount(0);
+
+    taxonomiesUnavailable = false;
+    const taxonomyReadsBeforeRecovery = taxonomyReads;
+    await retryTaxonomies.click();
+    await expect(page.getByRole("textbox", { name: "Regras de uso" })).toBeEnabled();
+    await expect(page.getByRole("checkbox", { name: feat007DefaultContent.tagName })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Salvar tags e comodidades" })).toBeEnabled();
+    await expect(taxonomyError).toHaveCount(0);
+    expect(taxonomyReads).toBe(taxonomyReadsBeforeRecovery + 1);
+    expect(commandPosts).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat007Network)).toBe(
+      "offline",
+    );
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
 test("SL-F007-E2E-002 @p1 reordena FAQ no mobile e preserva o conteúdo", async ({
   page,
 }, testInfo) => {

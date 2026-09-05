@@ -34,8 +34,10 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
   const [sessionTransitionStarted, setSessionTransitionStarted] = useState(false);
   const sessionQuery = useQuery({
     initialData: initialSession,
+    networkMode: "always",
     queryFn: async () => identitySessionForScope(await readIdentitySession(), userId),
     queryKey,
+    refetchOnReconnect: "always",
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 30_000,

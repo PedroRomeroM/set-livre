@@ -422,8 +422,10 @@ function StudioLocalPreview({
 function useStudioTypes(initialTypes: readonly StudioTypeOption[], userId: string) {
   return useQuery({
     initialData: [...initialTypes],
+    networkMode: "always",
     queryFn: ({ signal }) => readStudioTypes(signal),
     queryKey: studioQueryKeys.types(userId),
+    refetchOnReconnect: true,
     retry: false,
     staleTime: 0,
   });
@@ -992,6 +994,7 @@ function EditStudioForm({
   const editorQuery = useQuery({
     enabled: !studioDeleted,
     initialData: initialEditor,
+    networkMode: "always",
     queryFn: async ({ signal }) =>
       assertStudioEditorBoundary(
         await readStudioEditor(initialEditor.studioId, signal),

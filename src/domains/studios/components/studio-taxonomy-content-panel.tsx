@@ -534,6 +534,7 @@ export function StudioTaxonomyContentPanel({
   const editorQuery = useQuery({
     enabled: hydrated,
     initialData: initialEditor,
+    networkMode: "always",
     queryFn: async ({ signal }) =>
       assertStudioEditorBoundary(
         await readStudioEditor(initialEditor.studioId, signal),
@@ -542,6 +543,7 @@ export function StudioTaxonomyContentPanel({
       ),
     queryKey: editorQueryKey,
     refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
@@ -565,9 +567,11 @@ export function StudioTaxonomyContentPanel({
   const taxonomiesQuery = useQuery({
     enabled: editorIsVerified,
     initialData: initialTaxonomies,
+    networkMode: "always",
     queryFn: ({ signal }) => readStudioTaxonomies(signal),
     queryKey: studioQueryKeys.taxonomies(userId),
     refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,

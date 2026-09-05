@@ -180,6 +180,8 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
   const identity = createFeat002QaIdentity(testInfo, "002");
 
   try {
+    // Date fica fixo para o cache não envelhecer 30s; timers e deadlines seguem reais.
+    await page.clock.setFixedTime(Date.now());
     const emailFence = await submitFeat002Registration(page, identity, "Pessoa física");
     const confirmedSession = await confirmFeat002Registration(page, identity, emailFence);
     await logoutFeat002Identity(page);
@@ -217,6 +219,46 @@ test("SL-F002-E2E-002 @p0 login e logout controlam a sessão SSR em entrar", asy
     const loggedInSession = await readFeat002AuthenticatedSession(page);
     expect(loggedInSession.userId).toBe(confirmedSession.userId);
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/session",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Sessão indisponível" }),
+        ).toContainText("Sessão indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(page.getByText(identity.email, { exact: true })).toHaveCount(0);
+        await expect(page.getByRole("textbox", { name: "E-mail" })).toHaveCount(0);
+        await expect(getFeat002PasswordControl(page, "Senha")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Entrar", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Sair", exact: true })).toHaveCount(0);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(page.getByRole("status")).toContainText("Sessão ativa", { timeout: 12_000 });
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    await page.clock.setSystemTime(Date.now());
 
     await logoutFeat002Identity(page);
     expectUnauthenticatedSession(await readFeat002IdentitySession(page));
@@ -309,11 +351,30 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
         window.dispatchEvent(new Event("offline"));
         window.dispatchEvent(new Event("visibilitychange"));
       });
-      await expect(page.getByRole("status")).toContainText(
-        "Verificando se o link de recuperação é válido",
-      );
-      await expect(getFeat002PasswordControl(page, "Nova senha")).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/recovery/status",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Verificação indisponível" }),
+        ).toContainText("Verificação indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await expect(newPasswordInput).toHaveCount(0);
+        await expect(confirmNewPasswordInput).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Salvar nova senha" })).toHaveCount(0);
+      }
     } finally {
       await page.context().setOffline(false);
       await page.evaluate(() => {
@@ -322,6 +383,10 @@ test("SL-F002-E2E-003 @p0 recuperação mobile define e autentica com a nova sen
     }
 
     await expect(newPasswordInput).toBeEnabled();
+    await expect(confirmNewPasswordInput).toBeEnabled();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Verificação indisponível" }),
+    ).toHaveCount(0);
     const saveNewPassword = page.getByRole("button", { name: "Salvar nova senha" });
     const recoveryStatusRefetchStarted = createDeferredSignal();
     const releaseRecoveryStatusRefetch = createDeferredSignal();

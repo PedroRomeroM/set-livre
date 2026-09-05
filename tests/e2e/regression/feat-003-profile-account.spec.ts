@@ -240,6 +240,8 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   let logoutVerificationRequest: Request | undefined;
 
   try {
+    // Date fica fixo antes das leituras; o cache não envelhece 30s, mas os deadlines rodam.
+    await page.clock.setFixedTime(Date.now());
     await registerAndConfirmFeat003Identity(page, identity, "individual");
     await gotoExpectedPage(page, "/conta", "Minha conta");
     const initialProfile = await completeFeat003Profile(page, {
@@ -286,17 +288,42 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
         window.dispatchEvent(new Event("offline"));
         window.dispatchEvent(new Event("visibilitychange"));
       });
-      await expect(page.getByText("Validando seus dados privados…", { exact: true })).toBeVisible();
-      await assertFeat003PrivateValuesAbsentFromDom(page, privateValues);
-      await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/account/profile",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Perfil indisponível" }),
+        ).toContainText("Perfil indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        await assertFeat003PrivateValuesAbsentFromDom(page, [...privateValues, identity.email]);
+        await assertFeat003SecretsAbsentFromDom(page, [secrets.taxId, secrets.additionalDocument]);
+        await expect(page.getByRole("textbox", { name: "Nome completo" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Salvar alterações" })).toHaveCount(0);
+        await expect(page.getByRole("combobox", { name: "Tema da interface" })).toHaveCount(0);
+      }
     } finally {
       await page.context().setOffline(false);
       await page.evaluate(() => {
         window.dispatchEvent(new Event("online"));
-        window.dispatchEvent(new Event("visibilitychange"));
       });
     }
     await expect(page.getByRole("heading", { level: 2, name: "Dados do perfil" })).toBeVisible();
+    await expect(page.getByLabel("Resumo do perfil salvo")).toContainText(profileName);
+    expect(profileCommandRequests).toBe(0);
+    await page.clock.setSystemTime(Date.now());
 
     await page.getByRole("textbox", { name: "Nome completo" }).fill(offlineName);
     await fillFeat003PhoneWithoutReportValue(
@@ -474,8 +501,48 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
       offlineSecrets.additionalDocument,
     ]);
 
+    await page.clock.setFixedTime(Date.now());
     await gotoExpectedPage(page, "/conta/seguranca", "Segurança da conta");
     await expect(page.getByText(identity.email, { exact: true })).toBeVisible();
+    await page.context().setOffline(true);
+    try {
+      await page.evaluate(() => {
+        window.dispatchEvent(new Event("offline"));
+        window.dispatchEvent(new Event("visibilitychange"));
+      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await Promise.all([
+            page.waitForEvent("requestfailed", {
+              predicate: (request) =>
+                request.method() === "GET" &&
+                new URL(request.url()).pathname === "/api/auth/session",
+              timeout: 12_000,
+            }),
+            page.getByRole("button", { name: "Tentar novamente", exact: true }).click(),
+          ]);
+        }
+        await expect(
+          page.getByRole("alert").filter({ hasText: "Segurança indisponível" }),
+        ).toContainText("Segurança indisponível", {
+          timeout: 12_000,
+        });
+        await expect(
+          page.getByRole("button", { name: "Tentar novamente", exact: true }),
+        ).toBeEnabled({ timeout: 12_000 });
+        // O Flight do SSR contém initialSession; este boundary deve fechar a UI e seus controles.
+        await expect(page.getByRole("main")).not.toContainText(identity.email);
+        await expect(page.getByRole("textbox", { includeHidden: true })).toHaveCount(0);
+        await expect(page.getByRole("link", { name: "Recuperar ou trocar senha" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "Sair desta conta" })).toHaveCount(0);
+      }
+    } finally {
+      await page.context().setOffline(false);
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    }
+    await expect(page.getByText(identity.email, { exact: true })).toBeVisible({ timeout: 12_000 });
+    await expect(page.getByRole("button", { name: "Sair desta conta" })).toBeEnabled();
+    await page.clock.setSystemTime(Date.now());
     page.on("request", (request) => {
       const address = new URL(request.url());
       if (address.pathname === "/api/auth/logout" && request.method() === "POST") {

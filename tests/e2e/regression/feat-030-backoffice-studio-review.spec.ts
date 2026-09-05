@@ -1,5 +1,6 @@
 import {
   apiSuccessSchema,
+  backofficeSessionSchema,
   backofficeStudioCommandResultSchema,
   backofficeStudioRejectCommandSchema,
   backofficeStudioReviewDetailSchema,
@@ -772,6 +773,97 @@ test("SL-F030-E2E-016 @p1 fila inicialmente offline recupera leitura sem evento 
   } finally {
     await page.unroute("**/api/studios");
     await cleanupFeat030Scenario(page, { operators: [admin], owner });
+  }
+});
+
+test("SL-F030-E2E-018 @p1 detalhe offline anuncia falha passiva e recupera por leitura interativa", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const reviewer = createFeat030Operator(testInfo, "018_offline_detail");
+  let owner: Feat030Owner | undefined;
+  let detailPattern: string | undefined;
+  const readActivities: string[] = [];
+  let commandPosts = 0;
+  try {
+    const pending = await provisionFeat030PendingStudio(
+      page,
+      testInfo,
+      "018_offline_detail",
+      "3018",
+    );
+    owner = pending.owner;
+    await provisionAndLoginFeat030Operator(page, reviewer, "reviewer", "030018");
+    await openFeat030StudioReview(page, pending.studioId, pending.name);
+    await expectFeat030PreviewsInspectable(page);
+    const reject = page.getByRole("button", {
+      name: "Rejeitar e devolver para correção",
+      exact: true,
+    });
+    await expect(reject).toBeEnabled();
+
+    detailPattern = `**/api/studios/${pending.studioId}`;
+    await page.route(detailPattern, async (route) => {
+      const activity = route.request().headers()[backofficeStudioReadActivityHeader];
+      expect(activity).toMatch(/^(passive|interactive)$/u);
+      readActivities.push(activity ?? "missing");
+      if (activity === "passive") await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        commandPosts += 1;
+      }
+    });
+
+    // Only TanStack is offline: real HTTP/session checks stay available. Fail the
+    // passive detail transport, then let the explicit interactive GET reach the server.
+    await page.evaluate(() => {
+      document.documentElement.dataset.qaFeat030Network = "offline";
+      window.addEventListener("online", () => {
+        document.documentElement.dataset.qaFeat030Network = "online";
+      });
+      window.dispatchEvent(new Event("offline"));
+    });
+    const [sessionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname === "/api/auth/session",
+      ),
+      triggerFeat030StaleWindowFocusRefetch(page),
+    ]);
+    expect(sessionResponse.status()).toBe(200);
+    const session = apiSuccessSchema(backofficeSessionSchema).parse(await sessionResponse.json());
+    expect(session.data).toMatchObject({ authenticated: true, email: reviewer.email });
+
+    const warning = page.getByRole("alert").filter({ hasText: "A atualização do caso falhou" });
+    await expect(warning).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: pending.name })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sair", exact: true })).toBeEnabled();
+    await expect(reject).toBeDisabled();
+    await expect(page.getByRole("heading", { name: "Confirmar impacto", exact: true })).toHaveCount(
+      0,
+    );
+    expect(readActivities.length).toBeGreaterThan(0);
+    expect(readActivities.every((activity) => activity === "passive")).toBe(true);
+
+    const readsBeforeRetry = readActivities.length;
+    const retry = warning.getByRole("button", { name: "Tentar atualizar novamente", exact: true });
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect(page.getByText("O estado autoritativo foi atualizado novamente.")).toBeVisible();
+    await expect(warning).toHaveCount(0);
+    await expectFeat030PreviewsInspectable(page);
+    await expect(reject).toBeEnabled();
+    expect(readActivities.slice(readsBeforeRetry)).toEqual(["interactive"]);
+    expect(commandPosts).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat030Network)).toBe(
+      "offline",
+    );
+  } finally {
+    if (detailPattern !== undefined) await page.unroute(detailPattern);
+    await cleanupFeat030Scenario(page, { operators: [reviewer], owner });
   }
 });
 

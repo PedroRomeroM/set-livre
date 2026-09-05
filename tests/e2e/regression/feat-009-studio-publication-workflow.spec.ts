@@ -10,6 +10,7 @@ import {
 } from "@set-livre/contracts";
 import { expect, test, type BrowserContext } from "@playwright/test";
 
+import { createFeat008StudioFixture } from "../../helpers/feat-008-studio-media";
 import {
   archiveFeat009Tag,
   cleanupFeat009QaIdentity,
@@ -33,6 +34,117 @@ function deferredSignal() {
   });
   return { promise, resolve };
 }
+
+test("SL-F009-E2E-018 @p1 publicação offline verifica montagem e foco sem exibir cache privado", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(240_000);
+  const identity = createFeat009QaIdentity(testInfo, "018_offline_publication");
+  let publicationUnavailable = true;
+  let publicationReads = 0;
+  let commandPosts = 0;
+  try {
+    // This scenario owns the first publication mount; no healthy publication preload is needed.
+    const { editor } = await createFeat008StudioFixture(page, identity, "918");
+    const publicationPath = `/api/owner/studios/${editor.studioId}/publication`;
+    // The document is real SSR; only the client publication GET loses transport.
+    await page.addInitScript(() => {
+      const addEventListener = window.addEventListener.bind(window);
+      addEventListener("online", () => {
+        document.documentElement.dataset.qaFeat009Network = "online";
+      });
+      Object.defineProperty(window, "addEventListener", {
+        configurable: true,
+        value(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+          options?: boolean | AddEventListenerOptions,
+        ) {
+          addEventListener(type, listener, options);
+          if (type === "offline") {
+            window.addEventListener = addEventListener;
+            document.documentElement.dataset.qaFeat009Network = "offline";
+            window.dispatchEvent(new Event("offline"));
+          }
+        },
+      });
+    });
+    await page.route(`**${publicationPath}`, async (route) => {
+      publicationReads += 1;
+      if (publicationUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        commandPosts += 1;
+      }
+    });
+
+    const navigation = await page.goto(`/dono/estudios/${editor.studioId}/publicacao`, {
+      waitUntil: "domcontentloaded",
+    });
+    expect(navigation?.status()).toBe(200);
+    const error = page
+      .getByRole("alert")
+      .filter({ hasText: "Não foi possível verificar a publicação" });
+    const retry = page.getByRole("button", { name: "Verificar estado atual", exact: true });
+    let readsBeforeVerification = 0;
+    for (const boundary of ["mount", "focus"] as const) {
+      if (boundary === "focus") {
+        publicationUnavailable = true;
+        readsBeforeVerification = publicationReads;
+        await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+      }
+      await expect(error).toBeVisible();
+      // An offline pause can render the error too, so proving an actual GET is essential.
+      expect(publicationReads).toBeGreaterThan(readsBeforeVerification);
+      await expect(page.getByRole("heading", { name: "Checklist do anúncio" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Prévia das revisões" })).toHaveCount(0);
+      await expect(page.getByRole("article")).toHaveCount(0);
+      await expect(page.getByText(editor.revision.name, { exact: true })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Enviar revisão completa" })).toHaveCount(0);
+      await expect(retry).toBeEnabled();
+
+      const readsBeforeFailure = publicationReads;
+      await retry.click();
+      await expect.poll(() => publicationReads).toBe(readsBeforeFailure + 1);
+      await expect(error).toBeVisible();
+      await expect(page.getByRole("article")).toHaveCount(0);
+      await expect(retry).toBeEnabled();
+
+      publicationUnavailable = false;
+      const readsBeforeRecovery = publicationReads;
+      // Await the real GET before the DOM assertion: cold dev compilation is not UI render time.
+      const [recoveredResponse] = await Promise.all([
+        page.waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            new URL(response.url()).pathname === publicationPath,
+        ),
+        retry.click(),
+      ]);
+      expect(recoveredResponse.status()).toBe(200);
+      const recovered = apiSuccessSchema(studioPublicationSchema).parse(
+        await recoveredResponse.json(),
+      ).data;
+      expect(recovered.studioId).toBe(editor.studioId);
+      expect(recovered.scope).toBe(identity.userId);
+      await expect(page.getByRole("heading", { name: "Checklist do anúncio" })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: editor.revision.name, exact: true }),
+      ).toBeVisible();
+      await expect(error).toHaveCount(0);
+      expect(publicationReads).toBe(readsBeforeRecovery + 1);
+      expect(commandPosts).toBe(0);
+      expect(await page.evaluate(() => document.documentElement.dataset.qaFeat009Network)).toBe(
+        "offline",
+      );
+    }
+  } finally {
+    await closeFeat009PageBeforeCleanup(page);
+    await cleanupFeat009QaIdentity(identity);
+  }
+});
 
 test("SL-F009-E2E-006 @p1 motivo de rejeição orienta correção e preserva publicação estável", async ({
   page,

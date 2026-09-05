@@ -421,6 +421,7 @@ function HydratedStudioPublicationPanel({
 
   const publicationQuery = useQuery({
     initialData: initialPublication,
+    networkMode: "always",
     queryFn: async ({ signal }) => {
       const candidate = assertStudioPublicationBoundary(
         await readStudioPublication(studioId, signal),

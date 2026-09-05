@@ -157,6 +157,7 @@ export function StudioReviewDetail({
   }
   const review = useQuery({
     enabled: automaticRefetchEnabled,
+    networkMode: "always",
     queryFn: ({ signal }) => readDetail("passive", signal),
     queryKey: detailQueryKey,
     refetchInterval: automaticRefetchEnabled ? 4 * 60 * 1_000 : false,

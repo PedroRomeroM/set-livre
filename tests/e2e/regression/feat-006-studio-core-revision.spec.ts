@@ -146,6 +146,148 @@ test("SL-F006-E2E-025 @p1 criação offline oferece recuperação antes de liber
   }
 });
 
+test("SL-F006-E2E-027 @p1 editor e tipos recuperam offline e revalidam ao reconectar", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  const identity = createFeat006QaIdentity(testInfo, "027_offline_editor");
+  let editorUnavailable = true;
+  let typesUnavailable = true;
+  let editorReads = 0;
+  let typesReads = 0;
+  let commandPosts = 0;
+  try {
+    await provisionFeat006Owner(page, identity, "027");
+    await fillFeat006Core(page);
+    const editor = await createFeat006StudioThroughUi(page);
+    const editorPath = `/api/owner/studios/${editor.studioId}`;
+    // SSR/session still work. Signal offline when TanStack subscribes, before hydrated queries.
+    await page.addInitScript(() => {
+      const addEventListener = window.addEventListener.bind(window);
+      addEventListener("online", () => {
+        document.documentElement.dataset.qaFeat006Network = "online";
+      });
+      Object.defineProperty(window, "addEventListener", {
+        configurable: true,
+        value(
+          type: string,
+          listener: EventListenerOrEventListenerObject,
+          options?: boolean | AddEventListenerOptions,
+        ) {
+          addEventListener(type, listener, options);
+          if (type === "offline") {
+            window.addEventListener = addEventListener;
+            document.documentElement.dataset.qaFeat006Network = "offline";
+            window.dispatchEvent(new Event("offline"));
+          }
+        },
+      });
+    });
+    await page.route(`**${editorPath}`, async (route) => {
+      editorReads += 1;
+      if (editorUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    await page.route("**/api/studio-types", async (route) => {
+      typesReads += 1;
+      if (typesUnavailable) await route.abort("failed");
+      else await route.continue();
+    });
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/commands") {
+        commandPosts += 1;
+      }
+    });
+
+    const navigation = await page.reload({ waitUntil: "domcontentloaded" });
+    expect(navigation?.status()).toBe(200);
+    const error = page
+      .getByRole("alert")
+      .filter({ hasText: "Não foi possível verificar o editor" });
+    const retry = page.getByRole("button", { name: "Verificar novamente", exact: true });
+    await expect(error).toBeVisible();
+    // A paused query can show the same error without ever calling fetch: require real attempts.
+    expect(editorReads).toBeGreaterThan(0);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(page.getByText(editor.revision.name, { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Salvar rascunho" })).toHaveCount(0);
+    await expect(retry).toBeEnabled();
+
+    const readsBeforeFailure = editorReads;
+    await retry.click();
+    await expect.poll(() => editorReads).toBe(readsBeforeFailure + 1);
+    await expect(error).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    await expect(retry).toBeEnabled();
+
+    editorUnavailable = false;
+    const readsBeforeRecovery = editorReads;
+    await retry.click();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+      editor.revision.name,
+    );
+    await expect(error).toHaveCount(0);
+    expect(editorReads).toBe(readsBeforeRecovery + 1);
+
+    // The editor is authoritative now, but cached types cannot unlock editing without their GET.
+    expect(typesReads).toBeGreaterThan(0);
+    const typesError = page
+      .getByRole("alert")
+      .filter({ hasText: "Não foi possível confirmar os tipos ativos" });
+    const retryTypes = page.getByRole("button", {
+      name: "Atualizar tipos de estúdio",
+      exact: true,
+    });
+    const studioType = page.getByRole("combobox", { name: "Tipo de estúdio" });
+    const save = page.getByRole("button", { name: "Salvar rascunho" });
+    await expect(typesError).toBeVisible();
+    await expect(studioType).toBeDisabled();
+    await expect(save).toBeDisabled();
+    await expect(retryTypes).toBeEnabled();
+
+    const typesReadsBeforeFailure = typesReads;
+    await retryTypes.click();
+    await expect.poll(() => typesReads).toBe(typesReadsBeforeFailure + 1);
+    await expect(typesError).toBeVisible();
+    await expect(studioType).toBeDisabled();
+    await expect(save).toBeDisabled();
+    await expect(retryTypes).toBeEnabled();
+
+    typesUnavailable = false;
+    const typesReadsBeforeRecovery = typesReads;
+    await retryTypes.click();
+    await expect(studioType).toBeEnabled();
+    await expect(studioType).toHaveValue(editor.studioType.id);
+    await expect(save).toBeEnabled();
+    await expect(typesError).toHaveCount(0);
+    expect(typesReads).toBe(typesReadsBeforeRecovery + 1);
+    expect(commandPosts).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat006Network)).toBe(
+      "offline",
+    );
+
+    // Network-always must retain automatic reconnect revalidation, without a focus event or click.
+    const editorReadsBeforeReconnect = editorReads;
+    const typesReadsBeforeReconnect = typesReads;
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect.poll(() => editorReads).toBe(editorReadsBeforeReconnect + 1);
+    await expect.poll(() => typesReads).toBe(typesReadsBeforeReconnect + 1);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue(
+      editor.revision.name,
+    );
+    await expect(studioType).toBeEnabled();
+    await expect(studioType).toHaveValue(editor.studioType.id);
+    await expect(save).toBeEnabled();
+    expect(commandPosts).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.qaFeat006Network)).toBe(
+      "online",
+    );
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+});
+
 test("SL-F006-E2E-005 @p1 conflito otimista compara versões e preserva a escolha local", async ({
   page,
 }, testInfo) => {

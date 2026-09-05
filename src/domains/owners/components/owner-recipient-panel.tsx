@@ -817,12 +817,14 @@ function PreparedOwnerRecipientPanel({ initialResult, userId, view }: OwnerRecip
   const scopeTransitionGuard = useRef(false);
   const resultQuery = useQuery<OwnerRecipientResult>({
     initialData: initialResult,
+    networkMode: "always",
     queryFn: async () =>
       view === "overview"
         ? readNewestOwnerPrivateResult(queryClient, userId, "activation", readOwnerActivation)
         : readNewestOwnerPrivateResult(queryClient, userId, "recipient", readOwnerRecipient),
     queryKey,
     refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,

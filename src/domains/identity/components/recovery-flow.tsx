@@ -283,10 +283,12 @@ export function RecoveryFlow({
     [initialSessionScope],
   );
   const statusQuery = useQuery({
+    networkMode: "always",
     queryFn: async () =>
       identityRecoveryStatusForScope(await readPasswordRecoveryStatus(), initialSessionScope),
     queryKey: recoveryStatusQueryKey,
     refetchOnMount: "always",
+    refetchOnReconnect: true,
     refetchOnWindowFocus: "always",
     retry: false,
     staleTime: 0,
