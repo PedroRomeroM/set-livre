@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 
+import { BackofficeProviders } from "./providers";
+
 export const metadata: Metadata = {
   description: "Aplicação operacional separada da Set Livre.",
   robots: { follow: false, index: false },
@@ -25,7 +27,9 @@ export default async function BackofficeLayout({ children }: Readonly<{ children
 
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <BackofficeProviders>{children}</BackofficeProviders>
+      </body>
     </html>
   );
 }

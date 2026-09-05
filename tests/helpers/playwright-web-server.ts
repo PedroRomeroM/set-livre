@@ -55,10 +55,12 @@ export function createPlaywrightNextCommand(argumentsList: readonly string[]) {
 }
 
 export type ValidatedPlaywrightApplicationEnvironment = Readonly<{
+  BACKOFFICE_RUNTIME_UNLOCK_KEY?: string;
   DATABASE_URL_APP_DAL: string;
   NEXT_PUBLIC_APP_URL: string;
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
   NEXT_PUBLIC_SUPABASE_URL: string;
+  SUPABASE_SECRET_KEY?: string;
 }>;
 
 function sanitizedOperationalValue(name: string, value: string | undefined) {
@@ -76,9 +78,8 @@ function sanitizedOperationalValue(name: string, value: string | undefined) {
   return sanitizedPath === "" ? undefined : sanitizedPath;
 }
 
-export function createPlaywrightWebServerEnvironmentOverlay(
+export function createPlaywrightOperationalEnvironment(
   inheritedEnvironment: Readonly<Record<string, string | undefined>>,
-  applicationEnvironment: ValidatedPlaywrightApplicationEnvironment,
 ) {
   const overlay: Record<string, string> = Object.fromEntries(
     Object.keys(inheritedEnvironment).map((name) => [name, ""]),
@@ -90,6 +91,15 @@ export function createPlaywrightWebServerEnvironmentOverlay(
       overlay[name] = value;
     }
   }
+
+  return overlay;
+}
+
+export function createPlaywrightWebServerEnvironmentOverlay(
+  inheritedEnvironment: Readonly<Record<string, string | undefined>>,
+  applicationEnvironment: ValidatedPlaywrightApplicationEnvironment,
+) {
+  const overlay = createPlaywrightOperationalEnvironment(inheritedEnvironment);
 
   Object.assign(overlay, applicationEnvironment);
   overlay.APP_ENV = "test";

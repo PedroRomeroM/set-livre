@@ -28,7 +28,6 @@ function cleanupPool(
   calls: Array<Readonly<{ text: string; values: readonly [string, string] }>>,
 ): Feat003CleanupPool {
   return {
-    end: async () => undefined,
     query: async (text, values) => {
       calls.push({ text, values });
       return { rows: [evidence] };
@@ -86,6 +85,7 @@ describe("FEAT-003 Playwright helpers", () => {
       resolve(process.cwd(), "tests/e2e/critical/feat-003-profile-account.spec.ts"),
       "utf8",
     );
+    const playwrightConfig = readFileSync(resolve(process.cwd(), "playwright.config.ts"), "utf8");
 
     expect(switchSource).toContain("response = await page.evaluate(");
     expect(switchSource).toContain("password: identity.password");
@@ -94,7 +94,10 @@ describe("FEAT-003 Playwright helpers", () => {
     expect(switchSource).not.toContain(".parse(response.payload)");
     expect(switchSource).not.toContain("throw error");
     expect(switchSource).not.toContain("console.");
-    expect(criticalSpec).toContain('test.use({ screenshot: "off", trace: "off", video: "off" });');
+    expect(criticalSpec).not.toContain('test.use({ screenshot: "off"');
+    expect(playwrightConfig).toContain('screenshot: "only-on-failure"');
+    expect(playwrightConfig).toContain('trace: "retain-on-failure"');
+    expect(playwrightConfig).toContain('video: "retain-on-failure"');
   });
 
   it("fills phone controls through a redacted native input event instead of report titles", () => {

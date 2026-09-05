@@ -695,16 +695,34 @@ select ok(
 );
 
 select ok(
-  (
-    select pg_catalog.count(*) = 16
-    from pg_catalog.pg_proc as routine
-    cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
-    join pg_catalog.pg_roles as role on role.oid = privilege.grantee
-    where role.rolname = 'app_dal'
-      and privilege.privilege_type = 'EXECUTE'
-      and not privilege.is_grantable
+  not exists (
+    (
+      select pg_catalog.to_regprocedure(entry.signature) as routine_oid
+      from private.dal_routine_allowlist as entry
+      except
+      select routine.oid
+      from pg_catalog.pg_proc as routine
+      cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
+      join pg_catalog.pg_roles as role on role.oid = privilege.grantee
+      where role.rolname = 'app_dal'
+        and privilege.privilege_type = 'EXECUTE'
+        and not privilege.is_grantable
+    )
+    union all
+    (
+      select routine.oid
+      from pg_catalog.pg_proc as routine
+      cross join lateral pg_catalog.aclexplode(routine.proacl) as privilege
+      join pg_catalog.pg_roles as role on role.oid = privilege.grantee
+      where role.rolname = 'app_dal'
+        and privilege.privilege_type = 'EXECUTE'
+        and not privilege.is_grantable
+      except
+      select pg_catalog.to_regprocedure(entry.signature)
+      from private.dal_routine_allowlist as entry
+    )
   ),
-  'app_dal mantém allowlist exata de dezesseis rotinas'
+  'app_dal mantém exatamente as rotinas da allowlist canônica'
 );
 
 select ok(

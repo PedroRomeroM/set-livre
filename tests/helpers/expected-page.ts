@@ -1,5 +1,26 @@
 import { expect, type Page } from "@playwright/test";
 
+export async function expectSessionStorageValue(
+  page: Page,
+  key: string,
+  expected: string,
+  timeout = 15_000,
+) {
+  await expect
+    .poll(
+      async () => {
+        if (page.isClosed()) return undefined;
+        try {
+          return await page.evaluate((marker) => sessionStorage.getItem(marker), key);
+        } catch {
+          return undefined;
+        }
+      },
+      { timeout },
+    )
+    .toBe(expected);
+}
+
 export async function gotoExpectedPage(page: Page, url: string, heading: string) {
   const response = await page.goto(url);
 

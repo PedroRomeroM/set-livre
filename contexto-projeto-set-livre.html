@@ -45,7 +45,7 @@
   </head>
   <body>
     <header>
-      <p>Resumo executivo vivo · atualizado em 29/08/2026</p>
+      <p>Resumo executivo vivo · atualizado em 04/09/2026</p>
       <h1>Set Livre — contexto do projeto</h1>
       <p>
         Marketplace de aluguel de estúdios audiovisuais. A baseline inclui catálogo, calendário,
@@ -66,13 +66,30 @@
           <tbody>
             <tr>
               <td>Produto</td>
-              <td>FEAT-002, FEAT-003 e FEAT-004 concluídas; 31 planos permanecem no roadmap.</td>
+              <td>
+                FEAT-002, FEAT-003 e FEAT-004 estão implementadas na baseline. A fundação do
+                catálogo inclui cadastro e revisões de estúdio, conteúdo e taxonomias, backoffice
+                administrativo, galeria privada, fluxo editorial e revisão editorial. O backoffice
+                separa <code>support</code>, <code>reviewer</code> e <code>admin</code>, oferece
+                fila/detalhe privados, decide candidatas atomicamente, revalida o checklist sob
+                locks antes da aprovação, preserva a publicação em rejeições e restaura exatamente o
+                estado anterior à desativação. Polling do detalhe é passivo para a janela de
+                inatividade, enquanto refresh explícito é operacional; o refresh Auth e a assinatura
+                privada compartilham um deadline realmente abortável. Respostas atrasadas não podem
+                substituir uma revisão canônica mais nova, e a verificação de um upload retoma os
+                demais itens da fila. Novas buscas administrativas descartam confirmações
+                anteriores; concessões de papel só são oferecidas para contas ativas com perfil
+                completo. Reautenticação válida preserva a aba autora e avisa somente as demais
+                abas; PII só chega ao consumidor efêmero após coincidir com a sessão e o usuário
+                solicitados; logout offline oculta imediatamente a composição privada. As demais
+                features continuam no estado indicado pelo roadmap.
+              </td>
             </tr>
             <tr>
               <td>Desenvolvimento</td>
               <td>
-                Windows nativo, Node 24.18, npm 11.19 e Supabase local oficial, restrito às
-                coordenadas locais geradas; consulte o
+                Windows nativo para aplicação e testes, com Docker Engine oficial em uma distro WSL2
+                dedicada e Supabase local restrito ao loopback; consulte o
                 <a href="docs/development.md">contrato canônico de desenvolvimento</a>.
               </td>
             </tr>
@@ -94,11 +111,10 @@
             <tr>
               <td>Entrega</td>
               <td class="status">
-                Host, credenciais privadas, proteção de branch e HTTPS por IP configurados. O ciclo
-                protegido já concluiu migrations, ativação atômica do runtime restrito e health
-                público no mesmo SHA; a produção serve somente a fundação técnica, com identificação
-                neutra ao ambiente e sem simular features planejadas. Os contratos do rollout ficam
-                na <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. DNS foi
+                Host, credenciais privadas, proteção de branch e HTTPS por IP estão configurados. A
+                produção serve apenas a fundação técnica já promovida; novas features só entram
+                depois do ciclo completo de review e deploy. Os detalhes operacionais ficam na
+                <a href="docs/infrastructure.md">fonte canônica de infraestrutura</a>. DNS foi
                 adiado até o go-live.
               </td>
             </tr>
@@ -115,8 +131,17 @@
             Leituras por read models pequenos; escritas críticas por API, DAL e função SQL privada.
           </li>
           <li>
+            Respostas privadas são validadas contra o escopo da sessão antes do cache; registros
+            ausentes fecham em 404 contextual e efeitos externos ambíguos são reconciliados pelo
+            estado autoritativo antes de responder.
+          </li>
+          <li>
             Produção usa HTTPS na VM Oracle; aplicação pública e backoffice permanecem superfícies
             separadas.
+          </li>
+          <li>
+            O backoffice usa papéis explícitos: suporte opera usuários, reviewer decide conteúdo e
+            admin substitui ambos deliberadamente e executa moderação.
           </li>
           <li>
             A entrega usa releases imutáveis, ativação atômica e recuperação fail-closed. Os
@@ -134,35 +159,34 @@
       <section>
         <h2>Qualidade e entrega</h2>
         <p>
-          Cada feature usa branch própria. Antes do merge passam format, lint, tipos, Vitest, banco,
-          documentação, Playwright, build, audit e Knip conforme o risco. Todo PR recebe
-          <code>@codex review</code>, espera real mínima de 60 minutos e novos ciclos depois de cada
-          correção até uma declaração explícita de review limpo no SHA atual.
+          A regra normal é uma feature por branch. A conclusão da fundação é uma exceção
+          transitória, limitada a dois PRs consecutivos e registrada no ADR-017; cada fatia mantém
+          commit, testes e review próprios. Planos de feature já concluída são removidos conforme o
+          ADR-015. Antes do merge passam format, lint, tipos, Vitest, banco, documentação,
+          Playwright, build, audit e Knip conforme o risco.
         </p>
         <p>
-          O CI repete os gates em Windows e Linux limpos, incluindo unitários, SQL/RLS, Playwright
-          multiengine, acessibilidade, builds standalone, disciplina de dívida técnica e fronteiras
-          de segurança da entrega e do host. Testes não usam retry, timeout ampliado ou relaxamento
-          de asserção para mascarar falhas; os resultados permanecem no PR e nos checks. Os
-          contratos técnicos ficam nas fontes canônicas de
+          Todo push recebe <code>@codex review</code> no SHA exato. O agente acompanha até o status
+          <code>Completed</code>, corrige findings aplicáveis, resolve as conversas e repete o ciclo
+          até uma declaração explícita de review limpo. Antes do merge, uma revisão holística cobre
+          todo o diff contra <code>main</code>; timeout ou ausência de resposta nunca equivalem a
+          aprovação. O CI repete os gates em Windows e Linux limpos. Cenários Playwright sem risco
+          de engine ou composição rodam uma vez no projeto <code>contract-chromium</code>; somente
+          riscos responsivos, visuais ou de engine justificam multiplicação. A matriz completa é
+          dividida entre seis runners Linux simultâneos, cada um com Supabase local isolado e um
+          único worker; o context protegido só aprova quando todos os shards e contratos Linux
+          terminam em <code>success</code>. As superfícies de conteúdo do estúdio usam espaçamento
+          nominal da fonte para preservar texto contínuo no WebKit com DejaVu Sans. O reflow
+          permanece sujeito às provas globais de caixa e overflow, sem scroll horizontal adicional.
+          Os contratos detalhados ficam nas fontes canônicas de
           <a href="docs/development.md">desenvolvimento</a>,
-          <a href="docs/infrastructure.md">infraestrutura</a> e
-          <a href="docs/security-privacy.md">segurança</a>.
+          <a href="docs/infrastructure.md">infraestrutura</a>,
+          <a href="docs/database.md">banco</a> e <a href="docs/security-privacy.md">segurança</a>.
         </p>
         <p>
-          Ambiente local e banco recusam exposição de rede, configuração insegura ou divergente.
-          Procedimentos e contratos ficam nas fontes canônicas de
-          <a href="docs/development.md">desenvolvimento</a> e <a href="docs/database.md">banco</a>.
-        </p>
-        <p>
-          Merge em <code>main</code> só inicia escritas irreversíveis depois de concluir toda
-          evidência reversível da release, inclusive no ambiente de destino. O staging persiste e
-          relê o digest integral da árvore e vincula os ambientes à configuração corrente; retries
-          do mesmo SHA reutilizam esses bytes somente quando ambos continuam idênticos. O host
-          também comprova a árvore ativa, o comando SSH, o Nginx e o systemd efetivamente
-          carregados. Então aplica migrations forward-only e publica a release imutável na VM, com
-          health interno e público, rollback e recuperação após interrupção. Timeout ou serviço
-          indisponível é inconclusivo; falha pós-merge abre nova branch e repete o ciclo.
+          Depois do merge, o mesmo SHA aplica migrations forward-only, publica uma release imutável
+          na VM e precisa passar health interno e público. Falha de produção abre nova branch e
+          repete integralmente o processo.
         </p>
       </section>
 
@@ -173,9 +197,9 @@
           <li>Uma fonte canônica por fato e documentação sem copiar histórico de execução.</li>
           <li>Complexidade precisa de requisito, ameaça ou métrica concreta.</li>
           <li>
-            Playwright prova comportamento visível; unitários e SQL protegem lógica e invariantes.
+            O ciclo de vida dos planos transitórios segue o
+            <a href="docs/adr/ADR-015-living-documentation-and-qa.md">ADR-015</a>.
           </li>
-          <li>Plano de feature é removido depois do merge/deploy concluído.</li>
         </ul>
       </section>
 
@@ -215,9 +239,9 @@ npm run knip</code></pre>
       <section>
         <h2>Próximo marco</h2>
         <p>
-          Consolidar os gates no commit candidato, abrir o PR, executar reviews até ficar limpo,
-          fazer merge e comprovar o SHA no readiness público e nos dois readiness internos. Depois
-          disso, produzir a retrospectiva desta etapa e voltar à próxima feature.
+          Completar a base operacional do catálogo de estúdios, desde cadastro e mídia até decisão
+          editorial, disponibilidade e apresentação pública, antes de avançar para reservas e
+          liquidação financeira.
         </p>
       </section>
     </main>

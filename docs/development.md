@@ -4,12 +4,40 @@
 
 - Windows 11 nativo;
 - Node.js `24.18.0` e npm `11.19.0`;
-- Docker Desktop em Linux containers;
+- WSL2 com a distro dedicada `SetLivreDocker`, baseada em Ubuntu 24.04;
+- Docker CLI e Docker Engine `29.7.2` dos repositórios oficiais;
 - Supabase CLI `2.116.0` instalada como dependência fixa do projeto;
 - navegadores Playwright instalados pelo próprio Playwright.
 
-WSL não é requisito. CI e produção continuam Linux x86_64, portanto build e release também são
-comprovados nesse sistema.
+Node, Next.js, Vitest e Playwright continuam nativos no Windows. O WSL2 hospeda somente o daemon de
+containers; não é ambiente de desenvolvimento do código. CI e produção continuam Linux x86_64,
+portanto build e release também são comprovados nesse sistema.
+
+## Runtime Docker no Windows
+
+O contrato local não usa Docker Desktop. A estação mantém:
+
+- Docker Engine oficial na distro `SetLivreDocker`, iniciado por `systemd`;
+- Supabase CLI Linux `2.116.0`, igual à versão fixada no lockfile do projeto;
+- API do daemon em `tcp://127.0.0.1:2375` e socket Unix interno, sem listener wildcard;
+- Docker CLI oficial no Windows com contexto ativo `set-livre-wsl`;
+- `instanceIdleTimeout=28800000` em `[general]` e `vmIdleTimeout=28800000` em `[wsl2]`, ambos em
+  `%UserProfile%\.wslconfig`, mantendo respectivamente a distro e a VM por oito horas desde a última
+  atividade, sem processo artificial de manutenção.
+
+O wrapper inicia `docker.service` por `systemd` sob demanda antes de inspecionar o daemon. O WSL aplica
+separadamente os timeouts da instância e da VM somente quando não há mais atividade; o primeiro comando
+Supabase de uma nova jornada reinicia o serviço. Não há tarefa agendada nem aplicativo residente na
+área de notificação.
+
+Depois de um reset, o wrapper executa uma vez o mesmo handler e core TypeScript do cleanup contra Auth,
+RPCs e Storage locais reais. Somente um resultado terminal saudável cria o heartbeat necessário; a
+role DAL é provisionada e testada depois dessa execução. O setup não insere sucesso artificial no
+ledger e falha fechado se o worker ou sua resposta forem ambíguos.
+
+A porta 2375 não usa TLS porque existe somente no loopback da mesma máquina. Ela concede controle total
+do daemon a processos locais e, portanto, nunca pode ser encaminhada, publicada na LAN ou reutilizada
+com credenciais/dados reais. Docker e Supabase de desenvolvimento contêm apenas QA descartável.
 
 ## Primeiro setup
 
@@ -40,17 +68,15 @@ também invalida o build, sem criar um script adicional.
 Os dados são descartáveis. O guardrail relevante não é um firewall especial: Playwright e helpers de
 QA recusam endpoints que não sejam `127.0.0.1` nas portas fixas do projeto. A stack usa a bridge local
 suportada pela CLI e, depois de cada `start`, `reset` ou `status`, o wrapper comprova a bridge, todos os
-containers e exatamente as quatro portas publicadas. No Windows também exige o modo nativo
-`local-only-port-binding` do Docker Desktop; no Linux, cada binding precisa ser `127.0.0.1`. Estado
-divergente é parado e falha fechado. A existência da stack é inspecionada antes de validar a política
-do Docker Desktop: se a configuração mudar ou ficar ilegível enquanto houver containers em execução,
-o wrapper encerra a stack antes de propagar o erro e revalida a política imediatamente antes de qualquer
-novo `start`.
+containers e exatamente as quatro portas publicadas. Cada binding precisa ser `127.0.0.1`; wildcard e
+IPv6 não são aceitos como equivalentes. Estado divergente é parado e falha fechado antes de um novo
+`start`.
 
 Antes de qualquer chamada à CLI Supabase, o wrapper exige `DOCKER_HOST`/`DOCKER_CONTEXT` ausentes,
-comprova o contexto local canônico (`desktop-linux`/named pipe no Windows ou `default`/socket no Linux),
-confirma containers Linux e fixa explicitamente esse endpoint no processo filho. Assim, nenhum comando
-alcança um daemon remoto selecionado pelo ambiente ou pelo contexto ativo.
+comprova o contexto local canônico (`set-livre-wsl`/`tcp://127.0.0.1:2375` no Windows ou
+`default`/socket Unix no Linux), confirma containers Linux e fixa explicitamente esse endpoint no
+processo filho. Assim, nenhum comando alcança um daemon remoto selecionado pelo ambiente ou por outro
+contexto ativo.
 O stdout dos comandos interativos permanece visível, mas stderr é sempre capturado; em falha, somente o
 diagnóstico JSON reconhecido e com credenciais de conexão redigidas pode voltar ao terminal ou ao CI.
 
@@ -82,6 +108,22 @@ contratos gerados.
 
 O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs importam o componente
 diretamente e não iniciam um servidor Vite aninhado.
+
+O setup global do Playwright executa o cleanup local real antes da primeira spec e a cada dez minutos
+enquanto a suíte existir, reproduzindo a cadência operacional da VM. As execuções são serializadas e
+um resultado não terminal reprova o gate no teardown; assim, uma suíte longa não perde readiness por
+ausência artificial do timer de produção.
+
+No Windows, `npm run test:db` usa a imagem pinada
+`public.ecr.aws/supabase/pg_prove:3.36` em um container efêmero na rede local oficial do Supabase.
+Os testes são copiados com `docker cp`, sem bind mount sujeito a permissões/compartilhamento do
+OneDrive; host, usuário, senha e database entram apenas no ambiente do processo/container. O runner
+sempre remove o container no `finally` e preserva a primeira falha se a limpeza também falhar. Quando
+o pgTAP reprova, o wrapper informa o código de saída e preserva início e fim de `stderr` e `stdout` em
+blocos rotulados e limitados separadamente. DSNs, parâmetros de senha e o segredo conhecido nas formas
+literal, JSON escapada ou percent-encoded são redigidos antes de qualquer saída. Linux continua usando o comando oficial
+`supabase test db --local`. Em ambos, `0000_test_setup.sql` cria a extensão pgTAP idempotentemente
+antes das suítes, e o gate ainda valida readiness e artefatos gerados.
 
 ## Variáveis locais
 
@@ -115,6 +157,9 @@ arquivos para produção.
 - Não se testa wrapper, inode, árvore de processo ou chamada interna quando o comportamento final pode
   ser comprovado diretamente.
 - Não se duplica o mesmo cenário em várias camadas sem risco diferente e explícito.
+- Cenários independentes de engine e composição responsiva, inclusive contratos HTTP ou dimensões
+  fixadas pela própria spec, ficam em `tests/e2e/contract/` e rodam uma única vez no Chromium; somente
+  cenários com risco visual, responsivo ou de engine explícito são multiplicados entre projetos.
 
 Ao concluir uma feature, seus cenários automatizados ficam nas specs Playwright e o plano transitório em
 `docs/features/` é removido. Contratos permanentes relevantes são consolidados no documento de domínio.
@@ -124,14 +169,19 @@ Ao concluir uma feature, seus cenários automatizados ficam nas specs Playwright
 `supabase/schema.generated.sql` e `packages/contracts/src/database.generated.ts` são gerados apenas a
 partir do banco local migrado. A geração valida o conteúdo antes de substituir os arquivos rastreados.
 `supabase:lint` passa pelo mesmo guard local de daemon, stack e bindings antes de executar o linter
-oficial do banco, tratando qualquer warning como falha. `test:db` roda
+oficial nos schemas próprios `public`, `private` e `audit`, tratando qualquer warning como falha. O
+schema `extensions` contém implementações de terceiros, inclusive pgTAP, e fica fora desse gate;
+`test:db` roda
 pgTAP e regenera candidatos temporários; qualquer diferença falha com orientação para executar
 `npm run supabase:generate`.
 
 ## Diagnóstico
 
-1. `docker desktop status` deve indicar `running`.
-2. `npm run supabase:status` deve confirmar endpoints, bridge e bindings locais.
-3. Se a API do Docker mantiver operações presas, use `docker desktop diagnose` e reinicie o engine com
-   `docker desktop restart`; não crie uma rede paralela permanente para mascarar o runtime.
+1. `npm run supabase:status` deve iniciar a distro sob demanda e confirmar endpoints, bridge e bindings
+   locais.
+2. `docker context show` deve retornar `set-livre-wsl`, e `docker version` deve mostrar cliente Windows
+   e servidor Linux `29.7.2`.
+3. Se o daemon falhar, execute
+   `wsl -d SetLivreDocker -u root -- systemctl restart docker` e repita `docker version`; não crie
+   contexto, rede ou listener paralelo para mascarar o runtime.
 4. Reset, timeout ou serviço interrompido é inconclusivo até uma nova execução terminar com sucesso.

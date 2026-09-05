@@ -68,7 +68,7 @@ Não introduza ORM, Tailwind, shadcn/ui, CSS-in-JS, Redux, Zustand para estado r
 
 Toda escrita crítica segue:
 
-`POST /api/commands` → origem/sessão → limite de corpo/rate limit → Zod estrito → registry modular → DAL `server-only` → função SQL privada → transação/lock → retorno autoritativo → invalidação TanStack Query.
+`POST /api/commands` → origem → sessão → fachada de rate limit → limite de corpo → Zod estrito → rate limit específico → registry modular → DAL `server-only` → função SQL privada → transação/lock → retorno autoritativo → invalidação TanStack Query.
 
 Exceções permitidas:
 
@@ -173,9 +173,9 @@ Além disso:
   sem logs de execução ou repetição dos documentos técnicos;
 - correção interna sem mudança de contrato não exige alteração documental artificial.
 
-Planos em `docs/features/` existem somente para trabalho planejado ou em andamento. Depois de merge e
-deploy verdes, o comportamento durável é consolidado, o roadmap é atualizado e o plano é apagado.
-Histórico detalhado permanece no Git e no PR.
+O ciclo de vida obrigatório dos planos transitórios em `docs/features/` é definido exclusivamente no
+[`ADR-015`](docs/adr/ADR-015-living-documentation-and-qa.md). Outros documentos apenas referenciam
+essa decisão; histórico detalhado permanece no Git e no PR.
 
 ## 12. Proibições
 
@@ -233,8 +233,11 @@ Mudança operacional executa também `actionlint`, `bash -n`, ShellCheck e, quan
 ## 14. Ciclo obrigatório de review e deploy
 
 Toda mudança destinada a `main` segue `docs/review-deploy-cycle.md`. Branch protection e checks
-nativos são guardrails; não substituem o pedido `@codex review`, a espera mínima de 60 minutos, a
-correção dos findings e a resposta explicitamente limpa no SHA final. Novo push reinicia o ciclo.
+nativos são guardrails; não substituem o pedido `@codex review`, o polling a cada 10 minutos até o
+status terminal `Completed` no SHA exato, a correção dos findings e a resposta explicitamente limpa
+no SHA final. Sessenta minutos sem conclusão é alerta operacional, nunca aprovação. Novo push
+reinicia o ciclo. Antes do merge, o mesmo SHA recebe ainda a revisão geral holística obrigatória de
+todo o diff contra `main`; finding nessa etapa reinicia também o ciclo integral.
 Somente depois dessa evidência, uma credencial confiável do mantenedor publica o status
 `Codex review contract` no SHA atual com link para o review limpo; workflows não publicam esse status.
 A branch protection o exige, portanto qualquer push volta a bloquear o merge. Falha pós-merge é

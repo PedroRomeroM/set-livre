@@ -1,4 +1,3 @@
-import { Pool } from "pg";
 import { z } from "zod";
 
 import { assertQaAuthEmail } from "./local-auth-mailpit";
@@ -14,15 +13,13 @@ type CleanupResult = {
   rows: unknown[];
 };
 
-export type LocalAuthCleanupPool = {
-  end: () => Promise<void>;
+export type LocalAuthCleanupClient = {
   query: (text: string, values: readonly [string, string]) => Promise<CleanupResult>;
 };
 
 export type LocalAuthCleanupDependencies = {
-  adminDatabaseUrl: string;
-  createPool: (databaseUrl: string) => LocalAuthCleanupPool;
   preflight: () => Promise<void>;
+  withClient: <T>(operation: (client: LocalAuthCleanupClient) => Promise<T>) => Promise<T>;
 };
 
 type LocalAuthCleanupInput = z.infer<typeof cleanupInputSchema>;
@@ -47,37 +44,26 @@ export async function cleanupLocalAuthUserWithDependencies(
     throw new Error("O preflight do banco E2E local não foi validado para a limpeza Auth.");
   }
 
-  let pool: LocalAuthCleanupPool;
+  let result: CleanupResult;
   try {
-    pool = dependencies.createPool(dependencies.adminDatabaseUrl);
+    result = await dependencies.withClient((client) =>
+      client.query(
+        `with authorization_fence as materialized (
+           select pg_catalog.pg_advisory_xact_lock(
+             pg_catalog.hashtextextended('set-livre:backoffice-authorization', 0)
+           )
+         )
+         delete from auth.users using authorization_fence
+         where id = $1::uuid
+           and email = $2
+         returning id`,
+        [parsed.data.userId, email],
+      ),
+    );
   } catch {
     throw cleanupError();
   }
-
-  let result: CleanupResult | undefined;
-  let failure: Error | undefined;
-  try {
-    result = await pool.query(
-      `delete from auth.users
-       where id = $1::uuid
-         and email = $2
-       returning id`,
-      [parsed.data.userId, email],
-    );
-  } catch {
-    failure = cleanupError();
-  }
-
-  try {
-    await pool.end();
-  } catch {
-    failure ??= cleanupError();
-  }
-
-  if (failure !== undefined) {
-    throw failure;
-  }
-  if (result === undefined || (result.rowCount !== 0 && result.rowCount !== 1)) {
+  if (result.rowCount !== 0 && result.rowCount !== 1) {
     throw cleanupError();
   }
 
@@ -92,30 +78,20 @@ export async function cleanupLocalAuthUserWithDependencies(
 }
 
 export async function cleanupLocalAuthUser(input: LocalAuthCleanupInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
+  const { e2eDatabaseSafetyPreflight, withE2EAdminClient } =
+    await import("./e2e-database-preflight");
 
   return cleanupLocalAuthUserWithDependencies(input, {
-    adminDatabaseUrl: safeE2EEnvironment.adminDatabaseUrl,
-    createPool(databaseUrl) {
-      const pool = new Pool({
-        allowExitOnIdle: true,
-        connectionString: databaseUrl,
-        connectionTimeoutMillis: 1_000,
-        max: 1,
-        query_timeout: 1_000,
-        statement_timeout: 1_000,
-      });
-      return {
-        end: () => pool.end(),
-        async query(text, values) {
-          const result = await pool.query<{ id: string }>(text, [...values]);
-          return { rowCount: result.rowCount, rows: result.rows };
-        },
-      };
+    preflight: e2eDatabaseSafetyPreflight,
+    withClient(operation) {
+      return withE2EAdminClient((client) =>
+        operation({
+          async query(text, values) {
+            const result = await client.query<{ id: string }>(text, [...values]);
+            return { rowCount: result.rowCount, rows: result.rows };
+          },
+        }),
+      );
     },
-    preflight: e2eDatabasePreflight,
   });
 }

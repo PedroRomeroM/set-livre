@@ -1,11 +1,11 @@
-import { FoundationStatus } from "@set-livre/ui";
+import { redirect } from "next/navigation";
 
-export default function BackofficeFoundationPage() {
-  return (
-    <FoundationStatus
-      application="Backoffice"
-      description="A fronteira administrativa está isolada em aplicação própria. Autenticação e operações serão adicionadas nas features correspondentes."
-      title="Operação Set Livre"
-    />
-  );
+import { readComponentBackofficeSession } from "@/domains/backoffice/server/backoffice-session";
+import { backofficeLandingPath } from "@/domains/backoffice/backoffice-authorization";
+
+export const dynamic = "force-dynamic";
+
+export default async function BackofficeEntryPage() {
+  const session = await readComponentBackofficeSession();
+  redirect(session.authenticated ? backofficeLandingPath(session.roles) : "/entrar");
 }

@@ -1,0 +1,650 @@
+"use client";
+
+import {
+  type BackofficePiiReason,
+  type BackofficeSession,
+  type BackofficeUserList,
+  type BackofficeUserPii,
+  type BackofficeUserRevealPiiCommand,
+  type BackofficeUserStatusCommand,
+  type BackofficeUserSummary,
+} from "@set-livre/contracts";
+import { Alert, Button, ButtonLink, Checkbox, Field, Input, Select } from "@set-livre/ui";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+
+import {
+  BackofficeClientError,
+  executeBackofficeUserCommand,
+  isAmbiguousBackofficeError,
+  isStaleBackofficeError,
+  listBackofficeUsersClient,
+  revealBackofficePiiWithoutCaching,
+} from "./backoffice-api";
+import { useBackofficePrivateBoundary } from "./backoffice-private-boundary";
+import { backofficeFilterFingerprint, backofficeQueryKeys } from "./query-keys";
+import { useBackofficeHydrated } from "./use-backoffice-hydrated";
+import styles from "./backoffice.module.css";
+
+type AuthenticatedSession = Extract<BackofficeSession, { authenticated: true }>;
+type Mode = "access" | "users";
+
+const reasonLabels: Record<BackofficePiiReason, string> = {
+  identity_verification: "Verificação de identidade",
+  legal_request: "Solicitação legal",
+  security_investigation: "Investigação de segurança",
+  support_case: "Atendimento de suporte",
+};
+
+function errorMessage(error: unknown) {
+  if (isAmbiguousBackofficeError(error)) {
+    return "O resultado não pôde ser confirmado. Repita a mesma tentativa para consultar o resultado idempotente.";
+  }
+  return error instanceof BackofficeClientError
+    ? error.message
+    : "Não foi possível concluir agora. Tente novamente.";
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof BackofficeClientError
+    ? error.message
+    : "Não foi possível carregar os usuários agora. Tente novamente.";
+}
+
+export function userStatusNoticeFromRetainedState(
+  commandResult: BackofficeUserSummary,
+  retainedUser: BackofficeUserSummary | undefined,
+) {
+  if (
+    retainedUser === undefined ||
+    retainedUser.id !== commandResult.id ||
+    retainedUser.accountVersion < commandResult.accountVersion ||
+    (retainedUser.accountVersion === commandResult.accountVersion &&
+      retainedUser.status !== commandResult.status)
+  ) {
+    return undefined;
+  }
+  if (retainedUser.accountVersion > commandResult.accountVersion) {
+    return retainedUser.status === "active"
+      ? "O estado mais recente da conta foi preservado: conta ativa."
+      : "O estado mais recente da conta foi preservado: conta suspensa.";
+  }
+  return retainedUser.status === "active"
+    ? "Usuário restaurado."
+    : "Usuário suspenso e sessões operacionais encerradas.";
+}
+
+function UserPiiReveal({
+  interactive,
+  session,
+  user,
+}: {
+  interactive: boolean;
+  session: AuthenticatedSession;
+  user: BackofficeUserSummary;
+}) {
+  const [reason, setReason] = useState<BackofficePiiReason>("support_case");
+  const [pii, setPii] = useState<BackofficeUserPii>();
+  const [retryAvailable, setRetryAvailable] = useState(false);
+  const pendingReveal = useRef<BackofficeUserRevealPiiCommand>(undefined);
+  const reveal = useMutation({
+    gcTime: 0,
+    mutationFn: () => {
+      if (pendingReveal.current === undefined) {
+        throw new Error("A revelação não possui solicitação idempotente preparada.");
+      }
+      return revealBackofficePiiWithoutCaching(pendingReveal.current, (revealedPii) => {
+        if (document.visibilityState === "visible") setPii(revealedPii);
+      });
+    },
+    networkMode: "always",
+    onError: (error) => {
+      const ambiguous = isAmbiguousBackofficeError(error);
+      setRetryAvailable(ambiguous);
+      if (!ambiguous) pendingReveal.current = undefined;
+    },
+    onSuccess: () => {
+      pendingReveal.current = undefined;
+      setRetryAvailable(false);
+    },
+  });
+
+  useEffect(() => {
+    if (pii === undefined) return;
+    const timeout = window.setTimeout(() => setPii(undefined), 60_000);
+    const hide = () => {
+      if (document.visibilityState === "hidden") setPii(undefined);
+    };
+    hide();
+    document.addEventListener("visibilitychange", hide);
+    return () => {
+      window.clearTimeout(timeout);
+      document.removeEventListener("visibilitychange", hide);
+    };
+  }, [pii]);
+
+  return (
+    <div className={styles.confirmation}>
+      <Field label="Motivo auditado">
+        <Select
+          disabled={!interactive || reveal.isPending || retryAvailable}
+          onChange={(event) => {
+            setPii(undefined);
+            setReason(event.target.value as BackofficePiiReason);
+          }}
+          value={reason}
+        >
+          {Object.entries(reasonLabels).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className={styles.actions}>
+        <Button
+          disabled={!interactive}
+          loading={reveal.isPending}
+          loadingLabel="Revelando"
+          onClick={() => {
+            setRetryAvailable(false);
+            pendingReveal.current ??= {
+              action: "backoffice.user.revealPii",
+              expectedScope: session.scope,
+              idempotencyKey: crypto.randomUUID(),
+              payload: { reason, userId: user.id },
+            };
+            reveal.mutate();
+          }}
+          variant="secondary"
+        >
+          {retryAvailable ? "Repetir mesma revelação" : "Revelar dados por 60 segundos"}
+        </Button>
+        {pii === undefined ? null : (
+          <Button onClick={() => setPii(undefined)} variant="ghost">
+            Ocultar agora
+          </Button>
+        )}
+      </div>
+      {reveal.isError ? <Alert variant="error">{errorMessage(reveal.error)}</Alert> : null}
+      {pii === undefined ? null : (
+        <section aria-label={`Dados revelados de ${user.emailMasked}`} className={styles.piiPanel}>
+          <p className={styles.help}>
+            Conteúdo temporário, fora do cache e limpo ao ocultar a aba.
+          </p>
+          <dl className={styles.definitionList}>
+            <dt>E-mail</dt>
+            <dd>{pii.email}</dd>
+            <dt>Nome</dt>
+            <dd>{pii.name ?? "Não informado"}</dd>
+            <dt>Telefone</dt>
+            <dd>{pii.phoneE164 ?? "Não informado"}</dd>
+            <dt>Documento fiscal</dt>
+            <dd>{pii.taxId ?? "Não informado"}</dd>
+            <dt>Documento adicional</dt>
+            <dd>{pii.additionalDocument ?? "Não informado"}</dd>
+          </dl>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function UserCard({
+  interactive,
+  mode,
+  onStatusChange,
+  session,
+  statusChangeDisabled,
+  user,
+}: {
+  interactive: boolean;
+  mode: Mode;
+  onStatusChange: (user: BackofficeUserSummary) => void;
+  session: AuthenticatedSession;
+  statusChangeDisabled: boolean;
+  user: BackofficeUserSummary;
+}) {
+  return (
+    <article className={styles.card}>
+      <div className={styles.cardHeader}>
+        <div>
+          <h2>Conta {user.emailMasked}</h2>
+          <p className={styles.muted}>Identificador …{user.id.slice(-8)}</p>
+        </div>
+        <span className={styles.badge} data-state={user.status}>
+          {user.status === "active" ? "Ativo" : "Suspenso"}
+        </span>
+      </div>
+      <p className={styles.metadata}>
+        Criado em{" "}
+        {new Date(user.createdAt).toLocaleDateString("pt-BR", {
+          timeZone: "America/Sao_Paulo",
+        })}{" "}
+        · versão {user.accountVersion}
+      </p>
+      {mode === "users" ? (
+        <>
+          <Button
+            disabled={statusChangeDisabled}
+            onClick={() => onStatusChange(user)}
+            variant={user.status === "active" ? "secondary" : "primary"}
+          >
+            {user.status === "active" ? "Revisar suspensão" : "Revisar restauração"}
+          </Button>
+          <UserPiiReveal interactive={interactive} session={session} user={user} />
+        </>
+      ) : (
+        <ButtonLink href={`/acessos/${user.id}`} variant="secondary">
+          Gerenciar acesso
+        </ButtonLink>
+      )}
+    </article>
+  );
+}
+
+export function UserDirectory({ mode, session }: { mode: Mode; session: AuthenticatedSession }) {
+  const queryClient = useQueryClient();
+  const recomposeSession = useBackofficePrivateBoundary();
+  const interactive = useBackofficeHydrated();
+  const [draftQuery, setDraftQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState({ fingerprint: "empty", query: "" });
+  const [statusTarget, setStatusTarget] = useState<BackofficeUserSummary>();
+  const [statusImpactConfirmed, setStatusImpactConfirmed] = useState(false);
+  const [statusRetryAvailable, setStatusRetryAvailable] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  const [verification, setVerification] = useState<{
+    user: BackofficeUserSummary;
+    status: "reading" | "error";
+  }>();
+  const verificationInFlight = useRef(false);
+  const searchInFlight = useRef(false);
+  const [searchPending, setSearchPending] = useState(false);
+  const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
+  const usersQueryKey = backofficeQueryKeys.users(session.scope, activeFilter.fingerprint);
+  const users = useInfiniteQuery({
+    initialPageParam: null as string | null,
+    networkMode: "always",
+    queryKey: usersQueryKey,
+    queryFn: ({ pageParam, signal }) =>
+      listBackofficeUsersClient(
+        {
+          expectedScope: session.scope,
+          query: {
+            cursor: pageParam,
+            ...(activeFilter.query === "" ? {} : { query: activeFilter.query }),
+          },
+        },
+        signal,
+      ),
+    getNextPageParam: (page) => page.nextCursor,
+    refetchOnReconnect: verification === undefined,
+    refetchOnWindowFocus: verification === undefined,
+  });
+  const resetUsers = () =>
+    queryClient.resetQueries({ queryKey: ["backoffice", "users", session.scope] });
+  const verifiedUserRows = (queryKey: readonly string[]) => {
+    const retained =
+      queryClient.getQueryState<InfiniteData<BackofficeUserList, string | null>>(queryKey);
+    // Cancelamento com revert pode resolver o refetch com dados anteriores.
+    if (
+      retained?.status !== "success" ||
+      retained.fetchStatus !== "idle" ||
+      retained.isInvalidated ||
+      !retained.data?.pages.every((page) => page.scope === session.scope)
+    ) {
+      throw new Error("A leitura de usuários ainda não foi verificada.");
+    }
+    return retained.data.pages.flatMap((page) => page.items);
+  };
+  const verifyUsers = async (confirmed: NonNullable<typeof verification>) => {
+    if (verificationInFlight.current || queryClient.getQueryState(usersQueryKey) === undefined)
+      return;
+    verificationInFlight.current = true;
+    setVerification({ ...confirmed, status: "reading" });
+    setNotice(undefined);
+    try {
+      await queryClient.invalidateQueries({
+        queryKey: ["backoffice", "users", session.scope],
+        refetchType: "none",
+      });
+      if (queryClient.getQueryState(usersQueryKey) === undefined) return;
+      await users.refetch({ throwOnError: true });
+      let retainedUser = verifiedUserRows(usersQueryKey).find(
+        (item) => item.id === confirmed.user.id,
+      );
+      if (retainedUser === undefined) {
+        const targetQueryKey = backofficeQueryKeys.users(
+          session.scope,
+          await backofficeFilterFingerprint(confirmed.user.id),
+        );
+        verifiedUserRows(usersQueryKey);
+        await queryClient.invalidateQueries({
+          exact: true,
+          queryKey: targetQueryKey,
+          refetchType: "none",
+        });
+        verifiedUserRows(usersQueryKey);
+        await queryClient.fetchInfiniteQuery({
+          getNextPageParam: (page: BackofficeUserList) => page.nextCursor,
+          initialPageParam: null as string | null,
+          networkMode: "always",
+          pages: 1,
+          queryFn: ({ signal }) =>
+            listBackofficeUsersClient(
+              {
+                expectedScope: session.scope,
+                query: { cursor: null, query: confirmed.user.id },
+              },
+              signal,
+            ),
+          queryKey: targetQueryKey,
+          staleTime: 0,
+        });
+        verifiedUserRows(usersQueryKey);
+        retainedUser = verifiedUserRows(targetQueryKey).find(
+          (item) => item.id === confirmed.user.id,
+        );
+      }
+      const verifiedNotice = userStatusNoticeFromRetainedState(confirmed.user, retainedUser);
+      if (verifiedNotice === undefined) {
+        setVerification({ ...confirmed, status: "error" });
+        return;
+      }
+      pendingStatusCommand.current = undefined;
+      setStatusImpactConfirmed(false);
+      setStatusRetryAvailable(false);
+      setStatusTarget(undefined);
+      setVerification(undefined);
+      setNotice(verifiedNotice);
+    } catch {
+      setVerification({ ...confirmed, status: "error" });
+    } finally {
+      verificationInFlight.current = false;
+    }
+  };
+  const statusMutation = useMutation({
+    mutationFn: () => {
+      if (pendingStatusCommand.current === undefined) {
+        throw new Error("A alteração de status não possui solicitação idempotente preparada.");
+      }
+      return executeBackofficeUserCommand(pendingStatusCommand.current);
+    },
+    networkMode: "always",
+    onError: async (error) => {
+      if (isStaleBackofficeError(error)) {
+        pendingStatusCommand.current = undefined;
+        setStatusImpactConfirmed(false);
+        setStatusRetryAvailable(false);
+        setStatusTarget(undefined);
+        setNotice("A conta mudou. A lista foi recarregada; revise o estado atual antes de agir.");
+        await resetUsers();
+        return;
+      }
+      const ambiguous = isAmbiguousBackofficeError(error);
+      const command = pendingStatusCommand.current;
+      if (
+        ambiguous &&
+        command?.action === "backoffice.user.suspend" &&
+        command.payload.userId === session.scope
+      ) {
+        recomposeSession();
+        return;
+      }
+      setStatusRetryAvailable(ambiguous);
+      if (!ambiguous) pendingStatusCommand.current = undefined;
+    },
+    onSuccess: (user) => {
+      if (user.id === session.scope && user.status === "suspended") {
+        recomposeSession();
+        return;
+      }
+      setStatusRetryAvailable(false);
+      void verifyUsers({ user, status: "reading" });
+    },
+  });
+  const items = users.data?.pages.flatMap((page) => page.items) ?? [];
+  const searchBlocked =
+    !interactive ||
+    statusMutation.isPending ||
+    statusRetryAvailable ||
+    verification !== undefined ||
+    searchPending;
+  const statusSubmitBlocked =
+    !interactive ||
+    statusMutation.isPending ||
+    verification !== undefined ||
+    searchPending ||
+    !users.isSuccess ||
+    users.isFetching;
+  const statusBlocked = statusSubmitBlocked || statusRetryAvailable;
+
+  return (
+    <section
+      aria-busy={!interactive}
+      aria-labelledby={`${mode}-title`}
+      className={styles.pageStack}
+      inert={!interactive}
+    >
+      <header>
+        <p className={styles.eyebrow}>{mode === "users" ? "Contas" : "Menor privilégio"}</p>
+        <h1 id={`${mode}-title`}>{mode === "users" ? "Usuários" : "Acessos"}</h1>
+        <p>
+          {mode === "users"
+            ? "Busque, suspenda ou restaure contas e revele dados somente com motivo auditado."
+            : "Busque uma conta e abra o detalhe autorizado para revisar seus acessos."}
+        </p>
+      </header>
+      {notice === undefined ? null : <Alert>{notice}</Alert>}
+      <form
+        aria-busy={!interactive || searchPending}
+        className={styles.toolbar}
+        inert={!interactive}
+        method="post"
+        noValidate
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (searchBlocked || searchInFlight.current || pendingStatusCommand.current !== undefined)
+            return;
+          searchInFlight.current = true;
+          setSearchPending(true);
+          pendingStatusCommand.current = undefined;
+          statusMutation.reset();
+          setNotice(undefined);
+          setStatusImpactConfirmed(false);
+          setStatusRetryAvailable(false);
+          setStatusTarget(undefined);
+          try {
+            const normalized = draftQuery.trim().toLocaleLowerCase("pt-BR");
+            const fingerprint =
+              normalized === "" ? "empty" : await backofficeFilterFingerprint(normalized);
+            if (fingerprint === activeFilter.fingerprint && normalized === activeFilter.query) {
+              if (users.isError) await users.refetch();
+              return;
+            }
+            setActiveFilter({ fingerprint, query: normalized });
+          } catch {
+            setNotice("Não foi possível preparar a busca com segurança. Tente novamente.");
+          } finally {
+            searchInFlight.current = false;
+            setSearchPending(false);
+          }
+        }}
+      >
+        <fieldset
+          className={`${styles.secureFormBoundary} ${styles.toolbarBoundary}`}
+          disabled={searchBlocked}
+        >
+          <Field
+            description="Prefixo de e-mail ou UUID completo. Nome exige revelação auditada; o filtro não é colocado na URL."
+            label="Buscar usuários"
+          >
+            <Input
+              disabled={searchBlocked}
+              name="query"
+              onChange={(event) => setDraftQuery(event.target.value)}
+              value={draftQuery}
+            />
+          </Field>
+          <Button
+            disabled={searchBlocked}
+            loading={searchPending}
+            loadingLabel="Buscando"
+            type="submit"
+          >
+            Buscar
+          </Button>
+        </fieldset>
+      </form>
+      {users.isPending ? <p role="status">Carregando usuários…</p> : null}
+      {verification !== undefined || users.isError ? (
+        <Alert
+          title={
+            verification === undefined
+              ? "A lista não pôde ser carregada"
+              : "Alteração confirmada; verificando usuários"
+          }
+          variant={verification?.status === "reading" ? "status" : "error"}
+        >
+          <p>
+            {verification === undefined
+              ? readErrorMessage(users.error)
+              : verification.status === "reading"
+                ? "A alteração foi aplicada. Aguarde a leitura atualizada antes de continuar."
+                : "A alteração foi aplicada, mas não foi possível verificar a lista atualizada. Tente carregar novamente; o comando não será reenviado."}
+          </p>
+          <div className={styles.actions}>
+            <Button
+              disabled={
+                !interactive ||
+                users.isFetching ||
+                verification?.status === "reading" ||
+                statusMutation.isPending ||
+                searchPending
+              }
+              loading={users.isFetching || verification?.status === "reading"}
+              loadingLabel="Tentando novamente"
+              onClick={() => {
+                if (verification === undefined) void users.refetch();
+                else void verifyUsers(verification);
+              }}
+              variant="secondary"
+            >
+              Tentar carregar usuários novamente
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+      {!users.isPending && !users.isError && items.length === 0 ? (
+        <p className={styles.empty}>Nenhum usuário encontrado.</p>
+      ) : null}
+      <div className={styles.cardGrid}>
+        {items.map((user) => (
+          <UserCard
+            interactive={!statusBlocked}
+            key={user.id}
+            mode={mode}
+            onStatusChange={(target) => {
+              if (
+                statusBlocked ||
+                searchInFlight.current ||
+                pendingStatusCommand.current !== undefined
+              )
+                return;
+              pendingStatusCommand.current = undefined;
+              statusMutation.reset();
+              setNotice(undefined);
+              setStatusImpactConfirmed(false);
+              setStatusRetryAvailable(false);
+              setStatusTarget(target);
+            }}
+            session={session}
+            statusChangeDisabled={statusBlocked}
+            user={user}
+          />
+        ))}
+      </div>
+      {statusTarget === undefined ? null : (
+        <section aria-labelledby="status-confirmation" className={styles.confirmation}>
+          <h2 id="status-confirmation">
+            Confirmar {statusTarget.status === "active" ? "suspensão" : "restauração"}
+          </h2>
+          <p>
+            {statusTarget.status === "active"
+              ? "A conta perderá acesso e as sessões administrativas serão fechadas. O histórico permanece."
+              : "A conta volta a executar ações permitidas pelo próprio perfil e papéis."}
+          </p>
+          <Checkbox
+            checked={statusImpactConfirmed}
+            disabled={statusBlocked}
+            label="Revisei o impacto desta alteração"
+            onChange={(event) => setStatusImpactConfirmed(event.target.checked)}
+            required
+          />
+          {statusMutation.isError ? (
+            <Alert variant="error">{errorMessage(statusMutation.error)}</Alert>
+          ) : null}
+          <div className={styles.actions}>
+            <Button
+              disabled={statusSubmitBlocked || !statusImpactConfirmed}
+              loading={statusMutation.isPending}
+              loadingLabel="Aplicando"
+              onClick={() => {
+                if (statusSubmitBlocked || !statusImpactConfirmed || searchInFlight.current) return;
+                pendingStatusCommand.current ??= {
+                  action:
+                    statusTarget.status === "active"
+                      ? "backoffice.user.suspend"
+                      : "backoffice.user.restore",
+                  expectedScope: session.scope,
+                  idempotencyKey: crypto.randomUUID(),
+                  payload: {
+                    expectedAccountVersion: statusTarget.accountVersion,
+                    userId: statusTarget.id,
+                  },
+                };
+                statusMutation.mutate();
+              }}
+            >
+              {statusRetryAvailable ? "Repetir mesma tentativa" : "Confirmar"}
+            </Button>
+            <Button
+              disabled={statusBlocked}
+              onClick={() => {
+                if (statusBlocked) return;
+                pendingStatusCommand.current = undefined;
+                statusMutation.reset();
+                setStatusImpactConfirmed(false);
+                setStatusRetryAvailable(false);
+                setStatusTarget(undefined);
+              }}
+              variant="ghost"
+            >
+              Cancelar
+            </Button>
+          </div>
+        </section>
+      )}
+      {users.hasNextPage ? (
+        <div className={styles.pagination}>
+          <Button
+            disabled={statusBlocked}
+            loading={users.isFetchingNextPage}
+            loadingLabel="Carregando"
+            onClick={() => {
+              if (!statusBlocked && !searchInFlight.current) void users.fetchNextPage();
+            }}
+            variant="secondary"
+          >
+            Carregar mais
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}

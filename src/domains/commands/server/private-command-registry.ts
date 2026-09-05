@@ -4,7 +4,9 @@ import {
   ownerCommandSchema,
   profileCompleteCommandSchema,
   profileUpdateCommandSchema,
+  studioCommandSchema,
   type OwnerCommand,
+  type StudioCommand,
 } from "@set-livre/contracts";
 import { z } from "zod";
 
@@ -15,6 +17,7 @@ export const privateCommandSchema = z.discriminatedUnion("action", [
   profileCompleteCommandSchema,
   profileUpdateCommandSchema,
   ...ownerCommandSchema.options,
+  ...studioCommandSchema.options,
 ]);
 
 export type PrivateCommand = z.infer<typeof privateCommandSchema>;
@@ -24,8 +27,14 @@ type OwnerCommandHandler = (
   context: PrivateCommandContext,
 ) => Promise<unknown>;
 
+type StudioCommandHandler = (
+  command: StudioCommand,
+  context: PrivateCommandContext,
+) => Promise<unknown>;
+
 export type PrivateCommandDependencies = Readonly<{
   executeOwnerCommand: OwnerCommandHandler;
+  executeStudioCommand: StudioCommandHandler;
 }>;
 
 export function createPrivateCommandRegistry(dependencies: PrivateCommandDependencies) {
@@ -38,6 +47,20 @@ export function createPrivateCommandRegistry(dependencies: PrivateCommandDepende
       case "recipient.onboarding.start":
       case "recipient.onboarding.refresh":
         return dependencies.executeOwnerCommand(command, context);
+      case "studio.create":
+      case "studio.revision.updateCore":
+      case "studio.revision.updateTaxonomy":
+      case "studio.revision.updateContent":
+      case "studio.draft.discard":
+      case "studio.revision.submit":
+      case "studio.pause":
+      case "studio.resume":
+      case "studio.media.upload.prepare":
+      case "studio.media.upload.finalize":
+      case "studio.media.reorder":
+      case "studio.media.cover.set":
+      case "studio.media.delete":
+        return dependencies.executeStudioCommand(command, context);
     }
   };
 }

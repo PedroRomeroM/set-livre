@@ -16,7 +16,11 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hostConfigurationFiles, packageRelease } from "../../scripts/release.mjs";
+import {
+  hostConfigurationFiles,
+  packageRelease,
+  releaseSensitiveValues,
+} from "../../scripts/release.mjs";
 
 const roots = [];
 const commit = "a".repeat(40);
@@ -37,6 +41,8 @@ function fixture() {
     mkdirSync(resolve(root, path, ".."), { recursive: true });
     writeFileSync(resolve(root, path), `${path}\n`);
   }
+  mkdirSync(resolve(root, "ops/runtime"), { recursive: true });
+  writeFileSync(resolve(root, "ops/runtime/invoke-media-cleanup.mjs"), "runtime-source\n");
   writeFileSync(resolve(root, ".next/BUILD_ID"), commit);
   writeFileSync(resolve(root, ".next/standalone/server.js"), "web");
   writeFileSync(resolve(root, ".next/static/app.js"), "static-web");
@@ -93,6 +99,12 @@ describe("release package", () => {
     });
     expect(readFileSync(resolve(outputDirectory, "web/server.js"), "utf8")).toBe("web");
     expect(
+      readFileSync(resolve(outputDirectory, "web/runtime/invoke-media-cleanup.mjs"), "utf8"),
+    ).toBe("runtime-source\n");
+    expect(manifest.applications.web.mediaCleanupEntrypoint).toBe(
+      "runtime/invoke-media-cleanup.mjs",
+    );
+    expect(
       readFileSync(resolve(outputDirectory, "backoffice/apps/backoffice/server.js"), "utf8"),
     ).toBe("backoffice");
   });
@@ -120,6 +132,21 @@ describe("release package", () => {
       }),
     ).toThrow("valor sensível");
     expect(existsSync(outputDirectory)).toBe(false);
+  });
+
+  it("classifies the backoffice runtime unlock key as release-sensitive", () => {
+    const runtimeUnlockKey = "A".repeat(43);
+
+    expect(releaseSensitiveValues({ BACKOFFICE_RUNTIME_UNLOCK_KEY: runtimeUnlockKey })).toContain(
+      runtimeUnlockKey,
+    );
+  });
+
+  it("classifies every Supabase server secret alias as release-sensitive", () => {
+    const secretKey = "sb_secret_release_server_contract_key";
+
+    expect(releaseSensitiveValues({ SUPABASE_SECRET_KEY: secretKey })).toContain(secretKey);
+    expect(releaseSensitiveValues({ PRD_SUPABASE_SECRET_KEY: secretKey })).toContain(secretKey);
   });
 
   it("materializes internal symbolic and hard links as independent regular files", () => {

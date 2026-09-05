@@ -5,6 +5,7 @@ import { Alert, Button, Stack } from "@set-livre/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 
 import {
   clearIdentityAndAccountQueryCache,
@@ -151,7 +152,9 @@ function PreparedAccountSecurityPanel({ initialSession }: AccountSecurityPanelPr
             loading={logoutMutation.isPending}
             loadingLabel="Saindo"
             onClick={() => {
-              setSessionTransitionStarted(true);
+              flushSync(() => {
+                setSessionTransitionStarted(true);
+              });
               logoutMutation.mutate();
             }}
             variant="secondary"

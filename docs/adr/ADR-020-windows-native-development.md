@@ -2,7 +2,9 @@
 
 ## Status
 
-Aceito em 2026-08-24, consolidando a mudança de workstation autorizada em 2026-08-16.
+Aceito em 2026-08-24, consolidando a mudança de workstation autorizada em 2026-08-16. A decisão sobre
+o runtime de containers foi substituída pelo ADR-023 em 2026-08-30; aplicação e testes permanecem
+nativos no Windows.
 
 ## Contexto
 
@@ -12,9 +14,10 @@ fronteira hostil de produção, criando milhares de linhas e testes sem ameaça 
 
 ## Decisão
 
-- desenvolvimento, Supabase local, Vitest e Playwright funcionam em Windows nativo, sem exigir WSL;
-- Node, npm e Supabase CLI continuam fixados pelo `package.json` e pelo lockfile;
-- Docker Desktop executa containers Linux; a stack local contém somente dados QA descartáveis;
+- aplicação, Vitest e Playwright funcionam em Windows nativo;
+- Node e npm continuam fixados pelo `package.json` e pelo lockfile;
+- Docker Engine e Supabase CLI executam na distro WSL2 dedicada definida pelo ADR-023; a stack local
+  contém somente dados QA descartáveis;
 - scripts locais validam o mínimo necessário para impedir conexão acidental com produção, mas não
   implementam uma sandbox de sistema operacional;
 - encerramento de processos locais pode usar as primitivas simples da plataforma, inclusive
@@ -26,7 +29,7 @@ fronteira hostil de produção, criando milhares de linhas e testes sem ameaça 
 
 ## Alternativas
 
-- exigir WSL: rejeitado pela escolha explícita da workstation;
+- executar aplicação e test runner dentro do WSL: rejeitado pela escolha explícita da workstation;
 - manter a implementação de Job Object e guards de ACL próprios: rejeitado por complexidade e custo de
   manutenção desproporcionais;
 - reutilizar credenciais ou dados produtivos localmente: rejeitado por segurança.

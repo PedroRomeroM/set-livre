@@ -11,6 +11,11 @@ export type ButtonProps = Omit<ComponentPropsWithRef<"button">, "aria-busy"> & {
   variant?: ButtonVariant;
 };
 
+export type ButtonLinkProps = ComponentPropsWithRef<"a"> & {
+  children: ReactNode;
+  variant?: ButtonVariant;
+};
+
 const variantClassNames: Record<ButtonVariant, string | undefined> = {
   ghost: styles.ghost,
   primary: styles.primary,
@@ -46,5 +51,21 @@ export function Button({
       </span>
       {loading ? <span className={styles.loadingLabel}>{loadingLabel}</span> : null}
     </button>
+  );
+}
+
+export function ButtonLink({
+  children,
+  className,
+  variant = "primary",
+  ...linkProps
+}: ButtonLinkProps) {
+  return (
+    <a
+      {...linkProps}
+      className={joinClassNames(styles.button, variantClassNames[variant], className)}
+    >
+      <span className={styles.content}>{children}</span>
+    </a>
   );
 }

@@ -1,12 +1,14 @@
 [Unit]
-Description=Start Set Livre applications after release recovery
+Description=Start Set Livre applications after recovery and initial media cleanup
 Requires=set-livre-release-recovery.service
 After=set-livre-release-recovery.service
+AssertPathExists=!/etc/set-livre/bootstrap-in-progress.sha256
+AssertPathExists=!/etc/set-livre/bootstrap-recovery-in-progress.sha256
 
 [Service]
 Type=oneshot
+ExecStart=/usr/bin/systemctl start set-livre-media-cleanup.service
 ExecStart=/usr/bin/systemctl start set-livre-web.service set-livre-backoffice.service
-RemainAfterExit=yes
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

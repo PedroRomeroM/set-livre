@@ -176,7 +176,7 @@ Ao clicar:
 
 - `/conta`: Server Component valida a sessão, lê o perfil próprio e entrega um boundary fechado; anônimo retorna a `/entrar?retorno=%2Fconta`;
 - `/conta/seguranca`: exibe o e-mail Auth somente leitura e oferece apenas os fluxos reais de recuperação de senha e logout; anônimo preserva o retorno allowlisted;
-- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono` ou `/dono/recebimentos`; depois da validação ela vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
+- `/entrar`: a query `retorno` somente atravessa a borda Server/Client quando for exatamente `/conta`, `/conta/seguranca`, `/dono`, `/dono/recebimentos`, `/dono/estudios/novo` ou um dos paths canônicos `/dono/estudios/<studioId>/dados | midia | publicacao`, cujo único segmento variável é um UUID minúsculo válido; cada rota do editor redireciona UUID válido não canônico para essa representação antes do login. Depois da validação, o destino vira o campo interno `returnTo`. Login bem-sucedido volta ao destino exato, e um resultado ambíguo preserva o mesmo destino na recomposição SSR. URL externa/protocol-relative, query ou fragmento extra, traversal, barra invertida, UUID inválido, codificação alternativa e valor repetido são descartados; o servidor Auth continua sendo a decisão final;
 - perfil incompleto: PF/PJ, nome, telefone, CPF/CNPJ e documento adicional opcional em uma coluna no mobile e grade no desktop;
 - perfil completo: tipo PF/PJ somente leitura, documentos já salvos apenas mascarados e ações explícitas `manter | substituir | remover` quando aplicáveis;
 - preferência: seletor nativo `Dispositivo | Claro | Escuro`, persistência autoritativa e aplicação sem paleta customizável;
@@ -249,7 +249,9 @@ Bootstrap da FEAT-004:
 - loading/refetch/pausa/troca de sessão fecham status, elegibilidade e ações privados. Timeout ou resultado ambíguo oferece `Verificar estado atual`, sem afirmar falha nem reenviar cegamente; durante esse GET, a superfície privada fecha sob boundary neutro e, ao terminar, o foco programático vai ao heading do checklist no sucesso ou ao alerta seguro na falha. Nesse alerta, `Tentar novamente` repete o boundary e devolve foco ao heading somente após novo GET bem-sucedido;
 - se uma nova versão do contrato surgir entre a tela e `start | refresh`, a API devolve `409 CONFLICT` e conduz ao mesmo `Verificar estado atual`; nenhuma tentativa é repetida. Dono ou recebedor realmente bloqueado continua proibido e não é apresentado como simples estado stale recuperável;
 - `pending`, `active`, `refused`, `suspended` e `blocked` são apresentados por texto, não somente cor. Mudança assíncrona usa `role=status`, erro usa `role=alert` e foco retorna ao heading/alerta pertinente;
-- não há link para estúdios, checkout, financeiro, suporte inventado, fallback administrativo nem formulário bancário enquanto essas superfícies não existirem.
+- a navegação agora inclui somente `Novo estúdio`, superfície real da FEAT-006. Portfólio, checkout,
+  financeiro, suporte, fallback administrativo e formulário bancário continuam ausentes enquanto suas
+  features não existirem.
 
 Dashboard:
 
@@ -261,12 +263,51 @@ Dashboard:
 
 Editor de estúdio:
 
-- navegação por etapas;
-- progresso derivado;
-- autosave somente se seguro; baseline usa salvar explícito;
-- status da revisão;
-- preview aprovado/draft;
-- submit com checklist.
+- `/dono/estudios/novo` exige sessão, perfil completo, dono ativo e contrato vigente; estados
+  suspenso/incompleto/inativo substituem o formulário por ação factual;
+- `/dono/estudios/[studioId]/dados` usa o mesmo gate e retorna a mesma composição `not found` para UUID
+  inválido, estúdio ausente ou pertencente a outro dono, com `noindex` e sem conteúdo privado;
+- o editor só monta depois da hidratação completa e mantém todos os valores SSR privados ocultos até o
+  GET autoritativo do mesmo usuário/estúdio terminar. Durante montagem, foco/refetch ou falha de
+  acesso, somente o boundary neutro permanece; usa salvar explícito e divide nome/tipo/capacidade,
+  descrição e endereço Curitiba/PR em seções; não há autosave;
+- preview local acompanha os valores e sempre informa **não publicada**. Revisão, versão e condição
+  draft/aprovada são texto factual;
+- validação preserva a entrada e não envia POST. Timeout/resultado ambíguo congela campos e ações
+  concorrentes e permite repetir somente o mesmo payload/chave idempotente;
+- conflito otimista de update preserva valores locais, mostra diferenças com rótulos também em mobile
+  e exige escolher remoto ou novo submit sobre o token atual. Conflito de descarte fecha a confirmação,
+  relê e exige nova confirmação. Contrato alterado recompõe a rota e volta ao aceite vigente;
+- descartar exige confirmação: remove o cadastro ainda inédito ou somente o draft quando há publicação.
+  A revisão aprovada nunca é alterada pelo editor; depois do descarte, os campos centrais e comerciais
+  voltam juntos aos valores publicados, sem conservar estado local da revisão removida;
+- criação aceita não reabilita o formulário: mostra estado terminal e ação única para abrir o editor.
+  Estúdio `disabled` é somente leitura. Tipo arquivado permanece identificável no histórico, mas salvar
+  exige escolher uma opção ativa;
+- a mesma rota inclui conteúdo comercial da revisão: dois seletores com busca local para tags e
+  comodidades, regras plain text, FAQ adicionável/reordenável/excluível e vídeo YouTube com prévia de
+  privacidade aprimorada. Taxonomia vazia orienta correção administrativa, sem opções falsas;
+- taxonomia e conteúdo têm saves explícitos separados. Catálogo arquivado durante a edição produz
+  conflito, relê editor/catálogo, preserva texto e seleções válidas, remove a opção indisponível e exige
+  nova confirmação; URL de vídeo inválida não envia POST;
+- mobile, 320 px e zoom 200% usam uma coluna, sem overflow; axe, teclado, toque e alvos de 44 px fazem
+  parte da matriz da feature.
+
+Publicação do estúdio:
+
+- `/dono/estudios/[studioId]/publicacao` usa o mesmo gate privado e só revela a projeção depois da
+  hidratação e de uma leitura autoritativa do mesmo usuário/estúdio. Sem JavaScript, conteúdo, prévias
+  e ações permanecem ausentes e a página orienta habilitar scripts e recarregar;
+- o checklist é derivado no banco e leva à seção editável correspondente. Status, versão, revisão
+  candidata/publicada e motivo de rejeição são texto factual; a prévia publicada permanece estável
+  enquanto uma alteração aguarda nova decisão;
+- envio, pausa e retomada ficam nativamente desabilitados antes da hidratação e durante qualquer ação.
+  Pausa exige confirmação com impacto explícito e devolve foco ao controle de origem quando cancelada;
+- conflito nunca repete a transição: relê o estado, move foco para a recuperação segura e exige aceite
+  explícito. Resposta ambígua mantém somente a tentativa idempotente original para verificar ou repetir
+  exatamente o mesmo comando; anúncio de sucesso ou estado aceito recebe foco programático;
+- a composição usa uma coluna em mobile/320 px, alvos de 44 px, dimensões reservadas para capas,
+  contraste nos dois temas e reflow operável em zoom de 200%.
 
 Agenda:
 
@@ -287,6 +328,16 @@ Financeiro:
 ## 11. Backoffice
 
 Definido em documento próprio. Composição densa, filtros server-side, preview de impacto e confirmação forte.
+
+Na revisão editorial, `/estudios` apresenta uma fila keyset sem filtros em URL e
+`/estudios/[studioId]` compara candidata/publicação por seções semânticas. Conteúdo, endereço,
+taxonomias, FAQ, regras, vídeo, checklist e mídia privada permanecem legíveis em uma coluna no mobile;
+preço não aparece antes da feature proprietária. Reviewer decide candidata, admin também modera e
+restaura. Ações incompatíveis ficam ausentes ou desabilitadas conforme o read model autoritativo.
+Conflito fecha a confirmação e exige releitura; resposta ambígua conserva a mesma tentativa para replay.
+Loading/refetch/erro/expiração de mídia fecham ações e nunca reutilizam URL assinada, confirmação ou
+conteúdo de outro snapshot/escopo. Fotos são mostradas integralmente e vídeo validado permanece
+inspecionável sem ampliar a CSP.
 
 ## 12. Estados obrigatórios
 

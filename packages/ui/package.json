@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./password-input": "./src/password-input.tsx",
     "./tokens.css": "./src/tokens.css"
   },
   "scripts": {

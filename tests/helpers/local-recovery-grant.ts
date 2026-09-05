@@ -1,4 +1,3 @@
-import { Pool } from "pg";
 import { z } from "zod";
 
 import { assertQaAuthEmail } from "./local-auth-mailpit";
@@ -25,15 +24,13 @@ type ExpirationResult = {
   rows: unknown[];
 };
 
-export type LocalRecoveryGrantPool = {
-  end: () => Promise<void>;
+export type LocalRecoveryGrantClient = {
   query: (text: string, values: readonly [string, string]) => Promise<ExpirationResult>;
 };
 
 export type LocalRecoveryGrantDependencies = {
-  adminDatabaseUrl: string;
-  createPool: (databaseUrl: string) => LocalRecoveryGrantPool;
   preflight: () => Promise<void>;
+  withClient: <T>(operation: (client: LocalRecoveryGrantClient) => Promise<T>) => Promise<T>;
 };
 
 type ExpirationInput = z.infer<typeof expirationInputSchema>;
@@ -64,18 +61,11 @@ export async function expireExactLocalRecoveryGrantWithDependencies(
     throw new Error("O preflight do banco E2E local não foi validado para a expiração.");
   }
 
-  let pool: LocalRecoveryGrantPool;
+  let result: ExpirationResult;
   try {
-    pool = dependencies.createPool(dependencies.adminDatabaseUrl);
-  } catch {
-    throw expirationError();
-  }
-
-  let result: ExpirationResult | undefined;
-  let failure: Error | undefined;
-  try {
-    result = await pool.query(
-      `with candidate_count as (
+    result = await dependencies.withClient((client) =>
+      client.query(
+        `with candidate_count as (
          select pg_catalog.count(*) as exact_count
          from private.identity_recovery_grants as recovery_grant
          join private.identity_recovery_sessions as recovery_session
@@ -111,23 +101,14 @@ export async function expireExactLocalRecoveryGrantWithDependencies(
          and recovery_grant.claim_attempt_id is null
          and recovery_grant.claimed_at is null
          and recovery_grant.expires_at > pg_catalog.statement_timestamp()
-       returning true as expired`,
-      [parsed.data.userId, email],
+         returning true as expired`,
+        [parsed.data.userId, email],
+      ),
     );
   } catch {
-    failure = expirationError();
+    throw expirationError();
   }
-
-  try {
-    await pool.end();
-  } catch {
-    failure ??= expirationError();
-  }
-
-  if (failure !== undefined) {
-    throw failure;
-  }
-  if (result === undefined || result.rowCount !== 1) {
+  if (result.rowCount !== 1) {
     throw expirationError();
   }
   const rows = expirationRowsSchema.safeParse(result.rows);
@@ -137,32 +118,7 @@ export async function expireExactLocalRecoveryGrantWithDependencies(
 }
 
 export async function expireExactLocalRecoveryGrant(input: ExpirationInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
-
-  return expireExactLocalRecoveryGrantWithDependencies(input, {
-    adminDatabaseUrl: safeE2EEnvironment.adminDatabaseUrl,
-    createPool(databaseUrl) {
-      const pool = new Pool({
-        allowExitOnIdle: true,
-        connectionString: databaseUrl,
-        connectionTimeoutMillis: 1_000,
-        max: 1,
-        query_timeout: 1_000,
-        statement_timeout: 1_000,
-      });
-      return {
-        end: () => pool.end(),
-        async query(text, values) {
-          const result = await pool.query<{ expired: boolean }>(text, [...values]);
-          return { rowCount: result.rowCount, rows: result.rows };
-        },
-      };
-    },
-    preflight: e2eDatabasePreflight,
-  });
+  return expireExactLocalRecoveryGrantWithDependencies(input, await localRecoveryDependencies());
 }
 
 export async function assertExactLocalRecoverySessionClosedWithDependencies(
@@ -181,18 +137,11 @@ export async function assertExactLocalRecoverySessionClosedWithDependencies(
     throw new Error("O preflight do banco E2E local não foi validado para a prova de sessão.");
   }
 
-  let pool: LocalRecoveryGrantPool;
+  let result: ExpirationResult;
   try {
-    pool = dependencies.createPool(dependencies.adminDatabaseUrl);
-  } catch {
-    throw closedSessionError();
-  }
-
-  let result: ExpirationResult | undefined;
-  let failure: Error | undefined;
-  try {
-    result = await pool.query(
-      `with target_user as (
+    result = await dependencies.withClient((client) =>
+      client.query(
+        `with target_user as (
          select auth_user.id
          from auth.users as auth_user
          where auth_user.id = $1::uuid
@@ -221,23 +170,14 @@ export async function assertExactLocalRecoverySessionClosedWithDependencies(
            select pg_catalog.count(*)::integer
            from private.identity_recovery_grants as recovery_grant
            join target_user on target_user.id = recovery_grant.user_id
-         ) as grant_count`,
-      [parsed.data.userId, email],
+           ) as grant_count`,
+        [parsed.data.userId, email],
+      ),
     );
   } catch {
-    failure = closedSessionError();
+    throw closedSessionError();
   }
-
-  try {
-    await pool.end();
-  } catch {
-    failure ??= closedSessionError();
-  }
-
-  if (failure !== undefined) {
-    throw failure;
-  }
-  if (result === undefined || result.rowCount !== 1) {
+  if (result.rowCount !== 1) {
     throw closedSessionError();
   }
   const rows = closedSessionRowsSchema.safeParse(result.rows);
@@ -247,30 +187,26 @@ export async function assertExactLocalRecoverySessionClosedWithDependencies(
 }
 
 export async function assertExactLocalRecoverySessionClosed(input: ExpirationInput) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
+  return assertExactLocalRecoverySessionClosedWithDependencies(
+    input,
+    await localRecoveryDependencies(),
+  );
+}
 
-  return assertExactLocalRecoverySessionClosedWithDependencies(input, {
-    adminDatabaseUrl: safeE2EEnvironment.adminDatabaseUrl,
-    createPool(databaseUrl) {
-      const pool = new Pool({
-        allowExitOnIdle: true,
-        connectionString: databaseUrl,
-        connectionTimeoutMillis: 1_000,
-        max: 1,
-        query_timeout: 1_000,
-        statement_timeout: 1_000,
-      });
-      return {
-        end: () => pool.end(),
-        async query(text, values) {
-          const result = await pool.query(text, [...values]);
-          return { rowCount: result.rowCount, rows: result.rows };
-        },
-      };
+async function localRecoveryDependencies(): Promise<LocalRecoveryGrantDependencies> {
+  const { e2eDatabaseSafetyPreflight, withE2EAdminClient } =
+    await import("./e2e-database-preflight");
+  return {
+    preflight: e2eDatabaseSafetyPreflight,
+    withClient(operation) {
+      return withE2EAdminClient((client) =>
+        operation({
+          async query(text, values) {
+            const result = await client.query(text, [...values]);
+            return { rowCount: result.rowCount, rows: result.rows };
+          },
+        }),
+      );
     },
-    preflight: e2eDatabasePreflight,
-  });
+  };
 }

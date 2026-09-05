@@ -27,9 +27,15 @@ concreto, conforme ADR-022.
   SSR;
 - conta suspensa não executa comando e backoffice revalida papel no servidor.
 
-Os formulários com segredo não podem funcionar antes da hidratação se isso permitir fallback GET. Rede,
-timeout ou resposta inválida depois de uma possível publicação de sessão são tratados como ambíguos e
-terminais, com cleanup restrito aos cookies canônicos.
+Os formulários com segredo não podem funcionar antes da hidratação se isso permitir fallback HTTP ou
+perda silenciosa de entrada quando o React assume o HTML. Cadastro público, login operacional e chave
+local usam estado servidor-fechado, `inert`, método POST e controles nativos desabilitados; a
+ausência de JavaScript mantém a fronteira fechada e mostra recuperação explícita por habilitação e
+reload. A reautenticação de papel só é criada depois de uma ação já hidratada. Login, logout,
+desbloqueio e mutações administrativas do backoffice encerram no cliente em dez segundos; rede, timeout
+ou resposta inválida depois de uma possível publicação de sessão são tratados como ambíguos e
+terminais, com cleanup restrito aos cookies canônicos. Auto-suspensão e revogação do próprio papel
+administrativo também fecham imediatamente a composição privada quando a resposta é perdida.
 
 ## Autorização e banco
 
@@ -61,10 +67,82 @@ Dados de CPF/CNPJ e documento permanecem em colunas privadas e não entram no re
 mantém valores sensíveis apenas pelo tempo da ação e não os coloca em query key, URL, mutation cache ou
 evidência Playwright.
 
+Na FEAT-006, nome, descrição e endereço de revisão ainda não aprovada são acessíveis somente ao próprio
+dono autenticado e elegível por grants de coluna, `auth.uid()` e RLS. A policy e o read model derivam
+novamente perfil ativo/completo, autoridade de dono ativa e aceite íntegro do contrato vigente; qualquer
+revogação retorna zero linhas mesmo em chamada direta à Data API, e outro dono recebe a mesma ausência.
+`app_dal` não lê tabelas e executa apenas as cinco fachadas privadas de estúdio. Cada uma revalida perfil
+ativo/completo, autoridade e contrato vigente antes inclusive de replay idempotente. O ledger guarda
+somente hash e referências; auditoria e logs operacionais não recebem conteúdo ou endereço. O browser
+mantém o editor em key com usuário + estúdio e callbacks tardios não recriam cache após troca de sessão.
+
+Na FEAT-007, regras, FAQ e taxonomias da revisão seguem o mesmo isolamento. Tabelas filhas nascem
+revogadas, com RLS independente; `app_dal` recebe somente execução nas duas novas fachadas. O comando
+aceita apenas taxonomia ativa e plain text validado, persiste somente o YouTube ID e mantém URLs/HTML
+fora do banco. React escapa a prévia, e o único frame remoto permitido pelo CSP é
+`www.youtube-nocookie.com`; auditoria guarda contagens e presença de vídeo, sem conteúdo comercial.
+
+Na FEAT-031, o backoffice usa storage key de cookie própria e binding no banco pelo `session_id` Auth:
+30 minutos de inatividade, oito horas absolutas e cinco minutos de autenticação forte para alterar
+papéis. O polling de sessão é deliberadamente passivo: revalida toda a fronteira sem atualizar
+`last_seen_at`; somente leituras operacionais e comandos renovam atividade. Cada leitura e comando
+revalida sessão Auth canônica, perfil ativo/concluído e papel atual;
+remover todos os papéis ou suspender a conta fecha bindings existentes. `support` alcança somente
+usuários e revelação temporária de PII; catálogo administrativo, taxonomias e papéis exigem `admin` no
+banco, mesmo se uma rota for chamada diretamente. Papéis permanecem no servidor: o DTO de sessão e a
+lista enviada ao browser carregam somente uma versão opaca de autorização; o detalhe de uma única conta
+é composto por fachada admin-only no Server Component. Cada concessão/revogação é uma action explícita
+contra `expectedAccountVersion`. O último admin ativo é protegido sob lock global.
+
+Confirmações de revisão editorial, conta, acesso e taxonomia exigem a
+[identidade persistida da tentativa](api-contracts.md#57-adminbackoffice), não apenas alvo/versão.
+O eco é derivado do ledger SQL na transação auditada e validado na DAL e no cliente antes do
+consumo. O hash do payload vincula a chave ao papel solicitado ou ao motivo normalizado de rejeição,
+sem transportar papéis ou duplicar texto livre no DTO. Eco inválido não limpa o pending nem autoriza
+sucesso por uma leitura posterior. Locks, RLS, grants mínimos e hashes históricos são preservados.
+
+PII aparece mascarada no read model. A busca comum aceita somente prefixo de e-mail ou UUID exato e
+nunca avalia `profiles.name`; nome bruto fica exclusivamente na revelação por motivo allowlisted, fora
+de URL/QueryCache, por até 60 segundos. A resposta só é consumida se a aba estiver
+visível e é descartada se terminar durante ocultação. Antes de consumir os dados, DAL e cliente
+exigem o [eco da tentativa auditada exata](api-contracts.md#57-adminbackoffice); identidade de
+operador/alvo sozinha não confirma outra tentativa. Eco ausente/divergente não é reconstruído da
+request, não expõe PII e não libera o pending no cliente.
+Um observador relê a sessão no mount, foco,
+intervalo curto e eventos entre abas; identidade ou versão de autorização divergente ocultam o DOM
+privado e limpam o cache antes da recomposição. Ledger e auditoria registram ator, ação, alvo,
+motivo/versões e correlação, nunca o valor nem hash reutilizável da PII. Taxonomia é versionada, limitada
+transacionalmente a 500 itens e arquivada sem apagar referências.
+
+Na FEAT-030, `reviewer` recebe somente fila, detalhe e decisão editorial; `support` recebe zero linhas e
+zero comando dessa superfície. `admin` substitui reviewer de forma explícita e é o único papel de
+desativação/restauração. O banco revalida binding, sessão Auth, perfil e papel em cada fachada. A policy
+de `storage.objects` aceita somente `auth.uid()` + `session_id` da binding vigente, mídia `ready` e uma
+relação pertencente à submissão `pending` ainda apontada ou à publicação selecionada para
+moderação/restauração. Draft não submetido permanece privado até do backoffice; a policy não concede
+listagem geral, escrita ou acesso a outros estúdios. Ela também exige a operação exata
+`storage.object.sign_many`; download
+autenticado e listagem permanecem negados. O servidor troca os paths por URLs assinadas de cinco minutos e não envia path, secret
+key, papel ou claims ao browser. Antes da assinatura, o serviço revalida `scope` e `studioId` do read
+model contra sessão e rota. Decisão e moderação usam versão/ID esperados, lock, ledger e auditoria
+redigida; aprovação também relê o checklist sob locks, e uma corrida produz conflito sem efeito parcial.
+
+Além da sessão e da autorização no banco, toda mutação exige um desbloqueio local do runtime. A chave de
+43 caracteres base64url existe apenas no EnvironmentFile do processo e na entrada efêmera do formulário;
+ela não é armazenada no browser. O servidor compara seu digest em tempo constante e emite por cinco
+minutos um token HMAC em cookie HttpOnly, SameSite estrito e vinculado a usuário + `session_id` Auth.
+Token ausente, expirado, adulterado ou de outra sessão falha fechado antes da DAL; transições de
+autenticação apagam o cookie. A release recusa a chave em artifact e o CI a transporta somente pelo
+environment protegido de produção.
+
 ## Comandos, origem e abuso
 
-Escritas cookie-based exigem método, body limitado, content type, `Origin`/`Host` exatos e, em produção,
-`X-Forwarded-Host` e `X-Forwarded-Proto=https` substituídos pelo Nginx confiável.
+Escritas cookie-based exigem método, body limitado, content type e `Origin`/`Host` exatos. Na aplicação
+pública e em futura exposição HTTPS do backoffice, produção também exige `X-Forwarded-Host` e
+`X-Forwarded-Proto=https` substituídos pelo Nginx confiável. Na fase atual, o backoffice não passa pelo
+Nginx: escuta somente em `127.0.0.1:3001`, aceita a origem literal homônima via túnel SSH e rejeita
+headers de proxy. O trecho remoto é cifrado pelo túnel; o pequeno trecho HTTP existe apenas no
+loopback do navegador e permite o cookie host-only necessário à origem efetivamente acessível.
 `X-Forwarded-For` recebe um único `$remote_addr`; cadeia fornecida pelo cliente é descartada. A borda
 gera um UUIDv4 a partir do `$request_id` interno, substitui o header não confiável de entrada e usa o
 mesmo valor no upstream, na resposta e no log. O access log do Nginx substitui o formato `combined`:
@@ -144,19 +222,39 @@ emissão do certificado, `nosniff`, referrer policy, permissions policy e bloque
 Antes do go-live, Nginx aceita somente o Host do IP reservado, não expõe o backoffice e envia `noindex`
 em toda resposta pública, além de bloquear crawling no `robots.txt`.
 
-Novas origens CSP entram apenas com a integração consumidora e teste. Respostas autenticadas e HTML
-dinâmico não são cacheados; assets com hash podem receber cache imutável.
+Primitives React server-safe permanecem no barrel raiz de `@set-livre/ui`; componentes client-only,
+como `PasswordInput`, usam subpath explícito. Essa fronteira impede que um import server-side crie
+scripts de boundary não consumidos e preserva o contrato de que todo script emitido no HTML recebe o
+nonce da própria resposta sob `strict-dynamic`. Navegações estruturais dentro desses boundaries usam
+âncoras nativas e não introduzem o runtime cliente de `next/link` onde nenhuma interação depende dele.
 
-Uploads futuros usam URL assinada curta, path derivado, allowlist de MIME, validação dos bytes, tamanho
-limitado, Storage RLS e cleanup. SVG e nomes de usuário nunca chegam a processamento shell.
+Novas origens CSP entram apenas com a integração consumidora e teste. A aplicação pública acrescenta a
+origem Supabase validada em `img-src` e `connect-src` porque envia mídia diretamente; o backoffice usa
+somente `img-src`, pois suas APIs e assinaturas executam no servidor. Em ambos, a origem é HTTPS exata
+fora do desenvolvimento e o loopback HTTP canônico no stack local. Path, credencial, origem ampla,
+HTTP remoto e token injetável são recusados antes de compor o header. O erro global continua com a
+política mínima, pois não consome mídia ou API remota. Respostas autenticadas e HTML dinâmico não são cacheados;
+assets com hash podem receber cache imutável.
+
+Uploads de estúdio usam token assinado curto, path derivado, allowlist de MIME, validação real dos
+bytes, limites de tamanho/dimensão/pixels e cleanup pela Storage API. O browser não recebe grants para
+listar registros ou objetos nem para criar URLs de leitura. A secret key moderna existe somente no
+processo web do servidor e no ambiente gerenciado da Edge Function; clientes com a chave moderna a
+enviam exclusivamente em `apikey`, nunca em `Authorization: Bearer`. Na VM ela chega pelo EnvironmentFile
+privado também consumido pela oneshot `systemd` e só é usada depois da autorização DAL ou para invocar o
+slug do SHA ativo. Não entra no backoffice, artifact, log, QueryCache ou bundle público. SVG e nomes de
+usuário nunca chegam a processamento shell.
 
 ## Ambiente local
 
 Supabase local e E2E usam somente a fronteira local validada, dados QA descartáveis e credenciais próprias
 geradas a cada reset. O preflight recusa banco/URL não local antes de abrir navegador; o wrapper também
-recusa daemon, bridge, política do Docker Desktop, container ou binding divergente. Docker Desktop não é
-uma fronteira de produção e não recebe firewall customizado; o controle decisivo continua sendo não
-reutilizar dado ou credencial real.
+recusa daemon, contexto, endpoint, bridge, container ou binding divergente. No Windows, somente o
+contexto `set-livre-wsl` para `tcp://127.0.0.1:2375` é aceito; containers precisam publicar cada porta
+em `127.0.0.1`, sem wildcard ou equivalência IPv6. A API local do Docker é privilegiada, por isso não
+pode ser encaminhada nem exposta à LAN. Ela não é fronteira de produção e não recebe firewall
+customizado; os controles decisivos continuam sendo loopback estrito e nunca reutilizar dado ou
+credencial real.
 
 Arquivos `.env.local` são ignorados e escritos com permissão privada quando a plataforma oferece essa
 semântica. Antes de interpretar `.env.e2e.local`, o leitor recusa links e arquivos não regulares ou com
@@ -191,6 +289,10 @@ Cobertura proporcional inclui:
 
 - isolamento entre ao menos dois usuários, dono e admin;
 - role escalation, IDOR, origem inválida e body grande;
+- expiração/revogação da sessão administrativa, último admin, PII efêmera e fronteira
+  `support/reviewer/admin`;
+- isolamento de fila/detalhe/mídia entre suporte, reviewer e admin; decisão concorrente e restauração
+  exata de estúdio;
 - concorrência/idempotência de reserva e pagamento quando implementados;
 - webhook inválido/replay e upload spoof quando suas features existirem;
 - redaction, CSP, secret scan e release/rollback;

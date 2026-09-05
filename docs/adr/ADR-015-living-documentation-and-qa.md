@@ -12,8 +12,10 @@ Sem obrigação mecânica, documentação e testes deixam de acompanhar mudança
 
 Somente alterações que mudam um fato durável atualizam sua documentação canônica no mesmo PR. Diff,
 rationale da entrega, execução de gates e comentários permanecem no GitHub. Uma feature planejada ou
-em andamento possui plano e cenários Playwright com IDs estáveis; depois do merge/deploy concluído, o
-plano é removido e o estado durável permanece nas fontes canônicas e no roadmap.
+em implementação possui plano e cenários Playwright com IDs estáveis. Depois de implementação, suíte
+completa, documentação permanente e reviews incrementais verdes, o candidato final remove o plano e
+atualiza o roadmap antes da revisão holística. Merge e deploy permanecem gates obrigatórios de entrega,
+mas não justificam conservar documentação transitória já consolidada.
 
 O checker documental verifica objetivamente:
 

@@ -161,19 +161,53 @@ export function apiSuccessSchema<TData extends z.ZodType>(data: TData) {
   return z.strictObject({ data, requestId: z.uuid() });
 }
 
-const defaultAuthenticatedReturnTo = "/entrar?sessao=ativa" as const;
-const allowedAuthenticatedReturnTos = new Set<string>([
-  defaultAuthenticatedReturnTo,
+const accountLoginReturnTargets = [
   "/conta",
   "/conta/seguranca",
   "/dono",
   "/dono/recebimentos",
-]);
+  "/dono/estudios/novo",
+] as const;
+type StudioEditorLoginReturnTarget = `/dono/estudios/${string}/${"dados" | "midia" | "publicacao"}`;
+
+export type AccountLoginReturnTarget =
+  (typeof accountLoginReturnTargets)[number] | StudioEditorLoginReturnTarget;
+
+function resolveStudioEditorLoginReturnTarget(
+  candidate: string,
+): StudioEditorLoginReturnTarget | undefined {
+  const segments = candidate.split("/");
+  if (
+    segments.length !== 5 ||
+    segments[0] !== "" ||
+    segments[1] !== "dono" ||
+    segments[2] !== "estudios" ||
+    (segments[4] !== "dados" && segments[4] !== "midia" && segments[4] !== "publicacao")
+  ) {
+    return undefined;
+  }
+
+  const studioId = z.uuid().safeParse(segments[3]);
+  if (!studioId.success || studioId.data !== studioId.data.toLowerCase()) {
+    return undefined;
+  }
+  return `/dono/estudios/${studioId.data}/${segments[4]}`;
+}
+
+export function resolveAccountLoginReturnTarget(
+  candidate: unknown,
+): AccountLoginReturnTarget | undefined {
+  if (typeof candidate !== "string") return undefined;
+  for (const target of accountLoginReturnTargets) {
+    if (candidate === target) return target;
+  }
+  return resolveStudioEditorLoginReturnTarget(candidate);
+}
+
+const defaultAuthenticatedReturnTo = "/entrar?sessao=ativa" as const;
 
 export function resolveAuthenticatedReturnTo(candidate: unknown) {
-  return typeof candidate === "string" && allowedAuthenticatedReturnTos.has(candidate)
-    ? candidate
-    : defaultAuthenticatedReturnTo;
+  return resolveAccountLoginReturnTarget(candidate) ?? defaultAuthenticatedReturnTo;
 }
 
 export type ApiError = z.infer<typeof apiErrorSchema>;

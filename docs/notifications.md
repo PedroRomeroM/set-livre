@@ -27,6 +27,13 @@ Supabase Auth é responsável por confirmação e reset. A FEAT-002 já fornece 
 
 Mudança de domínio e enfileiramento ocorrem na mesma transação.
 
+A FEAT-009 entrega o contrato bootstrap mínimo: uma submissão real cria uma única intenção
+deduplicada `studio.review.submitted`, destinada à audiência de revisão, junto do evento editorial.
+Ela não envia e-mail. A FEAT-030 cria, na mesma transação da decisão, as intenções deduplicadas
+`studio.review.approved/rejected` destinadas ao dono; a FEAT-029 é a única responsável por expandir audiência, resolver destinatários,
+renderizar, enviar, tentar novamente e operar dead-letter. Ausência de worker/provider nunca é
+apresentada como entrega concluída.
+
 `email_outbox` possui deduplication key, por exemplo:
 
 ```text

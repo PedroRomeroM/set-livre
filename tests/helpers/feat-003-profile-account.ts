@@ -11,9 +11,9 @@ import {
   type PersonType,
 } from "@set-livre/contracts";
 import { expect, type Locator, type Page } from "@playwright/test";
-import { Pool } from "pg";
 import { z } from "zod";
 
+import { withE2EAdminClient } from "./e2e-database-preflight";
 import {
   cleanupFeat002QaIdentity,
   confirmFeat002Registration,
@@ -48,7 +48,6 @@ export type Feat003ProfileSecrets = Readonly<{
   taxId: string;
 }>;
 export type Feat003CleanupPool = Readonly<{
-  end: () => Promise<void>;
   query: (
     text: string,
     values: readonly [string, string],
@@ -330,12 +329,12 @@ export async function registerAndConfirmFeat003Identity(
   identity: Feat003QaIdentity,
   personType: PersonType,
 ) {
-  const notBefore = await submitFeat002Registration(
+  const emailFence = await submitFeat002Registration(
     page,
     identity,
     personType === "individual" ? "Pessoa física" : "Pessoa jurídica",
   );
-  return confirmFeat002Registration(page, identity, notBefore);
+  return confirmFeat002Registration(page, identity, emailFence);
 }
 
 export async function loginFeat003Identity(
@@ -459,24 +458,7 @@ export async function verifyFeat003CleanupWithDependencies(
 }
 
 async function verifyFeat003Cleanup(input: Readonly<{ email: string; userId: string }>) {
-  const [{ default: e2eDatabasePreflight }, { safeE2EEnvironment }] = await Promise.all([
-    import("./e2e-database-preflight"),
-    import("./e2e-environment"),
-  ]);
-  await e2eDatabasePreflight();
-  const pool = new Pool({
-    allowExitOnIdle: true,
-    connectionString: safeE2EEnvironment.adminDatabaseUrl,
-    connectionTimeoutMillis: 1_000,
-    max: 1,
-    query_timeout: 1_000,
-    statement_timeout: 1_000,
-  });
-  try {
-    await verifyFeat003CleanupWithDependencies(input, pool);
-  } finally {
-    await pool.end();
-  }
+  await withE2EAdminClient((client) => verifyFeat003CleanupWithDependencies(input, client));
 }
 
 export async function cleanupFeat003QaIdentity(identity: Feat003QaIdentity) {

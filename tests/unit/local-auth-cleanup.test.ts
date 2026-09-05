@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   cleanupLocalAuthUserWithDependencies,
+  type LocalAuthCleanupClient,
   type LocalAuthCleanupDependencies,
-  type LocalAuthCleanupPool,
 } from "../helpers/local-auth-cleanup";
 
 const email = "qa_worker_auth_cleanup@set-livre.local";
@@ -11,16 +11,14 @@ const userId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";
 const otherUserId = "df74fb75-8611-48d8-b407-fc3be63ada21";
 const databaseUrl = "postgresql://postgres:unit-secret@127.0.0.1:54322/postgres";
 
-function dependenciesFor(pool: LocalAuthCleanupPool, events: string[]) {
+function dependenciesFor(client: LocalAuthCleanupClient, events: string[]) {
   const dependencies: LocalAuthCleanupDependencies = {
-    adminDatabaseUrl: databaseUrl,
-    createPool(receivedDatabaseUrl) {
-      expect(receivedDatabaseUrl).toBe(databaseUrl);
-      events.push("pool");
-      return pool;
-    },
     async preflight() {
       events.push("preflight");
+    },
+    async withClient(operation) {
+      events.push("client");
+      return operation(client);
     },
   };
   return dependencies;
@@ -44,6 +42,10 @@ describe("exact local Auth user cleanup", () => {
     const query = vi.fn(async (text: string, values: readonly [string, string]) => {
       events.push("query");
       expect(text).toContain("delete from auth.users");
+      expect(text).toContain("with authorization_fence as materialized");
+      expect(text).toContain("pg_catalog.pg_advisory_xact_lock(");
+      expect(text).toContain("'set-livre:backoffice-authorization'");
+      expect(text).toContain("delete from auth.users using authorization_fence");
       expect(text).toContain("id = $1::uuid");
       expect(text).toContain("email = $2");
       expect(text).not.toMatch(/\blike\b|%/iu);
@@ -52,26 +54,20 @@ describe("exact local Auth user cleanup", () => {
       expect(values).toEqual([userId, email]);
       return { rowCount: 1, rows: [{ id: userId }] };
     });
-    const pool: LocalAuthCleanupPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalAuthCleanupClient = {
       query,
     };
 
     await expect(
-      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(pool, events)),
+      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(client, events)),
     ).resolves.toBe(true);
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
     expect(query).toHaveBeenCalledTimes(1);
   });
 
   it("is idempotent only for the same exact UUID and email pair", async () => {
     const events: string[] = [];
-    const pool: LocalAuthCleanupPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalAuthCleanupClient = {
       async query() {
         events.push("query");
         return { rowCount: 0, rows: [] };
@@ -79,7 +75,7 @@ describe("exact local Auth user cleanup", () => {
     };
 
     await expect(
-      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(pool, events)),
+      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(client, events)),
     ).resolves.toBe(false);
   });
 
@@ -89,54 +85,47 @@ describe("exact local Auth user cleanup", () => {
     { email, userId: "not-a-uuid" },
   ])("rejects non-exact QA identity input before the preflight", async (input) => {
     const preflight = vi.fn(async () => undefined);
-    const createPool = vi.fn(() => {
-      throw new Error("pool must not be created");
+    const withClient = vi.fn(() => {
+      throw new Error("client must not be acquired");
     });
 
     await expect(
       cleanupLocalAuthUserWithDependencies(input, {
-        adminDatabaseUrl: databaseUrl,
-        createPool,
         preflight,
+        withClient,
       }),
     ).rejects.toThrow();
     expect(preflight).not.toHaveBeenCalled();
-    expect(createPool).not.toHaveBeenCalled();
+    expect(withClient).not.toHaveBeenCalled();
   });
 
   it("fails closed when the local database preflight is not valid", async () => {
     const preflightSecret = "preflight-database-secret";
-    const createPool = vi.fn(() => {
-      throw new Error("pool must not be created");
+    const withClient = vi.fn(() => {
+      throw new Error("client must not be acquired");
     });
     const message = await capturedAsyncError(() =>
       cleanupLocalAuthUserWithDependencies(
         { email, userId },
         {
-          adminDatabaseUrl: databaseUrl,
-          createPool,
           preflight: async () => {
             throw new Error(preflightSecret);
           },
+          withClient,
         },
       ),
     );
 
-    expect(createPool).not.toHaveBeenCalled();
+    expect(withClient).not.toHaveBeenCalled();
     expect(message).toContain("preflight");
     expect(message).not.toContain(preflightSecret);
     expect(message).not.toContain(databaseUrl);
   });
 
-  it("redacts query and pool shutdown failures without skipping shutdown", async () => {
+  it("redacts a query failure without leaking database or provider details", async () => {
     const events: string[] = [];
     const querySecret = "query-provider-secret";
-    const shutdownSecret = "shutdown-provider-secret";
-    const pool: LocalAuthCleanupPool = {
-      async end() {
-        events.push("end");
-        throw new Error(shutdownSecret);
-      },
+    const client: LocalAuthCleanupClient = {
       async query() {
         events.push("query");
         throw new Error(querySecret);
@@ -144,21 +133,17 @@ describe("exact local Auth user cleanup", () => {
     };
 
     const message = await capturedAsyncError(() =>
-      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(pool, events)),
+      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(client, events)),
     );
 
-    expect(events).toEqual(["preflight", "pool", "query", "end"]);
+    expect(events).toEqual(["preflight", "client", "query"]);
     expect(message).not.toContain(querySecret);
-    expect(message).not.toContain(shutdownSecret);
     expect(message).not.toContain(databaseUrl);
   });
 
   it("rejects a returned UUID that is not the requested exact user", async () => {
     const events: string[] = [];
-    const pool: LocalAuthCleanupPool = {
-      async end() {
-        events.push("end");
-      },
+    const client: LocalAuthCleanupClient = {
       async query() {
         events.push("query");
         return { rowCount: 1, rows: [{ id: otherUserId }] };
@@ -166,7 +151,7 @@ describe("exact local Auth user cleanup", () => {
     };
 
     await expect(
-      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(pool, events)),
+      cleanupLocalAuthUserWithDependencies({ email, userId }, dependenciesFor(client, events)),
     ).rejects.toThrow("com segurança");
   });
 });

@@ -1,20 +1,21 @@
 # Roadmap de produto
 
-Esta é a fonte canônica de ordem e estado. Um arquivo em `docs/features/` é um plano transitório:
-existe enquanto a feature está planejada ou em andamento e é removido quando a implementação termina.
-O comportamento concluído fica no código, nos testes e nos documentos permanentes de domínio.
+Esta é a fonte canônica de ordem e estado. `Planejada` ainda não entrou em implementação; `Em andamento`
+ainda não concluiu o candidato; `Concluída` satisfez a transição definida no
+[`ADR-015`](adr/ADR-015-living-documentation-and-qa.md). O histórico de entrega permanece no PR e nos
+checks.
 
 | Ordem | ID       | Feature                             | Estado    | Depende de                                       | Plano                                                         |
 | ----: | -------- | ----------------------------------- | --------- | ------------------------------------------------ | ------------------------------------------------------------- |
 |     1 | FEAT-002 | Autenticação e recuperação          | Concluída | —                                                | —                                                             |
 |     2 | FEAT-003 | Perfil, conta e preferências        | Concluída | FEAT-002                                         | —                                                             |
 |     3 | FEAT-004 | Ativação de dono e recebedor        | Concluída | FEAT-003                                         | —                                                             |
-|     4 | FEAT-006 | Núcleo e revisões de estúdio        | Planejada | FEAT-003, FEAT-004                               | [plano](features/FEAT-006-studio-core-revision.md)            |
-|     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Planejada | FEAT-006                                         | [plano](features/FEAT-007-studio-taxonomy-content.md)         |
-|     6 | FEAT-031 | Backoffice de usuários e taxonomias | Planejada | FEAT-003, FEAT-007                               | [plano](features/FEAT-031-backoffice-users-taxonomy.md)       |
-|     7 | FEAT-008 | Mídia de estúdio                    | Planejada | FEAT-006                                         | [plano](features/FEAT-008-studio-media.md)                    |
-|     8 | FEAT-009 | Publicação e revisão de estúdio     | Planejada | FEAT-006, FEAT-007, FEAT-008                     | [plano](features/FEAT-009-studio-publication-workflow.md)     |
-|     9 | FEAT-030 | Backoffice de revisão de estúdio    | Planejada | FEAT-008, FEAT-009                               | [plano](features/FEAT-030-backoffice-studio-review.md)        |
+|     4 | FEAT-006 | Núcleo e revisões de estúdio        | Concluída | FEAT-003, FEAT-004                               | —                                                             |
+|     5 | FEAT-007 | Taxonomias e conteúdo de estúdio    | Concluída | FEAT-006                                         | —                                                             |
+|     6 | FEAT-031 | Backoffice de usuários e taxonomias | Concluída | FEAT-003, FEAT-007                               | —                                                             |
+|     7 | FEAT-008 | Mídia de estúdio                    | Concluída | FEAT-006                                         | —                                                             |
+|     8 | FEAT-009 | Submissão e controle editorial      | Concluída | FEAT-006, FEAT-007, FEAT-008                     | —                                                             |
+|     9 | FEAT-030 | Backoffice de revisão de estúdio    | Concluída | FEAT-008, FEAT-009                               | —                                                             |
 |    10 | FEAT-012 | Disponibilidade semanal             | Planejada | FEAT-006                                         | [plano](features/FEAT-012-weekly-availability.md)             |
 |    11 | FEAT-013 | Exceções e bloqueios de agenda      | Planejada | FEAT-012                                         | [plano](features/FEAT-013-calendar-exceptions-blocks.md)      |
 |    12 | FEAT-016 | Precificação                        | Planejada | FEAT-006, FEAT-012                               | [plano](features/FEAT-016-pricing.md)                         |
@@ -43,6 +44,6 @@ O comportamento concluído fica no código, nos testes e nos documentos permanen
 
 ## Regra de avanço
 
-Uma feature começa pela primeira linha `Planejada` cujas dependências estejam concluídas. Durante o PR,
-o estado muda para `Em andamento`. Após merge e deploy verdes, o plano é removido e a linha vira
-`Concluída`.
+Uma feature começa pela primeira linha `Planejada` cujas dependências estejam concluídas. Toda mudança de
+estado e remoção de plano segue o `ADR-015`; dependências continuam obrigatórias mesmo quando várias
+fatias compartilham o mesmo PR de fundação.
