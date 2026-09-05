@@ -669,19 +669,28 @@ edição manual do banco como procedimento operacional.
 
 Cada invocação da Function reclama no máximo três itens sequenciais. A leitura do corpo de entrada
 tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
-do corpo da resposta, limitado a 64 KiB. Claim e conclusão de item admitem no máximo uma segunda
-tentativa com o mesmo token, dentro desses prazos. O claim serializado no banco relê a reserva após
+do corpo da resposta, limitado a 64 KiB. Abertura, claim, conclusão de item e fechamento admitem no
+máximo uma segunda tentativa com os mesmos parâmetros e identidade, dentro desses prazos.
+O claim serializado no banco relê a reserva após
 perda de resposta; se as duas tentativas forem inconclusivas, o worker não sela contagens inventadas
 e responde erro sem totais, preservando o run para replay ou recuperação por abandono.
-O orçamento inclui a preparação: 5s de entrada + 5s de abertura + duas tentativas de claim de 5s,
-mais três itens de até 20s cada (remoção de 10s e duas confirmações de 5s), totalizam 80s.
-Com 5s de fechamento, o pior caso limitado cabe em 85s, antes dos envelopes de trabalho e invocação.
+Se ambas as respostas de conclusão de algum item se perderem, uma única releitura do lote original
+confere identidade, cardinalidade e resultados terminais persistidos, sem repetir Storage. Resultado
+pendente, membro ausente/duplicado/trocado ou releitura indisponível deixa o run inconclusivo e
+replayable, com erro sem totais; não transforma incerteza em `failed`. O mesmo vale para uma abertura
+cuja segunda resposta permanece inconclusiva. Um replay de abertura já terminal reproduz o resultado
+sem reclamar outro lote.
+O orçamento inclui 5s de entrada, duas aberturas e dois claims de 5s, mais três itens de até 20s
+(remoção de 10s e duas confirmações de 5s), totalizando 85s. A releitura única dispõe de até 5s
+adicionais dentro dos 90s de trabalho; o fechamento e seu replay cabem nos 10s reservados até 100s.
 Desconexão cancela novos claims e remoções, mas não cancela as confirmações idempotentes de item:
 elas precisam reconciliar um commit cuja resposta se perdeu antes de derivar as contagens do run.
 Continuam sujeitas ao deadline de RPC e ao orçamento de trabalho; não há repetição da remoção física.
 Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
-run tem deadline próprio de 5s dentro da janela reservada até 100s, inclusive se o chamador desconectar.
-Falhas de remoção/completion continuam contabilizadas e o resultado só é saudável depois da confirmação
+run tem deadline próprio de 5s por tentativa dentro da janela reservada até 100s, inclusive se o
+chamador desconectar. Desconexão ou esgotamento do orçamento que impeça a releitura final preserva
+o resultado inconclusivo, sem selar contagens estimadas.
+Falhas comprovadas continuam contabilizadas e o resultado só é saudável depois da confirmação
 do ledger. Indisponibilidade ou resposta ambígua do próprio ledger permanece fail-closed e usa a
 recuperação de runs abandonados descrita acima, sem fabricar confirmação.
 

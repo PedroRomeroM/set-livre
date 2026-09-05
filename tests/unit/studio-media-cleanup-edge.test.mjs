@@ -589,7 +589,7 @@ describe("studio media cleanup edge core", () => {
     });
   });
 
-  it("classifica falha persistente de complete por item como execução não saudável", async () => {
+  it("preserva execução inconclusiva quando complete e releitura não provam o resultado", async () => {
     const completeRun = vi.fn().mockResolvedValue(undefined);
     const contract = dependencies({
       complete: vi
@@ -602,17 +602,75 @@ describe("studio media cleanup edge core", () => {
 
     await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).rejects.toMatchObject({
       errorCode: "cleanup_item_complete_failed",
+      result: null,
+    });
+    expect(contract.claim).toHaveBeenCalledTimes(2);
+    expect(contract.remove).toHaveBeenCalledTimes(2);
+    expect(completeRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "membro pendente", items: candidates },
+    { name: "membro ausente", items: [] },
+    {
+      name: "membro trocado",
+      items: [
+        { mediaId: runId, outcome: "deleted" },
+        { mediaId: candidates[1].mediaId, outcome: "deleted" },
+      ],
+    },
+    {
+      name: "membro duplicado",
+      items: [
+        { mediaId: candidates[0].mediaId, outcome: "deleted" },
+        { mediaId: candidates[0].mediaId, outcome: "deleted" },
+      ],
+    },
+  ])("não sela contagens com $name na reconciliação", async ({ items }) => {
+    const contract = dependencies({
+      claim: vi
+        .fn()
+        .mockResolvedValueOnce({ claimToken: workerId, items: candidates })
+        .mockResolvedValueOnce({ claimToken: workerId, items }),
+      complete: vi.fn().mockRejectedValue(new Error("Lost item response")),
+    });
+    await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).rejects.toMatchObject({
+      errorCode: "cleanup_item_complete_failed",
+      result: null,
+    });
+    expect(contract.completeRun).not.toHaveBeenCalled();
+    expect(contract.claim).toHaveBeenCalledTimes(2);
+    expect(contract.remove).toHaveBeenCalledTimes(2);
+  });
+
+  it("reconcilia falhas persistidas sem convertê-las em sucesso ou repetir Storage", async () => {
+    const contract = dependencies({
+      claim: vi
+        .fn()
+        .mockResolvedValueOnce({ claimToken: workerId, items: candidates })
+        .mockResolvedValueOnce({
+          claimToken: workerId,
+          items: [
+            { mediaId: candidates[1].mediaId, outcome: "deleted" },
+            { mediaId: candidates[0].mediaId, outcome: "failed" },
+          ],
+        }),
+      complete: vi.fn().mockRejectedValue(new Error("Lost item response")),
+      remove: vi.fn().mockRejectedValueOnce(new Error("Storage failed")).mockResolvedValue(),
+    });
+    await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).rejects.toMatchObject({
+      errorCode: "cleanup_storage_remove_failed",
       result: { claimed: 2, deleted: 1, failed: 1 },
     });
-    expect(completeRun).toHaveBeenCalledWith({
-      claimed: 2,
-      deleted: 1,
-      errorCode: "cleanup_item_complete_failed",
-      failed: 1,
-      functionSlug,
-      runId,
-      workerId,
-    });
+    expect(contract.completeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claimed: 2,
+        deleted: 1,
+        failed: 1,
+        errorCode: "cleanup_storage_remove_failed",
+      }),
+    );
+    expect(contract.remove).toHaveBeenCalledTimes(2);
   });
 
   it("rejeita UUIDs válidos trocados antes de remover ou completar qualquer item", async () => {
@@ -692,29 +750,34 @@ describe("studio media cleanup edge core", () => {
     });
   });
 
-  it("reproduz exatamente um sucesso terminal sem reclamar nem remover os itens", async () => {
-    const contract = dependencies({
-      beginRun: vi.fn().mockResolvedValue({
+  it.each([false, true])(
+    "reproduz sucesso terminal sem efeitos, com resposta inicial perdida: %s",
+    async (loseFirstResponse) => {
+      const contract = dependencies({
+        beginRun: vi.fn().mockResolvedValue({
+          claimed: 2,
+          deleted: 2,
+          errorCode: null,
+          failed: 0,
+          functionSlug,
+          runId,
+          status: "succeeded",
+        }),
+      });
+      if (loseFirstResponse)
+        contract.beginRun.mockRejectedValueOnce(new Error("Lost begin response"));
+
+      await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).resolves.toEqual({
         claimed: 2,
         deleted: 2,
-        errorCode: null,
         failed: 0,
-        functionSlug,
-        runId,
-        status: "succeeded",
-      }),
-    });
-
-    await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).resolves.toEqual({
-      claimed: 2,
-      deleted: 2,
-      failed: 0,
-    });
-    expect(contract.claim).not.toHaveBeenCalled();
-    expect(contract.remove).not.toHaveBeenCalled();
-    expect(contract.complete).not.toHaveBeenCalled();
-    expect(contract.completeRun).not.toHaveBeenCalled();
-  });
+      });
+      expect(contract.claim).not.toHaveBeenCalled();
+      expect(contract.remove).not.toHaveBeenCalled();
+      expect(contract.complete).not.toHaveBeenCalled();
+      expect(contract.completeRun).not.toHaveBeenCalled();
+    },
+  );
 
   it("reproduz exatamente uma falha terminal sem repetir efeitos físicos", async () => {
     const contract = dependencies({
@@ -792,7 +855,7 @@ describe("studio media cleanup edge core", () => {
       const contract = dependencies({ beginRun: vi.fn().mockResolvedValue(ledgerState) });
       await expect(runStudioMediaCleanup(contract, { functionSlug, runId })).rejects.toMatchObject({
         errorCode: "cleanup_run_begin_failed",
-        result: { claimed: 0, deleted: 0, failed: 0 },
+        result: null,
       });
       expect(contract.claim).not.toHaveBeenCalled();
       expect(contract.remove).not.toHaveBeenCalled();

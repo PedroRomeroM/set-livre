@@ -317,10 +317,11 @@ function parseCleanupClaim(value: unknown, workerId: string, batchSize: number):
   ) {
     throw new Error("A fila de cleanup retornou um payload inválido.");
   }
-  return {
-    claimed: value.items.length,
-    items: value.items.map(parseCandidate),
-  };
+  const items = value.items.map(parseCandidate);
+  if (new Set(items.map(({ mediaId }) => mediaId)).size !== items.length) {
+    throw new Error("A fila de cleanup retornou membros duplicados.");
+  }
+  return { claimed: items.length, items };
 }
 
 function claimedCardinality(value: unknown): number {
@@ -337,11 +338,13 @@ async function completeRun(
   errorCode: string | null,
 ): Promise<CleanupResult> {
   try {
-    await dependencies.completeRun({
-      ...context,
-      ...result,
-      errorCode,
-    });
+    await retryOnce(() =>
+      dependencies.completeRun({
+        ...context,
+        ...result,
+        errorCode,
+      }),
+    );
   } catch (cause) {
     throw new CleanupRunError("cleanup_run_complete_failed", result, { cause });
   }
@@ -351,14 +354,11 @@ async function completeRun(
   return result;
 }
 
-async function completeItem(
-  dependencies: CleanupDependencies,
-  context: CleanupItemCompletionContext,
-): Promise<void> {
+async function retryOnce<T>(operation: () => Promise<T>): Promise<T> {
   try {
-    await dependencies.complete(context);
+    return await operation();
   } catch {
-    await dependencies.complete(context);
+    return operation();
   }
 }
 
@@ -381,12 +381,12 @@ export async function runStudioMediaCleanup(
   let ledgerState: CleanupLedgerState;
   try {
     ledgerState = parseCleanupRunLedgerState(
-      await dependencies.beginRun(context),
+      await retryOnce(() => dependencies.beginRun(context)),
       runId,
       functionSlug,
     );
   } catch (cause) {
-    throw new CleanupRunError("cleanup_run_begin_failed", terminalResult(0, 0, 0), {
+    throw new CleanupRunError("cleanup_run_begin_failed", null, {
       cause,
     });
   }
@@ -398,15 +398,11 @@ export async function runStudioMediaCleanup(
 
   let rawClaim: unknown;
   try {
-    rawClaim = await dependencies.claim({ batchSize, ...context });
-  } catch {
-    try {
-      rawClaim = await dependencies.claim({ batchSize, ...context });
-    } catch (cause) {
-      // A lost response does not prove that the claim transaction rolled back.
-      // Keep the run replayable; never seal it with invented zero membership.
-      throw new CleanupRunError("cleanup_claim_failed", null, { cause });
-    }
+    rawClaim = await retryOnce(() => dependencies.claim({ batchSize, ...context }));
+  } catch (cause) {
+    // A lost response does not prove that the claim transaction rolled back.
+    // Keep the run replayable; never seal it with invented zero membership.
+    throw new CleanupRunError("cleanup_claim_failed", null, { cause });
   }
 
   let claim: CleanupClaim;
@@ -425,6 +421,7 @@ export async function runStudioMediaCleanup(
   let deleted = 0;
   let failed = 0;
   let runErrorCode: string | null = null;
+  let needsReconciliation = false;
   for (const candidate of claim.items) {
     if ("outcome" in candidate) {
       if (candidate.outcome === "deleted") deleted += 1;
@@ -446,19 +443,52 @@ export async function runStudioMediaCleanup(
     }
 
     try {
-      await completeItem(dependencies, {
-        errorCode: succeeded ? null : "storage_remove_failed",
-        functionSlug,
-        mediaId: candidate.mediaId,
-        runId,
-        succeeded,
-        workerId,
-      });
+      await retryOnce(() =>
+        dependencies.complete({
+          errorCode: succeeded ? null : "storage_remove_failed",
+          functionSlug,
+          mediaId: candidate.mediaId,
+          runId,
+          succeeded,
+          workerId,
+        }),
+      );
       if (succeeded) deleted += 1;
       else failed += 1;
     } catch {
-      failed += 1;
-      runErrorCode = "cleanup_item_complete_failed";
+      needsReconciliation = true;
+    }
+  }
+
+  if (needsReconciliation) {
+    // One replay reads the original membership, not another batch. Never repeat Storage here.
+    // Reconcile the whole batch once so all ambiguous item responses fit the invocation budget.
+    try {
+      const replay = parseCleanupClaim(
+        await dependencies.claim({ batchSize, ...context }),
+        workerId,
+        batchSize,
+      );
+      const originalIds = new Set(claim.items.map(({ mediaId }) => mediaId));
+      if (
+        replay.claimed !== claim.claimed ||
+        replay.items.some(({ mediaId }) => !originalIds.has(mediaId))
+      ) {
+        throw new Error("cleanup_reconciliation_membership_conflict");
+      }
+      deleted = 0;
+      failed = 0;
+      for (const item of replay.items) {
+        if (!("outcome" in item)) throw new Error("cleanup_item_outcome_unknown");
+        if (item.outcome === "deleted") deleted += 1;
+        else {
+          failed += 1;
+          runErrorCode ??= "cleanup_replayed_item_failed";
+        }
+      }
+    } catch (cause) {
+      // Missing/ambiguous evidence is not a failed item. Leave the run replayable.
+      throw new CleanupRunError("cleanup_item_complete_failed", null, { cause });
     }
   }
 

@@ -241,8 +241,8 @@ function createCleanupFetch(
       method === "POST" &&
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup";
-    // Setup: 5s input + 5s begin + two 5s claims. Three items need at most 60s
-    // including completion replays: 80s work + 5s finalization fit below 90s/100s.
+    // Setup: 5s input + two 5s begins + two 5s claims. Three items need at most 60s.
+    // One 5s batch reconciliation fits the 90s work budget; two 5s finishes fit 100s.
     const remainingMs =
       invocationStartedAt +
       (isRunCompletion ? cleanupInvocationDeadlineMs : cleanupWorkDeadlineMs) -
