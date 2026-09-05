@@ -94,7 +94,12 @@ export function taxonomyUpsertNoticeFromRetainedState(
     retainedItem === undefined ||
     retainedItem.id !== commandResult.id ||
     retainedItem.kind !== commandResult.kind ||
-    retainedItem.version < commandResult.version
+    retainedItem.version < commandResult.version ||
+    (retainedItem.version === commandResult.version &&
+      (retainedItem.name !== commandResult.name ||
+        retainedItem.slug !== commandResult.slug ||
+        retainedItem.sortOrder !== commandResult.sortOrder ||
+        retainedItem.active !== commandResult.active))
   ) {
     return undefined;
   }
@@ -142,6 +147,7 @@ export function TaxonomyForm({
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
+        if (submitLocked || pending) return;
         if (retrying) {
           onRetry();
           return;
@@ -256,19 +262,67 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
   const [activationRetryAvailable, setActivationRetryAvailable] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [upsertRetryAvailable, setUpsertRetryAvailable] = useState(false);
+  const [verification, setVerification] = useState<{
+    item: BackofficeTaxonomyItem;
+    operation: "upsert" | "status";
+    status: "reading" | "error";
+  }>();
+  const verificationInFlight = useRef(false);
   const pendingActivationCommand = useRef<BackofficeTaxonomyStatusCommand>(undefined);
   const pendingUpsertCommand = useRef<BackofficeTaxonomyUpsertCommand>(undefined);
   const taxonomyQueryKey = backofficeQueryKeys.taxonomies(session.scope);
   const taxonomies = useQuery({
+    networkMode: "always",
     queryFn: ({ signal }) => listBackofficeTaxonomiesClient(session.scope, signal),
     queryKey: taxonomyQueryKey,
+    refetchOnReconnect: verification === undefined,
+    refetchOnWindowFocus: verification === undefined,
   });
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: taxonomyQueryKey });
   const resetTaxonomies = () => queryClient.resetQueries({ queryKey: taxonomyQueryKey });
-  const retainedTaxonomy = (id: string) =>
-    queryClient
-      .getQueryData<BackofficeTaxonomyList>(taxonomyQueryKey)
-      ?.items.find((item) => item.id === id);
+  const verifyTaxonomies = async (confirmed: NonNullable<typeof verification>) => {
+    if (verificationInFlight.current || queryClient.getQueryState(taxonomyQueryKey) === undefined)
+      return;
+    verificationInFlight.current = true;
+    setVerification({ ...confirmed, status: "reading" });
+    setNotice(undefined);
+    try {
+      await queryClient.invalidateQueries({ queryKey: taxonomyQueryKey, refetchType: "none" });
+      if (queryClient.getQueryState(taxonomyQueryKey) === undefined) return;
+      await taxonomies.refetch({ throwOnError: true });
+      const retained = queryClient.getQueryState<BackofficeTaxonomyList>(taxonomyQueryKey);
+      const retainedItem = retained?.data?.items.find((item) => item.id === confirmed.item.id);
+      const verifiedNotice =
+        confirmed.operation === "upsert"
+          ? taxonomyUpsertNoticeFromRetainedState(confirmed.item, retainedItem)
+          : taxonomyStatusNoticeFromRetainedState(confirmed.item, retainedItem);
+      // Cancelamento com revert pode resolver o refetch com dados anteriores.
+      if (
+        retained?.status !== "success" ||
+        retained.fetchStatus !== "idle" ||
+        retained.isInvalidated ||
+        retained.data?.scope !== session.scope ||
+        verifiedNotice === undefined
+      ) {
+        setVerification({ ...confirmed, status: "error" });
+        return;
+      }
+      pendingUpsertCommand.current = undefined;
+      pendingActivationCommand.current = undefined;
+      setUpsertRetryAvailable(false);
+      setActivationRetryAvailable(false);
+      setActivationTarget(undefined);
+      if (confirmed.operation === "upsert") {
+        setEditing(undefined);
+        setFormGeneration((current) => current + 1);
+      }
+      setVerification(undefined);
+      setNotice(verifiedNotice);
+    } catch {
+      setVerification({ ...confirmed, status: "error" });
+    } finally {
+      verificationInFlight.current = false;
+    }
+  };
   const upsert = useMutation({
     mutationFn: () => {
       if (pendingUpsertCommand.current === undefined) {
@@ -291,14 +345,9 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       setUpsertRetryAvailable(ambiguous);
       if (!ambiguous) pendingUpsertCommand.current = undefined;
     },
-    onSuccess: async (item) => {
-      pendingUpsertCommand.current = undefined;
+    onSuccess: (item) => {
       setUpsertRetryAvailable(false);
-      setEditing(undefined);
-      setFormGeneration((current) => current + 1);
-      setNotice(undefined);
-      await invalidate();
-      setNotice(taxonomyUpsertNoticeFromRetainedState(item, retainedTaxonomy(item.id)));
+      void verifyTaxonomies({ item, operation: "upsert", status: "reading" });
     },
   });
   const transition = useMutation({
@@ -322,16 +371,21 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
       setActivationRetryAvailable(ambiguous);
       if (!ambiguous) pendingActivationCommand.current = undefined;
     },
-    onSuccess: async (item) => {
-      pendingActivationCommand.current = undefined;
+    onSuccess: (item) => {
       setActivationRetryAvailable(false);
-      setActivationTarget(undefined);
-      setNotice(undefined);
-      await invalidate();
-      setNotice(taxonomyStatusNoticeFromRetainedState(item, retainedTaxonomy(item.id)));
+      void verifyTaxonomies({ item, operation: "status", status: "reading" });
     },
   });
   const items = taxonomies.data?.items ?? [];
+  const readingBlocked =
+    verification !== undefined || !taxonomies.isSuccess || taxonomies.isFetching;
+  const actionsBlocked =
+    !interactive ||
+    readingBlocked ||
+    upsert.isPending ||
+    upsertRetryAvailable ||
+    transition.isPending ||
+    activationRetryAvailable;
 
   return (
     <section
@@ -355,19 +409,38 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
         </h2>
         {upsert.isError ? <Alert variant="error">{taxonomyError(upsert.error)}</Alert> : null}
         <TaxonomyForm
-          blocked={transition.isPending || activationRetryAvailable}
+          blocked={readingBlocked || transition.isPending || activationRetryAvailable}
           editing={editing}
           fieldErrors={taxonomyFieldErrors(upsert.error)}
           interactive={interactive}
           key={`${editing?.id ?? "new"}:${formGeneration}`}
           onCancel={() => {
+            if (actionsBlocked) return;
             pendingUpsertCommand.current = undefined;
             setUpsertRetryAvailable(false);
             upsert.reset();
             setEditing(undefined);
           }}
-          onRetry={() => upsert.mutate()}
+          onRetry={() => {
+            if (
+              !interactive ||
+              readingBlocked ||
+              upsert.isPending ||
+              transition.isPending ||
+              activationRetryAvailable
+            )
+              return;
+            upsert.mutate();
+          }}
           onSubmit={(value) => {
+            if (
+              actionsBlocked ||
+              pendingUpsertCommand.current !== undefined ||
+              pendingActivationCommand.current !== undefined
+            )
+              return;
+            setActivationTarget(undefined);
+            transition.reset();
             setNotice(undefined);
             setUpsertRetryAvailable(false);
             pendingUpsertCommand.current = {
@@ -388,15 +461,37 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
         />
       </section>
       {taxonomies.isPending ? <p role="status">Carregando taxonomias…</p> : null}
-      {taxonomies.isError ? (
-        <Alert title="O catálogo não pôde ser carregado" variant="error">
-          <p>{taxonomyListError(taxonomies.error)}</p>
+      {verification !== undefined || taxonomies.isError ? (
+        <Alert
+          title={
+            verification === undefined
+              ? "O catálogo não pôde ser carregado"
+              : "Alteração confirmada; verificando catálogo"
+          }
+          variant={verification?.status === "reading" ? "status" : "error"}
+        >
+          <p>
+            {verification === undefined
+              ? taxonomyListError(taxonomies.error)
+              : verification.status === "reading"
+                ? "A alteração foi aplicada. Aguarde a leitura atualizada antes de continuar."
+                : "A alteração foi aplicada, mas não foi possível verificar o catálogo atualizado. Tente carregar novamente; o comando não será reenviado."}
+          </p>
           <div className={styles.actions}>
             <Button
-              disabled={!interactive || taxonomies.isFetching}
-              loading={taxonomies.isFetching}
+              disabled={
+                !interactive ||
+                taxonomies.isFetching ||
+                verification?.status === "reading" ||
+                upsert.isPending ||
+                transition.isPending
+              }
+              loading={taxonomies.isFetching || verification?.status === "reading"}
               loadingLabel="Tentando novamente"
-              onClick={() => void taxonomies.refetch()}
+              onClick={() => {
+                if (verification === undefined) void taxonomies.refetch();
+                else void verifyTaxonomies(verification);
+              }}
               variant="secondary"
             >
               Tentar carregar taxonomias novamente
@@ -434,14 +529,11 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                   </p>
                   <div className={styles.actions}>
                     <Button
-                      disabled={
-                        !interactive ||
-                        activationRetryAvailable ||
-                        transition.isPending ||
-                        upsert.isPending ||
-                        upsertRetryAvailable
-                      }
+                      disabled={actionsBlocked}
                       onClick={() => {
+                        if (actionsBlocked) return;
+                        setActivationTarget(undefined);
+                        transition.reset();
                         pendingUpsertCommand.current = undefined;
                         setUpsertRetryAvailable(false);
                         upsert.reset();
@@ -453,14 +545,9 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                       Editar
                     </Button>
                     <Button
-                      disabled={
-                        !interactive ||
-                        activationRetryAvailable ||
-                        transition.isPending ||
-                        upsert.isPending ||
-                        upsertRetryAvailable
-                      }
+                      disabled={actionsBlocked}
                       onClick={() => {
+                        if (actionsBlocked) return;
                         pendingActivationCommand.current = undefined;
                         setActivationRetryAvailable(false);
                         transition.reset();
@@ -495,10 +582,24 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
           ) : null}
           <div className={styles.actions}>
             <Button
-              disabled={!interactive || upsert.isPending || upsertRetryAvailable}
+              disabled={
+                !interactive ||
+                readingBlocked ||
+                transition.isPending ||
+                upsert.isPending ||
+                upsertRetryAvailable
+              }
               loading={transition.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
+                if (
+                  !interactive ||
+                  readingBlocked ||
+                  transition.isPending ||
+                  upsert.isPending ||
+                  upsertRetryAvailable
+                )
+                  return;
                 pendingActivationCommand.current ??= {
                   action: activationTarget.active
                     ? "backoffice.taxonomy.archive"
@@ -519,8 +620,9 @@ export function TaxonomyManager({ session }: { session: AuthenticatedSession }) 
                 : "Repetir mesma tentativa"}
             </Button>
             <Button
-              disabled={!interactive || transition.isPending || activationRetryAvailable}
+              disabled={actionsBlocked}
               onClick={() => {
+                if (actionsBlocked) return;
                 pendingActivationCommand.current = undefined;
                 setActivationRetryAvailable(false);
                 transition.reset();

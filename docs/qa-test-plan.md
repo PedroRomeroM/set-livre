@@ -179,6 +179,9 @@ Os cenários estáveis `SL-F006-E2E-*` cobrem:
   e só resolve a recuperação depois de conferir a chave original no replay;
   o descarte definitivo remove também as abas do estúdio, enquanto descartar somente uma revisão
   mantém a navegação da publicação existente;
+- `SL-F006-E2E-023/024` esgotam a quota da aba somente após a criação real: preservam a intenção
+  original, bloqueiam uma confirmação não durável e recuperam a persistência sem novo comando;
+  reload reconcilia a mesma chave sem duplicar, e uma nova criação só começa após o consumo seguro;
 - axe/teclado/toque/alvos em desktop, mobile, 320 px e tema escuro;
 - reflow a 200% em Chromium, Firefox e WebKit.
 
@@ -246,6 +249,9 @@ Os cenários `SL-F031-E2E-*` cobrem:
   permanecem bloqueados durante mutação pendente ou resultado ambíguo, preservando alvo, payload e
   chave idempotente até a reconciliação. O fingerprint assíncrono serializa submissões, e a busca
   normaliza caixa e espaços de forma consistente com SQL e cursor;
+- `SL-F031-E2E-031/032/033` interrompem a leitura após comandos reais de criação/edição de taxonomia,
+  arquivamento/reativação e suspensão/restauração. Preservam confirmação e formulário, bloqueiam ações,
+  busca e paginação e recuperam somente a leitura do mesmo recorte, sem duplicar comando ou auditoria;
 - ordem de taxonomia vazia é rejeitada no próprio campo antes de enviar criação ou edição; zero
   explícito permanece válido. Unitários de fronteira rejeitam usuário, ID ou tipo de taxonomia
   diferentes do comando e comprovam deadline das leituras, inclusive durante consumo do corpo;

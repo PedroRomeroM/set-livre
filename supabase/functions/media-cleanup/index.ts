@@ -228,6 +228,10 @@ function createCleanupFetch(
       method === "POST" &&
       endpoint.origin === storageObjectEndpoint.origin &&
       endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup_run";
+    const isItemCompletion =
+      method === "POST" &&
+      endpoint.origin === storageObjectEndpoint.origin &&
+      endpoint.pathname === "/rest/v1/rpc/complete_studio_media_cleanup";
     // Four items: 10s removal + two 5s completion attempts each. Stop work at 90s;
     // the final ledger RPC gets its own 5s deadline within the remaining 10s.
     const remainingMs =
@@ -239,8 +243,8 @@ function createCleanupFetch(
     }
     const deadlineController = new AbortController();
     const signal = AbortSignal.any([
-      // A disconnected caller stops physical work, but not bounded ledger finalization.
-      ...(isRunCompletion ? [] : [invocationSignal]),
+      // Disconnect stops physical work, not bounded item reconciliation or run finalization.
+      ...(isRunCompletion || isItemCompletion ? [] : [invocationSignal]),
       ...(input instanceof Request ? [input.signal] : []),
       ...(init?.signal ? [init.signal] : []),
       deadlineController.signal,

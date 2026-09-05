@@ -258,12 +258,18 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
   const [statusImpactConfirmed, setStatusImpactConfirmed] = useState(false);
   const [statusRetryAvailable, setStatusRetryAvailable] = useState(false);
   const [notice, setNotice] = useState<string>();
+  const [verification, setVerification] = useState<{
+    user: BackofficeUserSummary;
+    status: "reading" | "error";
+  }>();
+  const verificationInFlight = useRef(false);
   const searchInFlight = useRef(false);
   const [searchPending, setSearchPending] = useState(false);
   const pendingStatusCommand = useRef<BackofficeUserStatusCommand>(undefined);
   const usersQueryKey = backofficeQueryKeys.users(session.scope, activeFilter.fingerprint);
   const users = useInfiniteQuery({
     initialPageParam: null as string | null,
+    networkMode: "always",
     queryKey: usersQueryKey,
     queryFn: ({ pageParam, signal }) =>
       listBackofficeUsersClient(
@@ -277,11 +283,53 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         signal,
       ),
     getNextPageParam: (page) => page.nextCursor,
+    refetchOnReconnect: verification === undefined,
+    refetchOnWindowFocus: verification === undefined,
   });
-  const invalidateUsers = () =>
-    queryClient.invalidateQueries({ queryKey: ["backoffice", "users", session.scope] });
   const resetUsers = () =>
     queryClient.resetQueries({ queryKey: ["backoffice", "users", session.scope] });
+  const verifyUsers = async (confirmed: NonNullable<typeof verification>) => {
+    if (verificationInFlight.current || queryClient.getQueryState(usersQueryKey) === undefined)
+      return;
+    verificationInFlight.current = true;
+    setVerification({ ...confirmed, status: "reading" });
+    setNotice(undefined);
+    try {
+      await queryClient.invalidateQueries({
+        queryKey: ["backoffice", "users", session.scope],
+        refetchType: "none",
+      });
+      if (queryClient.getQueryState(usersQueryKey) === undefined) return;
+      await users.refetch({ throwOnError: true });
+      const retained =
+        queryClient.getQueryState<InfiniteData<BackofficeUserList, string | null>>(usersQueryKey);
+      const retainedUser = retained?.data?.pages
+        .flatMap((page) => page.items)
+        .find((item) => item.id === confirmed.user.id);
+      const verifiedNotice = userStatusNoticeFromRetainedState(confirmed.user, retainedUser);
+      // Cancelamento com revert pode resolver o refetch com dados anteriores.
+      if (
+        retained?.status !== "success" ||
+        retained.fetchStatus !== "idle" ||
+        retained.isInvalidated ||
+        !retained.data?.pages.every((page) => page.scope === session.scope) ||
+        verifiedNotice === undefined
+      ) {
+        setVerification({ ...confirmed, status: "error" });
+        return;
+      }
+      pendingStatusCommand.current = undefined;
+      setStatusImpactConfirmed(false);
+      setStatusRetryAvailable(false);
+      setStatusTarget(undefined);
+      setVerification(undefined);
+      setNotice(verifiedNotice);
+    } catch {
+      setVerification({ ...confirmed, status: "error" });
+    } finally {
+      verificationInFlight.current = false;
+    }
+  };
   const statusMutation = useMutation({
     mutationFn: () => {
       if (pendingStatusCommand.current === undefined) {
@@ -313,25 +361,30 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       setStatusRetryAvailable(ambiguous);
       if (!ambiguous) pendingStatusCommand.current = undefined;
     },
-    onSuccess: async (user) => {
-      pendingStatusCommand.current = undefined;
+    onSuccess: (user) => {
       if (user.id === session.scope && user.status === "suspended") {
         recomposeSession();
         return;
       }
-      setStatusImpactConfirmed(false);
       setStatusRetryAvailable(false);
-      setStatusTarget(undefined);
-      setNotice(undefined);
-      await invalidateUsers();
-      const retainedUser = queryClient
-        .getQueryData<InfiniteData<BackofficeUserList, string | null>>(usersQueryKey)
-        ?.pages.flatMap((page) => page.items)
-        .find((item) => item.id === user.id);
-      setNotice(userStatusNoticeFromRetainedState(user, retainedUser));
+      void verifyUsers({ user, status: "reading" });
     },
   });
   const items = users.data?.pages.flatMap((page) => page.items) ?? [];
+  const searchBlocked =
+    !interactive ||
+    statusMutation.isPending ||
+    statusRetryAvailable ||
+    verification !== undefined ||
+    searchPending;
+  const statusSubmitBlocked =
+    !interactive ||
+    statusMutation.isPending ||
+    verification !== undefined ||
+    searchPending ||
+    !users.isSuccess ||
+    users.isFetching;
+  const statusBlocked = statusSubmitBlocked || statusRetryAvailable;
 
   return (
     <section
@@ -358,7 +411,8 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         noValidate
         onSubmit={async (event) => {
           event.preventDefault();
-          if (statusMutation.isPending || statusRetryAvailable || searchInFlight.current) return;
+          if (searchBlocked || searchInFlight.current || pendingStatusCommand.current !== undefined)
+            return;
           searchInFlight.current = true;
           setSearchPending(true);
           pendingStatusCommand.current = undefined;
@@ -386,27 +440,21 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       >
         <fieldset
           className={`${styles.secureFormBoundary} ${styles.toolbarBoundary}`}
-          disabled={
-            !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
-          }
+          disabled={searchBlocked}
         >
           <Field
             description="Prefixo de e-mail ou UUID completo. Nome exige revelação auditada; o filtro não é colocado na URL."
             label="Buscar usuários"
           >
             <Input
-              disabled={
-                !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
-              }
+              disabled={searchBlocked}
               name="query"
               onChange={(event) => setDraftQuery(event.target.value)}
               value={draftQuery}
             />
           </Field>
           <Button
-            disabled={
-              !interactive || statusMutation.isPending || statusRetryAvailable || searchPending
-            }
+            disabled={searchBlocked}
             loading={searchPending}
             loadingLabel="Buscando"
             type="submit"
@@ -416,17 +464,60 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
         </fieldset>
       </form>
       {users.isPending ? <p role="status">Carregando usuários…</p> : null}
-      {users.isError ? <Alert variant="error">{readErrorMessage(users.error)}</Alert> : null}
+      {verification !== undefined || users.isError ? (
+        <Alert
+          title={
+            verification === undefined
+              ? "A lista não pôde ser carregada"
+              : "Alteração confirmada; verificando usuários"
+          }
+          variant={verification?.status === "reading" ? "status" : "error"}
+        >
+          <p>
+            {verification === undefined
+              ? readErrorMessage(users.error)
+              : verification.status === "reading"
+                ? "A alteração foi aplicada. Aguarde a leitura atualizada antes de continuar."
+                : "A alteração foi aplicada, mas não foi possível verificar a lista atualizada. Tente carregar novamente; o comando não será reenviado."}
+          </p>
+          <div className={styles.actions}>
+            <Button
+              disabled={
+                !interactive ||
+                users.isFetching ||
+                verification?.status === "reading" ||
+                statusMutation.isPending ||
+                searchPending
+              }
+              loading={users.isFetching || verification?.status === "reading"}
+              loadingLabel="Tentando novamente"
+              onClick={() => {
+                if (verification === undefined) void users.refetch();
+                else void verifyUsers(verification);
+              }}
+              variant="secondary"
+            >
+              Tentar carregar usuários novamente
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
       {!users.isPending && !users.isError && items.length === 0 ? (
         <p className={styles.empty}>Nenhum usuário encontrado.</p>
       ) : null}
       <div className={styles.cardGrid}>
         {items.map((user) => (
           <UserCard
-            interactive={interactive}
+            interactive={!statusBlocked}
             key={user.id}
             mode={mode}
             onStatusChange={(target) => {
+              if (
+                statusBlocked ||
+                searchInFlight.current ||
+                pendingStatusCommand.current !== undefined
+              )
+                return;
               pendingStatusCommand.current = undefined;
               statusMutation.reset();
               setNotice(undefined);
@@ -435,7 +526,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               setStatusTarget(target);
             }}
             session={session}
-            statusChangeDisabled={!interactive || statusMutation.isPending || statusRetryAvailable}
+            statusChangeDisabled={statusBlocked}
             user={user}
           />
         ))}
@@ -452,7 +543,7 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           </p>
           <Checkbox
             checked={statusImpactConfirmed}
-            disabled={!interactive || statusMutation.isPending || statusRetryAvailable}
+            disabled={statusBlocked}
             label="Revisei o impacto desta alteração"
             onChange={(event) => setStatusImpactConfirmed(event.target.checked)}
             required
@@ -462,10 +553,11 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
           ) : null}
           <div className={styles.actions}>
             <Button
-              disabled={!interactive || !statusImpactConfirmed || statusMutation.isPending}
+              disabled={statusSubmitBlocked || !statusImpactConfirmed}
               loading={statusMutation.isPending}
               loadingLabel="Aplicando"
               onClick={() => {
+                if (statusSubmitBlocked || !statusImpactConfirmed || searchInFlight.current) return;
                 pendingStatusCommand.current ??= {
                   action:
                     statusTarget.status === "active"
@@ -484,8 +576,9 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
               {statusRetryAvailable ? "Repetir mesma tentativa" : "Confirmar"}
             </Button>
             <Button
-              disabled={!interactive || statusMutation.isPending || statusRetryAvailable}
+              disabled={statusBlocked}
               onClick={() => {
+                if (statusBlocked) return;
                 pendingStatusCommand.current = undefined;
                 statusMutation.reset();
                 setStatusImpactConfirmed(false);
@@ -502,10 +595,12 @@ export function UserDirectory({ mode, session }: { mode: Mode; session: Authenti
       {users.hasNextPage ? (
         <div className={styles.pagination}>
           <Button
-            disabled={!interactive}
+            disabled={statusBlocked}
             loading={users.isFetchingNextPage}
             loadingLabel="Carregando"
-            onClick={() => users.fetchNextPage()}
+            onClick={() => {
+              if (!statusBlocked && !searchInFlight.current) void users.fetchNextPage();
+            }}
             variant="secondary"
           >
             Carregar mais

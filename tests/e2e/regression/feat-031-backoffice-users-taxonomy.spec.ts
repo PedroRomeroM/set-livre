@@ -1,4 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import {
+  apiSuccessSchema,
+  backofficeTaxonomyItemSchema,
+  backofficeTaxonomyListSchema,
+  backofficeUserListSchema,
+  backofficeUserSummarySchema,
+} from "@set-livre/contracts";
 
 import {
   cleanupFeat031Users,
@@ -7,6 +14,7 @@ import {
   createFeat031DirectIdentity,
   createFeat031IncompleteIdentity,
   createFeat031Operator,
+  failFeat031ReadsAfterConfirmedCommands,
   loginFeat031Backoffice,
   provisionFeat031Operator,
   readFeat031Audit,
@@ -750,5 +758,286 @@ test("SL-F031-E2E-028 @p1 erro inicial de taxonomias oferece recuperação na p�
     await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [admin] });
+  }
+});
+
+test("SL-F031-E2E-031 @p1 criação e edição confirmadas recuperam somente a leitura do catálogo", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const admin = createFeat031Operator(testInfo, "031_upsert_read_recovery");
+  const slug = `qa-f031-recovery-${Date.now().toString(36)}`;
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031031");
+    await loginFeat031Backoffice(page, admin);
+    await page.getByRole("link", { name: "Taxonomias" }).click();
+    await expect(page.getByRole("button", { name: "Criar taxonomia" })).toBeEnabled();
+    const faults = await failFeat031ReadsAfterConfirmedCommands(page, "/api/taxonomies");
+    const manager = page.getByRole("region", { name: "Taxonomias" });
+    const retry = manager.getByRole("button", { name: "Tentar carregar taxonomias novamente" });
+    const card = page.getByRole("article").filter({ has: page.getByText(slug, { exact: true }) });
+    const form = page.locator("form").filter({ has: page.getByRole("textbox", { name: "Slug" }) });
+
+    for (const editing of [false, true]) {
+      if (editing) await card.getByRole("button", { name: "Editar", exact: true }).click();
+      else {
+        await page.getByRole("combobox", { name: "Grupo" }).selectOption("tag");
+        await page.getByRole("textbox", { name: "Slug" }).fill(slug);
+      }
+      const name = editing ? "Taxonomia QA recuperada editada" : "Taxonomia QA recuperada";
+      await page.getByRole("textbox", { name: "Nome" }).fill(name);
+      const submit = page.getByRole("button", {
+        name: editing ? "Salvar edição" : "Criar taxonomia",
+      });
+      await submit.click();
+      const error = manager.getByRole("alert").filter({ hasText: "Alteração confirmada" });
+      await expect(error).toContainText("o comando não será reenviado");
+      await expect(retry).toBeEnabled();
+      const confirmed = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(
+        faults.results.at(-1),
+      ).data;
+      expect(confirmed).toMatchObject({ name, slug, active: true });
+      const commandCount = editing ? 2 : 1;
+      expect(faults.commands).toHaveLength(commandCount);
+      await expect(submit).toBeDisabled();
+      await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue(name);
+      await expect(page.getByRole("textbox", { name: "Nome" })).toBeDisabled();
+      await expect(page.getByRole("textbox", { name: "Slug" })).toHaveValue(slug);
+      await expect(
+        manager.getByRole("button", { name: "Editar", exact: true }).first(),
+      ).toBeDisabled();
+      await expect(
+        manager.getByRole("button", { name: "Revisar arquivamento" }).first(),
+      ).toBeDisabled();
+      if (editing)
+        await expect(page.getByRole("button", { name: "Cancelar edição" })).toBeDisabled();
+      await form.evaluate((element: HTMLFormElement) => element.requestSubmit());
+      await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
+      // Uma segunda falha da leitura não libera o formulário nem converte sucesso em replay.
+      await retry.click();
+      await expect(error).toBeVisible();
+      await expect(retry).toBeEnabled();
+      await expect(submit).toBeDisabled();
+      expect(faults.commands).toHaveLength(commandCount);
+
+      const failedReadCount = faults.reads.length;
+      faults.allowReads();
+      const readResponse = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/taxonomies" && response.status() === 200,
+      );
+      await retry.click();
+      const refreshed = apiSuccessSchema(backofficeTaxonomyListSchema).parse(
+        await (await readResponse).json(),
+      ).data;
+      expect(refreshed.scope).toBe(admin.userId);
+      expect(refreshed.items.filter((item) => item.slug === slug)).toEqual([confirmed]);
+      await expect(error).toHaveCount(0);
+      await expect(card.getByRole("heading", { name, exact: true })).toBeVisible();
+      await expect(card).toContainText(`versão ${confirmed.version}`);
+      await expect(card.getByRole("button", { name: "Editar", exact: true })).toBeEnabled();
+      await expect(page.getByRole("textbox", { name: "Nome" })).toHaveValue("");
+      expect(faults.reads).toHaveLength(failedReadCount + 1);
+      expect(faults.reads.every((read) => read.method === "GET")).toBe(true);
+      expect(faults.commands).toHaveLength(commandCount);
+      expect(
+        await readFeat031Audit(
+          editing ? "backoffice.taxonomy_updated" : "backoffice.taxonomy_created",
+          confirmed.id,
+        ),
+      ).toHaveLength(1);
+    }
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Taxonomy(undefined, slug);
+    await cleanupFeat031Users({ operators: [admin] });
+  }
+});
+
+test("SL-F031-E2E-032 @p1 arquivamento e reativação confirmados preservam o impacto até reler o catálogo", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const admin = createFeat031Operator(testInfo, "032_taxonomy_status_read_recovery");
+  const slug = `qa-f031-status-${Date.now().toString(36)}`;
+  try {
+    await provisionFeat031Operator(page, admin, "admin", "031032");
+    await loginFeat031Backoffice(page, admin);
+    await page.getByRole("link", { name: "Taxonomias" }).click();
+    await page.getByRole("combobox", { name: "Grupo" }).selectOption("tag");
+    await page.getByRole("textbox", { name: "Nome" }).fill("Taxonomia QA estado verificado");
+    await page.getByRole("textbox", { name: "Slug" }).fill(slug);
+    await page.getByRole("button", { name: "Criar taxonomia" }).click();
+    const card = page.getByRole("article").filter({ has: page.getByText(slug, { exact: true }) });
+    await expect(card.getByRole("button", { name: "Editar", exact: true })).toBeEnabled();
+    const faults = await failFeat031ReadsAfterConfirmedCommands(page, "/api/taxonomies");
+
+    for (const archiving of [true, false]) {
+      await card
+        .getByRole("button", { name: archiving ? "Revisar arquivamento" : "Revisar reativação" })
+        .click();
+      const confirmation = page.getByRole("region", { name: /^Impacto do/u });
+      const submit = confirmation.getByRole("button", { name: /^Confirmar/u });
+      await submit.click();
+      const error = page.getByRole("alert").filter({ hasText: "Alteração confirmada" });
+      const retry = page.getByRole("button", { name: "Tentar carregar taxonomias novamente" });
+      await expect(error).toContainText("o comando não será reenviado");
+      await expect(retry).toBeEnabled();
+      const confirmed = apiSuccessSchema(backofficeTaxonomyItemSchema).parse(
+        faults.results.at(-1),
+      ).data;
+      expect(confirmed.active).toBe(!archiving);
+      await expect(
+        card.getByText(archiving ? "Ativa" : "Arquivada", { exact: true }),
+      ).toBeVisible();
+      await expect(submit).toBeDisabled();
+      await expect(
+        confirmation.getByRole("button", { name: "Cancelar", exact: true }),
+      ).toBeDisabled();
+      await expect(card.getByRole("button", { name: "Editar", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Criar taxonomia" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Repetir mesma tentativa" })).toHaveCount(0);
+      const failedReadCount = faults.reads.length;
+      faults.allowReads();
+      await retry.click();
+      await expect(confirmation).toHaveCount(0);
+      await expect(error).toHaveCount(0);
+      await expect(
+        card.getByText(archiving ? "Arquivada" : "Ativa", { exact: true }),
+      ).toBeVisible();
+      await expect(card).toContainText(`versão ${confirmed.version}`);
+      await expect(card.getByRole("button", { name: "Editar", exact: true })).toBeEnabled();
+      expect(faults.reads).toHaveLength(failedReadCount + 1);
+      expect(faults.commands).toHaveLength(archiving ? 1 : 2);
+      expect(
+        await readFeat031Audit(
+          archiving ? "backoffice.taxonomy_archived" : "backoffice.taxonomy_reactivated",
+          confirmed.id,
+        ),
+      ).toHaveLength(1);
+    }
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Taxonomy(undefined, slug);
+    await cleanupFeat031Users({ operators: [admin] });
+  }
+});
+
+test("SL-F031-E2E-033 @p1 status confirmado bloqueia busca e paginação até recuperar a leitura sem repetir comando", async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(210_000);
+  const support = createFeat031Operator(testInfo, "033_user_status_read_recovery");
+  const bulk = await createFeat031BulkUsers(`033_${testInfo.project.name}`);
+  try {
+    await provisionFeat031Operator(page, support, "support", "031033");
+    await loginFeat031Backoffice(page, support);
+    const firstRead = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/users" &&
+        response.request().postDataJSON()?.query === bulk.query &&
+        response.status() === 200,
+    );
+    const search = page.getByRole("textbox", { name: "Buscar usuários" });
+    await search.fill(bulk.query);
+    await page.getByRole("button", { name: "Buscar", exact: true }).click();
+    const initial = apiSuccessSchema(backofficeUserListSchema).parse(
+      await (await firstRead).json(),
+    ).data;
+    const target = initial.items[0];
+    if (target === undefined) throw new Error("A lista QA precisa conter a conta alvo.");
+    const card = page.getByRole("article").filter({
+      has: page.getByText(`Identificador …${target.id.slice(-8)}`, { exact: true }),
+    });
+    await expect(card).toBeVisible();
+    const loadMore = page.getByRole("button", { name: "Carregar mais" });
+    await expect(loadMore).toBeEnabled();
+    const faults = await failFeat031ReadsAfterConfirmedCommands(page, "/api/users");
+    for (const suspending of [true, false]) {
+      await card
+        .getByRole("button", { name: suspending ? "Revisar suspensão" : "Revisar restauração" })
+        .click();
+      const confirmation = page.getByRole("region", {
+        name: suspending ? "Confirmar suspensão" : "Confirmar restauração",
+      });
+      const impact = confirmation.getByRole("checkbox", {
+        name: "Revisei o impacto desta alteração",
+      });
+      await impact.check();
+      const submit = confirmation.getByRole("button", { name: "Confirmar", exact: true });
+      await submit.click();
+      const error = page.getByRole("alert").filter({ hasText: "Alteração confirmada" });
+      const retry = page.getByRole("button", { name: "Tentar carregar usuários novamente" });
+      await expect(error).toContainText("o comando não será reenviado");
+      await expect(retry).toBeEnabled();
+      const confirmed = apiSuccessSchema(backofficeUserSummarySchema).parse(
+        faults.results.at(-1),
+      ).data;
+      expect(confirmed).toMatchObject({
+        id: target.id,
+        status: suspending ? "suspended" : "active",
+      });
+      await expect(
+        card.getByText(suspending ? "Ativo" : "Suspenso", { exact: true }),
+      ).toBeVisible();
+      await expect(submit).toBeDisabled();
+      await expect(impact).toBeChecked();
+      await expect(impact).toBeDisabled();
+      await expect(
+        confirmation.getByRole("button", { name: "Cancelar", exact: true }),
+      ).toBeDisabled();
+      await expect(search).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Buscar", exact: true })).toBeDisabled();
+      await expect(loadMore).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Revisar suspensão" }).last()).toBeDisabled();
+      await expect(
+        card.getByRole("button", { name: "Revelar dados por 60 segundos" }),
+      ).toBeDisabled();
+      await page
+        .locator("form")
+        .filter({ has: search })
+        .evaluate((form: HTMLFormElement) => form.requestSubmit());
+      await expect(search).toHaveValue(bulk.query);
+      await retry.click();
+      await expect(error).toBeVisible();
+      await expect(retry).toBeEnabled();
+      await expect(submit).toBeDisabled();
+      expect(faults.commands).toHaveLength(suspending ? 1 : 2);
+
+      const failedReadCount = faults.reads.length;
+      faults.allowReads();
+      await retry.click();
+      await expect(error).toHaveCount(0);
+      await expect(confirmation).toHaveCount(0);
+      await expect(
+        card.getByText(suspending ? "Suspenso" : "Ativo", { exact: true }),
+      ).toBeVisible();
+      await expect(card).toContainText(`versão ${confirmed.accountVersion}`);
+      await expect(search).toBeEnabled();
+      await expect(loadMore).toBeEnabled();
+      expect(faults.reads).toHaveLength(failedReadCount + 1);
+      expect(faults.reads.every((read) => read.method === "POST" && read.search === "")).toBe(true);
+      for (const read of faults.reads)
+        expect(read.body).toMatchObject({ query: bulk.query, cursor: null });
+      expect(faults.commands).toHaveLength(suspending ? 1 : 2);
+      expect(await readFeat031UserStatus(target.id)).toMatchObject({
+        account_version: confirmed.accountVersion,
+        status: confirmed.status,
+      });
+      expect(
+        await readFeat031Audit(
+          suspending ? "backoffice.user_suspended" : "backoffice.user_restored",
+          target.id,
+        ),
+      ).toHaveLength(1);
+    }
+    await loadMore.click();
+    await expect(page.getByRole("article")).toHaveCount(52);
+  } finally {
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await closePageBeforeDatabaseCleanup(page);
+    await cleanupFeat031Users({ bulk: bulk.identities, operators: [support] });
   }
 });

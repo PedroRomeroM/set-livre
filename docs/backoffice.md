@@ -41,6 +41,19 @@ O detalhe de acessos também compara, no serviço server-only, o ID devolvido pe
 canônico solicitado antes de renderizar a conta e suas ações no Server Component. Divergência não
 produz tela de outro usuário nem revela o registro na mensagem de erro.
 
+Em comandos de conta e taxonomia, sucesso do comando e verificação da lista são estados distintos.
+Após confirmação, a tentativa, o formulário e a confirmação de impacto permanecem preservados até
+uma leitura do mesmo escopo e filtro cobrir a versão retornada. Erro, cancelamento que reverta ao
+cache anterior ou resposta sem a versão necessária mantêm erro recuperável. Enquanto a leitura não
+for verificada, ficam bloqueados edição, novas ações, cancelamento, busca e paginação; dados antigos podem continuar visíveis,
+mas não autorizam decisões. A recuperação usa somente a leitura existente (`GET /api/taxonomies` ou
+`POST /api/users`, que mantém o filtro fora da URL), nunca reenvia `/api/commands`. As outras buscas
+do mesmo escopo ficam invalidadas; a verificação relê apenas o filtro ativo, com suas páginas, sem
+troca de cursor ou refetch automático por foco/reconexão concorrendo com a recuperação. Leitura offline
+também conclui em erro limitado, sem ficar pausada indefinidamente. Só depois da leitura verificada
+os controles são liberados e o sucesso é anunciado; uma versão posterior é descrita como o estado
+mais recente, sem atribuir a ela o resultado antigo.
+
 `support` opera usuários. `reviewer` revisa candidatas editoriais. `admin` substitui deliberadamente
 ambos e também administra acessos, taxonomias e moderação de estúdios. As capacidades não são
 hierárquicas por acidente: a função privada recebe o papel exigido em cada chamada. `finance` continua
@@ -129,7 +142,7 @@ nome do dono.
 
 Enquanto uma suspensão/restauração estiver em voo ou com resultado ambíguo, a busca permanece
 bloqueada, inclusive no handler de submit, preservando alvo, payload e chave para replay. Nova busca
-só descarta uma confirmação ainda não enviada ou uma tentativa já conclusiva.
+só descarta uma confirmação ainda não enviada ou uma tentativa já verificada pela leitura.
 
 ## 5. Acessos e taxonomias
 
@@ -265,6 +278,9 @@ Audit é append-only para operadores. Export controlado.
 - criação de taxonomia rejeita respostas válidas de outro conteúdo do mesmo grupo;
 - atualização de acesso aguarda a versão RSC verificada, com recuperação de leitura sem repetir
   a mutação (`SL-F031-E2E-030`);
+- criação/edição, arquivamento/reativação e suspensão/restauração confirmadas conservam os controles
+  bloqueados quando a leitura falha, recuperam a lista no mesmo recorte e não duplicam comando nem
+  auditoria (`SL-F031-E2E-031`, `SL-F031-E2E-032`, `SL-F031-E2E-033`);
 - correção regressiva do relógio preserva atividade/encerramento monotônicos sem violar constraints;
 - conflitos de conta, papel, taxonomia e revisão exigem novo read model e nova confirmação;
 - aprovação/rejeição concorrentes produzem uma única decisão; rejeição preserva publicação e cria a

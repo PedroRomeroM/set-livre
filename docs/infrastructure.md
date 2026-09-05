@@ -663,7 +663,10 @@ edição manual do banco como procedimento operacional.
 Cada invocação da Function reclama no máximo quatro itens sequenciais. A leitura do corpo de entrada
 tem teto de 256 bytes e 5s; cada remoção Storage tem 10s, e cada RPC tem 5s, incluindo consumo integral
 do corpo da resposta, limitado a 64 KiB. O retry de conclusão de item permanece limitado a uma segunda
-tentativa. Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
+tentativa. Desconexão cancela novas remoções, mas não cancela essas confirmações idempotentes de item:
+elas precisam reconciliar um commit cuja resposta se perdeu antes de derivar as contagens do run.
+Continuam sujeitas ao deadline de RPC e ao orçamento de trabalho; não há repetição da remoção física.
+Aos 90s desde a entrada da Function, nenhum trabalho adicional é iniciado; o fechamento do
 run tem deadline próprio de 5s dentro da janela reservada até 100s, inclusive se o chamador desconectar.
 Falhas de remoção/completion continuam contabilizadas e o resultado só é saudável depois da confirmação
 do ledger. Indisponibilidade ou resposta ambígua do próprio ledger permanece fail-closed e usa a

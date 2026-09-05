@@ -84,6 +84,89 @@ describe("studio creation recovery", () => {
     expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({ state: "empty" });
   });
 
+  it("retains the original pending command when confirmation exceeds quota and retries its persistence", () => {
+    const { storage } = memoryStorage();
+    const pending = { command, createdStudioId: null, version: 1 } as const;
+    const resolved = { ...pending, createdStudioId: studioTestIds.studioId };
+    expect(writeStudioCreationRecovery(storage, pending)).toBe(true);
+    const fullStorage: StudioCreationRecoveryStorage = {
+      ...storage,
+      setItem: () => {
+        throw new DOMException("full", "QuotaExceededError");
+      },
+    };
+
+    expect(writeStudioCreationRecovery(fullStorage, resolved)).toBe(false);
+    expect(readStudioCreationRecovery(fullStorage, studioTestIds.userId)).toEqual({
+      record: pending,
+      state: "found",
+    });
+    expect(
+      consumeResolvedStudioCreation(fullStorage, studioTestIds.userId, resolved.createdStudioId),
+    ).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: pending,
+      state: "found",
+    });
+
+    expect(writeStudioCreationRecovery(storage, resolved)).toBe(true);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: resolved,
+      state: "found",
+    });
+    const removalDeniedStorage: StudioCreationRecoveryStorage = {
+      ...storage,
+      removeItem: () => {
+        throw new DOMException("blocked", "SecurityError");
+      },
+    };
+    expect(
+      consumeResolvedStudioCreation(
+        removalDeniedStorage,
+        studioTestIds.userId,
+        resolved.createdStudioId,
+      ),
+    ).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: resolved,
+      state: "found",
+    });
+    expect(
+      consumeResolvedStudioCreation(storage, studioTestIds.userId, resolved.createdStudioId),
+    ).toBe(true);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({ state: "empty" });
+  });
+
+  it("isolates recovery by scope and refuses to consume a record copied from another owner", () => {
+    const { storage } = memoryStorage();
+    const resolved = { command, createdStudioId: studioTestIds.studioId, version: 1 } as const;
+    expect(writeStudioCreationRecovery(storage, resolved)).toBe(true);
+    expect(readStudioCreationRecovery(storage, studioTestIds.otherUserId)).toEqual({
+      state: "empty",
+    });
+    expect(
+      consumeResolvedStudioCreation(storage, studioTestIds.otherUserId, studioTestIds.studioId),
+    ).toBe(false);
+
+    storage.setItem(
+      `set-livre:studio-create:v1:${studioTestIds.otherUserId}`,
+      JSON.stringify(resolved),
+    );
+    expect(readStudioCreationRecovery(storage, studioTestIds.otherUserId)).toEqual({
+      state: "invalid",
+    });
+    expect(
+      consumeResolvedStudioCreation(storage, studioTestIds.otherUserId, studioTestIds.studioId),
+    ).toBe(false);
+    expect(
+      clearStudioCreationAttempt(storage, studioTestIds.otherUserId, command.idempotencyKey),
+    ).toBe(false);
+    expect(readStudioCreationRecovery(storage, studioTestIds.userId)).toEqual({
+      record: resolved,
+      state: "found",
+    });
+  });
+
   it("fails closed for malformed or unavailable storage", () => {
     const { entries, storage } = memoryStorage();
     writeStudioCreationRecovery(storage, { command, createdStudioId: null, version: 1 });

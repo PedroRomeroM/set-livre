@@ -250,6 +250,65 @@ describe("cleanup HTTP and ledger deadlines", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(["headers", "body"])(
+    "reconciles a committed item after disconnect loses its response %s",
+    async (stage) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const firstCompletion = Promise.withResolvers();
+      const outcomes = new Map();
+      let lostResponse = false;
+      const probe = harness(({ name, value, parameters }) => {
+        if (name === complete) {
+          const { p_media_id: mediaId, p_succeeded: succeeded } = parameters;
+          if (outcomes.has(mediaId)) expect(outcomes.get(mediaId)).toBe(succeeded);
+          outcomes.set(mediaId, succeeded);
+          if (!lostResponse) {
+            lostResponse = true;
+            controller.abort();
+            firstCompletion.resolve();
+            if (stage === "headers") throw new TypeError("Connection closed after commit");
+            return slowBody(null, null).response;
+          }
+        }
+        if (name === finish) {
+          const deleted = [...outcomes.values()].filter(Boolean).length;
+          if (parameters.p_deleted !== deleted || parameters.p_failed !== items.length - deleted) {
+            return Response.json(
+              { code: "40001", message: "Run membership mismatch" },
+              { status: 409 },
+            );
+          }
+        }
+        return Response.json(value);
+      });
+
+      const responsePromise = probe.handler(request({ signal: controller.signal }));
+      await firstCompletion.promise;
+      await vi.advanceTimersByTimeAsync(5_000);
+      const response = await responsePromise;
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        claimed: 4,
+        deleted: 1,
+        failed: 3,
+        errorCode: "cleanup_storage_remove_failed",
+      });
+      expect(probe.calls.filter(({ name }) => name === storage)).toHaveLength(1);
+      const completions = probe.calls.filter(({ name }) => name === complete);
+      expect(completions).toHaveLength(5);
+      expect(completions[1].parameters).toEqual(completions[0].parameters);
+      expect(completions.slice(1).every(({ signal }) => !signal.aborted)).toBe(true);
+      expect(outcomes.size).toBe(4);
+      expect(probe.calls.at(-1)).toMatchObject({
+        name: finish,
+        parameters: { p_status: "failed", p_deleted: 1, p_failed: 3 },
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it("bounds the input body before creating a ledger or issuing any request", async () => {
     vi.useFakeTimers();
     const input = slowBody(null, null);

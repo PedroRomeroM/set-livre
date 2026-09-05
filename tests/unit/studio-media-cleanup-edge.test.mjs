@@ -314,7 +314,7 @@ describe("studio media cleanup edge adapter", () => {
     }
   });
 
-  it("cancela trabalho da invocação sem cancelar o fechamento reservado do ledger", async () => {
+  it("cancela trabalho sem cancelar confirmação de item ou fechamento do ledger", async () => {
     const invocationController = new AbortController();
     const observedRequests = [];
     const fetchImplementation = vi.fn(async (input, init) => {
@@ -385,11 +385,11 @@ describe("studio media cleanup edge adapter", () => {
     const abortReason = new DOMException("cleanup_invocation_aborted", "AbortError");
     invocationController.abort(abortReason);
 
-    expect(observedRequests.slice(0, -1).every(({ signal }) => signal.aborted === true)).toBe(true);
-    expect(observedRequests.slice(0, -1).every(({ signal }) => signal.reason === abortReason)).toBe(
+    expect(observedRequests.slice(0, 3).every(({ signal }) => signal.aborted === true)).toBe(true);
+    expect(observedRequests.slice(0, 3).every(({ signal }) => signal.reason === abortReason)).toBe(
       true,
     );
-    expect(observedRequests.at(-1).signal.aborted).toBe(false);
+    expect(observedRequests.slice(-2).every(({ signal }) => signal.aborted === false)).toBe(true);
   });
 
   it.each([

@@ -111,6 +111,18 @@ describe("backoffice administrative feedback", () => {
     ).toBeUndefined();
   });
 
+  it.each([{ name: "Nome antigo" }, { slug: "slug-antigo" }, { sortOrder: 5 }, { active: true }])(
+    "does not verify an upsert with divergent content in the same version: %j",
+    (change) => {
+      expect(
+        taxonomyUpsertNoticeFromRetainedState(taxonomy, { ...taxonomy, ...change }),
+      ).toBeUndefined();
+      expect(
+        taxonomyUpsertNoticeFromRetainedState(taxonomy, { ...taxonomy, ...change, version: 3 }),
+      ).toContain("estado mais recente");
+    },
+  );
+
   it("announces the refreshed account after a delayed suspension response", () => {
     const retained = {
       ...user,

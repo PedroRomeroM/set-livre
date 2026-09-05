@@ -146,6 +146,48 @@ export async function unlockFeat031Backoffice(page: Page) {
   ).toBeVisible();
 }
 
+export async function failFeat031ReadsAfterConfirmedCommands(
+  page: Page,
+  readPath: "/api/taxonomies" | "/api/users",
+) {
+  let failReads = false;
+  const commands: unknown[] = [];
+  const results: unknown[] = [];
+  const reads: Array<{ body: unknown; method: string; search: string }> = [];
+  await page.route("**/api/commands", async (route) => {
+    const command = route.request().postDataJSON() as { action?: unknown } | null;
+    const prefix = readPath === "/api/taxonomies" ? "backoffice.taxonomy." : "backoffice.user.";
+    if (typeof command?.action !== "string" || !command.action.startsWith(prefix)) {
+      await route.continue();
+      return;
+    }
+    commands.push(command);
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    results.push(await response.json());
+    failReads = true;
+    await route.fulfill({ response });
+  });
+  await page.route(`**${readPath}`, async (route) => {
+    const request = route.request();
+    reads.push({
+      body: request.method() === "POST" ? request.postDataJSON() : null,
+      method: request.method(),
+      search: new URL(request.url()).search,
+    });
+    if (failReads) await route.abort("failed");
+    else await route.continue();
+  });
+  return {
+    commands,
+    results,
+    reads,
+    allowReads: () => {
+      failReads = false;
+    },
+  };
+}
+
 async function createFeat031DirectIdentityWithProfile(
   scenario: string,
   options: Readonly<{ owner: boolean; profileCompleted: boolean }>,

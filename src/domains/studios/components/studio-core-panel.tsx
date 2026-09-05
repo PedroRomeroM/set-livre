@@ -82,7 +82,7 @@ type StudioCoreConflict = Readonly<{
   remote: StudioEditor;
 }>;
 type StudioCreationRecoveryState =
-  | Readonly<{ problem: string; status: "blocked" }>
+  | Readonly<{ problem: string; status: "blocked"; studioId?: string }>
   | Readonly<{ status: "checking" | "ready" | "recovering" }>
   | Readonly<{ status: "resolved"; studioId: string }>;
 
@@ -485,6 +485,27 @@ function CreateStudioForm({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formState, setFormState] = useState<StudioCoreFormState>(emptyFormState);
 
+  function persistCreatedStudio(studioId: string) {
+    const command = pendingCommand.current;
+    if (command === undefined || command.expectedScope !== userId) return;
+    if (
+      !writeStudioCreationRecovery(resolveStudioCreationRecoveryStorage(window), {
+        command,
+        createdStudioId: studioId,
+        version: 1,
+      })
+    ) {
+      setCreationRecovery({
+        problem:
+          "Seu estúdio foi criado, mas não foi possível preservar a confirmação nesta aba. Tente concluir a recuperação antes de continuar.",
+        status: "blocked",
+        studioId,
+      });
+      return;
+    }
+    setCreationRecovery({ status: "resolved", studioId });
+  }
+
   function releaseConclusivelyRejectedCreation() {
     const command = pendingCommand.current;
     if (
@@ -540,15 +561,7 @@ function CreateStudioForm({
       });
     },
     onSuccess: (editor) => {
-      const command = pendingCommand.current;
-      if (command !== undefined) {
-        writeStudioCreationRecovery(resolveStudioCreationRecoveryStorage(window), {
-          command,
-          createdStudioId: editor.studioId,
-          version: 1,
-        });
-      }
-      setCreationRecovery({ status: "resolved", studioId: editor.studioId });
+      persistCreatedStudio(editor.studioId);
     },
   });
   const replayStudioCreation = mutation.mutate;
@@ -701,9 +714,17 @@ function CreateStudioForm({
   }
 
   if (creationRecovery.status === "blocked") {
+    const { problem, studioId } = creationRecovery;
     return (
       <Alert title="Criação protegida contra duplicação" variant="error">
-        {creationRecovery.problem}
+        <Stack space={3}>
+          <span>{problem}</span>
+          {studioId === undefined ? null : (
+            <Button onClick={() => persistCreatedStudio(studioId)} variant="secondary">
+              Tentar concluir recuperação
+            </Button>
+          )}
+        </Stack>
       </Alert>
     );
   }
@@ -1428,7 +1449,7 @@ export function StudioCorePanel(
     );
   }
   return props.mode === "create" ? (
-    <CreateStudioForm initialTypes={props.initialTypes} userId={props.userId} />
+    <CreateStudioForm key={props.userId} initialTypes={props.initialTypes} userId={props.userId} />
   ) : (
     <EditStudioForm
       discardRevision={props.discardRevision}

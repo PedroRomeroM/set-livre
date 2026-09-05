@@ -22,6 +22,7 @@ import {
   mutateFeat006DraftForConflict,
   publishFeat006Studio,
   provisionFeat006Owner,
+  readFeat006OwnedStudioCount,
   readFeat006StudioEvidence,
   saveFeat006StudioThroughUi,
   setFeat006ProfileStatus,
@@ -726,6 +727,149 @@ test("SL-F006-E2E-022 @p1 criação rejeita outra tentativa do mesmo dono e recu
   page,
 }, testInfo) => {
   await expectCreationResponseBoundary(page, testInfo, "022");
+});
+
+async function expectCreationStorageRecovery(
+  page: Page,
+  testInfo: TestInfo,
+  scenario: "023" | "024",
+) {
+  test.setTimeout(180_000);
+  const identity = createFeat006QaIdentity(testInfo, `${scenario}_creation_storage_quota`);
+  const submittedCommands: Array<z.infer<typeof studioCreateCommandSchema>> = [];
+  const failedConfirmations = scenario === "024" ? 2 : 1;
+  let committedStudioId: string | undefined;
+  try {
+    await provisionFeat006Owner(page, identity, scenario);
+    const userId = z.uuid().parse(identity.userId);
+    const storageKey = `set-livre:studio-create:v1:${userId}`;
+    const readRecovery = () =>
+      page.evaluate((key) => {
+        const serialized = window.sessionStorage.getItem(key);
+        return serialized === null ? null : (JSON.parse(serialized) as unknown);
+      }, storageKey);
+    page.on("request", (request) => {
+      if (request.method() !== "POST" || new URL(request.url()).pathname !== "/api/commands") {
+        return;
+      }
+      const command = studioCreateCommandSchema.safeParse(request.postDataJSON());
+      if (command.success) submittedCommands.push(command.data);
+    });
+    await fillFeat006Core(page);
+    await page.route(
+      "**/api/commands",
+      async (route) => {
+        const command = studioCreateCommandSchema.parse(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        const result = apiSuccessSchema(studioCommandResultSchema(studioEditorSchema)).parse(
+          await response.json(),
+        ).data;
+        expect(result.action).toBe(command.action);
+        expect(result.idempotencyKey).toBe(command.idempotencyKey);
+        expect(result.result.scope).toBe(userId);
+        committedStudioId ??= result.result.studioId;
+        expect(result.result.studioId).toBe(committedStudioId);
+        expect(await readRecovery()).toEqual({ command, createdStudioId: null, version: 1 });
+
+        // The pending command is durable and the real POST has committed before quota fails.
+        await page.evaluate((key) => {
+          const originalSetItem = Storage.prototype.setItem;
+          Storage.prototype.setItem = function (itemKey: string, value: string) {
+            if (this === window.sessionStorage && itemKey === key) {
+              throw new DOMException("QA storage quota exhausted", "QuotaExceededError");
+            }
+            originalSetItem.call(this, itemKey, value);
+          };
+          window.addEventListener(
+            "qa:restore-studio-creation-storage",
+            () => {
+              Storage.prototype.setItem = originalSetItem;
+            },
+            { once: true },
+          );
+        }, storageKey);
+        await route.fulfill({ response });
+      },
+      { times: failedConfirmations },
+    );
+
+    await page.getByRole("button", { name: "Criar estúdio em rascunho" }).click();
+    const blocked = page
+      .getByRole("alert")
+      .filter({ hasText: "Criação protegida contra duplicação" });
+    await expect(blocked).toBeVisible();
+    if (scenario === "024") {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(blocked).toBeVisible();
+    }
+    await expect(blocked).toContainText("Seu estúdio foi criado");
+    await expect(page.getByText("Estúdio salvo", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Criar estúdio em rascunho" })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveCount(0);
+    expect(submittedCommands).toHaveLength(failedConfirmations);
+    for (const command of submittedCommands) expect(command).toEqual(submittedCommands[0]);
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(1);
+
+    const retry = page.getByRole("button", { name: "Tentar concluir recuperação" });
+    await retry.click();
+    await expect(blocked).toBeVisible();
+    expect(await readRecovery()).toEqual({
+      command: submittedCommands[0],
+      createdStudioId: null,
+      version: 1,
+    });
+    expect(submittedCommands).toHaveLength(failedConfirmations);
+
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("qa:restore-studio-creation-storage")),
+    );
+    await retry.click();
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    await expect(blocked).toHaveCount(0);
+    expect(await readRecovery()).toEqual({
+      command: submittedCommands[0],
+      createdStudioId: committedStudioId,
+      version: 1,
+    });
+    expect(submittedCommands).toHaveLength(failedConfirmations);
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: "Abrir editor criado" })).toBeVisible();
+    expect(submittedCommands).toHaveLength(failedConfirmations);
+    await page.getByRole("button", { name: "Abrir editor criado" }).click();
+    await expect(page).toHaveURL(new RegExp(`/dono/estudios/${committedStudioId}/dados$`, "u"));
+    await expect(page.getByRole("navigation", { name: "Edição do estúdio" })).toBeVisible();
+    await expect.poll(readRecovery).toBeNull();
+
+    await page.goto("/dono/estudios/novo");
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
+    await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toHaveValue("");
+    await fillFeat006Core(page, { name: "Novo estúdio QA independente após recuperação" });
+    const independentEditor = await createFeat006StudioThroughUi(page);
+    expect(independentEditor.studioId).not.toBe(committedStudioId);
+    expect(independentEditor.revision.name).toBe("Novo estúdio QA independente após recuperação");
+    expect(submittedCommands).toHaveLength(failedConfirmations + 1);
+    expect(submittedCommands.at(-1)?.idempotencyKey).not.toBe(submittedCommands[0]?.idempotencyKey);
+    expect(await readFeat006OwnedStudioCount(userId)).toBe(2);
+    await expect.poll(readRecovery).toBeNull();
+  } finally {
+    await closeFeat006PageBeforeCleanup(page);
+    await cleanupFeat006QaIdentity(identity);
+  }
+}
+
+test("SL-F006-E2E-023 @p0 quota após POST bloqueia confirmação e recupera sem reenviar criação", async ({
+  page,
+}, testInfo) => {
+  await expectCreationStorageRecovery(page, testInfo, "023");
+});
+
+test("SL-F006-E2E-024 @p0 reload durante falha de quota reconcilia o comando original sem duplicar", async ({
+  page,
+}, testInfo) => {
+  await expectCreationStorageRecovery(page, testInfo, "024");
 });
 
 test("SL-F006-E2E-021 @p1 descarte rejeita escopo e estúdio divergentes antes de remover painéis", async ({

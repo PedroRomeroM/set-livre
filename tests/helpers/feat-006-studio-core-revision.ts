@@ -383,6 +383,20 @@ export async function setFeat006StudioTypeActive(studioTypeId: string, active: b
   });
 }
 
+export async function readFeat006OwnedStudioCount(userId: string) {
+  const parsedUserId = z.uuid().parse(userId);
+  return withFeat006AdminPool(async (pool) => {
+    const result = await pool.query(
+      `select count(*)::integer as studio_count
+         from public.studios
+        where owner_user_id = $1::uuid`,
+      [parsedUserId],
+    );
+    return z.strictObject({ studio_count: z.number().int().nonnegative() }).parse(result.rows[0])
+      .studio_count;
+  });
+}
+
 export async function readFeat006StudioEvidence(studioId: string) {
   return withFeat006AdminPool(async (pool) => {
     const result = await pool.query(
