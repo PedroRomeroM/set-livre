@@ -93,6 +93,9 @@ O cenário P0 exige a requisição de documento e o resultado autoritativo nos t
 Os cenários `SL-F002-E2E-002/003`, `SL-F003-E2E-009` e `SL-F004-E2E-001/002` exercitam
 leitura offline, erro recuperável, nova tentativa real e reconexão sem expor a composição privada.
 Sessão e perfil também provam reconexão com cache ainda fresco, sem adiantar os deadlines de rede.
+No logout ambíguo de `SL-F003-E2E-009`, a interceptação da resposta permanece instalada até o descarte
+da página, sem remoção automática concorrente com a navegação. A contagem exige exatamente um POST,
+e a prova final continua exigindo navegação real, sessão autoritativa e ausência de reenvio na reconexão.
 
 ## Segurança do E2E
 
