@@ -414,36 +414,84 @@ describe("production media cleanup configuration", () => {
     });
   });
 
-  it("sends a modern secret to Storage only in apikey and proves absence by NoSuchKey", async () => {
-    const fetchImplementation = vi.fn(async () =>
-      Response.json(
-        { code: "NoSuchKey", error: "not_found", message: "Object not found", statusCode: "404" },
-        { status: 404 },
-      ),
-    );
-    const storage = createProductionStorageClient({ fetchImplementation, secretKey });
+  it.each([404, 400])(
+    "sends a modern secret only in apikey and confirms the SDK NoSuchKey envelope over HTTP %s",
+    async (status) => {
+      // Legacy envelope: supabase/storage@c015666ee13ee29faab50cf76ac513d73bdb6bfc,
+      // src/http/error-handler.test.ts; HTTP status and body statusCode are distinct.
+      const fetchImplementation = vi.fn(async () =>
+        Response.json(
+          { code: "NoSuchKey", error: "not_found", message: "Object not found", statusCode: "404" },
+          { status },
+        ),
+      );
+      const storage = createProductionStorageClient({ fetchImplementation, secretKey });
 
-    await storage.from("studio-media").download("owners/probe.webp");
+      const { data, error } = await storage.from("studio-media").download("owners/probe.webp");
 
-    expect(fetchImplementation).toHaveBeenCalledOnce();
-    const [input, init] = fetchImplementation.mock.calls[0];
-    const headers = new Headers(
-      init?.headers ?? (input instanceof Request ? input.headers : undefined),
-    );
-    expect(headers.get("apikey")).toBe(secretKey);
-    expect(headers.has("authorization")).toBe(false);
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(init.signal.aborted).toBe(false);
+      expect(fetchImplementation).toHaveBeenCalledOnce();
+      const [input, init] = fetchImplementation.mock.calls[0];
+      expect(input).toBe(`${supabaseUrl}/storage/v1/object/studio-media/owners/probe.webp`);
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
+      expect(headers.get("apikey")).toBe(secretKey);
+      expect(headers.has("authorization")).toBe(false);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal.aborted).toBe(false);
+      expect(data).toBeNull();
+      expect(error).toBeInstanceOf(StorageApiError);
+      expect(error).toMatchObject({ code: "NoSuchKey", status, statusCode: "404" });
+      expect(isConfirmedStorageObjectAbsence(error)).toBe(true);
+    },
+  );
 
-    expect(
-      isConfirmedStorageObjectAbsence(
-        new StorageApiError("Object not found", 404, "404", "storage", "NoSuchKey"),
-      ),
-    ).toBe(true);
+  it("rejects ambiguous, unauthorized and malformed absence envelopes through the SDK", async () => {
+    const rejectedEnvelopes = [
+      [400, { code: "InvalidRequest", statusCode: "400" }],
+      [400, { error: "not_found", statusCode: "404" }],
+      [404, { error: "not_found", statusCode: "404" }],
+      [400, { code: "NoSuchBucket", statusCode: "404" }],
+      [404, { code: "NoSuchBucket", statusCode: "404" }],
+      [400, { code: "AccessDenied", statusCode: "404" }],
+      [404, { code: "AccessDenied", statusCode: "404" }],
+      [401, { code: "InvalidJWT", statusCode: "401" }],
+      [403, { code: "AccessDenied", statusCode: "403" }],
+      [401, { code: "NoSuchKey", statusCode: "404" }],
+      [403, { code: "NoSuchKey", statusCode: "404" }],
+      [400, { code: "NoSuchKey", statusCode: "400" }],
+      [400, { code: "NoSuchKey", statusCode: 404 }],
+      [400, { code: "NoSuchKey", statusCode: null }],
+      [400, { code: "NoSuchKey" }],
+      [400, { code: ["NoSuchKey"], statusCode: "404" }],
+      [400, null],
+      [404, null],
+    ];
+    for (const [status, body] of rejectedEnvelopes) {
+      const fetchImplementation = vi.fn(async () => Response.json(body, { status }));
+      const storage = createProductionStorageClient({ fetchImplementation, secretKey });
+      const { data, error } = await storage.from("studio-media").download("owners/probe.webp");
+
+      expect(data).toBeNull();
+      expect(error).toBeInstanceOf(StorageApiError);
+      expect(isConfirmedStorageObjectAbsence(error), JSON.stringify({ status, body })).toBe(false);
+    }
+    for (const status of [400, 404]) {
+      const fetchImplementation = vi.fn(async () => new Response("not JSON", { status }));
+      const storage = createProductionStorageClient({ fetchImplementation, secretKey });
+      const { error } = await storage.from("studio-media").download("owners/probe.webp");
+
+      expect(error).toBeInstanceOf(StorageApiError);
+      expect(isConfirmedStorageObjectAbsence(error)).toBe(false);
+    }
+  });
+
+  it("requires a StorageApiError instance to confirm absence", () => {
     for (const error of [
-      new StorageApiError("Invalid", 400, "400", "storage", "InvalidRequest"),
-      new StorageApiError("Denied", 404, "404", "storage", "AccessDenied"),
       { code: "NoSuchKey", status: 404 },
+      { code: "NoSuchKey", status: 400, statusCode: "404" },
+      null,
+      undefined,
     ]) {
       expect(isConfirmedStorageObjectAbsence(error)).toBe(false);
     }
@@ -507,6 +555,7 @@ describe("production media cleanup configuration", () => {
             },
           },
         });
+        expect(isConfirmedStorageObjectAbsence((await outcome).error)).toBe(false);
         expect(observedSignal.aborted).toBe(true);
         expect(vi.getTimerCount()).toBe(0);
       } finally {

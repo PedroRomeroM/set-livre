@@ -2,11 +2,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
-import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { parseEnv } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "pg";
 import { createClient } from "@supabase/supabase-js";
@@ -654,7 +655,28 @@ function mapWindowsArgumentToWsl(value) {
   return assignment === null ? value : `${assignment[1]}${windowsPathToWslPath(assignment[2])}`;
 }
 
-function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot) {
+// The guest owns the CLI process: closing the parent's stdin also works when the
+// Windows launcher dies, unlike sending a signal only to wsl.exe.
+const supabaseStdinRelay = `
+exec 3<&0
+"$@" </dev/null &
+cli_pid=$!
+cat <&3 >/dev/null &
+input_pid=$!
+cleanup() {
+  trap - EXIT
+  kill -TERM "$cli_pid" "$input_pid" 2>/dev/null || true
+  wait "$cli_pid" 2>/dev/null || true
+  wait "$input_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+wait -n "$cli_pid" "$input_pid"
+`;
+
+function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot, stdinRelay = false) {
   return [
     "--distribution",
     windowsDockerDistribution,
@@ -666,6 +688,7 @@ function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot) {
     "/usr/bin/env",
     "-i",
     ...windowsWslEnvironment,
+    ...(stdinRelay ? ["/bin/bash", "-c", supabaseStdinRelay, "set-livre-edge-relay"] : []),
     windowsSupabaseCliPath,
     ...argumentsList.map(mapWindowsArgumentToWsl),
   ];
@@ -775,15 +798,15 @@ export function assertLocalDockerDaemon(environment = process.env, platform = pr
   return localEnvironment;
 }
 
-export function runSupabase(
+export function resolveSupabaseLaunch(
   argumentsList,
   {
-    capture = false,
     execute = spawnSync,
     network = false,
     platform = process.platform,
     resolveLocalDockerEnvironment = assertLocalDockerDaemon,
     root = repositoryRoot,
+    stdinRelay = false,
   } = {},
 ) {
   const localDockerEnvironment = resolveLocalDockerEnvironment();
@@ -812,16 +835,35 @@ export function runSupabase(
         `A distro ${windowsDockerDistribution} precisa da Supabase CLI ${supabasePackage.version}.`,
       );
     }
-    executableArguments = windowsWslSupabaseArguments(commandArguments, root);
+    executableArguments = windowsWslSupabaseArguments(commandArguments, root, stdinRelay);
+  } else if (stdinRelay) {
+    executableArguments = [
+      "-c",
+      supabaseStdinRelay,
+      "set-livre-edge-relay",
+      executable,
+      ...executableArguments,
+    ];
+    executable = "/bin/bash";
   }
 
-  const result = execute(executable, executableArguments, {
-    cwd: root,
+  return {
+    command: executable,
+    argumentsList: executableArguments,
+    options: { cwd: root, env: invocationEnvironment, windowsHide: platform === "win32" },
+  };
+}
+
+export function runSupabase(
+  argumentsList,
+  { capture = false, execute = spawnSync, ...options } = {},
+) {
+  const launch = resolveSupabaseLaunch(argumentsList, { ...options, execute });
+  const result = execute(launch.command, launch.argumentsList, {
+    ...launch.options,
     encoding: "utf8",
-    env: invocationEnvironment,
     maxBuffer: 128 * 1024 * 1024,
     stdio: ["ignore", capture ? "pipe" : "inherit", "pipe"],
-    windowsHide: platform === "win32",
   });
   if (result.error !== undefined || result.status !== 0) {
     const status = result.status === null ? "sem código" : `código ${result.status}`;
@@ -832,6 +874,246 @@ export function runSupabase(
     );
   }
   return result.stdout ?? "";
+}
+
+function observeCleanupProcess(child) {
+  const observed = { child, output: "", result: undefined, closed: undefined };
+  child.stdin?.on("error", () => {
+    observed.output += "\nO canal de encerramento do CLI falhou.";
+  });
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.on("data", (chunk) => {
+      observed.output = (observed.output + chunk.toString()).slice(-16_384);
+    });
+  }
+  observed.closed = new Promise((resolvePromise) => {
+    child.once("error", () => {
+      observed.result = { code: null };
+      resolvePromise(observed.result);
+    });
+    child.once("close", (code) => {
+      observed.result = { code };
+      resolvePromise(observed.result);
+    });
+  });
+  return observed;
+}
+
+async function waitForCleanupProcess(observed, timeoutMs) {
+  const deadline = new AbortController();
+  try {
+    return await Promise.race([
+      observed.closed,
+      delay(timeoutMs, undefined, { signal: deadline.signal }).then(() => {
+        throw new Error("O processo da integração Edge não terminou no prazo.");
+      }),
+    ]);
+  } finally {
+    deadline.abort();
+  }
+}
+
+export async function runLocalCleanupIntegration(
+  values,
+  {
+    execute = spawnSync,
+    fetchImplementation = fetch,
+    platform = process.platform,
+    resolveLocalDockerEnvironment = assertLocalDockerDaemon,
+    root = repositoryRoot,
+    startProcess = spawn,
+    startupTimeoutMs = 120_000,
+    shutdownTimeoutMs = 30_000,
+  } = {},
+) {
+  parseSupabaseStatus(JSON.stringify(values));
+  if (
+    values.API_URL !== "http://127.0.0.1:54321" ||
+    new URL(values.DB_URL).hash !== "" ||
+    typeof values.SECRET_KEY !== "string" ||
+    values.SECRET_KEY.length > 8_192 ||
+    !/^sb_secret_[A-Za-z0-9_-]{12,}$/u.test(values.SECRET_KEY)
+  ) {
+    throw new Error("A integração Edge exige SECRET_KEY moderna no status local.");
+  }
+  const environment = resolveLocalDockerEnvironment();
+  const runtimeInventory = () => {
+    const result = execute(
+      "docker",
+      [
+        "container",
+        "ls",
+        "--all",
+        "--filter",
+        "name=^/supabase_edge_runtime_set-livre$",
+        "--format",
+        "{{.ID}}",
+      ],
+      { cwd: root, env: environment, encoding: "utf8", windowsHide: true, timeout: 10_000 },
+    );
+    if (result.error !== undefined || result.status !== 0) {
+      throw new Error("Não foi possível comprovar o inventário do Edge runtime local.");
+    }
+    return (result.stdout ?? "").trim();
+  };
+  if (runtimeInventory() !== "") {
+    throw new Error("A integração não substitui um Edge runtime preexistente.");
+  }
+  const launch = resolveSupabaseLaunch(["functions", "serve", "--no-verify-jwt"], {
+    execute,
+    network: true,
+    platform,
+    resolveLocalDockerEnvironment: () => environment,
+    root,
+    stdinRelay: true,
+  });
+  const functionsDirectory = resolve(root, "supabase/functions");
+  const sourceDirectory = resolve(functionsDirectory, "media-cleanup");
+  const slug = `media-cleanup-${randomBytes(20).toString("hex")}`;
+  const candidateDirectory = resolve(functionsDirectory, slug);
+  const sourceFiles = ["index.ts", "cleanup-core.ts", "deno.json", "deno.lock"];
+  for (const path of [functionsDirectory, sourceDirectory]) {
+    if (!lstatSync(path).isDirectory())
+      throw new Error("A fonte Edge local não é um diretório canônico.");
+  }
+  for (const file of sourceFiles) {
+    if (!lstatSync(resolve(sourceDirectory, file)).isFile()) {
+      throw new Error("A fonte Edge local não contém os quatro arquivos canônicos regulares.");
+    }
+  }
+
+  let candidateCreated = false;
+  let server;
+  let tester;
+  let interrupted = false;
+  const failures = [];
+  const interrupt = () => {
+    interrupted = true;
+    server?.child.stdin.end();
+    tester?.child.kill("SIGTERM");
+  };
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  try {
+    await mkdir(candidateDirectory);
+    candidateCreated = true;
+    for (const file of sourceFiles) {
+      await copyFile(resolve(sourceDirectory, file), resolve(candidateDirectory, file));
+    }
+    if (interrupted) throw new Error("A integração Edge foi interrompida.");
+    server = observeCleanupProcess(
+      startProcess(launch.command, launch.argumentsList, {
+        ...launch.options,
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    );
+    const readyDeadline = Date.now() + startupTimeoutMs;
+    let ready = false;
+    while (Date.now() < readyDeadline && !interrupted) {
+      if (server.result !== undefined) throw new Error("O Edge CLI terminou antes da readiness.");
+      try {
+        // Invalid body exercises environment/auth/routing without creating a SQL run.
+        const response = await fetchImplementation(`${values.API_URL}/functions/v1/${slug}`, {
+          method: "POST",
+          body: "{}",
+          headers: { apikey: values.SECRET_KEY, "content-type": "application/json" },
+          signal: AbortSignal.timeout(Math.max(1, Math.min(5_000, readyDeadline - Date.now()))),
+        });
+        const body = await response.json();
+        if (response.status === 400 && body?.errorCode === "invalid_request") {
+          ready = true;
+          break;
+        }
+      } catch {
+        // Gateway/container initialization is polled only within the startup budget.
+      }
+      await delay(250);
+    }
+    if (!ready || interrupted)
+      throw new Error("O Edge gateway não ficou pronto no prazo ou foi interrompido.");
+    tester = observeCleanupProcess(
+      startProcess(
+        process.execPath,
+        [
+          resolve(root, "node_modules/vitest/vitest.mjs"),
+          "run",
+          "tests/unit/studio-media-cleanup-edge.test.mjs",
+          "-t",
+          "studio media cleanup local integration",
+        ],
+        {
+          cwd: root,
+          env: {
+            ...environment,
+            SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_DATABASE_URL: values.DB_URL,
+            SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SECRET_KEY: values.SECRET_KEY,
+            SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SLUG: slug,
+            SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SUPABASE_URL: values.API_URL,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        },
+      ),
+    );
+    const result = await waitForCleanupProcess(tester, 120_000);
+    if (result.code !== 0 || interrupted) throw new Error("A integração real Edge/Storage falhou.");
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    try {
+      if (tester !== undefined && tester.result === undefined) {
+        tester.child.kill("SIGTERM");
+        await waitForCleanupProcess(tester, shutdownTimeoutMs);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      if (server !== undefined) {
+        server.child.stdin.end();
+        const result = await waitForCleanupProcess(server, shutdownTimeoutMs);
+        if (result.code !== 0) throw new Error("O relay Edge não encerrou normalmente.");
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      if (server !== undefined && server.result === undefined) {
+        throw new Error("O relay Edge permaneceu ativo; candidata preservada.");
+      }
+      if (runtimeInventory() !== "")
+        throw new Error("O Edge runtime permaneceu ativo; candidata preservada.");
+      if (candidateCreated) {
+        if (!lstatSync(candidateDirectory).isDirectory())
+          throw new Error("A candidata Edge mudou de identidade.");
+        await rm(candidateDirectory, { recursive: true });
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  }
+  const secrets = [
+    values.SECRET_KEY,
+    values.ANON_KEY,
+    values.SERVICE_ROLE_KEY,
+    new URL(values.DB_URL).password,
+    decodeURIComponent(new URL(values.DB_URL).password),
+  ];
+  if (failures.length > 0) {
+    const diagnostic = redactDiagnostic(
+      `${server?.output ?? ""}\n${tester?.output ?? ""}`,
+      secrets,
+    );
+    throw new AggregateError(
+      failures,
+      `A integração Edge local não foi comprovada.\n${diagnostic}`,
+    );
+  }
+  process.stdout.write(
+    `${redactDiagnostic(tester.output, secrets)}\nIntegração Edge/Storage local comprovada.\n`,
+  );
 }
 
 const pgProveImage = "public.ecr.aws/supabase/pg_prove:3.36";
@@ -1341,7 +1623,7 @@ export async function runLocalMediaCleanup(
     readConfiguration: () => ({ secretKey: values.SERVICE_ROLE_KEY, url: values.API_URL }),
   });
   const response = await handler(
-    new Request(`${values.API_URL}/functions/v1/${functionSlug}`, {
+    new Request(`${values.API_URL}/${functionSlug}`, {
       body: JSON.stringify({ runId }),
       headers: {
         apikey: values.SERVICE_ROLE_KEY,
@@ -1570,7 +1852,9 @@ export async function main(command = "reset") {
   }
 
   const values = localStatus();
-  if (command === "cleanup") {
+  if (command === "test-cleanup") {
+    await runLocalCleanupIntegration(values);
+  } else if (command === "cleanup") {
     await runLocalMediaCleanup(values);
     process.stdout.write("Cleanup local concluído em estado terminal saudável.\n");
   } else if (command === "generate-schema") {

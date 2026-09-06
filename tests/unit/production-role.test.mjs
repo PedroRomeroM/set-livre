@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { databaseMigrationHead } from "../../packages/contracts/src/database-contract.ts";
 import {
   assertProductionDeploymentContract,
   assertSupabasePublishableKey,
@@ -65,6 +66,8 @@ function productionPreflightAdminQuery({
     managedBoundariesReady: true,
     ready: true,
   },
+  currentBoundaryError,
+  observedMigrationHead = currentBoundary.currentMigrationHead,
   memberships = [expectedRuntimeMembership],
   migrationCount = 0,
   migrationTable = null,
@@ -99,7 +102,14 @@ function productionPreflightAdminQuery({
     if (sql.includes("where granted.rolname = 'app_runtime_production'")) {
       return { rowCount: runtimeMembers.length, rows: runtimeMembers };
     }
-    if (sql.includes("with current_head as")) {
+    if (sql.includes('pg_catalog.max(migration.version)::text as "currentMigrationHead"')) {
+      return { rowCount: 1, rows: [{ currentMigrationHead: observedMigrationHead }] };
+    }
+    if (
+      sql.includes("private.check_deployment_structure(current_head.version)") ||
+      sql.includes("private.check_readiness(current_head.version)")
+    ) {
+      if (currentBoundaryError !== undefined) throw currentBoundaryError;
       return { rowCount: 1, rows: [currentBoundary] };
     }
     throw new Error("consulta administrativa inesperada no preflight de teste");
@@ -107,6 +117,7 @@ function productionPreflightAdminQuery({
 }
 
 function productionProvisioningAdminQuery({
+  databaseReadiness = { migrationHeadIsCurrent: true, ready: true },
   roles = [restrictedAppDalRole, initialRuntimeRole],
 } = {}) {
   return vi.fn(async (statement) => {
@@ -124,7 +135,7 @@ function productionProvisioningAdminQuery({
       return { rowCount: 1, rows: [{ ready: true }] };
     }
     if (sql.includes("private.check_readiness($1::text) as ready")) {
-      return { rowCount: 1, rows: [{ migrationHeadIsCurrent: true, ready: true }] };
+      return { rowCount: 1, rows: [databaseReadiness] };
     }
     if (sql.includes("pg_catalog.format('alter role app_runtime_production login password")) {
       return {
@@ -421,70 +432,162 @@ describe("production role provisioning", () => {
     expect(query).toHaveBeenCalledTimes(3);
   });
 
-  it("validates the deployed DAL boundary while the runtime role is still NOLOGIN", async () => {
+  it.each([
+    ["20260905190840", "check_readiness", "check_deployment_structure"],
+    ["20260906051637", "check_deployment_structure", "check_readiness"],
+    ["20260907000000", "check_deployment_structure", "check_readiness"],
+  ])(
+    "selects the deployed readiness contract for head %s as admin",
+    async (head, expectedFunction, forbiddenFunction) => {
+      const connections = productionRoleConnections({
+        PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+        SUPABASE_DB_PASSWORD: "admin-secret",
+        SUPABASE_PROJECT_REF: projectRef,
+      });
+      const query = productionPreflightAdminQuery({
+        currentBoundary: { currentMigrationHead: head, managedBoundariesReady: true, ready: true },
+        roles: [restrictedAppDalRole, initialRuntimeRole],
+      });
+      const createClient = vi.fn(() => ({
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query,
+      }));
+
+      await expect(
+        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+      ).resolves.toBeUndefined();
+      expect(createClient).toHaveBeenCalledOnce();
+      expect(createClient).toHaveBeenCalledWith(connections.admin);
+      expect(query).toHaveBeenCalledWith(expect.stringContaining("with current_head as"));
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining(`private.${expectedFunction}(current_head.version)`),
+      );
+      expect(query.mock.calls.flat().join(" ")).not.toContain(`private.${forbiddenFunction}(`);
+      const statements = query.mock.calls.map(([statement]) => String(statement));
+      const headRead = statements.findIndex((sql) =>
+        sql.includes('pg_catalog.max(migration.version)::text as "currentMigrationHead"'),
+      );
+      expect(headRead).toBeGreaterThan(-1);
+      expect(headRead).toBeLessThan(
+        statements.findIndex((sql) => sql.includes("with current_head as")),
+      );
+    },
+  );
+
+  it("rejects a head change between contract selection and boundary verification", async () => {
     const connections = productionRoleConnections({
       PRD_DATABASE_URL_APP_DAL: runtimeUrl,
       SUPABASE_DB_PASSWORD: "admin-secret",
       SUPABASE_PROJECT_REF: projectRef,
     });
-    const query = productionPreflightAdminQuery({
-      roles: [restrictedAppDalRole, initialRuntimeRole],
-    });
-    const createClient = vi.fn(() => ({
+    const admin = {
       connect: vi.fn(async () => undefined),
       end: vi.fn(async () => undefined),
-      query,
-    }));
-
+      query: productionPreflightAdminQuery({
+        observedMigrationHead: "20260905190840",
+        currentBoundary: {
+          currentMigrationHead: "20260906051637",
+          managedBoundariesReady: true,
+          ready: true,
+        },
+      }),
+    };
+    const createClient = vi.fn(() => admin);
     await expect(
       verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
-    ).resolves.toBeUndefined();
+    ).rejects.toMatchObject({
+      cause: expect.objectContaining({
+        message: "A fronteira DAL implantada diverge do seu migration head atual.",
+      }),
+    });
     expect(createClient).toHaveBeenCalledOnce();
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("with current_head as"));
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("private.check_readiness(current_head.version)"),
-    );
+    expect(admin.end).toHaveBeenCalledOnce();
   });
 
-  it("rejects a stale credential for an already active runtime before migrations", async () => {
-    const connections = productionRoleConnections({
-      PRD_DATABASE_URL_APP_DAL: runtimeUrl,
-      SUPABASE_DB_PASSWORD: "admin-secret",
-      SUPABASE_PROJECT_REF: projectRef,
-    });
-    const clients = [];
-    const createClient = vi.fn(() => {
-      const clientIndex = clients.length;
-      const client = {
-        connect: vi.fn(async () => {
-          if (clientIndex === 1) throw new Error("password authentication failed");
-        }),
+  it.each(["42883", "42501", "XX000", "08006"])(
+    "propagates deployment structure failure %s without fallback or runtime access",
+    async (code) => {
+      const connections = productionRoleConnections({
+        PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+        SUPABASE_DB_PASSWORD: "admin-secret",
+        SUPABASE_PROJECT_REF: projectRef,
+      });
+      const failure = Object.assign(new Error("deployment structure check failed"), { code });
+      const admin = {
+        connect: vi.fn(async () => undefined),
         end: vi.fn(async () => undefined),
-        query:
-          clientIndex === 0
-            ? productionPreflightAdminQuery()
-            : vi.fn(async () => ({
-                rowCount: 1,
-                rows: [
-                  {
-                    currentRole: "app_dal",
-                    ready: true,
-                    sessionRole: "app_runtime_production",
-                  },
-                ],
-              })),
+        query: productionPreflightAdminQuery({
+          currentBoundaryError: failure,
+          currentBoundary: {
+            currentMigrationHead: "20260907000000",
+            managedBoundariesReady: true,
+            ready: true,
+          },
+        }),
       };
-      clients.push(client);
-      return client;
-    });
+      const createClient = vi.fn(() => admin);
+      await expect(
+        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+      ).rejects.toMatchObject({
+        message: "Não foi possível validar a role de produção antes das migrations.",
+        cause: failure,
+      });
+      expect(createClient).toHaveBeenCalledOnce();
+      expect(createClient).toHaveBeenCalledWith(connections.admin);
+      expect(admin.end).toHaveBeenCalledOnce();
+      expect(admin.query.mock.calls.flat().join(" ")).not.toContain("private.check_readiness(");
+    },
+  );
 
-    await expect(
-      verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
-    ).rejects.toThrow("credencial runtime ativa não autenticou antes das migrations");
-    expect(clients).toHaveLength(2);
-    expect(clients[0].end).toHaveBeenCalledOnce();
-    expect(clients[1].end).toHaveBeenCalledOnce();
-  });
+  it.each(["20260905190840", "20260906051637", "20260907000000"])(
+    "rejects a stale active runtime credential before migrations at head %s",
+    async (head) => {
+      const connections = productionRoleConnections({
+        PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+        SUPABASE_DB_PASSWORD: "admin-secret",
+        SUPABASE_PROJECT_REF: projectRef,
+      });
+      const clients = [];
+      const createClient = vi.fn(() => {
+        const clientIndex = clients.length;
+        const client = {
+          connect: vi.fn(async () => {
+            if (clientIndex === 1) throw new Error("password authentication failed");
+          }),
+          end: vi.fn(async () => undefined),
+          query:
+            clientIndex === 0
+              ? productionPreflightAdminQuery({
+                  currentBoundary: {
+                    currentMigrationHead: head,
+                    managedBoundariesReady: true,
+                    ready: true,
+                  },
+                })
+              : vi.fn(async () => ({
+                  rowCount: 1,
+                  rows: [
+                    {
+                      currentRole: "app_dal",
+                      ready: true,
+                      sessionRole: "app_runtime_production",
+                    },
+                  ],
+                })),
+        };
+        clients.push(client);
+        return client;
+      });
+
+      await expect(
+        verifyProductionRuntimeCredentialBeforeMigrations(connections, { createClient }),
+      ).rejects.toThrow("credencial runtime ativa não autenticou antes das migrations");
+      expect(clients).toHaveLength(2);
+      expect(clients[0].end).toHaveBeenCalledOnce();
+      expect(clients[1].end).toHaveBeenCalledOnce();
+    },
+  );
 
   it("rejects an active credential that cannot prove the exact restricted runtime", async () => {
     const connections = productionRoleConnections({
@@ -807,6 +910,44 @@ describe("production role provisioning", () => {
       productionRoleActivationMode({ ...initialRuntimeRole, connectionLimit: 20 }),
     ).toThrow("atributos restritos");
   });
+
+  it.each([
+    { migrationHeadIsCurrent: true, ready: false },
+    { migrationHeadIsCurrent: false, ready: true },
+  ])(
+    "requires full readiness and the exact compiled head before activation (%#)",
+    async (databaseReadiness) => {
+      const adminQuery = productionProvisioningAdminQuery({ databaseReadiness });
+      const admin = {
+        connect: vi.fn(async () => undefined),
+        end: vi.fn(async () => undefined),
+        query: adminQuery,
+      };
+      const createClient = vi.fn(() => admin);
+      await expect(
+        provisionProductionRole(
+          {
+            ...fixedCoordinates,
+            PRD_DATABASE_URL_APP_DAL: runtimeUrl,
+            SUPABASE_DB_PASSWORD: "admin-secret",
+            SUPABASE_PROJECT_REF: projectRef,
+          },
+          { createClient },
+        ),
+      ).rejects.toThrow("migration head de produção ou a fronteira DAL");
+      expect(adminQuery).toHaveBeenCalledWith(
+        expect.stringContaining("private.check_readiness($1::text) as ready"),
+        [databaseMigrationHead],
+      );
+      expect(adminQuery).toHaveBeenCalledWith("rollback");
+      expect(adminQuery).not.toHaveBeenCalledWith("commit");
+      expect(adminQuery.mock.calls.flat().join(" ")).not.toContain(
+        "alter role app_runtime_production login",
+      );
+      expect(createClient).toHaveBeenCalledOnce();
+      expect(admin.end).toHaveBeenCalledOnce();
+    },
+  );
 
   it("commits the initial password before validating the runtime", async () => {
     const adminQuery = productionProvisioningAdminQuery();

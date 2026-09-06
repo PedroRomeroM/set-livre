@@ -1,9 +1,11 @@
 import { X509Certificate } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   normalizeSchemaSnapshot,
@@ -23,6 +25,8 @@ import {
   parseSupabaseCliError,
   parseSupabaseStatus,
   reconcileSupabaseNetworkAfterReset,
+  resolveSupabaseLaunch,
+  runLocalCleanupIntegration,
   runLocalMediaCleanup,
   runNextBuildWithCacheCleanup,
   runSupabase,
@@ -78,6 +82,202 @@ describe("local tooling contracts", () => {
     SUPABASE_SECRET_KEY: localServiceRoleKey,
   };
 
+  function cleanupLauncherFixture({
+    existingRuntime = false,
+    startupFailure = false,
+    testExit = 0,
+    residualRuntime = false,
+  } = {}) {
+    const root = mkdtempSync(resolve(tmpdir(), "set-livre-edge-launcher-"));
+    const functions = resolve(root, "supabase/functions");
+    const source = resolve(functions, "media-cleanup");
+    mkdirSync(source, { recursive: true });
+    for (const file of ["index.ts", "cleanup-core.ts", "deno.json", "deno.lock"]) {
+      writeFileSync(resolve(source, file), `canonical ${file}`);
+    }
+    const values = {
+      ANON_KEY: localAnonKey,
+      SERVICE_ROLE_KEY: localServiceRoleKey,
+      SECRET_KEY: "sb_secret_localIntegrationKey123",
+      API_URL: "http://127.0.0.1:54321",
+      DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
+    };
+    const children = [];
+    const execute = vi.fn(() => ({
+      status: 0,
+      stdout: existingRuntime || (residualRuntime && children.length > 0) ? "runtime-id\n" : "",
+    }));
+    const startProcess = vi.fn((_command, _args, options) => {
+      const child = new EventEmitter();
+      child.stdin = new PassThrough();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = vi.fn(() => child.emit("close", 143));
+      children.push(child);
+      if (children.length === 1) {
+        child.stdin.once("finish", () =>
+          queueMicrotask(() => child.emit("close", startupFailure ? 1 : 0)),
+        );
+        if (startupFailure) queueMicrotask(() => child.emit("close", 1));
+      } else {
+        const slug = options.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SLUG;
+        expect(slug).toMatch(/^media-cleanup-[0-9a-f]{40}$/u);
+        expect(readFileSync(resolve(functions, slug, "index.ts"), "utf8")).toBe(
+          "canonical index.ts",
+        );
+        queueMicrotask(() => child.emit("close", testExit));
+      }
+      return child;
+    });
+    const fetchImplementation = vi.fn(async () =>
+      Response.json({ errorCode: "invalid_request" }, { status: 400 }),
+    );
+    return {
+      children,
+      execute,
+      fetchImplementation,
+      functions,
+      root,
+      startProcess,
+      values,
+      options: {
+        execute,
+        fetchImplementation,
+        platform: "linux",
+        root,
+        startProcess,
+        resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+      },
+      dispose: () => rmSync(root, { recursive: true, force: true }),
+    };
+  }
+
+  it("runs the mandatory Edge integration via the immutable gateway and closes guest stdin", async () => {
+    const fixture = cleanupLauncherFixture();
+    const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await runLocalCleanupIntegration(fixture.values, fixture.options);
+      expect(fixture.startProcess).toHaveBeenCalledTimes(2);
+      const [command, args] = fixture.startProcess.mock.calls[0];
+      expect(command).toBe("/bin/bash");
+      expect(args).toContain("--no-verify-jwt");
+      expect(args.slice(-2)).toEqual(["--network-id", supabaseLocalNetworkName]);
+      const [, testArgs, testOptions] = fixture.startProcess.mock.calls[1];
+      expect(testArgs.slice(1)).toEqual([
+        "run",
+        "tests/unit/studio-media-cleanup-edge.test.mjs",
+        "-t",
+        "studio media cleanup local integration",
+      ]);
+      expect(testOptions.env).toMatchObject({
+        SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_DATABASE_URL: fixture.values.DB_URL,
+        SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SECRET_KEY: fixture.values.SECRET_KEY,
+        SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SUPABASE_URL: fixture.values.API_URL,
+      });
+      expect(testOptions.env).not.toHaveProperty("SUPABASE_SECRET_KEYS");
+      const [url, request] = fixture.fetchImplementation.mock.calls[0];
+      expect(url).toBe(
+        `${fixture.values.API_URL}/functions/v1/${testOptions.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SLUG}`,
+      );
+      expect(request.headers.apikey).toBe(fixture.values.SECRET_KEY);
+      expect(request.body).toBe("{}");
+      expect(fixture.children[0].stdin.writableEnded).toBe(true);
+      expect(fixture.children[0].kill).not.toHaveBeenCalled();
+      expect(readdirSync(fixture.functions)).toEqual(["media-cleanup"]);
+    } finally {
+      output.mockRestore();
+      fixture.dispose();
+    }
+  });
+
+  it.each(["missing-key", "legacy-key", "remote-db", "preexisting-runtime"])(
+    "refuses Edge integration before copying or spawning: %s",
+    async (scenario) => {
+      const fixture = cleanupLauncherFixture({
+        existingRuntime: scenario === "preexisting-runtime",
+      });
+      try {
+        if (scenario === "missing-key") delete fixture.values.SECRET_KEY;
+        if (scenario === "legacy-key") fixture.values.SECRET_KEY = localServiceRoleKey;
+        if (scenario === "remote-db")
+          fixture.values.DB_URL = "postgresql://postgres:private@remote.example:54322/postgres";
+        await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow();
+        expect(fixture.startProcess).not.toHaveBeenCalled();
+        expect(readdirSync(fixture.functions)).toEqual(["media-cleanup"]);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.each(["startup", "readiness", "test"])(
+    "cleans its candidate after Edge %s failure",
+    async (phase) => {
+      const fixture = cleanupLauncherFixture({
+        startupFailure: phase === "startup",
+        testExit: phase === "test" ? 1 : 0,
+      });
+      try {
+        if (phase === "readiness") fixture.options.startupTimeoutMs = 0;
+        await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+          "não foi comprovada",
+        );
+        expect(fixture.children[0].stdin.writableEnded).toBe(true);
+        expect(readdirSync(fixture.functions)).toEqual(["media-cleanup"]);
+        if (phase === "readiness") expect(fixture.startProcess).toHaveBeenCalledTimes(1);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it("fails closed and preserves the candidate if the Edge runtime remains", async () => {
+    const fixture = cleanupLauncherFixture({ residualRuntime: true });
+    try {
+      await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+        "não foi comprovada",
+      );
+      expect(readdirSync(fixture.functions)).toHaveLength(2);
+      expect(fixture.children[0].stdin.writableEnded).toBe(true);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("reuses WSL version, path and environment resolution for the stdin-controlled Edge relay", () => {
+    const execute = vi.fn(() => ({ status: 0, stdout: "2.116.0\n" }));
+    const launch = resolveSupabaseLaunch(["functions", "serve", "--no-verify-jwt"], {
+      execute,
+      network: true,
+      platform: "win32",
+      stdinRelay: true,
+      root: "C:\\Users\\thefe\\set-livre",
+      resolveLocalDockerEnvironment: () => ({
+        PATH: "trusted",
+        SUPABASE_SECRET_KEYS: "must-not-leak",
+      }),
+    });
+    expect(execute.mock.calls[0][1].at(-1)).toBe("--version");
+    expect(launch.command).toBe("wsl.exe");
+    expect(launch.argumentsList).toContain("/mnt/c/Users/thefe/set-livre");
+    expect(launch.argumentsList).toContain("/bin/bash");
+    expect(launch.argumentsList).toContain("/usr/bin/supabase");
+    expect(launch.argumentsList).toContain("SetLivreDocker");
+    expect(launch.argumentsList.slice(-2)).toEqual(["--network-id", supabaseLocalNetworkName]);
+    expect(launch.options.env).toEqual({ PATH: "trusted" });
+    expect(launch.options.windowsHide).toBe(true);
+    execute.mockReturnValue({ status: 0, stdout: "wrong-version" });
+    expect(() =>
+      resolveSupabaseLaunch(["functions", "serve"], {
+        execute,
+        platform: "win32",
+        stdinRelay: true,
+        root: "C:\\Users\\thefe\\set-livre",
+        resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+      }),
+    ).toThrow("Supabase CLI 2.116.0");
+  });
+
   it("runs the real cleanup handler before local readiness and rejects ambiguous completion", async () => {
     const requests = [];
     const configurations = [];
@@ -109,9 +309,7 @@ describe("local tooling contracts", () => {
       url: "http://127.0.0.1:54321",
     });
     expect(requests).toHaveLength(1);
-    expect(requests[0].url).toMatch(
-      /^http:\/\/127\.0\.0\.1:54321\/functions\/v1\/media-cleanup-[0-9a-f]{40}$/u,
-    );
+    expect(requests[0].url).toMatch(/^http:\/\/127\.0\.0\.1:54321\/media-cleanup-[0-9a-f]{40}$/u);
     expect(requests[0].headers.get("apikey")).toBe(localServiceRoleKey);
     await expect(requests[0].json()).resolves.toEqual({ runId });
 

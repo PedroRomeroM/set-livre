@@ -4449,8 +4449,8 @@ select public.complete_studio_media_cleanup_run(
 reset role;
 select ok(
   not private.studio_media_cleanup_runs_are_healthy()
-    and not private.managed_runtime_boundaries_are_ready(),
-  'health detecta falha terminal posterior ao último sucesso'
+    and private.managed_runtime_boundaries_are_ready(),
+  'health detecta falha terminal posterior ao último sucesso sem invalidar a estrutura gerenciada'
 );
 rollback to savepoint cleanup_failed_health;
 release savepoint cleanup_failed_health;
@@ -4472,8 +4472,8 @@ values (
 );
 select ok(
   not private.studio_media_cleanup_runs_are_healthy()
-    and not private.managed_runtime_boundaries_are_ready(),
-  'health/readiness detectam execução running envelhecida'
+    and private.managed_runtime_boundaries_are_ready(),
+  'health detecta execução running envelhecida sem invalidar a estrutura gerenciada'
 );
 rollback to savepoint cleanup_stale_health;
 release savepoint cleanup_stale_health;
@@ -4507,8 +4507,8 @@ values (
 );
 select ok(
   not private.studio_media_cleanup_runs_are_healthy()
-    and not private.managed_runtime_boundaries_are_ready(),
-  'health/readiness degradam quando o worker deixa de publicar sucesso por trinta minutos'
+    and private.managed_runtime_boundaries_are_ready(),
+  'health degrada sem sucesso por trinta minutos mas a estrutura gerenciada continua válida'
 );
 rollback to savepoint cleanup_stale_success_health;
 release savepoint cleanup_stale_success_health;

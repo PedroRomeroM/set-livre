@@ -203,6 +203,6 @@ describe("health contract", () => {
   });
 
   it("pins the readiness contract to the current migration", () => {
-    expect(databaseMigrationHead).toBe("20260905190840");
+    expect(databaseMigrationHead).toBe("20260906051637");
   });
 });

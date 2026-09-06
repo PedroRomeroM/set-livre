@@ -14,6 +14,7 @@ const productionRoleNames = "app_dal,app_runtime_production";
 const runtimeTerminationPollIntervalMilliseconds = 250;
 const runtimeTerminationTimeoutMilliseconds = 5_000;
 const migrationVersionPattern = /^[0-9]{14}$/u;
+const deploymentStructureMigrationVersion = "20260906051637";
 export const productionCoordinates = Object.freeze({
   backofficeUrl: "http://127.0.0.1:3001",
   databaseHost: "aws-0-sa-east-1.pooler.supabase.com",
@@ -355,6 +356,23 @@ async function assertProductionMemberships(admin) {
 }
 
 async function verifyCurrentDatabaseBoundaryBeforeMigrations(admin) {
+  const deployedHead = await admin.query(`
+    select pg_catalog.max(migration.version)::text as "currentMigrationHead"
+    from supabase_migrations.schema_migrations as migration
+  `);
+  const expectedHead = deployedHead.rows[0]?.currentMigrationHead;
+  if (
+    deployedHead.rowCount !== 1 ||
+    typeof expectedHead !== "string" ||
+    !migrationVersionPattern.test(expectedHead)
+  ) {
+    throw new Error("A fronteira DAL implantada diverge do seu migration head atual.");
+  }
+  // Deliberate transition: older databases do not contain the structural helper yet.
+  const readinessFunction =
+    expectedHead < deploymentStructureMigrationVersion
+      ? "private.check_readiness"
+      : "private.check_deployment_structure";
   const boundary = await admin.query(`
     with current_head as (
       select pg_catalog.max(migration.version)::text as version
@@ -363,13 +381,13 @@ async function verifyCurrentDatabaseBoundaryBeforeMigrations(admin) {
     select
       current_head.version as "currentMigrationHead",
       private.managed_runtime_boundaries_are_ready() as "managedBoundariesReady",
-      private.check_readiness(current_head.version) as ready
+      ${readinessFunction}(current_head.version) as ready
     from current_head
   `);
   const row = boundary.rows[0];
   if (
     boundary.rowCount !== 1 ||
-    !migrationVersionPattern.test(row?.currentMigrationHead ?? "") ||
+    row?.currentMigrationHead !== expectedHead ||
     row?.managedBoundariesReady !== true ||
     row?.ready !== true
   ) {

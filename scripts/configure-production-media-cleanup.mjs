@@ -181,7 +181,11 @@ export function createProductionStorageClient({ fetchImplementation, secretKey }
 }
 
 export function isConfirmedStorageObjectAbsence(error) {
-  return error instanceof StorageApiError && error.status === 404 && error.code === "NoSuchKey";
+  return (
+    error instanceof StorageApiError &&
+    error.code === "NoSuchKey" &&
+    (error.status === 404 || (error.status === 400 && error.statusCode === "404"))
+  );
 }
 
 async function requestJson(

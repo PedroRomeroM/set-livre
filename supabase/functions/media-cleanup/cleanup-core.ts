@@ -153,10 +153,10 @@ export function parseCleanupFunctionSlug(requestUrl: string): string {
   } catch {
     throw new Error("A URL da execução de cleanup é inválida.");
   }
-  if (url.search !== "" || url.hash !== "") {
+  if (url.href.includes("?") || url.href.includes("#")) {
     throw new Error("A URL da execução de cleanup é inválida.");
   }
-  const match = /^\/functions\/v1\/(media-cleanup-[0-9a-f]{40})$/u.exec(url.pathname);
+  const match = /^\/(media-cleanup-[0-9a-f]{40})$/u.exec(url.pathname);
   const functionSlug = match?.[1];
   if (functionSlug === undefined || !cleanupFunctionSlugPattern.test(functionSlug)) {
     throw new Error("A URL da execução de cleanup é inválida.");

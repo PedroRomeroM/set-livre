@@ -25,7 +25,7 @@ const finish = "complete_studio_media_cleanup_run";
 const storage = "studio-media";
 
 function request(options = {}) {
-  return new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+  return new Request(`https://supabase.example/${functionSlug}`, {
     body: JSON.stringify({ runId }),
     headers: { apikey: secretKey, "content-type": "application/json" },
     method: "POST",
@@ -350,7 +350,15 @@ describe("cleanup HTTP and ledger deadlines", () => {
         NEXT_PUBLIC_SUPABASE_URL: "https://oirvvnojgkzdppkdvhej.supabase.co",
         SUPABASE_SECRET_KEY: secretKey,
       },
-      fetchImplementation: (url, init) => probe.handler(new Request(url, init)),
+      fetchImplementation: (url, init) => {
+        const routedUrl = new URL(url);
+        expect(routedUrl.href).toBe(
+          `https://oirvvnojgkzdppkdvhej.supabase.co/functions/v1/${functionSlug}`,
+        );
+        // The provider gateway removes /functions/v1 before invoking the handler.
+        routedUrl.pathname = `/${functionSlug}`;
+        return probe.handler(new Request(routedUrl, init));
+      },
       makeRunId: () => runId,
     });
     await probe.firstStorage;

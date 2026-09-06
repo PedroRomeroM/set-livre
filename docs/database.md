@@ -18,8 +18,8 @@
 A árvore versionada começa na baseline `20260824000100`, define a role de produção em
 `20260828174500_default_production_dal_role` e mantém features e correções exclusivamente por
 migrations append-only. A migration mais recente deste recorte é
-`20260905190840_bind_studio_command_results`, criada depois de
-`20260905163830_renew_media_cleanup_replay_leases`; uma feature nova nunca é inserida antes de uma
+`20260906051637_separate_deployment_structure_from_cleanup_health`, criada depois de
+`20260905190840_bind_studio_command_results`; uma feature nova nunca é inserida antes de uma
 migration já versionada. Antes do primeiro deploy, enquanto o projeto Supabase de produção
 ainda não possuía migrations, tabelas ou usuários da aplicação, o histórico local de construção foi
 consolidado uma única vez pelo squash oficial schema-only do Supabase CLI. O preâmbulo versionado
@@ -61,7 +61,12 @@ ao owner canônico `postgres` e ao `USAGE` da DAL, ownership do schema e de toda
 em `postgres`, ACL de rotinas privadas restrita a esse owner e aos `EXECUTE` allowlisted da DAL,
 ausência de acesso direto ou via `PUBLIC` a dados, ausência de acesso efetivo a schemas externos mesmo
 quando herdado por `PUBLIC`, ownership nulo, memberships reversas conhecidas, RLS em tabelas públicas e
-negação de `CREATE/TEMP`.
+negação de `CREATE/TEMP`. Desde `20260906051637`, essa verificação estrutural completa é
+`private.check_deployment_structure(text)`, executável somente por `postgres`.
+`private.check_readiness(text)` preserva a assinatura e o grant DAL, exigindo estrutura válida **e**
+cleanup operacional saudável. O helper gerenciado permanece estritamente estrutural; nenhum grant,
+RLS, ownership ou predicado de segurança foi removido. Os testes provam a estrutura válida com ledger
+vazio ou degradado, a recusa do health nessa condição e a inacessibilidade do preflight pela aplicação.
 O check do runtime prova login restrito, membership única com `SET app_dal` e allowlist
 reversa exata: somente `postgres` pode administrar `app_runtime_production`, sem `SET` ou `INHERIT`;
 qualquer identidade assumível é rejeitada. O runtime mantém exatamente um setting próprio em

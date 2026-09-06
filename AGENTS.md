@@ -218,6 +218,7 @@ npm run migrations:check
 npm run supabase:reset
 npm run supabase:lint
 npm run test:db
+npm run test:edge
 npm run docs:check
 npm run test:e2e:affected
 npm run build

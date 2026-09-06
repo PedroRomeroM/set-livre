@@ -2,7 +2,8 @@
 
 ## Status
 
-Aceito; detalhado para a implementação da FEAT-008 em 2026-08-31.
+Aceito; detalhado para a implementação da FEAT-008 em 2026-08-31. Contrato de ausência do Storage
+corrigido com aprovação humana explícita em 2026-09-06 (OPEN-007).
 
 ## Contexto
 
@@ -41,6 +42,22 @@ release cujo SHA determina o slug periódico. A ativação executa a oneshot uma
 timer. O ledger fecha as contagens; falha da candidata impede a ativação e falha da oneshot aciona o
 rollback já existente da release.
 
+### Confirmação de ausência no Storage
+
+Após remoção confirmada pela Storage API, a verificação usa a mesma identidade autorizada e exige
+ausência dos dois paths exatos. O SDK deve retornar `data === null` e um `StorageApiError` com
+`code === "NoSuchKey"`, acompanhado de HTTP `404` ou, no envelope legado, HTTP `400` e
+`statusCode === "404"`. `status` representa o HTTP; `statusCode` representa o código no corpo.
+
+Essa interpretação corresponde ao
+[handler oficial do Storage](https://github.com/supabase/storage/blob/c015666ee13ee29faab50cf76ac513d73bdb6bfc/src/http/error-handler.ts)
+e à [transição de formatos do provider](https://supabase.com/docs/guides/storage/debugging/error-codes).
+Ela substitui a recusa anterior de todo HTTP `400`, que rejeitava uma resposta legítima do serviço.
+Não aceita `400` genérico, `not_found` isolado, `NoSuchBucket`, falha de autenticação, timeout ou
+resposta ambígua. Ausência em `storage.objects` por SQL não substitui a prova pela Storage API.
+O teste local deve comprovar upload e leitura autorizada antes da remoção e verificar a ausência
+posterior com o SDK real, além dos casos negativos.
+
 ## Alternativas
 
 - upload ou cleanup físico pela VM: rejeitado por tráfego e por acoplar Storage ao host. A VM apenas
@@ -72,7 +89,6 @@ rollback já existente da release.
 - run interrompido é terminalizado automaticamente depois de 30 minutos pela próxima execução, com
   leases vencidos novamente elegíveis e readiness restaurada somente por sucesso posterior;
 - canário interrompido preserva seu checkpoint; depois de 30 minutos o configurador serializado remove
-  os dois paths, comprova `404/NoSuchKey` e só então o terminaliza como abortado, sem aceitar `400` como
-  evidência de ausência;
+  os dois paths, comprova a ausência pelo contrato acima e só então o terminaliza como abortado;
 - observabilidade usa contagens e códigos allowlisted, nunca path, chave ou payload do provider;
 - egress, duração do cleanup e pressão da VM precisam ser medidos antes de ampliar limites.
