@@ -249,6 +249,8 @@ Os controles de onboarding também são gated por `recipientOnboardingCapability
   thumbnail ou da imagem ampliada publica um alerta agregado e uma única ação `Renovar prévias`;
 - ordem usa botões `Subir`/`Descer`, capa e exclusão possuem nomes contextuais, e a confirmação de
   exclusão permanece em fluxo normal. Drag nunca é requisito;
+- retorno de foco após uma operação confirmada ou cancelamento da exclusão ocorre no commit do DOM
+  habilitado, sem callback de frame pendente que possa sobrescrever a próxima escolha do usuário;
 - cards reservam a proporção persistida da prévia. A imagem abre um lightbox modal com trap de foco,
   fechamento por Escape/backdrop e retorno ao acionador; expiração da URL apresenta recuperação;
 - hidratação, refetch, troca de escopo e conflito mantêm a superfície privada fail-closed. A matriz

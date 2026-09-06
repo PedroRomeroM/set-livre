@@ -349,7 +349,10 @@ Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 - `SL-F008-E2E-015` devolve uma reserva real de tentativa irmã do mesmo estúdio: chave ou ação
   divergentes impedem qualquer upload ao Storage, preservam o comando e só a confirmação do retry
   original permite finalizar a mídia correta;
-- axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
+- axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições. `SL-F008-E2E-010`
+  controla os frames da página para provar que reordenação e cancelamento da exclusão restauram foco
+  antes de liberar a interação e não roubam uma escolha posterior; Enter abre a foto escolhida e
+  Escape devolve seu acionador;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e
