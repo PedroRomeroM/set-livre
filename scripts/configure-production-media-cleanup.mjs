@@ -36,8 +36,6 @@ const cleanupConfigurationLockName = "set-livre-production-media-cleanup";
 const staleCleanupProbeBatchSize = 100;
 const storageRequestDeadlineMs = 15_000;
 const cleanupInvocationDeadlineMs = 110_000;
-// Production's last release before immutable cleanup provides the bounded migration boundary.
-const immutableCleanupBootstrapReleaseSha = "a6549f558133a76f559a1c94ded73aca558786e5";
 
 function isExactObject(value, keys) {
   return (
@@ -70,7 +68,7 @@ export function assertImmutableCleanupSlug(value) {
 
 export function assertReleaseSha(value) {
   if (typeof value !== "string" || !releaseShaPattern.test(value)) {
-    throw new Error("A release ativa precisa ser um SHA completo válido.");
+    throw new Error("A release precisa ser um SHA completo válido.");
   }
   return value;
 }
@@ -186,22 +184,6 @@ export function isConfirmedStorageObjectAbsence(error) {
   return error instanceof StorageApiError && error.status === 404 && error.code === "NoSuchKey";
 }
 
-export function assertActiveWebReleaseHealth(payload) {
-  if (
-    !isExactObject(payload, ["application", "checkedAt", "release", "requestId", "status"]) ||
-    payload.application !== "web" ||
-    payload.status !== "live" ||
-    typeof payload.checkedAt !== "string" ||
-    !Number.isFinite(Date.parse(payload.checkedAt)) ||
-    new Date(payload.checkedAt).toISOString() !== payload.checkedAt ||
-    typeof payload.requestId !== "string" ||
-    !uuidPattern.test(payload.requestId)
-  ) {
-    throw new Error("O health público não retornou uma liveness web estrita.");
-  }
-  return assertReleaseSha(payload.release);
-}
-
 async function requestJson(
   fetchImplementation,
   endpoint,
@@ -247,20 +229,6 @@ async function requestJson(
   } finally {
     clearTimeout(deadline);
   }
-}
-
-export async function readActivePublicReleaseSha({ fetchImplementation = fetch } = {}) {
-  if (typeof fetchImplementation !== "function") {
-    throw new Error("O cliente HTTP do health público não está disponível.");
-  }
-  const endpoint = new URL("/api/health/live", productionCoordinates.publicUrl);
-  if (endpoint.protocol !== "https:") {
-    throw new Error("O health público de produção precisa usar HTTPS.");
-  }
-  const payload = await requestJson(fetchImplementation, endpoint, {
-    label: "O health público",
-  });
-  return assertActiveWebReleaseHealth(payload);
 }
 
 function assertCleanupProbe(payload, { identity = undefined, runId, status }) {
@@ -404,101 +372,92 @@ function assertCleanupRun(payload, expected) {
   return payload;
 }
 
-function deploymentTimestamp(value) {
-  if (Number.isInteger(value) && value >= 0) return value;
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
+function assertRetainedReleaseInventory(inventory, candidateSlug) {
+  assertImmutableCleanupSlug(candidateSlug);
+  if (
+    !isExactObject(inventory, ["version", "activeReleaseSha", "releases"]) ||
+    inventory.version !== 1 ||
+    !Array.isArray(inventory.releases) ||
+    inventory.releases.length < 1 ||
+    inventory.releases.length > 4
+  ) {
+    throw new Error("O inventário de releases retidas possui contrato inválido.");
   }
-  throw new Error("A Management API retornou timestamp inválido para uma Edge Function.");
+  const activeReleaseSha = assertReleaseSha(inventory.activeReleaseSha);
+  const shas = new Set();
+  for (const release of inventory.releases) {
+    if (
+      !isExactObject(release, ["sha", "mediaCleanup"]) ||
+      typeof release.mediaCleanup !== "boolean"
+    ) {
+      throw new Error("Uma release retida possui contrato inválido.");
+    }
+    const sha = assertReleaseSha(release.sha);
+    if (shas.has(sha)) throw new Error("O inventário contém releases duplicadas.");
+    shas.add(sha);
+  }
+  if (
+    candidateSlug !== `media-cleanup-${activeReleaseSha}` ||
+    !inventory.releases.some((release) => release.sha === activeReleaseSha && release.mediaCleanup)
+  ) {
+    throw new Error("O inventário não confirma a candidata como release ativa com cleanup.");
+  }
+  return inventory;
 }
 
-export function selectCleanupFunctionRetention(payload, { activeReleaseSha, candidateSlug }) {
-  const activeSlug = assertImmutableCleanupSlug(
-    `media-cleanup-${assertReleaseSha(activeReleaseSha)}`,
-  );
-  assertImmutableCleanupSlug(candidateSlug);
+function selectCleanupFunctionRetention(payload, { retainedReleaseInventory, candidateSlug }) {
+  const inventory = assertRetainedReleaseInventory(retainedReleaseInventory, candidateSlug);
   if (!Array.isArray(payload)) {
     throw new Error("A Management API retornou uma lista de Edge Functions inválida.");
   }
-  const legacyCandidates = payload.filter(
-    (candidate) => candidate?.slug === legacyMutableCleanupSlug,
-  );
-  if (legacyCandidates.length > 1) {
-    throw new Error("A função mutável legada possui cardinalidade ambígua.");
-  }
-  const legacyCandidate = legacyCandidates[0];
-  if (
-    legacyCandidate !== undefined &&
-    (typeof legacyCandidate !== "object" ||
-      legacyCandidate === null ||
-      Array.isArray(legacyCandidate) ||
-      legacyCandidate.status !== "ACTIVE" ||
-      legacyCandidate.verify_jwt !== false)
-  ) {
-    throw new Error("A função mutável legada diverge do contrato de migração.");
-  }
-
+  // Authenticated VM inventory describes immutable entrypoints, or their proven absence.
+  // No retained artifact uses the legacy mutable slug; provider timestamps are not authority.
+  const referencedSlugs = inventory.releases
+    .filter((release) => release.mediaCleanup)
+    .map((release) => `media-cleanup-${release.sha}`);
+  const protectedSlugs = new Set(referencedSlugs);
   const slugs = new Set();
-  const versions = payload
-    .filter((candidate) => immutableCleanupSlugPattern.test(candidate?.slug ?? ""))
-    .map((candidate) => {
-      if (
-        typeof candidate !== "object" ||
-        candidate === null ||
-        Array.isArray(candidate) ||
-        candidate.status !== "ACTIVE" ||
-        candidate.verify_jwt !== false ||
-        slugs.has(candidate.slug)
-      ) {
-        throw new Error("Uma versão imutável de cleanup diverge do contrato implantado.");
+  let unavailableReferencedFunctions = 0;
+  for (const candidate of payload) {
+    if (
+      typeof candidate !== "object" ||
+      candidate === null ||
+      Array.isArray(candidate) ||
+      typeof candidate.slug !== "string"
+    ) {
+      throw new Error("A Management API retornou uma identidade de Edge Function inválida.");
+    }
+    if (
+      candidate.slug !== legacyMutableCleanupSlug &&
+      !immutableCleanupSlugPattern.test(candidate.slug)
+    )
+      continue;
+    if (slugs.has(candidate.slug)) {
+      throw new Error("Uma Function de cleanup possui cardinalidade ou contrato ambíguo.");
+    }
+    if (
+      protectedSlugs.has(candidate.slug) &&
+      (candidate.status !== "ACTIVE" || candidate.verify_jwt !== false)
+    ) {
+      if (candidate.slug === candidateSlug) {
+        throw new Error("A Function ativa de cleanup diverge do contrato implantado.");
       }
-      slugs.add(candidate.slug);
-      return {
-        slug: candidate.slug,
-        timestamp: deploymentTimestamp(candidate.updated_at ?? candidate.created_at),
-      };
-    })
-    .sort((left, right) => right.timestamp - left.timestamp || right.slug.localeCompare(left.slug));
-
+      unavailableReferencedFunctions += 1;
+    }
+    slugs.add(candidate.slug);
+  }
   if (!slugs.has(candidateSlug)) {
-    throw new Error("A versão candidata de cleanup não foi encontrada com cardinalidade única.");
+    throw new Error("A Function ativa de cleanup não foi encontrada no projeto.");
   }
-  const activeVersionExists = slugs.has(activeSlug);
-  const isImmutableCleanupBootstrap =
-    activeReleaseSha === immutableCleanupBootstrapReleaseSha && !activeVersionExists;
-  if (activeSlug !== candidateSlug && !activeVersionExists && !isImmutableCleanupBootstrap) {
-    throw new Error("A versão ativa de cleanup não foi encontrada no inventário de produção.");
-  }
-
-  const protectedSlugs = new Set([candidateSlug]);
-  if (activeVersionExists) protectedSlugs.add(activeSlug);
-  const retainedSet = new Set(
-    versions
-      .filter((candidate) => protectedSlugs.has(candidate.slug))
-      .map((candidate) => candidate.slug),
-  );
-  for (const version of versions) {
-    if (retainedSet.size >= 4) break;
-    retainedSet.add(version.slug);
-  }
-  const retained = versions
-    .filter((candidate) => retainedSet.has(candidate.slug))
-    .map((candidate) => candidate.slug);
-  const deleted = versions
-    .filter((candidate) => !retainedSet.has(candidate.slug))
-    .map((candidate) => candidate.slug);
-  if (legacyCandidate !== undefined) deleted.push(legacyMutableCleanupSlug);
-
-  if (
-    retained.length > 4 ||
-    !retained.includes(candidateSlug) ||
-    (slugs.has(activeSlug) && !retained.includes(activeSlug)) ||
-    deleted.some((slug) => protectedSlugs.has(slug))
-  ) {
-    throw new Error("A retenção não preservou as versões protegidas de cleanup.");
-  }
-  return { activeSlug, deleted, retained };
+  // Staged artifacts can precede Function publication: protect references without claiming rollback.
+  const retained = referencedSlugs.filter((slug) => slugs.has(slug));
+  const deleted = [...slugs].filter((slug) => !protectedSlugs.has(slug)).sort();
+  return {
+    deleted,
+    retained,
+    missingReferencedFunctions: referencedSlugs.length - retained.length,
+    unavailableReferencedFunctions,
+  };
 }
 
 async function managementRequest(endpoint, accessToken, fetchImplementation, options = {}) {
@@ -580,7 +539,6 @@ async function pruneCleanupFunctions(
   }
 
   if (retention.deleted.length > 0) {
-    let verified = false;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const verificationPayload = await managementRequest(
         collection,
@@ -589,21 +547,56 @@ async function pruneCleanupFunctions(
         { label: "A verificação da retenção de Edge Functions" },
       );
       const remaining = selectCleanupFunctionRetention(verificationPayload, retentionContext);
-      if (
-        remaining.deleted.length === 0 &&
-        remaining.retained.length === retention.retained.length &&
-        remaining.retained.every((slug, index) => slug === retention.retained[index])
-      ) {
-        verified = true;
-        break;
+      if (!retention.retained.every((slug) => remaining.retained.includes(slug))) {
+        throw new Error("A Management API não preservou uma Function referenciada após a coleta.");
+      }
+      if (remaining.deleted.length === 0) {
+        return { ...remaining, deleted: retention.deleted };
       }
       if (attempt < 9) await delay(500);
     }
-    if (!verified) {
-      throw new Error("A Management API não comprovou a retenção final das Edge Functions.");
-    }
+    throw new Error("A Management API não comprovou a retenção final das Edge Functions.");
   }
   return retention;
+}
+
+export async function pruneProductionMediaCleanupFunctions(
+  environment = process.env,
+  { fetchImplementation = fetch } = {},
+) {
+  if (typeof fetchImplementation !== "function") {
+    throw new Error("O cliente HTTP do cleanup não está disponível.");
+  }
+  const candidateSlug = assertImmutableCleanupSlug(
+    requiredValue(environment, "MEDIA_CLEANUP_FUNCTION_SLUG"),
+  );
+  const serializedInventory = requiredValue(environment, "RETAINED_RELEASE_INVENTORY");
+  let retainedReleaseInventory;
+  try {
+    retainedReleaseInventory = JSON.parse(serializedInventory);
+  } catch {
+    throw new Error("O inventário de releases retidas não contém JSON válido.");
+  }
+  assertRetainedReleaseInventory(retainedReleaseInventory, candidateSlug);
+  const projectRef = requiredValue(environment, "SUPABASE_PROJECT_REF");
+  if (projectRef !== productionCoordinates.projectRef) {
+    throw new Error("SUPABASE_PROJECT_REF diverge do projeto canônico de produção.");
+  }
+  const accessToken = requiredValue(environment, "SUPABASE_ACCESS_TOKEN");
+  const retention = await pruneCleanupFunctions(
+    accessToken,
+    projectRef,
+    { retainedReleaseInventory, candidateSlug },
+    fetchImplementation,
+  );
+  return {
+    activeReleaseSha: retainedReleaseInventory.activeReleaseSha,
+    candidateSlug,
+    deletedFunctions: retention.deleted.length,
+    retainedFunctions: retention.retained.length,
+    missingReferencedFunctions: retention.missingReferencedFunctions,
+    unavailableReferencedFunctions: retention.unavailableReferencedFunctions,
+  };
 }
 
 async function readJsonFunction(client, statement, parameters, field, message) {
@@ -780,11 +773,6 @@ export async function configureProductionMediaCleanup(
   const candidateSlug = assertImmutableCleanupSlug(
     requiredValue(environment, "MEDIA_CLEANUP_FUNCTION_SLUG"),
   );
-  const activeReleaseSha = assertReleaseSha(
-    requiredValue(environment, "ACTIVE_PUBLIC_RELEASE_SHA"),
-  );
-  const projectRef = requiredValue(environment, "SUPABASE_PROJECT_REF");
-  const accessToken = requiredValue(environment, "SUPABASE_ACCESS_TOKEN");
   const secretKey = assertDefaultSecretKey(requiredValue(environment, "PRD_SUPABASE_SECRET_KEY"));
   const connections = productionRoleConnections(environment);
   const storage = createStorageClient({ fetchImplementation, secretKey });
@@ -814,18 +802,7 @@ export async function configureProductionMediaCleanup(
     await client.end().catch(() => undefined);
   }
 
-  const retention = await pruneCleanupFunctions(
-    accessToken,
-    projectRef,
-    { activeReleaseSha, candidateSlug },
-    fetchImplementation,
-  );
-  return {
-    activeReleaseSha,
-    candidateSlug,
-    deletedFunctions: retention.deleted.length,
-    retainedFunctions: retention.retained.length,
-  };
+  return { candidateSlug };
 }
 
 function redactedError(error, environment) {
@@ -853,8 +830,13 @@ if (executedPath !== undefined && pathToFileURL(resolve(executedPath)).href === 
     ) {
       await writeEphemeralDefaultSecretKey(process.env, process.argv[3]);
       process.stdout.write("Secret key efêmera materializada sem exposição.\n");
-    } else if (process.argv[2] === "--read-active-release-sha" && process.argv[3] === undefined) {
-      process.stdout.write(`${await readActivePublicReleaseSha()}\n`);
+    } else if (process.argv[2] === "--prune-functions" && process.argv[3] === undefined) {
+      const result = await pruneProductionMediaCleanupFunctions();
+      process.stdout.write(
+        `Retenção de cleanup: ${result.retainedFunctions} Functions referenciadas presentes, ${result.deletedFunctions} removidas; ` +
+          `missingReferencedFunctions=${result.missingReferencedFunctions}, unavailableReferencedFunctions=${result.unavailableReferencedFunctions}. ` +
+          "Disponibilidade de rollback não comprovada.\n",
+      );
     } else if (process.argv[2] === undefined) {
       const result = await configureProductionMediaCleanup();
       process.stdout.write(

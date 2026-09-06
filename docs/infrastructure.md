@@ -146,15 +146,19 @@ No merge, o workflow:
 5. no caminho novo, envia o archive e os dois ambientes pelo comando SSH forçado, valida-os no host e preserva a release
    root-owned completa sem trocar o symlink ou iniciar serviços;
 6. somente depois de existir essa release exata e já verificada no destino aplica migrations pendentes com
-   `supabase db push --linked`, sem seed, e exige que o maior head remoto seja exatamente o head
+   `supabase db push --linked`, sem seed de dados, e exige que o maior head remoto seja exatamente o head
    compilado pelo candidato;
-7. inicializa a identidade restrita somente quando ela está `NOLOGIN` e sem verificador. Um resultado
+7. configura os buckets declarativos, publica a Function `media-cleanup-<SHA>` e exige sucesso do canário
+   da candidata, sem coletar versões antigas nem depender do health da aplicação anterior;
+8. inicializa a identidade restrita somente quando ela está `NOLOGIN` e sem verificador. Um resultado
    ambíguo abre conexões administrativas novas, força `NOLOGIN`, encerra sessões com espera limitada e
    aceita ausência do verificador apenas se o commit inicial não terminou; nos deploys seguintes
    retoma ou valida a credencial existente sem rotacioná-la ou imprimi-la;
-8. ativa somente a release staged já autenticada, sem reupload depois da migration;
-9. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
-   público a partir do runner.
+9. ativa somente a release staged já autenticada, sem reupload depois da migration;
+10. verifica readiness interno dos dois apps e HTTPS público durante a ativação, e repete o health
+    público a partir do runner;
+11. somente após essas provas obtém pelo SSH restrito o inventário autenticado das releases retidas no
+    host, vinculado ao SHA ativo esperado, e coleta apenas Functions sem referência nesse inventário.
 
 O instalador `ops/deploy-release.sh` valida caminho, ownership, checksum, manifesto, entrypoints,
 ambientes, o digest não secreto do par de ambientes, o digest persistido da árvore completa e o digest
@@ -204,8 +208,8 @@ incapaz de voltar ao readiness interno e HTTPS público interrompe os serviços.
 ser reutilizado quando checksum, artifact, ambientes, contrato corrente e o digest determinístico
 persistido correspondem à árvore instalada completa; alteração de conteúdo, caminho, tipo, owner, grupo ou modo falha antes da
 ativação. O workflow consulta essa raiz antes de buildar e, em retry do mesmo SHA, usa o checksum relido
-da release já verificada em vez de produzir novos bytes Next. A retenção ocorre antes da ativação e
-mantém no máximo quatro releases, incluindo candidata e anterior. Ordem, timestamps, owner e gzip ainda
+da release já verificada em vez de produzir novos bytes Next. A retenção das releases no disco ocorre
+antes da ativação e mantém no máximo quatro releases, incluindo candidata e anterior. Ordem, timestamps, owner e gzip ainda
 são normalizados para tornar o archive estável dentro da mesma build, sem tratá-lo como prova de
 reprodutibilidade entre builds independentes.
 O empacotador percorre o standalone sem preservar referências de filesystem: links simbólicos cujos
@@ -232,6 +236,13 @@ conflitos entre branches são resolvidos na árvore final antes do merge. Altera
 backup e recuperação comprovada.
 
 ## Host Oracle
+
+Bootstrap e rollback administrativos só podem começar quando o workflow de produção estiver em estado
+terminal e não houver deploy ativo; nenhum novo deploy deve iniciar até a manutenção terminar. O grupo
+de concurrency `production`, sem cancelamento em andamento, cobre ativação, inventário e GC no mesmo
+job, mas não bloqueia o SSH administrativo. A coordenação da administração root confiável é obrigatória
+durante toda essa janela; o lock local de cada comando não substitui essa coordenação entre comandos.
+Não há lease ou framework de lock distribuído para a manutenção.
 
 `ops/bootstrap-host.sh` é idempotente para a VM dedicada e instala apenas:
 
@@ -286,9 +297,10 @@ Diretórios e identidades:
 Os processos Node executam com UIDs e arquivos de ambiente separados, sem root, com `NoNewPrivileges`,
 devices privados, capabilities vazias, namespaces/realtime bloqueados, filesystem protegido e apenas
 AF_UNIX/IPv4/IPv6. O grupo compartilhado `setlivre` concede somente leitura do artifact e do SHA
-ativo. O workflow sincroniza em cada release somente as cinco chaves esperadas (`APP_ENV`, URL DAL,
-origem do app, URL e publishable key do Supabase); o instalador recusa chave extra, encoding inválido,
-projeto/role/host divergente, qualquer chave que não use `sb_publishable_` ou ambiente entre os apps
+ativo. O workflow sincroniza em cada release somente o envelope de runtime definido em
+[Banco de produção](#banco-de-produção), incluindo as chaves exclusivas de cada aplicação; o instalador
+recusa chave extra, encoding inválido, projeto/role/host divergente, publishable key que não use
+`sb_publishable_` ou ambiente entre os apps
 inconsistente. Antes de escrever qualquer chave, o bootstrap exige nomes, UIDs não root, grupos
 primários e suplementares exatos, ausência de membros reversos inesperados, homes, shells e senhas
 bloqueadas para as três identidades; uma conta preexistente divergente falha fechada. Home e `.ssh` do
@@ -300,11 +312,24 @@ rollback ou remover um `current` pendente. Somente `incoming` permanece graváve
 seguida, o bootstrap exige
 exatamente uma chave pública, decodifica o blob SSH, comprova o algoritmo Ed25519 e os 32 bytes de
 material e substitui `authorized_keys` por rename atômico. A chave instalada usa
-`authorized_keys command=` e aceita apenas uploads limitados, `inspect <sha>`,
-`stage <sha> <checksum>` e `activate <sha> <checksum>`; não abre
+`authorized_keys command=` e aceita apenas uploads limitados, `preflight`,
+`inspect <sha> <runtime-sha256>`, `stage <sha> <checksum> <runtime-sha256>`,
+`activate <sha> <checksum> <runtime-sha256>` e `retained-releases <sha>`; não abre
 shell, SCP genérico ou comando arbitrário. Somente o instalador pode ser executado como root. Ambientes
 antigos permanecem protegidos dentro das releases retidas e são removidos pela mesma política de
 retenção; uma credencial alterada exige novo SHA, nunca reescrita silenciosa de release.
+
+O comando `retained-releases <sha>` chama `set-livre-deploy --retained-releases <sha>` sob o lock de
+deploy, sem alterar releases ou serviços. Retorna JSON com `version: 1`, `activeReleaseSha` e
+`releases: [{sha, mediaCleanup}]`, contendo entre uma e quatro raízes realmente retidas. O instalador
+autentica caminhos, ownership root, permissões, manifestos e digests das árvores completas; exige que
+`current` e os readiness internos/público correspondam exatamente ao SHA esperado. `mediaCleanup: true`
+exige o entrypoint declarado no manifesto e seu arquivo regular; `false` só é válido para release
+inativa anterior ao cleanup, sem a propriedade no manifesto nem o arquivo. Uma release inativa pode
+carregar digest de host antigo: o inventário atesta sua integridade e referência para retenção, não sua
+capacidade de executar no host atual. Uma candidata staged cuja entrega parou antes da publicação da
+Function também pode permanecer nesse inventário com `mediaCleanup: true`; sua árvore preparada não
+constitui rollback validado. Nenhum ambiente ou segredo é retornado.
 
 Uploads usam lock próprio e o diretório `incoming` conserva no máximo o SHA em preparação. Antes de
 cada comando, nomes temporários interrompidos e artifacts de outro SHA são removidos somente após
@@ -358,7 +383,12 @@ os serviços e somente então consome os marcadores finais. Assim, um sinal ou e
 retryable ou mantém os apps já saudáveis, sem reclassificar a árvore preparada como legado.
 Somente depois dessa prova o bootstrap desarma o rollback. Se os digests divergirem, o symlink
 ativo é retirado sem apagar o diretório imutável e os apps permanecem parados até o deploy do artifact
-correto. Se uma release compatível não recuperar readiness interno e público depois do estado terminal,
+correto. Nesse upgrade, o próximo deploy não possui alvo anterior em `current` para rollback automático.
+Recuperar uma release incompatível exige restaurar o contrato do host a partir de suas fontes canônicas
+aprovadas e validar novamente release e health; reter sua Function ou seu diretório não autoriza
+reapontar o symlink sob o host novo. `host-config.previous` é somente um digest transitório, não um
+backup da configuração. Se uma release compatível não recuperar readiness interno e público depois do
+estado terminal,
 os serviços param e o symlink é retirado, mas o host válido permanece pronto para receber novamente uma
 release aprovada. Se o health falha, o bootstrap republica o in-progress antes de retirar o symlink e o
 rollback, mantendo boot e deploy bloqueados até uma reexecução segura. Um `current` pendente, cujo
@@ -560,9 +590,10 @@ artifact e o instalador publica cada um como `root:<grupo-da-aplicação> 0640`;
 é recusado no arquivo da outra. A chave do backoffice vira cookie HttpOnly assinado de cinco minutos;
 os candidatos efêmeros do contrato de host reproduzem exatamente esse conjunto obrigatório de chaves,
 para que o laboratório Linux valide o mesmo envelope aceito em produção.
-Nenhum dos valores entra em bundle, release, log ou browser storage. O preflight
-`set-livre-deploy-ready-v11` distingue hosts que já validam esse contrato dos instaladores anteriores
-antes de qualquer upload ou migration.
+Nenhum dos valores entra em bundle, release, log ou browser storage. Antes de qualquer upload ou
+migration, o preflight exige `set-livre-deploy-ready-v12`, identificando o instalador que valida esse
+envelope e oferece a operação de inventário descrita em [Host Oracle](#host-oracle). O preflight não
+exige release ativa; a leitura do inventário ocorre somente após ativação e health aprovados.
 
 ## HTTPS por IP e DNS adiado
 
@@ -630,12 +661,30 @@ web e o canário, e é truncada/removida em `always()`. Depois das migrations e 
 candidata, `npm run production:media-cleanup` cria objetos canário reais, invoca a candidata diretamente
 por HTTPS com `apikey` — sem duplicar a secret key moderna em `Authorization` —, exige remoção de ambos
 pela Storage API e comprova cada ausência somente por `404/NoSuchKey`, além de conferir a execução terminal vinculada
-ao slug no ledger durável. A retenção preserva a candidata e a Function correspondente à release ainda
-ativa, identificada pelo health público de liveness, antes de reduzir o conjunto a quatro versões
-imutáveis. Resposta negada, contrato ambíguo, chave legada, ACL excedente, timeout, contagem que não
-fecha ou cleanup com falha interrompe o deploy sem imprimir credenciais. Uma única Function mutável
-legada `media-cleanup` é aposentada somente depois desse canário; cardinalidade ou estado ambíguo
-bloqueia a entrega.
+ao slug no ledger durável. Esse comando executa somente o canário; não depende da disponibilidade da
+release anterior nem exclui Functions. Resposta negada, contrato ambíguo, chave legada, ACL excedente,
+timeout, contagem que não fecha ou cleanup com falha interrompe o deploy sem imprimir credenciais.
+
+Somente depois da ativação e do health público aprovado, o workflow entrega o JSON obtido por
+`retained-releases <SHA>` em `RETAINED_RELEASE_INVENTORY` para
+`node scripts/configure-production-media-cleanup.mjs --prune-functions`. A coleta protege toda Function
+`media-cleanup-<sha>` referenciada por uma entrada `mediaCleanup: true`, incluindo a candidata ativa e
+as demais releases retidas, sem escolher versões por timestamp ou pelo health público da versão antiga.
+Entradas `false` não exigem Function. Todos os slugs referenciados por entradas `true` ficam protegidos
+contra DELETE, independentemente de sua disponibilidade. Somente a Function da candidata ativa precisa
+estar presente, com status `ACTIVE` e `verify_jwt: false`. Referências inativas ausentes ou indisponíveis
+geram diagnóstico explícito, com contagens na CLI, sem bloquear o GC de uma candidata saudável nem
+atestar capacidade de rollback; isso inclui a candidata staged abandonada antes de publicar sua Function.
+Contagens de referências protegidas não são prova de Functions existentes ou executáveis. Inventário
+inválido, identidades duplicadas/ambíguas ou Function ativa ausente/indisponível continuam sendo erros
+antes de qualquer DELETE.
+
+Apenas versões sem referência e a única Function mutável legada `media-cleanup`, quando presente sem
+ambiguidade, podem ser removidas. A releitura final comprova o conjunto permitido e reavalia a Function
+ativa e os diagnósticos das referências inativas. Falha na coleta falha o job sem desfazer a ativação já
+aprovada. Falha antes da ativação ou do health não executa GC, preservando as Functions para recuperação.
+A coordenação administrativa dessa janela segue
+[Host Oracle](#host-oracle).
 
 Um advisory lock de sessão impede dois configuradores de manipular o canário simultaneamente. Antes do
 novo probe, checkpoints `prepared` ou `queued` abandonados há 30 minutos são removidos pela Storage API,
@@ -733,8 +782,9 @@ com roles ausentes é drift e bloqueia o deploy. Quando as roles existem, a sess
 remoto e exige que o `check_readiness` já implantado aprove exatamente esse head.
 Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `app_dal` e passar no
 `check_runtime_readiness`. Senha obsoleta, privilégio ou grant excedente, identidade ambígua ou
-indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige o HTTPS
-público operacional, e build, scan, archive determinístico, ambientes e staging validado na VM precisam
+indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige a entrada
+Nginx HTTPS operacional em `/robots.txt`, não o health do runtime anterior; build, scan, archive
+determinístico, ambientes e staging validado na VM precisam
 terminar antes do primeiro `db push`. O instalador da VM também
 aceita exclusivamente o formato moderno `sb_publishable_` no campo público; `sb_secret_`, JWT legado
 `service_role` e qualquer JWT genérico são recusados nessa posição antes de alcançar bundle ou

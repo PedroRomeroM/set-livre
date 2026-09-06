@@ -71,6 +71,11 @@ if [[ ${original_command} == "preflight" ]]; then
   flock --unlock 9
   exec 9>&-
   exec sudo --non-interactive /usr/local/sbin/set-livre-deploy --preflight
+elif [[ ${original_command} =~ ^retained-releases\ ([0-9a-f]{40})$ ]]; then
+  release_sha="${BASH_REMATCH[1]}"
+  flock --unlock 9
+  exec 9>&-
+  exec sudo --non-interactive /usr/local/sbin/set-livre-deploy --retained-releases "$release_sha"
 elif [[ ${original_command} =~ ^inspect\ ([0-9a-f]{40})\ ([0-9a-f]{64})$ ]]; then
   release_sha="${BASH_REMATCH[1]}"
   expected_runtime_digest="${BASH_REMATCH[2]}"

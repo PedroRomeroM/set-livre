@@ -569,7 +569,7 @@ if [[ $# -eq 1 && ${1:-} == "--preflight" ]]; then
     && $(stat --format '%U:%G:%a:%h' -- "$DEPLOY_LOCK_HELPER") == "root:root:755:1" ]] \
     || fail "primitive instalada do lock de deploy diverge do contrato."
   validate_deployment_host_prerequisites
-  printf 'set-livre-deploy-ready-v11\n'
+  printf 'set-livre-deploy-ready-v12\n'
   exit 0
 fi
 
@@ -618,7 +618,82 @@ if [[ $# -eq 1 && ${1:-} == "--recover-services" ]]; then
   exit 0
 fi
 
+retained_release_inventory() {
+  local expected_release="$1"
+  local names name directory unsafe_entry tree_digest media_cleanup
+  local -a release_names=()
+  local -a entries=()
+  [[ ${expected_release} =~ ^[0-9a-f]{40}$ ]] || fail "SHA de inventário inválido."
+  managed_release_directories_are_valid || fail "raiz do inventário é inválida."
+  [[ -L ${CURRENT_LINK} \
+    && $(readlink -- "$CURRENT_LINK") == "${RELEASES_DIRECTORY}/${expected_release}" \
+    && $(readlink --canonicalize-existing -- "$CURRENT_LINK") \
+      == "${RELEASES_DIRECTORY}/${expected_release}" ]] \
+    || fail "inventário não corresponde à release ativa esperada."
+  names="$(find "$RELEASES_DIRECTORY" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" \
+    || fail "inventário de releases não pôde ser lido."
+  mapfile -t release_names <<< "$names"
+  [[ ${#release_names[@]} -ge 1 && ${#release_names[@]} -le ${RETAINED_RELEASES} ]] \
+    || fail "inventário excede a retenção canônica."
+  for name in "${release_names[@]}"; do
+    [[ ${name} =~ ^[0-9a-f]{40}$ ]] || fail "inventário contém nome de release inválido."
+    directory="${RELEASES_DIRECTORY}/${name}"
+    [[ -d ${directory} && ! -L ${directory} \
+      && $(stat --format '%U:%G:%a' -- "$directory") == "root:setlivre:750" ]] \
+      || fail "release retida não atende ao contrato físico."
+    unsafe_entry="$(
+      find "$directory" -xdev \
+        \( ! -user root -o -perm /022 -o \( ! -type f -a ! -type d \) \
+          -o \( -type f -a -links +1 \) \) -print -quit
+    )" || fail "metadados da release retida não puderam ser verificados."
+    [[ -z ${unsafe_entry} ]] || fail "release retida possui metadados inseguros."
+    tree_digest="$(read_host_state_digest \
+      "${directory}/${STAGED_TREE_DIGEST_RELATIVE_PATH}" "root:setlivre:640")" \
+      || fail "digest da release retida é inválido."
+    [[ $(release_tree_digest "$directory") == "$tree_digest" ]] \
+      || fail "árvore da release retida divergiu do digest persistido."
+    jq --exit-status --arg sha "$name" '
+      .version == 2 and .commit == $sha and .node == "24.18.0" and
+      (.hostConfiguration.sha256 | test("^[0-9a-f]{64}$")) and
+      .applications.web.entrypoint == "server.js" and
+      .applications.web.health == "/api/health/ready" and
+      .applications.backoffice.entrypoint == "apps/backoffice/server.js" and
+      .applications.backoffice.health == "/api/health/ready" and
+      ((.applications.web | has("mediaCleanupEntrypoint") | not) or
+        .applications.web.mediaCleanupEntrypoint == "runtime/invoke-media-cleanup.mjs")
+    ' "${directory}/release-manifest.json" >/dev/null \
+      || fail "manifesto da release retida é inválido."
+    [[ -f "${directory}/web/server.js" \
+      && -f "${directory}/backoffice/apps/backoffice/server.js" ]] \
+      || fail "entrypoints da release retida estão ausentes."
+    media_cleanup="$(jq --compact-output \
+      '.applications.web | has("mediaCleanupEntrypoint")' "${directory}/release-manifest.json")"
+    if [[ ${media_cleanup} == true ]]; then
+      [[ -f "${directory}/web/runtime/invoke-media-cleanup.mjs" ]] \
+        || fail "entrypoint de cleanup da release retida está ausente."
+    else
+      [[ ! -e "${directory}/web/runtime/invoke-media-cleanup.mjs" \
+        && ${name} != "$expected_release" ]] \
+        || fail "release retida possui contrato de cleanup ambíguo."
+    fi
+    entries+=("$(jq --null-input --compact-output --arg sha "$name" \
+      --argjson mediaCleanup "$media_cleanup" '{sha: $sha, mediaCleanup: $mediaCleanup}')")
+  done
+  if ! health_is_ready 3000 web "$expected_release" \
+    || ! health_is_ready 3001 backoffice "$expected_release" \
+    || ! public_health_is_ready "$expected_release"; then
+    fail "release ativa não está saudável para coleta de versões antigas."
+  fi
+  printf '%s\n' "${entries[@]}" | jq --slurp --compact-output --arg active "$expected_release" \
+    '{version: 1, activeReleaseSha: $active, releases: .}'
+}
+
 validate_deployment_host_prerequisites
+
+if [[ $# -eq 2 && ${1:-} == "--retained-releases" ]]; then
+  retained_release_inventory "$2"
+  exit 0
+fi
 
 stage_only=false
 activation_only=false
@@ -639,7 +714,7 @@ elif [[ $# -eq 4 && ${4:-} == "--activate-staged" ]]; then
   expected_checksum="$2"
   expected_runtime_environment_digest="$3"
 elif [[ $# -ne 3 ]]; then
-  fail "uso: set-livre-deploy <sha> <sha256> <runtime-sha256> [--stage-only|--activate-staged], --inspect-staged <sha> <runtime-sha256>, --preflight, --recover-services ou --seal-services."
+  fail "uso: set-livre-deploy <sha> <sha256> <runtime-sha256> [--stage-only|--activate-staged], --inspect-staged <sha> <runtime-sha256>, --retained-releases <sha>, --preflight, --recover-services ou --seal-services."
 else
   release_sha="$1"
   expected_checksum="$2"

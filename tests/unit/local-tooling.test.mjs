@@ -1431,6 +1431,43 @@ describe("local tooling contracts", () => {
     expect(deploy).toContain(
       'readonly INSTALLED_DEPLOY_ENTRYPOINT="/usr/local/sbin/set-livre-deploy"',
     );
+    const inventoryBranchStart = command.indexOf(
+      "elif [[ ${original_command} =~ ^retained-releases\\ ([0-9a-f]{40})$ ]]; then",
+    );
+    expect(inventoryBranchStart).toBeGreaterThan(preflightBranchStart);
+    const inventoryBranch = command.slice(
+      inventoryBranchStart,
+      command.indexOf("\nelif ", inventoryBranchStart + 1),
+    );
+    expect(inventoryBranch).toContain('--retained-releases "$release_sha"');
+    expect(inventoryBranch.indexOf("flock --unlock 9")).toBeGreaterThan(-1);
+    expect(inventoryBranch.indexOf("flock --unlock 9")).toBeLessThan(
+      inventoryBranch.indexOf("exec 9>&-"),
+    );
+    expect(inventoryBranch.indexOf("exec 9>&-")).toBeLessThan(
+      inventoryBranch.indexOf("exec sudo --non-interactive"),
+    );
+    expect(inventoryBranch).not.toContain("cleanup_abandoned_uploads");
+    const inventoryDispatch = deploy.indexOf(
+      'if [[ $# -eq 2 && ${1:-} == "--retained-releases" ]]',
+    );
+    expect(inventoryDispatch).toBeGreaterThan(-1);
+    expect(
+      deploy.lastIndexOf("\nvalidate_deployment_host_prerequisites\n", inventoryDispatch),
+    ).toBeGreaterThan(-1);
+    const inventoryOperation = deploy.slice(
+      inventoryDispatch,
+      deploy.indexOf("\nfi", inventoryDispatch),
+    );
+    expect(inventoryOperation).toContain('retained_release_inventory "$2"');
+    expect(inventoryOperation).toContain("exit 0");
+    expect(hostVerification).toContain('SSH_ORIGINAL_COMMAND="$original_command"');
+    expect(hostVerification).toContain("inventário alterou estado do host:");
+    expect(hostVerification.indexOf("\nverify_retained_release_inventory\n")).toBeGreaterThan(
+      hostVerification.indexOf(
+        'invoke_candidate_through_forced_command "$release_sha" "$candidate_checksum" success activate',
+      ),
+    );
     expect(deploy).toContain('if [[ $# -eq 1 && ${1:-} == "--preflight" ]]');
     expect(deploy).toContain('== "root:root:755:1"');
     expect(deploy).toContain("bootstrap_is_terminal() {");
@@ -1442,7 +1479,7 @@ describe("local tooling contracts", () => {
     const privilegedPreflight = deploy.slice(privilegedPreflightStart, privilegedPreflightEnd);
     expect(privilegedPreflight).toContain("validate_deployment_host_prerequisites");
     expect(privilegedPreflight.indexOf("validate_deployment_host_prerequisites")).toBeLessThan(
-      privilegedPreflight.indexOf("set-livre-deploy-ready-v11"),
+      privilegedPreflight.indexOf("set-livre-deploy-ready-v12"),
     );
     const prerequisiteStart = deploy.indexOf("validate_deployment_host_prerequisites() {");
     const prerequisiteEnd = deploy.indexOf("\n}", prerequisiteStart);
@@ -1498,7 +1535,7 @@ describe("local tooling contracts", () => {
       'SSH_ORIGINAL_COMMAND="${operation} ${candidate_sha} ${candidate_checksum} ${runtime_digest}"',
     );
     expect(hostVerification).toContain("SSH_ORIGINAL_COMMAND=preflight");
-    expect(hostVerification).toContain("set-livre-deploy-ready-v11");
+    expect(hostVerification).toContain("set-livre-deploy-ready-v12");
     expect(hostVerification).toContain("preflight SSH aceitou drift no binário Node efetivo");
     expect(hostVerification).toContain("preflight SSH aceitou unit systemd efetiva divergente");
     expect(hostVerification).toContain(
@@ -1524,7 +1561,7 @@ describe("local tooling contracts", () => {
     );
     expect(hostVerification).toContain("preflight SSH aceitou certificado prestes a expirar");
     expect(hostVerification).toContain("preflight SSH aceitou HTTPS inválido");
-    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
+    expect(workflow).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v12" ]]');
     expect(hostVerification).toContain(
       'env_keep += "SET_LIVRE_TEST_CANDIDATE SET_LIVRE_TEST_PHASE SET_LIVRE_TEST_STATE"',
     );
@@ -1534,10 +1571,17 @@ describe("local tooling contracts", () => {
     expect(hostVerification).toContain("rollback-public-health-observed");
     expect(hostVerification).toContain("archive com mais de 20.000 entradas foi aceito");
     expect(hostVerification).toContain("archive com metadata PAX excessiva foi aceito");
-    expect(hostVerification.match(/tar --hard-dereference/gu)).toHaveLength(2);
-    expect(hostVerification.match(/--sort=name/gu)).toHaveLength(2);
-    expect(hostVerification.match(/--mtime='@0'/gu)).toHaveLength(2);
-    expect(hostVerification.match(/gzip --best --no-name/gu)).toHaveLength(2);
+    const archiveCommands = [
+      ...hostVerification.matchAll(
+        /LC_ALL=C tar --hard-dereference[\s\S]*?\| gzip --best --no-name/gu,
+      ),
+    ];
+    expect(archiveCommands).toHaveLength(2);
+    for (const [archiveCommand] of archiveCommands) {
+      expect(archiveCommand).toContain("--sort=name");
+      expect(archiveCommand).toContain("--mtime='@0'");
+      expect(archiveCommand).toContain("--owner=0 --group=0 --numeric-owner --format=posix");
+    }
     expect(workflow).toContain("LC_ALL=C tar --hard-dereference");
     const publishableFixtures = [
       ...workflow.matchAll(/NEXT_PUBLIC_SUPABASE_ANON_KEY: (sb_publishable_[A-Za-z0-9_-]+)/gu),

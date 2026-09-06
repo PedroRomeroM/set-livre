@@ -5,7 +5,6 @@ import { StorageApiError } from "@supabase/storage-js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  assertActiveWebReleaseHealth,
   assertCleanupResult,
   assertDefaultSecretKey,
   assertImmutableCleanupSlug,
@@ -14,8 +13,7 @@ import {
   configureProductionMediaCleanup,
   createProductionStorageClient,
   isConfirmedStorageObjectAbsence,
-  readActivePublicReleaseSha,
-  selectCleanupFunctionRetention,
+  pruneProductionMediaCleanupFunctions,
   selectDefaultSecretKey,
   writeEphemeralDefaultSecretKey,
 } from "../../scripts/configure-production-media-cleanup.mjs";
@@ -25,10 +23,9 @@ const supabaseUrl = `https://${projectRef}.supabase.co`;
 const runtimeUrl =
   "postgresql://app_runtime_production.oirvvnojgkzdppkdvhej:runtime%23secret@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=verify-full&options=-c%20role%3Dapp_dal";
 const secretKey = "sb_secret_defaultProductionKey123";
-const activeReleaseSha = "a".repeat(40);
-const immutableCleanupBootstrapReleaseSha = "a6549f558133a76f559a1c94ded73aca558786e5";
+const rollbackReleaseSha = "a".repeat(40);
 const candidateSha = "c".repeat(40);
-const activeSlug = `media-cleanup-${activeReleaseSha}`;
+const rollbackSlug = `media-cleanup-${rollbackReleaseSha}`;
 const candidateSlug = `media-cleanup-${candidateSha}`;
 const failedSlugs = ["b", "d", "e", "f", "9"].map(
   (character) => `media-cleanup-${character.repeat(40)}`,
@@ -37,12 +34,29 @@ const repositoryRoot = resolve(import.meta.dirname, "../..");
 
 function environment() {
   return {
-    ACTIVE_PUBLIC_RELEASE_SHA: activeReleaseSha,
     MEDIA_CLEANUP_FUNCTION_SLUG: candidateSlug,
     PRD_DATABASE_URL_APP_DAL: runtimeUrl,
     PRD_SUPABASE_SECRET_KEY: secretKey,
     SUPABASE_ACCESS_TOKEN: "sbp_management_access_token",
     SUPABASE_DB_PASSWORD: "admin-secret",
+    SUPABASE_PROJECT_REF: projectRef,
+  };
+}
+
+function retainedReleaseInventory(
+  releases = [
+    { sha: candidateSha, mediaCleanup: true },
+    { sha: rollbackReleaseSha, mediaCleanup: true },
+  ],
+) {
+  return { version: 1, activeReleaseSha: candidateSha, releases };
+}
+
+function retentionEnvironment(inventory = retainedReleaseInventory()) {
+  return {
+    MEDIA_CLEANUP_FUNCTION_SLUG: candidateSlug,
+    RETAINED_RELEASE_INVENTORY: JSON.stringify(inventory),
+    SUPABASE_ACCESS_TOKEN: "sbp_management_access_token",
     SUPABASE_PROJECT_REF: projectRef,
   };
 }
@@ -83,7 +97,7 @@ function functionInventory() {
     immutableFunction(failedSlugs[2], Date.UTC(2026, 7, 31, 15)),
     immutableFunction(failedSlugs[1], Date.UTC(2026, 7, 31, 14)),
     immutableFunction(failedSlugs[0], Date.UTC(2026, 7, 31, 13)),
-    immutableFunction(activeSlug, Date.UTC(2026, 7, 30, 12)),
+    immutableFunction(rollbackSlug, Date.UTC(2026, 7, 30, 12)),
   ];
 }
 
@@ -115,7 +129,7 @@ function createProductionHarness({
   const aborts = [];
   const deletedSlugs = [];
   const staleProbeRunIds = new Set(staleProbes.map((probe) => probe.runId));
-  let currentInventory = [...inventory];
+  let currentInventory = inventory;
   for (const probe of staleProbes) probes.set(probe.runId, probe);
 
   const query = vi.fn(async (statement, parameters = []) => {
@@ -339,10 +353,21 @@ describe("production media cleanup configuration", () => {
     expect(packageConfiguration.devDependencies.deno).toBe("2.9.5");
     expect(workflow).toContain("run: npm run typecheck");
     expect(workflow).not.toContain("denoland/setup-deno");
-    expect(workflow).toContain("--read-active-release-sha");
-    expect(workflow).toContain(
-      "ACTIVE_PUBLIC_RELEASE_SHA: ${{ steps.active_public_release.outputs.sha }}",
-    );
+    expect(workflow).not.toContain("--read-active-release-sha");
+    expect(workflow).not.toContain("ACTIVE_PUBLIC_RELEASE_SHA");
+    expect(workflow).toContain("--prune-functions");
+    expect(workflow).toContain('RETAINED_RELEASE_INVENTORY="$inventory"');
+    expect(workflow).toContain('"retained-releases ${GITHUB_SHA}"');
+    expect(workflow).toMatch(/concurrency:\s+group: production\s+cancel-in-progress: false/u);
+    const canary = workflow.indexOf("- name: Run immutable media cleanup canary");
+    const activation = workflow.indexOf("- name: Activate staged release on Oracle VM");
+    const ready = workflow.indexOf("- name: Verify public web health");
+    const prune = workflow.indexOf("- name: Prune unreferenced media cleanup functions");
+    expect(canary).toBeGreaterThan(-1);
+    expect(activation).toBeGreaterThan(canary);
+    expect(ready).toBeGreaterThan(activation);
+    expect(prune).toBeGreaterThan(ready);
+    expect(workflow.slice(prune)).not.toContain("SUPABASE_DB_PASSWORD");
     expect(workflow).not.toMatch(/mv[^\n]*index\.js[^\n]*index\.ts/u);
     expect(workflow).not.toMatch(/\b(?:pg_net|vault|cron|scheduler)\b/iu);
   });
@@ -509,36 +534,9 @@ describe("production media cleanup configuration", () => {
     expect(openFile).not.toHaveBeenCalled();
   });
 
-  it("reads the active release only from a strict HTTPS liveness response", async () => {
-    const payload = {
-      application: "web",
-      checkedAt: "2026-08-31T12:00:00.000Z",
-      release: activeReleaseSha,
-      requestId: "87000000-0000-4000-8000-000000000001",
-      status: "live",
-    };
-    expect(assertActiveWebReleaseHealth(payload)).toBe(activeReleaseSha);
-    for (const invalid of [
-      { ...payload, release: "unknown" },
-      { ...payload, status: "ready" },
-      { ...payload, dependency: "database" },
-    ]) {
-      expect(() => assertActiveWebReleaseHealth(invalid)).toThrow();
-    }
-
-    const fetchImplementation = vi.fn(async () => Response.json(payload));
-    await expect(readActivePublicReleaseSha({ fetchImplementation })).resolves.toBe(
-      activeReleaseSha,
-    );
-    expect(fetchImplementation).toHaveBeenCalledWith(
-      new URL("https://147.15.97.227/api/health/live"),
-      expect.objectContaining({ method: "GET", redirect: "error" }),
-    );
-  });
-
   it("validates immutable identities, accounting and the private bucket", () => {
     expect(assertImmutableCleanupSlug(candidateSlug)).toBe(candidateSlug);
-    expect(assertReleaseSha(activeReleaseSha)).toBe(activeReleaseSha);
+    expect(assertReleaseSha(candidateSha)).toBe(candidateSha);
     expect(assertCleanupResult({ claimed: 2, deleted: 2, failed: 0 })).toEqual({
       claimed: 2,
       deleted: 2,
@@ -552,98 +550,304 @@ describe("production media cleanup configuration", () => {
     expect(() => assertReleaseSha("unknown")).toThrow();
   });
 
-  it("protects the active Function and candidate after several failed attempts", () => {
-    const retention = selectCleanupFunctionRetention(functionInventory(), {
-      activeReleaseSha,
-      candidateSlug,
-    });
-    expect(retention.retained).toHaveLength(4);
-    expect(retention.retained).toContain(candidateSlug);
-    expect(retention.retained).toContain(activeSlug);
-    expect(retention.deleted).not.toContain(activeSlug);
-    expect(retention.deleted).not.toContain(candidateSlug);
-    expect(retention.deleted).toHaveLength(3);
-  });
-
-  it("permits only the known pre-cleanup release to bootstrap the first immutable Function", () => {
-    const bootstrapInventory = [
-      immutableFunction(candidateSlug, Date.UTC(2026, 8, 4, 12)),
-      legacyMutableFunction(),
-    ];
-    const retention = selectCleanupFunctionRetention(bootstrapInventory, {
-      activeReleaseSha: immutableCleanupBootstrapReleaseSha,
-      candidateSlug,
-    });
-
-    expect(retention).toEqual({
-      activeSlug: `media-cleanup-${immutableCleanupBootstrapReleaseSha}`,
-      deleted: ["media-cleanup"],
-      retained: [candidateSlug],
-    });
-    expect(() =>
-      selectCleanupFunctionRetention(bootstrapInventory, {
-        activeReleaseSha: "8".repeat(40),
-        candidateSlug,
-      }),
-    ).toThrow("ativa");
-  });
-
-  it("retires one valid mutable legacy surface and rejects ambiguous migration state", () => {
-    const retention = selectCleanupFunctionRetention(
-      [...functionInventory(), legacyMutableFunction()],
-      { activeReleaseSha, candidateSlug },
+  it("prunes only unreferenced Functions and preserves all four artifact references regardless of timestamps", async () => {
+    const protectedSlugs = [candidateSlug, rollbackSlug, ...failedSlugs.slice(0, 2)];
+    const inventory = retainedReleaseInventory(
+      protectedSlugs.map((slug) => ({
+        sha: slug.slice("media-cleanup-".length),
+        mediaCleanup: true,
+      })),
     );
-    expect(retention.deleted).toContain("media-cleanup");
-
-    for (const invalidLegacy of [
-      [legacyMutableFunction(), legacyMutableFunction()],
-      [{ ...legacyMutableFunction(), status: "FAILED" }],
-      [{ ...legacyMutableFunction(), verify_jwt: true }],
-    ]) {
-      expect(() =>
-        selectCleanupFunctionRetention([...functionInventory(), ...invalidLegacy], {
-          activeReleaseSha,
-          candidateSlug,
-        }),
-      ).toThrow("legada");
-    }
-    expect(() =>
-      selectCleanupFunctionRetention(
-        functionInventory().filter((candidate) => candidate.slug !== candidateSlug),
-        { activeReleaseSha, candidateSlug },
-      ),
-    ).toThrow("candidata");
-    expect(() =>
-      selectCleanupFunctionRetention(
-        functionInventory().filter((candidate) => candidate.slug !== activeSlug),
-        { activeReleaseSha, candidateSlug },
-      ),
-    ).toThrow("ativa");
-
-    expect(
-      selectCleanupFunctionRetention(functionInventory(), {
-        activeReleaseSha: candidateSha,
-        candidateSlug,
-      }).retained,
-    ).toContain(candidateSlug);
-  });
-
-  it("proves the candidate by direct HTTPS, ledger and Storage before pruning", async () => {
+    const unrelated = { slug: "other-function", status: "ACTIVE", verify_jwt: true };
     const harness = createProductionHarness({
-      inventory: [...functionInventory(), legacyMutableFunction()],
+      inventory: [...functionInventory(), legacyMutableFunction(), unrelated],
     });
+
     await expect(
-      configureProductionMediaCleanup(environment(), {
-        createClient: () => harness.client,
-        createStorageClient: () => harness.storage,
+      pruneProductionMediaCleanupFunctions(retentionEnvironment(inventory), {
         fetchImplementation: harness.fetchImplementation,
       }),
     ).resolves.toEqual({
-      activeReleaseSha,
+      activeReleaseSha: candidateSha,
       candidateSlug,
       deletedFunctions: 4,
       retainedFunctions: 4,
+      missingReferencedFunctions: 0,
+      unavailableReferencedFunctions: 0,
     });
+    expect(harness.deletedSlugs).toEqual(["media-cleanup", ...failedSlugs.slice(2)].sort());
+    expect(harness.client.connect).not.toHaveBeenCalled();
+    expect(harness.statements).toEqual([]);
+    expect(harness.storage.from).not.toHaveBeenCalled();
+    expect(harness.fetchImplementation).toHaveBeenCalledTimes(6);
+    for (const [input, init] of harness.fetchImplementation.mock.calls) {
+      expect(String(input)).toMatch(
+        new RegExp(`^https://api\\.supabase\\.com/v1/projects/${projectRef}/functions(?:/|$)`, "u"),
+      );
+      expect(["GET", "DELETE"]).toContain(init.method);
+      expect(init.headers.Authorization).toBe("Bearer sbp_management_access_token");
+    }
+    await expect(
+      pruneProductionMediaCleanupFunctions(retentionEnvironment(inventory), {
+        fetchImplementation: harness.fetchImplementation,
+      }),
+    ).resolves.toMatchObject({ deletedFunctions: 0, retainedFunctions: 4 });
+    expect(harness.fetchImplementation).toHaveBeenCalledTimes(7);
+  });
+
+  it("accepts pre-cleanup artifacts without a Function and keeps exactly the protected set", async () => {
+    const inventory = retainedReleaseInventory([
+      { sha: candidateSha, mediaCleanup: true },
+      { sha: "6".repeat(40), mediaCleanup: false },
+      { sha: rollbackReleaseSha, mediaCleanup: false },
+    ]);
+    const harness = createProductionHarness({
+      inventory: [
+        ...functionInventory().map((version) => ({
+          ...version,
+          created_at: undefined,
+          status: version.slug === candidateSlug ? "ACTIVE" : "FAILED",
+        })),
+        legacyMutableFunction(),
+      ],
+    });
+    const result = await pruneProductionMediaCleanupFunctions(retentionEnvironment(inventory), {
+      fetchImplementation: harness.fetchImplementation,
+    });
+    expect(result).toMatchObject({ deletedFunctions: 7, retainedFunctions: 1 });
+    expect(harness.deletedSlugs).toEqual(["media-cleanup", rollbackSlug, ...failedSlugs].sort());
+  });
+
+  it.each(["missing", "inactive", "jwt-mismatch"])(
+    "does not block healthy active B when staged release A has a %s Function",
+    async (state) => {
+      const inventory = functionInventory().filter((version) => version.slug !== rollbackSlug);
+      if (state !== "missing") {
+        inventory.push({
+          ...functionInventory().at(-1),
+          status: state === "inactive" ? "FAILED" : "ACTIVE",
+          verify_jwt: state === "jwt-mismatch",
+        });
+      }
+      const harness = createProductionHarness({ inventory });
+      await expect(
+        pruneProductionMediaCleanupFunctions(retentionEnvironment(), {
+          fetchImplementation: harness.fetchImplementation,
+        }),
+      ).resolves.toEqual({
+        activeReleaseSha: candidateSha,
+        candidateSlug,
+        deletedFunctions: 5,
+        retainedFunctions: state === "missing" ? 1 : 2,
+        missingReferencedFunctions: state === "missing" ? 1 : 0,
+        unavailableReferencedFunctions: state === "missing" ? 0 : 1,
+      });
+      expect(harness.deletedSlugs).toEqual([...failedSlugs].sort());
+      expect(harness.statements).toEqual([]);
+      expect(harness.storage.from).not.toHaveBeenCalled();
+    },
+  );
+
+  it("prints missing and unavailable references in the GC CLI without claiming rollback or exposing a token", async () => {
+    const releases = retainedReleaseInventory([
+      { sha: candidateSha, mediaCleanup: true },
+      { sha: rollbackReleaseSha, mediaCleanup: true },
+      { sha: "b".repeat(40), mediaCleanup: true },
+    ]);
+    const harness = createProductionHarness({
+      inventory: functionInventory()
+        .filter((version) => version.slug !== rollbackSlug)
+        .map((version) => ({
+          ...version,
+          status: version.slug === failedSlugs[0] ? "FAILED" : "ACTIVE",
+        })),
+    });
+    const originalArgv = process.argv;
+    const originalExitCode = process.exitCode;
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      for (const [key, value] of Object.entries(retentionEnvironment(releases))) {
+        vi.stubEnv(key, value);
+      }
+      vi.stubGlobal("fetch", harness.fetchImplementation);
+      process.argv = [
+        process.execPath,
+        resolve(repositoryRoot, "scripts/configure-production-media-cleanup.mjs"),
+        "--prune-functions",
+      ];
+      vi.resetModules();
+      await import("../../scripts/configure-production-media-cleanup.mjs");
+      expect(stderr).not.toHaveBeenCalled();
+      expect(stdout).toHaveBeenCalledWith(
+        "Retenção de cleanup: 2 Functions referenciadas presentes, 4 removidas; " +
+          "missingReferencedFunctions=1, unavailableReferencedFunctions=1. " +
+          "Disponibilidade de rollback não comprovada.\n",
+      );
+      expect(stdout.mock.calls.flat().join("")).not.toContain(
+        retentionEnvironment().SUPABASE_ACCESS_TOKEN,
+      );
+      expect(harness.deletedSlugs).toEqual(failedSlugs.slice(1).sort());
+      expect(harness.statements).toEqual([]);
+      expect(harness.storage.from).not.toHaveBeenCalled();
+    } finally {
+      process.argv = originalArgv;
+      process.exitCode = originalExitCode;
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+
+  it.each([
+    undefined,
+    "",
+    "{",
+    "null",
+    "[]",
+    JSON.stringify({ ...retainedReleaseInventory(), extra: true }),
+    JSON.stringify({ ...retainedReleaseInventory(), version: 2 }),
+    JSON.stringify({ releases: retainedReleaseInventory().releases, version: 1 }),
+    JSON.stringify({ ...retainedReleaseInventory(), activeReleaseSha: rollbackReleaseSha }),
+    JSON.stringify({ ...retainedReleaseInventory(), activeReleaseSha: candidateSha.toUpperCase() }),
+    ...[
+      [],
+      [{ sha: rollbackReleaseSha, mediaCleanup: true }],
+      [{ sha: candidateSha, mediaCleanup: false }],
+      [{ sha: candidateSha, mediaCleanup: "true" }],
+      [{ sha: candidateSha }],
+      [{ sha: candidateSha, mediaCleanup: true, slug: "media-cleanup" }],
+      [
+        { sha: candidateSha, mediaCleanup: true },
+        { sha: candidateSha, mediaCleanup: false },
+      ],
+      [
+        { sha: candidateSha, mediaCleanup: true },
+        { sha: "invalid", mediaCleanup: false },
+      ],
+      [null],
+      [candidateSha, "a".repeat(40), "b".repeat(40), "d".repeat(40), "e".repeat(40)].map((sha) => ({
+        sha,
+        mediaCleanup: true,
+      })),
+    ].map((releases) => JSON.stringify(retainedReleaseInventory(releases))),
+  ])(
+    "refuses invalid retained inventory before any provider request (%#)",
+    async (serializedInventory) => {
+      const fetchImplementation = vi.fn();
+      await expect(
+        pruneProductionMediaCleanupFunctions(
+          {
+            ...retentionEnvironment(),
+            RETAINED_RELEASE_INVENTORY: serializedInventory,
+          },
+          { fetchImplementation },
+        ),
+      ).rejects.toThrow();
+      expect(fetchImplementation).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    null,
+    {},
+    [],
+    functionInventory().filter((version) => version.slug !== candidateSlug),
+    [...functionInventory(), functionInventory()[0]],
+    [...functionInventory(), functionInventory().at(-1)],
+    [...functionInventory(), { ...functionInventory()[0], slug: [candidateSlug] }],
+    [...functionInventory(), legacyMutableFunction(), legacyMutableFunction()],
+    ...["status", "verify_jwt"].map((field) =>
+      functionInventory().map((version) =>
+        version.slug === candidateSlug
+          ? { ...version, [field]: field === "status" ? "FAILED" : true }
+          : version,
+      ),
+    ),
+  ])(
+    "does not DELETE anything when the active Function is invalid or identities are ambiguous (%#)",
+    async (inventory) => {
+      const harness = createProductionHarness({ inventory });
+      await expect(
+        pruneProductionMediaCleanupFunctions(retentionEnvironment(), {
+          fetchImplementation: harness.fetchImplementation,
+        }),
+      ).rejects.toThrow();
+      expect(harness.deletedSlugs).toEqual([]);
+      expect(harness.fetchImplementation).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("re-verifies retention and fails if the active Function disappears from the provider", async () => {
+    const harness = createProductionHarness();
+    let inventoryReads = 0;
+    await expect(
+      pruneProductionMediaCleanupFunctions(retentionEnvironment(), {
+        fetchImplementation: async (input, init) => {
+          if (init.method === "GET" && ++inventoryReads > 1) {
+            return Response.json([functionInventory().at(-1)]);
+          }
+          return harness.fetchImplementation(input, init);
+        },
+      }),
+    ).rejects.toThrow("Function ativa");
+    expect(inventoryReads).toBe(2);
+    expect(harness.deletedSlugs).not.toContain(candidateSlug);
+    expect(harness.deletedSlugs).not.toContain(rollbackSlug);
+  });
+
+  it.each(["missing", "inactive", "appeared"])(
+    "checks observed reference preservation and final diagnostics (%s)",
+    async (state) => {
+      const harness = createProductionHarness({
+        inventory: functionInventory().filter(
+          (version) => state !== "appeared" || version.slug !== rollbackSlug,
+        ),
+      });
+      let inventoryReads = 0;
+      const result = pruneProductionMediaCleanupFunctions(retentionEnvironment(), {
+        fetchImplementation: async (input, init) => {
+          if (init.method === "GET" && ++inventoryReads > 1) {
+            const finalInventory = [functionInventory()[0]];
+            if (state !== "missing") {
+              finalInventory.push({
+                ...functionInventory().at(-1),
+                status: state === "inactive" ? "FAILED" : "ACTIVE",
+              });
+            }
+            return Response.json(finalInventory);
+          }
+          return harness.fetchImplementation(input, init);
+        },
+      });
+      if (state === "missing") {
+        await expect(result).rejects.toThrow("não preservou uma Function referenciada");
+      } else {
+        await expect(result).resolves.toMatchObject({
+          deletedFunctions: 5,
+          retainedFunctions: 2,
+          missingReferencedFunctions: 0,
+          unavailableReferencedFunctions: state === "inactive" ? 1 : 0,
+        });
+      }
+      expect(inventoryReads).toBe(2);
+      expect(harness.deletedSlugs).toEqual([...failedSlugs].sort());
+    },
+  );
+
+  it("proves the candidate by direct HTTPS, ledger and Storage without pruning", async () => {
+    const harness = createProductionHarness({
+      inventory: [...functionInventory(), legacyMutableFunction()],
+    });
+    const result = await configureProductionMediaCleanup(environment(), {
+      createClient: () => harness.client,
+      createStorageClient: () => harness.storage,
+      fetchImplementation: harness.fetchImplementation,
+    });
+    expect(harness.deletedSlugs).toEqual([]);
+    expect(result).toEqual({ candidateSlug });
+    expect(harness.fetchImplementation).toHaveBeenCalledOnce();
 
     const functionCall = harness.fetchImplementation.mock.calls.find(
       ([input]) => String(input) === `${supabaseUrl}/functions/v1/${candidateSlug}`,
@@ -666,10 +870,23 @@ describe("production media cleanup configuration", () => {
     });
     expect(harness.bucket.upload).toHaveBeenCalledTimes(2);
     expect(harness.bucket.download).toHaveBeenCalledTimes(2);
-    expect(harness.deletedSlugs).not.toContain(activeSlug);
-    expect(harness.deletedSlugs).not.toContain(candidateSlug);
-    expect(harness.deletedSlugs).toContain("media-cleanup");
     expect(harness.statements.join("\n")).not.toMatch(/\b(?:pg_net|vault|cron|scheduler)\b/iu);
+  });
+
+  it("runs the pre-activation canary without old public health or a retention inventory", async () => {
+    const harness = createProductionHarness();
+    const canaryEnvironment = environment();
+    delete canaryEnvironment.SUPABASE_ACCESS_TOKEN;
+
+    await expect(
+      configureProductionMediaCleanup(canaryEnvironment, {
+        createClient: () => harness.client,
+        createStorageClient: () => harness.storage,
+        fetchImplementation: harness.fetchImplementation,
+      }),
+    ).resolves.toEqual({ candidateSlug });
+    expect(harness.deletedSlugs).toEqual([]);
+    expect(harness.fetchImplementation).toHaveBeenCalledOnce();
   });
 
   it("recovers stale prepared and queued probes before creating the next canary", async () => {
@@ -788,21 +1005,19 @@ describe("production media cleanup configuration", () => {
       },
     ]) {
       await expect(
-        configureProductionMediaCleanup(environment(), {
-          createClient: () => scenario.harness.client,
-          createStorageClient: () => scenario.harness.storage,
+        pruneProductionMediaCleanupFunctions(retentionEnvironment(), {
           fetchImplementation: scenario.harness.fetchImplementation,
         }),
       ).rejects.toThrow(scenario.expectedError);
-      expect(scenario.harness.deletedSlugs).not.toContain(activeSlug);
+      expect(scenario.harness.deletedSlugs).not.toContain(rollbackSlug);
       expect(scenario.harness.deletedSlugs).not.toContain(candidateSlug);
     }
   });
 
-  it("fails before opening Postgres when liveness identity or secret is invalid", async () => {
+  it("fails before opening Postgres when candidate identity or secret is invalid", async () => {
     const createClient = vi.fn();
     for (const invalidEnvironment of [
-      { ...environment(), ACTIVE_PUBLIC_RELEASE_SHA: "unknown" },
+      { ...environment(), MEDIA_CLEANUP_FUNCTION_SLUG: "media-cleanup" },
       { ...environment(), PRD_SUPABASE_SECRET_KEY: "invalid" },
     ]) {
       await expect(
@@ -813,5 +1028,22 @@ describe("production media cleanup configuration", () => {
       ).rejects.toThrow();
     }
     expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("refuses GC with missing authority, wrong project or candidate identity before any provider request", async () => {
+    const fetchImplementation = vi.fn();
+    for (const invalidEnvironment of [
+      { ...retentionEnvironment(), SUPABASE_ACCESS_TOKEN: undefined },
+      { ...retentionEnvironment(), SUPABASE_PROJECT_REF: "a".repeat(20) },
+      { ...retentionEnvironment(), MEDIA_CLEANUP_FUNCTION_SLUG: rollbackSlug },
+      { ...retentionEnvironment(), MEDIA_CLEANUP_FUNCTION_SLUG: "media-cleanup" },
+    ]) {
+      await expect(
+        pruneProductionMediaCleanupFunctions(invalidEnvironment, {
+          fetchImplementation,
+        }),
+      ).rejects.toThrow();
+    }
+    expect(fetchImplementation).not.toHaveBeenCalled();
   });
 });
