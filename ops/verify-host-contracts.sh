@@ -1390,7 +1390,7 @@ preflight_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_output} == set-livre-deploy-ready-v11 ]] \
+[[ ${preflight_output} == set-livre-deploy-ready-v12 ]] \
   || fail "preflight SSH não comprovou sudoers e entrypoint privilegiado instalados."
 
 sudo cp /etc/nginx/sites-available/set-livre "$temporary_directory/effective-nginx-site"
@@ -1490,7 +1490,7 @@ preflight_recovered_output="$(
   sudo --user deploy-setlivre -- env SSH_ORIGINAL_COMMAND=preflight \
     "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null
 )"
-[[ ${preflight_recovered_output} == set-livre-deploy-ready-v11 ]] \
+[[ ${preflight_recovered_output} == set-livre-deploy-ready-v12 ]] \
   || fail "preflight SSH não recuperou o contrato efetivo restaurado."
 
 package_candidate() {
@@ -1731,6 +1731,206 @@ recover_services_successfully() {
     || fail "recuperação terminal preservou o bloqueio de bootstrap."
 }
 
+# As saídas de fixtures pertencem ao runner; sudo só lê as árvores root-owned.
+# shellcheck disable=SC2024
+verify_retained_release_inventory() (
+  local legacy_sha modern_sha directory scenario filter command before after output
+  local expected inventory_status
+  local -a lock_prefix=()
+  legacy_sha="$(printf '0b%.0s' {1..20})"
+  modern_sha="$(printf '0c%.0s' {1..20})"
+  local legacy_directory="/opt/set-livre/releases/$legacy_sha"
+  local modern_directory="/opt/set-livre/releases/$modern_sha"
+  local current_backup="$temporary_directory/inventory-current"
+  local fixture_backup="$temporary_directory/inventory-modern"
+  local manifest_source="$temporary_directory/inventory-manifest.json"
+  local digest_source="$temporary_directory/inventory-tree.sha256"
+  local inventory_command="retained-releases $release_sha"
+
+  if privileged_path_exists "$legacy_directory" \
+    || privileged_path_exists "$modern_directory" \
+    || privileged_path_exists /opt/set-livre/current.next; then
+    fail "fixtures de inventário já existem."
+  fi
+  # shellcheck disable=SC2317,SC2329
+  restore_inventory_current() {
+    if sudo test -L "$current_backup"; then
+      sudo rm -f -- /opt/set-livre/current
+      sudo mv --no-target-directory -- "$current_backup" /opt/set-livre/current
+    fi
+  }
+  # shellcheck disable=SC2317,SC2329
+  cleanup_inventory_probe() {
+    restore_inventory_current
+    sudo rm -f -- /opt/set-livre/current.next
+    sudo rm -rf --one-file-system -- "$legacy_directory" "$modern_directory"
+  }
+  trap cleanup_inventory_probe EXIT
+
+  seal_inventory_fixture() {
+    local directory="$1"
+    {
+      printf '%s\n' 'set -Eeuo pipefail' \
+        'readonly STAGED_TREE_DIGEST_RELATIVE_PATH=".runtime/staged-tree.sha256"'
+      sed -n '/^release_tree_digest() {$/,/^}$/p' "$REPOSITORY_ROOT/ops/deploy-release.sh"
+      # shellcheck disable=SC2016
+      printf '%s\n' 'release_tree_digest "$1"'
+    } | sudo bash -s -- "$directory" > "$digest_source"
+    sudo install -o root -g setlivre -m 0640 "$digest_source" \
+      "$directory/.runtime/staged-tree.sha256"
+  }
+
+  inventory_state_digest() {
+    {
+      sudo tar --create --file=- --format=gnu --sort=name --mtime=@0 --numeric-owner \
+        --directory=/ opt/set-livre etc/set-livre home/deploy-setlivre/incoming \
+        "${test_state#/}" | sha256sum
+      sudo find /opt/set-livre -xdev -printf '%p:%i:%m:%u:%g:%T@:%l\n' | LC_ALL=C sort
+    } | sha256sum
+  }
+
+  check_inventory() {
+    local expected_status="$1"
+    local label="$2"
+    local original_command="${3:-$inventory_command}"
+    before="$(inventory_state_digest)"
+    inventory_status=0
+    output="$(
+      "${lock_prefix[@]}" sudo --user deploy-setlivre -- env \
+        SET_LIVRE_TEST_CANDIDATE="$release_sha" SET_LIVRE_TEST_PHASE=success \
+        SET_LIVRE_TEST_STATE="$test_state" SSH_ORIGINAL_COMMAND="$original_command" \
+        "$INSTALLED_DEPLOY_SSH_COMMAND" </dev/null \
+        2>"$temporary_directory/inventory-stderr"
+    )" || inventory_status=$?
+    after="$(inventory_state_digest)"
+    [[ $before == "$after" ]] || fail "inventário alterou estado do host: $label."
+    if [[ $expected_status == rejected ]]; then
+      [[ $inventory_status -ne 0 && -z $output ]] \
+        || fail "inventário aceitou entrada inválida ou publicou resultado parcial: $label."
+    else
+      [[ $inventory_status -eq 0 ]] || fail "inventário válido foi recusado: $label."
+      jq --exit-status --slurp --argjson expected "$expected" '
+        length == 1 and
+        (.[0] | .releases |= sort_by(.sha)) == ($expected | .releases |= sort_by(.sha))
+      ' <<< "$output" >/dev/null || fail "JSON do inventário divergiu do contrato exato: $label."
+    fi
+  }
+
+  expected="$(jq --null-input --arg active "$release_sha" --arg previous "$initial_failure_sha" '
+    {version: 1, activeReleaseSha: $active,
+      releases: [{sha: $active, mediaCleanup: true}, {sha: $previous, mediaCleanup: true}]}
+  ')"
+  check_inventory accepted initial
+  for directory in "$legacy_directory" "$modern_directory"; do
+    package_candidate "${directory##*/}"
+    upload_candidate "${directory##*/}"
+    invoke_candidate_through_forced_command "${directory##*/}" "$candidate_checksum"
+    sudo jq '.hostConfiguration.sha256 = ("0" * 64)' \
+      "$directory/release-manifest.json" > "$manifest_source"
+    sudo install -o root -g setlivre -m 0640 "$manifest_source" "$directory/release-manifest.json"
+  done
+  sudo jq 'del(.applications.web.mediaCleanupEntrypoint)' \
+    "$legacy_directory/release-manifest.json" > "$manifest_source"
+  sudo install -o root -g setlivre -m 0640 "$manifest_source" \
+    "$legacy_directory/release-manifest.json"
+  sudo rm -- "$legacy_directory/web/runtime/invoke-media-cleanup.mjs"
+  seal_inventory_fixture "$legacy_directory"
+  seal_inventory_fixture "$modern_directory"
+  sudo cp --archive -- "$modern_directory" "$fixture_backup"
+  # Sentinela de cleanup_files: uma leitura não pode removê-la nem limpar uploads antigos.
+  sudo install -o root -g root -m 0600 /dev/null /opt/set-livre/current.next
+  sudo install -o deploy-setlivre -g deploy-setlivre -m 0600 /dev/null \
+    "/home/deploy-setlivre/incoming/web-$legacy_sha.env"
+  expected="$(jq --arg legacy "$legacy_sha" --arg modern "$modern_sha" '
+    .releases += [{sha: $legacy, mediaCleanup: false}, {sha: $modern, mediaCleanup: true}]
+  ' <<< "$expected")"
+  check_inventory accepted legacy-and-old-host-digest
+
+  for command in \
+    "retained-releases $legacy_sha" \
+    'retained-releases' \
+    "retained-releases ${release_sha:0:39}" \
+    "retained-releases $(printf 'A%.0s' {1..40})" \
+    "retained-releases  $release_sha" \
+    "retained-releases $release_sha extra" \
+    "retained-releases $release_sha; true" \
+    $'retained-releases\t'"$release_sha" \
+    "retained-releases $release_sha"$'\n'; do
+    check_inventory rejected malformed-or-wrong-active "$command"
+  done
+
+  lock_prefix=(sudo flock --exclusive /run/lock/set-livre-deploy.lock)
+  check_inventory rejected deployment-lock
+  lock_prefix=()
+  sudo install -o root -g root -m 0600 /dev/null /etc/set-livre/bootstrap-in-progress.sha256
+  check_inventory rejected bootstrap-preflight
+  sudo rm -- /etc/set-livre/bootstrap-in-progress.sha256
+  sudo install -o root -g root -m 0600 /dev/null /opt/set-livre/.activation-rollback
+  check_inventory rejected interrupted-activation
+  sudo rm -- /opt/set-livre/.activation-rollback
+
+  sudo mv -- /opt/set-livre/current "$current_backup"
+  check_inventory rejected missing-current
+  sudo ln --symbolic -- "/opt/set-livre/releases/$release_sha/web" /opt/set-livre/current
+  check_inventory rejected nested-current
+  sudo rm -- /opt/set-livre/current
+  sudo ln --symbolic -- "$legacy_directory" /opt/set-livre/current
+  check_inventory rejected active-without-cleanup "retained-releases $legacy_sha"
+  restore_inventory_current
+
+  for scenario in tree manifest-sha manifest-schema cleanup-path cleanup-missing \
+    owner file-write directory-write symlink release-symlink excess-retention; do
+    case "$scenario" in
+      tree) printf 'adulterado\n' | sudo tee "$modern_directory/web/server.js" >/dev/null ;;
+      manifest-sha|manifest-schema|cleanup-path)
+        case "$scenario" in
+          manifest-sha) filter='.commit = ("f" * 40)' ;;
+          manifest-schema) filter='.version = 1' ;;
+          cleanup-path) filter='.applications.web.mediaCleanupEntrypoint = "runtime/other.mjs"' ;;
+        esac
+        sudo jq "$filter" "$modern_directory/release-manifest.json" > "$manifest_source"
+        sudo install -o root -g setlivre -m 0640 "$manifest_source" \
+          "$modern_directory/release-manifest.json"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      cleanup-missing)
+        sudo rm -- "$modern_directory/web/runtime/invoke-media-cleanup.mjs"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      owner)
+        sudo chown deploy-setlivre "$modern_directory/web/server.js"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      file-write)
+        sudo chmod 0660 "$modern_directory/web/server.js"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      directory-write)
+        sudo chmod 0770 "$modern_directory/web"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      symlink)
+        sudo rm -- "$modern_directory/web/server.js"
+        sudo ln --symbolic -- /etc/set-livre/host-config.sha256 "$modern_directory/web/server.js"
+        seal_inventory_fixture "$modern_directory"
+        ;;
+      release-symlink)
+        sudo rm -rf --one-file-system -- "$modern_directory"
+        sudo ln --symbolic -- "$fixture_backup" "$modern_directory"
+        ;;
+      excess-retention) sudo install -d -o root -g setlivre -m 0750 \
+        "/opt/set-livre/releases/$(printf '0d%.0s' {1..20})" ;;
+    esac
+    check_inventory rejected "$scenario"
+    if [[ $scenario == excess-retention ]]; then
+      sudo rmdir -- "/opt/set-livre/releases/$(printf '0d%.0s' {1..20})"
+    fi
+    sudo rm -rf --one-file-system -- "$modern_directory"
+    sudo cp --archive -- "$fixture_backup" "$modern_directory"
+  done
+  check_inventory accepted restored
+)
+
 run_expected_failure() {
   local candidate_sha="$1"
   local phase="$2"
@@ -1832,6 +2032,8 @@ grep --fixed-strings --line-regexp 'start set-livre-media-cleanup.timer' \
   == "root:setlivre:640" ]] || fail "digest dos ambientes versionados tem permissões inválidas."
 [[ $(sudo stat --format '%U:%G:%a' /opt/set-livre/current/.runtime/staged-tree.sha256) \
   == "root:setlivre:640" ]] || fail "digest da árvore staged tem permissões inválidas."
+
+verify_retained_release_inventory
 
 staged_tamper_sha="$(printf 'abcdef12%.0s' {1..5})"
 rm -f -- "$test_state"/*

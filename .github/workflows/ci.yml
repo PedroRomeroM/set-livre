@@ -451,7 +451,7 @@ jobs:
           deployment_probe="$(
             ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" preflight </dev/null
           )"
-          [[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]
+          [[ "$deployment_probe" == "set-livre-deploy-ready-v12" ]]
 
       - name: Verify public HTTPS entrypoint
         env:
@@ -672,16 +672,6 @@ jobs:
           [[ "$checksum" =~ ^[0-9a-f]{64}$ ]]
           echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
-      - name: Read active public release for cleanup retention
-        id: active_public_release
-        run: |
-          active_release_sha="$(
-            node scripts/configure-production-media-cleanup.mjs \
-              --read-active-release-sha
-          )"
-          [[ "$active_release_sha" =~ ^[0-9a-f]{40}$ ]]
-          printf 'sha=%s\n' "$active_release_sha" >> "$GITHUB_OUTPUT"
-
       - name: Apply forward-only Supabase migrations
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -720,13 +710,11 @@ jobs:
             --use-api
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
 
-      - name: Run immutable media cleanup canary and retention
+      - name: Run immutable media cleanup canary
         env:
-          ACTIVE_PUBLIC_RELEASE_SHA: ${{ steps.active_public_release.outputs.sha }}
           MEDIA_CLEANUP_FUNCTION_SLUG: ${{ steps.media_cleanup_function.outputs.slug }}
           NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/ops/certificates/supabase-root-2021-ca.crt
           PRD_DATABASE_URL_APP_DAL: ${{ secrets.PRD_DATABASE_URL_APP_DAL }}
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
         run: |
@@ -787,6 +775,32 @@ jobs:
             ' "$response" "$application" "$GITHUB_SHA"
           }
           verify_health "$PUBLIC_URL" web
+
+      - name: Prune unreferenced media cleanup functions
+        env:
+          MEDIA_CLEANUP_FUNCTION_SLUG: ${{ steps.media_cleanup_function.outputs.slug }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ env.PRODUCTION_SUPABASE_PROJECT_REF }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          ssh_options=(
+            -i "$HOME/.ssh/set-livre-deploy"
+            -o BatchMode=yes
+            -o ConnectionAttempts=1
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          # The production concurrency group covers activation, inventory and collection together.
+          # shellcheck disable=SC2029
+          inventory="$(
+            ssh -T "${ssh_options[@]}" "deploy-setlivre@${PRODUCTION_VM_HOST}" \
+              "retained-releases ${GITHUB_SHA}" </dev/null
+          )"
+          RETAINED_RELEASE_INVENTORY="$inventory" \
+            node scripts/configure-production-media-cleanup.mjs --prune-functions
 
       - name: Remove ephemeral runtime credentials
         if: always()

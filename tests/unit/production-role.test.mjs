@@ -685,9 +685,12 @@ describe("production role provisioning", () => {
       "- name: Stage and verify release on Oracle VM",
       "- name: Select exact verified release",
       "- name: Apply forward-only Supabase migrations",
+      "- name: Deploy immutable media cleanup candidate",
+      "- name: Run immutable media cleanup canary",
       "- name: Activate and verify the restricted production role",
       "- name: Activate staged release on Oracle VM",
       "- name: Verify public web health",
+      "- name: Prune unreferenced media cleanup functions",
     ];
     const positions = orderedSteps.map((step) => deployJob.indexOf(step));
     const preflight = positions[0];
@@ -699,8 +702,11 @@ describe("production role provisioning", () => {
     const staging = positions[8];
     const releaseSelection = positions[9];
     const migrations = positions[10];
-    const activation = positions[12];
-    const publicHealth = positions[13];
+    const canary = positions[12];
+    const roleActivation = positions[13];
+    const activation = positions[14];
+    const publicHealth = positions[15];
+    const pruning = positions[16];
 
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
@@ -711,7 +717,7 @@ describe("production role provisioning", () => {
     expect(sshProbe).toContain('[[ "$known_host" == "$PRODUCTION_VM_HOST" ]]');
     expect(sshProbe).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
     expect(sshProbe).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}" preflight');
-    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v11" ]]');
+    expect(sshProbe).toContain('[[ "$deployment_probe" == "set-livre-deploy-ready-v12" ]]');
     const httpsProbe = deployJob.slice(publicHttps, runtimeEnvironment);
     expect(httpsProbe).toContain("--proto '=https'");
     expect(httpsProbe).toContain("--tlsv1.2");
@@ -756,6 +762,30 @@ describe("production role provisioning", () => {
     );
     expect(activationStep).toContain("CHECKSUM: ${{ steps.selected_release.outputs.checksum }}");
     expect(activationStep).not.toContain("upload-release");
+    expect(deployJob).not.toContain("Read active public release for cleanup retention");
+    expect(deployJob).not.toContain("ACTIVE_PUBLIC_RELEASE_SHA");
+    const canaryStep = deployJob.slice(canary, roleActivation);
+    expect(canaryStep).toContain("MEDIA_CLEANUP_FUNCTION_SLUG:");
+    expect(canaryStep).toContain("npm run production:media-cleanup");
+    expect(canaryStep).not.toContain("--prune-functions");
+    const pruningStep = deployJob.slice(
+      pruning,
+      deployJob.indexOf("- name: Remove ephemeral runtime credentials", pruning),
+    );
+    expect(pruningStep).toContain('"retained-releases ${GITHUB_SHA}"');
+    expect(pruningStep).toContain("-o StrictHostKeyChecking=yes");
+    expect(pruningStep).toContain('UserKnownHostsFile="$HOME/.ssh/known_hosts"');
+    expect(pruningStep).toContain('"deploy-setlivre@${PRODUCTION_VM_HOST}"');
+    expect(pruningStep).toContain("--prune-functions");
+    expect(pruningStep).toContain('RETAINED_RELEASE_INVENTORY="$inventory"');
+    expect(pruningStep).toContain("MEDIA_CLEANUP_FUNCTION_SLUG:");
+    expect(pruningStep).toContain("SUPABASE_ACCESS_TOKEN:");
+    expect(pruningStep).not.toContain("continue-on-error");
+    expect(pruningStep).not.toContain("if: always()");
+    expect(pruningStep.indexOf('"retained-releases ${GITHUB_SHA}"')).toBeLessThan(
+      pruningStep.indexOf("--prune-functions"),
+    );
+    expect(deployJob.slice(0, pruning)).not.toContain("--prune-functions");
   });
 
   it("initializes once, resumes without rotation, and validates an active credential", () => {
