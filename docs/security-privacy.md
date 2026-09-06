@@ -216,7 +216,7 @@ reconhecida e com URL de banco redigida é emitida.
 
 ## Borda e headers
 
-Next gera CSP com nonce por request e não usa `unsafe-inline`/`unsafe-eval` em produção. Nginx preserva
+Next gera CSP com nonce por request e não usa `unsafe-inline`/`unsafe-eval` para scripts em produção. Nginx preserva
 os headers da aplicação, remove informação de versão e termina TLS. A baseline inclui HSTS depois da
 emissão do certificado, `nosniff`, referrer policy, permissions policy e bloqueio de framing.
 Antes do go-live, Nginx aceita somente o Host do IP reservado, não expõe o backoffice e envia `noindex`
@@ -227,6 +227,12 @@ como `PasswordInput`, usam subpath explícito. Essa fronteira impede que um impo
 scripts de boundary não consumidos e preserva o contrato de que todo script emitido no HTML recebe o
 nonce da própria resposta sob `strict-dynamic`. Navegações estruturais dentro desses boundaries usam
 âncoras nativas e não introduzem o runtime cliente de `next/link` onde nenhuma interação depende dele.
+
+Cada app configura Zod com `jitless: true` em `src/instrumentation-client.ts`, de forma síncrona antes
+dos módulos interativos. Isso desativa a sondagem por `Function()` e a compilação dinâmica no browser,
+sem alterar schemas, resultados de validação ou CSP. O servidor mantém sua configuração própria.
+O smoke Playwright usa builds de produção e exige bootstrap ativo, nonces válidos e zero violações
+de CSP nos dois apps; não ignora a sondagem bloqueada nem adiciona `unsafe-eval`.
 
 Novas origens CSP entram apenas com a integração consumidora e teste. A aplicação pública acrescenta a
 origem Supabase validada em `img-src` e `connect-src` porque envia mídia diretamente; o backoffice usa

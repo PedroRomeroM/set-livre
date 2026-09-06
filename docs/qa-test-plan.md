@@ -136,9 +136,9 @@ Os servidores Playwright usam
 `APP_ENV=test`: somente os buckets de rede compartilhados do login e do desbloqueio local recebem
 capacidade para a matriz multibrowser de identidades únicas. Os buckets por identidade continuam
 limitados a dez tentativas, e os runtimes `local`, `development` e `production` preservam o limite de
-rede de 30 tentativas por 15 minutos. Esse mesmo ambiente desativa, pela opção suportada
-`devIndicators`, o chrome visual do Next nos dois aplicativos: reflow e overflow medem apenas a UI do
-produto, enquanto erros de build e runtime continuam sendo emitidos pelo framework.
+rede de 30 tentativas por 15 minutos. O ciclo de inicialização compilada e o ambiente dos servidores
+são definidos em [Desenvolvimento local](development.md#comandos-cotidianos): reflow e overflow medem
+apenas a UI do produto, enquanto erros de build e runtime continuam sendo emitidos pelo framework.
 
 Os dois servidores Next compartilham cada pool PostgreSQL no escopo global do respectivo processo,
 inclusive entre bundles e recompilações do modo de desenvolvimento. O orçamento completo é exercitado

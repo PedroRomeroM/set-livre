@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 import { gotoExpectedPage } from "../../helpers/expected-page";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 
-const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
+const { backofficeBaseUrl } = readSafeE2EEnvironment();
 
 test("FOUNDATION-E2E-008 engines críticos abrem as duas fronteiras prontas", async ({
   context,

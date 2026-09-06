@@ -1,3 +1,4 @@
+import { apiSuccessSchema, backofficeSessionSchema } from "@set-livre/contracts";
 import { expect, test, type Page } from "@playwright/test";
 
 import {
@@ -287,13 +288,24 @@ test("SL-F031-E2E-029 @p0 logout offline fecha imediatamente a composição priv
   test.setTimeout(180_000);
   const support = createFeat031Operator(testInfo, "029_offline_logout_boundary");
   const safeEnvironment = readSafeE2EEnvironment();
-  const boundaryEvidenceKey = "sl-f031-029-private-boundary";
+  const backofficeOrigin = new URL(safeEnvironment.backofficeBaseUrl).origin;
+  let releaseNavigation: () => void = () => undefined;
+  const navigationRelease = new Promise<void>((resolve) => {
+    releaseNavigation = resolve;
+  });
   let offline = false;
   try {
     await provisionFeat031Operator(page, support, "support", "031029");
     await loginFeat031Backoffice(page, support, { unlockRuntime: false });
     await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
-    await recordPrivateBoundaryClosure(page, boundaryEvidenceKey);
+    await page.route(
+      (url) =>
+        url.origin === backofficeOrigin && (url.pathname === "/" || url.pathname === "/entrar"),
+      async (route) => {
+        await navigationRelease;
+        await route.continue();
+      },
+    );
 
     await page.context().setOffline(true);
     offline = true;
@@ -304,12 +316,34 @@ test("SL-F031-E2E-029 @p0 logout offline fecha imediatamente a composição priv
     await page.getByRole("button", { name: "Sair" }).click();
     await failedLogout;
 
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
+    await expect(page.getByRole("navigation")).toHaveCount(0);
+    await expect(
+      page.getByRole("status").filter({ hasText: "Encerrando a visualização privada" }),
+    ).toBeVisible();
+
+    const sessionResponse = page.waitForResponse((response) => {
+      const address = new URL(response.url());
+      return (
+        address.origin === backofficeOrigin &&
+        address.pathname === "/api/auth/session" &&
+        response.request().method() === "GET"
+      );
+    });
     await page.context().setOffline(false);
     offline = false;
-    await page.goto(`${safeEnvironment.backofficeBaseUrl}/usuarios`);
-    await expectRecordedPrivateBoundaryClosure(page, boundaryEvidenceKey);
+    releaseNavigation();
+    const recoveredResponse = await sessionResponse;
+    expect(recoveredResponse.status()).toBe(200);
+    const recoveredSession = apiSuccessSchema(backofficeSessionSchema).parse(
+      await recoveredResponse.json(),
+    ).data;
+    expect(recoveredSession).toMatchObject({ authenticated: true, email: support.email });
+    await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
   } finally {
+    releaseNavigation();
     if (offline) await page.context().setOffline(false);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [support] });
   }

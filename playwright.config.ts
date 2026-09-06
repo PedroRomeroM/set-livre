@@ -5,7 +5,7 @@ import { defineConfig } from "@playwright/test";
 import { createBrowserProcessEnvironment } from "./tests/helpers/browser-process-environment";
 import { readSafeE2EEnvironment } from "./tests/helpers/e2e-environment";
 import {
-  createPlaywrightNextCommand,
+  createPlaywrightWebServerCommand,
   createPlaywrightWebServerEnvironmentOverlay,
 } from "./tests/helpers/playwright-web-server";
 
@@ -186,7 +186,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3000"]),
+      command: createPlaywrightWebServerCommand(["web"]),
       cwd: repositoryRoot,
       env: publicWebServerEnvironment,
       ...gracefulWebServerShutdown,
@@ -197,7 +197,7 @@ export default defineConfig({
       url: `${publicBaseUrl}/api/health/live`,
     },
     {
-      command: createPlaywrightNextCommand(["dev", "--hostname", "127.0.0.1", "--port", "3001"]),
+      command: createPlaywrightWebServerCommand(["backoffice"]),
       cwd: resolve(repositoryRoot, "apps/backoffice"),
       env: backofficeWebServerEnvironment,
       ...gracefulWebServerShutdown,

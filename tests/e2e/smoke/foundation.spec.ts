@@ -5,17 +5,17 @@ import {
   expectRawHtmlScriptsUseNonce,
   policyNonce,
 } from "../../helpers/content-security-policy";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 import { gotoExpectedPage } from "../../helpers/expected-page";
 
-const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
+const { publicBaseUrl, backofficeBaseUrl } = readSafeE2EEnvironment();
 
-function expectDevelopmentHtmlRequiresRevalidation(cacheControl: string) {
-  expect(cacheControl).toContain("no-cache");
-  expect(cacheControl).toContain("must-revalidate");
+function expectHtmlIsNotStored(cacheControl: string) {
+  expect(cacheControl).toContain("no-store");
+  expect(cacheControl).not.toContain("immutable");
 }
 
-async function expectNonceProtectedDevelopmentDocument(
+async function expectNonceProtectedDocument(
   request: APIRequestContext,
   url: string,
   expectedStatus: number,
@@ -25,7 +25,7 @@ async function expectNonceProtectedDevelopmentDocument(
   expect(response.status()).toBe(expectedStatus);
   expect(response.headers()["content-type"]).toContain("text/html");
   const nonce = policyNonce(response.headers()["content-security-policy"] ?? "");
-  expectDevelopmentHtmlRequiresRevalidation(response.headers()["cache-control"] ?? "");
+  expectHtmlIsNotStored(response.headers()["cache-control"] ?? "");
   expectRawHtmlScriptsUseNonce(await response.text(), nonce);
 }
 
@@ -46,7 +46,7 @@ function staticAssetUrl(html: string, baseUrl: string) {
   return new URL((source ?? "").replaceAll("&amp;", "&"), baseUrl).toString();
 }
 
-async function expectStaticAssetErrorsCannotBypassDevelopmentPolicy(
+async function expectStaticAssetErrorsCannotBypassPolicy(
   request: APIRequestContext,
   baseUrl: string,
 ) {
@@ -56,7 +56,13 @@ async function expectStaticAssetErrorsCannotBypassDevelopmentPolicy(
   const assetResponse = await request.get(assetUrl);
   await expect(assetResponse).toBeOK();
   const nonces = [policyNonce(assetResponse.headers()["content-security-policy"] ?? "")];
-  expectDevelopmentHtmlRequiresRevalidation(assetResponse.headers()["cache-control"] ?? "");
+  const assetCacheControl = assetResponse.headers()["cache-control"] ?? "";
+  if (baseUrl === backofficeBaseUrl) {
+    expectHtmlIsNotStored(assetCacheControl);
+    expect(assetCacheControl).toContain("private");
+  } else {
+    expect(assetCacheControl).toBe("public, max-age=31536000, immutable");
+  }
 
   const adversarialResponses = [
     await request.post(assetUrl),
@@ -68,7 +74,7 @@ async function expectStaticAssetErrorsCannotBypassDevelopmentPolicy(
     const nonce = policyNonce(response.headers()["content-security-policy"] ?? "");
     nonces.push(nonce);
     if ((response.headers()["content-type"] ?? "").includes("text/html")) {
-      expectDevelopmentHtmlRequiresRevalidation(response.headers()["cache-control"] ?? "");
+      expectHtmlIsNotStored(response.headers()["cache-control"] ?? "");
       expectPresentRawHtmlScriptsUseNonce(await response.text(), nonce);
     }
   }
@@ -78,7 +84,7 @@ async function expectStaticAssetErrorsCannotBypassDevelopmentPolicy(
   );
 }
 
-async function expectNonceProtectedDevelopmentPage(
+async function expectNonceProtectedPage(
   page: Page,
   request: APIRequestContext,
   url: string,
@@ -87,7 +93,7 @@ async function expectNonceProtectedDevelopmentPage(
   const navigation = await gotoExpectedPage(page, url, heading);
   const firstPolicy = navigation.headers()["content-security-policy"] ?? "";
   const firstNonce = policyNonce(firstPolicy);
-  expectDevelopmentHtmlRequiresRevalidation(navigation.headers()["cache-control"] ?? "");
+  expectHtmlIsNotStored(navigation.headers()["cache-control"] ?? "");
 
   const browserScriptNonces = await page
     .locator("script")
@@ -101,24 +107,28 @@ async function expectNonceProtectedDevelopmentPage(
       page.evaluate(() => {
         const nextRuntime = window as typeof window & {
           __next_f?: unknown[];
-          __setLivreCspViolations?: number;
+          __setLivreCspViolations?: Array<{
+            blockedURI: string;
+            directive: string;
+            source: string;
+          }>;
           next?: { appDir?: boolean; version?: string };
         };
-        return (
-          Array.isArray(nextRuntime.__next_f) &&
-          nextRuntime.next?.appDir === true &&
-          typeof nextRuntime.next.version === "string" &&
-          nextRuntime.__setLivreCspViolations === 0
-        );
+        return {
+          appRouter: nextRuntime.next?.appDir === true,
+          cspViolations: nextRuntime.__setLivreCspViolations,
+          flightData: Array.isArray(nextRuntime.__next_f),
+          runtimeVersion: typeof nextRuntime.next?.version === "string",
+        };
       }),
     )
-    .toBe(true);
+    .toEqual({ appRouter: true, cspViolations: [], flightData: true, runtimeVersion: true });
 
   const secondResponse = await request.get(url);
   await expect(secondResponse).toBeOK();
   const secondPolicy = secondResponse.headers()["content-security-policy"] ?? "";
   const secondNonce = policyNonce(secondPolicy);
-  expectDevelopmentHtmlRequiresRevalidation(secondResponse.headers()["cache-control"] ?? "");
+  expectHtmlIsNotStored(secondResponse.headers()["cache-control"] ?? "");
   expect(secondNonce).not.toBe(firstNonce);
   expectRawHtmlScriptsUseNonce(await secondResponse.text(), secondNonce);
 }
@@ -128,20 +138,26 @@ test("FOUNDATION-E2E-001 fronteiras expõem somente superfícies autorizadas", a
   request,
 }) => {
   await page.addInitScript(() => {
-    const cspWindow = window as typeof window & { __setLivreCspViolations?: number };
-    cspWindow.__setLivreCspViolations = 0;
-    document.addEventListener("securitypolicyviolation", () => {
-      cspWindow.__setLivreCspViolations = (cspWindow.__setLivreCspViolations ?? 0) + 1;
+    const cspWindow = window as typeof window & {
+      __setLivreCspViolations?: Array<{ blockedURI: string; directive: string; source: string }>;
+    };
+    cspWindow.__setLivreCspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      cspWindow.__setLivreCspViolations?.push({
+        blockedURI: event.blockedURI.split("?")[0] ?? "",
+        directive: event.effectiveDirective,
+        source: event.sourceFile.split("?")[0] ?? "",
+      });
     });
   });
 
-  await expectNonceProtectedDevelopmentPage(page, request, backofficeBaseUrl, "Operação Set Livre");
+  await expectNonceProtectedPage(page, request, backofficeBaseUrl, "Operação Set Livre");
   await expect(page.getByText("Acesso restrito a operadores autorizados")).toBeVisible();
   await expect(page.getByRole("button", { name: "Entrar no backoffice" })).toBeVisible();
   await expect(page.getByText("Backoffice · fundação técnica", { exact: true })).toHaveCount(0);
   await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
 
-  await expectNonceProtectedDevelopmentPage(page, request, "/", "Set Livre");
+  await expectNonceProtectedPage(page, request, "/", "Set Livre");
   await expect(
     page.getByText("Plataforma pública · fundação técnica", { exact: true }),
   ).toBeVisible();
@@ -154,10 +170,10 @@ test("FOUNDATION-E2E-001 fronteiras expõem somente superfícies autorizadas", a
   await expect(page.getByText(/ambiente local|base local/iu)).toHaveCount(0);
 
   for (const baseUrl of [publicBaseUrl, backofficeBaseUrl]) {
-    await expectNonceProtectedDevelopmentDocument(request, baseUrl, 200, {
+    await expectNonceProtectedDocument(request, baseUrl, 200, {
       purpose: "prefetch",
     });
-    await expectNonceProtectedDevelopmentDocument(request, baseUrl, 200, {
+    await expectNonceProtectedDocument(request, baseUrl, 200, {
       "next-router-prefetch": "1",
     });
     for (const path of [
@@ -167,14 +183,10 @@ test("FOUNDATION-E2E-001 fronteiras expõem somente superfícies autorizadas", a
       "/favicon.ico/extra",
       "/_next/imageish",
     ]) {
-      await expectNonceProtectedDevelopmentDocument(
-        request,
-        new URL(path, baseUrl).toString(),
-        404,
-      );
+      await expectNonceProtectedDocument(request, new URL(path, baseUrl).toString(), 404);
     }
     await expectNonceProtectedGlobalError(request, baseUrl);
-    await expectStaticAssetErrorsCannotBypassDevelopmentPolicy(request, baseUrl);
+    await expectStaticAssetErrorsCannotBypassPolicy(request, baseUrl);
   }
 
   await expect(page.getByRole("status")).toContainText("Fundação executável");

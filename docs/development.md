@@ -125,9 +125,14 @@ O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs i
 diretamente e não iniciam um servidor Vite aninhado.
 
 Navegações causadas por ações usam `page.waitForURL` com destino exato e a leitura autoritativa
-esperada, registradas junto ao clique. Uma asserção de URL não substitui a sincronização da navegação:
-no servidor de desenvolvimento, uma rota fria pode ultrapassar seu prazo curto. Isso não autoriza
-alterar timeouts globais, adicionar sleeps/retries ou dispensar as verificações de resposta e UI.
+esperada, registradas junto ao clique. Uma asserção de URL não substitui a sincronização da navegação.
+Playwright usa builds novos e os servidores standalone dos dois apps, tanto localmente quanto em cada
+shard do CI; a compilação termina antes da primeira navegação. O helper existente reutiliza a limpeza
+de cache do build e copia `public` e `.next/static` para o layout standalone suportado pelo Next. Uma
+falha de build interrompe a suíte, sem reutilizar artefato anterior. Não há compilação de rotas sob
+demanda, aquecimento manual de endpoints, aumento dos deadlines HTTP, sleeps ou retries. `npm run dev`
+permanece disponível para desenvolvimento interativo. As asserções de CSP exigem também a política de
+produção: nonce por request e ausência de `unsafe-eval` e `unsafe-inline`.
 
 O setup global do Playwright executa o cleanup local real antes da primeira spec e a cada dez minutos
 enquanto a suíte existir, reproduzindo a cadência operacional da VM. As execuções são serializadas e
@@ -163,9 +168,11 @@ apps, a chave pública `anon`, a conexão administrativa local e um marcador ale
 esse arquivo existe, seus valores canônicos têm precedência sobre variáveis herdadas do shell; sem ele,
 o guardrail ainda aceita somente o contrato local completo. O webServer do Playwright neutraliza o
 ambiente herdado e repõe explicitamente em cada app somente os valores locais já validados, inclusive a
-URL DAL que as fixtures usam. Os dois servidores chamam o executável Node corrente e o CLI Next fixado
-no lockfile diretamente, com cwd explícito; `.npmrc` e `script-shell` do usuário não participam dessa
-fronteira. Ela também fixa `APP_ENV=test`; somente nessa
+URL DAL que as fixtures usam. O helper chama o executável Node corrente e o CLI Next fixado no lockfile
+para compilar com cwd explícito, depois carrega o `server.js` standalone no próprio processo;
+`.npmrc` e `script-shell` do usuário não participam dessa fronteira. Build e runtime usam os mesmos
+valores validados, sem reler o `.env.local` pelo wrapper interativo. Ela também fixa `NODE_ENV=production`,
+`APP_RELEASE_SHA=local` e `APP_ENV=test`; somente nessa
 fronteira as fixtures privadas e allowlisted dos adapters locais ficam disponíveis. Nunca copie esses
 arquivos para produção.
 
