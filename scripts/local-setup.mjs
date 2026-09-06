@@ -658,6 +658,8 @@ function mapWindowsArgumentToWsl(value) {
 // The guest owns the CLI process: closing the parent's stdin also works when the
 // Windows launcher dies, unlike sending a signal only to wsl.exe.
 const supabaseStdinRelay = `
+printf '%s%s\\n' "$1" "$$"
+shift
 exec 3<&0
 "$@" </dev/null &
 cli_pid=$!
@@ -676,7 +678,7 @@ trap 'exit 129' HUP
 wait -n "$cli_pid" "$input_pid"
 `;
 
-function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot, stdinRelay = false) {
+function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot, relayMarker) {
   return [
     "--distribution",
     windowsDockerDistribution,
@@ -688,7 +690,17 @@ function windowsWslSupabaseArguments(argumentsList, root = repositoryRoot, stdin
     "/usr/bin/env",
     "-i",
     ...windowsWslEnvironment,
-    ...(stdinRelay ? ["/bin/bash", "-c", supabaseStdinRelay, "set-livre-edge-relay"] : []),
+    ...(relayMarker === undefined
+      ? []
+      : [
+          "/usr/bin/setsid",
+          "--wait",
+          "/bin/bash",
+          "-c",
+          supabaseStdinRelay,
+          "set-livre-edge-relay",
+          relayMarker,
+        ]),
     windowsSupabaseCliPath,
     ...argumentsList.map(mapWindowsArgumentToWsl),
   ];
@@ -811,6 +823,9 @@ export function resolveSupabaseLaunch(
 ) {
   const localDockerEnvironment = resolveLocalDockerEnvironment();
   const commandArguments = network ? withSupabaseLocalNetwork(argumentsList) : argumentsList;
+  const relayMarker = stdinRelay
+    ? `set-livre-edge-relay-${randomBytes(16).toString("hex")}:`
+    : undefined;
   let executable = process.execPath;
   let executableArguments = [supabaseCliPath, ...commandArguments];
   let invocationEnvironment = localDockerEnvironment;
@@ -835,20 +850,24 @@ export function resolveSupabaseLaunch(
         `A distro ${windowsDockerDistribution} precisa da Supabase CLI ${supabasePackage.version}.`,
       );
     }
-    executableArguments = windowsWslSupabaseArguments(commandArguments, root, stdinRelay);
+    executableArguments = windowsWslSupabaseArguments(commandArguments, root, relayMarker);
   } else if (stdinRelay) {
     executableArguments = [
+      "--wait",
+      "/bin/bash",
       "-c",
       supabaseStdinRelay,
       "set-livre-edge-relay",
+      relayMarker,
       executable,
       ...executableArguments,
     ];
-    executable = "/bin/bash";
+    executable = "/usr/bin/setsid";
   }
 
   return {
     command: executable,
+    relayMarker,
     argumentsList: executableArguments,
     options: { cwd: root, env: invocationEnvironment, windowsHide: platform === "win32" },
   };
@@ -876,20 +895,43 @@ export function runSupabase(
   return result.stdout ?? "";
 }
 
-function observeCleanupProcess(child) {
-  const observed = { child, output: "", result: undefined, closed: undefined };
+function observeCleanupProcess(child, { relayMarker, ownProcessGroup = false } = {}) {
+  const observed = {
+    child,
+    output: "",
+    result: undefined,
+    closed: undefined,
+    processGroupId: ownProcessGroup ? child.pid : undefined,
+  };
+  let identityOutput = "";
   child.stdin?.on("error", () => {
     observed.output += "\nO canal de encerramento do CLI falhou.";
   });
   for (const stream of [child.stdout, child.stderr]) {
     stream.on("data", (chunk) => {
+      if (
+        stream === child.stdout &&
+        relayMarker !== undefined &&
+        observed.processGroupId === undefined
+      ) {
+        identityOutput += chunk.toString();
+        const match = new RegExp(`(?:^|\\n)${relayMarker}([1-9][0-9]*)\\r?\\n`, "u").exec(
+          identityOutput,
+        );
+        const processGroupId = Number(match?.[1]);
+        if (Number.isSafeInteger(processGroupId) && processGroupId > 1)
+          observed.processGroupId = processGroupId;
+        identityOutput = identityOutput.slice(-256);
+      }
       observed.output = (observed.output + chunk.toString()).slice(-16_384);
     });
   }
   observed.closed = new Promise((resolvePromise) => {
     child.once("error", () => {
-      observed.result = { code: null };
-      resolvePromise(observed.result);
+      if (child.pid === undefined) {
+        observed.result = { code: null };
+        resolvePromise(observed.result);
+      }
     });
     child.once("close", (code) => {
       observed.result = { code };
@@ -922,8 +964,11 @@ export async function runLocalCleanupIntegration(
     resolveLocalDockerEnvironment = assertLocalDockerDaemon,
     root = repositoryRoot,
     startProcess = spawn,
+    resolveLaunch = resolveSupabaseLaunch,
     startupTimeoutMs = 120_000,
     shutdownTimeoutMs = 30_000,
+    forcedShutdownTimeoutMs = 5_000,
+    testTimeoutMs = 120_000,
   } = {},
 ) {
   parseSupabaseStatus(JSON.stringify(values));
@@ -944,12 +989,20 @@ export async function runLocalCleanupIntegration(
         "container",
         "ls",
         "--all",
+        "--no-trunc",
         "--filter",
         "name=^/supabase_edge_runtime_set-livre$",
         "--format",
         "{{.ID}}",
       ],
-      { cwd: root, env: environment, encoding: "utf8", windowsHide: true, timeout: 10_000 },
+      {
+        cwd: root,
+        env: environment,
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+      },
     );
     if (result.error !== undefined || result.status !== 0) {
       throw new Error("Não foi possível comprovar o inventário do Edge runtime local.");
@@ -959,7 +1012,7 @@ export async function runLocalCleanupIntegration(
   if (runtimeInventory() !== "") {
     throw new Error("A integração não substitui um Edge runtime preexistente.");
   }
-  const launch = resolveSupabaseLaunch(["functions", "serve", "--no-verify-jwt"], {
+  const launch = resolveLaunch(["functions", "serve", "--no-verify-jwt"], {
     execute,
     network: true,
     platform,
@@ -987,6 +1040,70 @@ export async function runLocalCleanupIntegration(
   let tester;
   let interrupted = false;
   const failures = [];
+  const forceStop = async (observed) => {
+    observed.shutdownUnconfirmed = true;
+    const killOptions = {
+      cwd: root,
+      env: environment,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: forcedShutdownTimeoutMs,
+      killSignal: "SIGKILL",
+    };
+    try {
+      if (Number.isSafeInteger(observed.processGroupId) && observed.processGroupId > 1) {
+        const groupArguments = ["-KILL", "--", `-${observed.processGroupId}`];
+        const killed =
+          platform === "win32"
+            ? execute(
+                "wsl.exe",
+                [
+                  "--distribution",
+                  windowsDockerDistribution,
+                  "--user",
+                  "root",
+                  "--exec",
+                  "/bin/kill",
+                  ...groupArguments,
+                ],
+                killOptions,
+              )
+            : execute("/bin/kill", groupArguments, killOptions);
+        if (killed.error !== undefined || killed.status !== 0)
+          failures.push(new Error("Não foi possível encerrar o grupo da integração Edge."));
+        else observed.shutdownUnconfirmed = false;
+      } else if (platform !== "win32" || observed === server) {
+        failures.push(new Error("O grupo da integração Edge não teve identidade comprovada."));
+      }
+      if (
+        platform === "win32" &&
+        Number.isSafeInteger(observed.child.pid) &&
+        observed.child.pid > 1
+      ) {
+        const killed = execute(
+          "taskkill.exe",
+          ["/PID", String(observed.child.pid), "/T", "/F"],
+          killOptions,
+        );
+        if (killed.error !== undefined || killed.status !== 0)
+          failures.push(new Error("Não foi possível encerrar o launcher da integração Edge."));
+        // Closing wsl.exe alone does not prove that its Linux guest group terminated.
+        else if (observed === tester) observed.shutdownUnconfirmed = false;
+      } else if (observed.processGroupId === undefined) {
+        observed.child.kill("SIGKILL");
+      }
+      await waitForCleanupProcess(observed, forcedShutdownTimeoutMs);
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      if (observed.result === undefined) {
+        // A failed kill must return a failure, not keep Node alive through inherited pipes.
+        for (const stream of [observed.child.stdin, observed.child.stdout, observed.child.stderr])
+          stream?.destroy();
+        observed.child.unref();
+      }
+    }
+  };
   const interrupt = () => {
     interrupted = true;
     server?.child.stdin.end();
@@ -1006,6 +1123,7 @@ export async function runLocalCleanupIntegration(
         ...launch.options,
         stdio: ["pipe", "pipe", "pipe"],
       }),
+      { relayMarker: launch.relayMarker },
     );
     const readyDeadline = Date.now() + startupTimeoutMs;
     let ready = false;
@@ -1052,10 +1170,12 @@ export async function runLocalCleanupIntegration(
           },
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
+          detached: platform !== "win32",
         },
       ),
+      { ownProcessGroup: platform !== "win32" },
     );
-    const result = await waitForCleanupProcess(tester, 120_000);
+    const result = await waitForCleanupProcess(tester, testTimeoutMs);
     if (result.code !== 0 || interrupted) throw new Error("A integração real Edge/Storage falhou.");
   } catch (error) {
     failures.push(error);
@@ -1067,6 +1187,7 @@ export async function runLocalCleanupIntegration(
       }
     } catch (error) {
       failures.push(error);
+      if (tester !== undefined && tester.result === undefined) await forceStop(tester);
     }
     try {
       if (server !== undefined) {
@@ -1076,10 +1197,37 @@ export async function runLocalCleanupIntegration(
       }
     } catch (error) {
       failures.push(error);
+      if (server !== undefined && server.result === undefined) await forceStop(server);
     }
     try {
-      if (server !== undefined && server.result === undefined) {
-        throw new Error("O relay Edge permaneceu ativo; candidata preservada.");
+      const remainingRuntime = runtimeInventory();
+      if (remainingRuntime !== "") {
+        failures.push(new Error("O Edge runtime não encerrou normalmente."));
+        if (server === undefined || !/^[a-f0-9]{64}$/u.test(remainingRuntime))
+          throw new Error(
+            "A identidade do runtime residual não foi comprovada; candidata preservada.",
+          );
+        const removed = execute("docker", ["container", "rm", "--force", remainingRuntime], {
+          cwd: root,
+          env: environment,
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: forcedShutdownTimeoutMs,
+          killSignal: "SIGKILL",
+        });
+        if (removed.error !== undefined || removed.status !== 0)
+          throw new Error("O runtime residual não pôde ser removido; candidata preservada.");
+      }
+      if (
+        [server, tester].some(
+          (observed) =>
+            observed !== undefined &&
+            (observed.result === undefined || observed.shutdownUnconfirmed === true),
+        )
+      ) {
+        throw new Error(
+          "O encerramento da integração Edge não foi comprovado; candidata preservada.",
+        );
       }
       if (runtimeInventory() !== "")
         throw new Error("O Edge runtime permaneceu ativo; candidata preservada.");

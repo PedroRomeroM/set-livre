@@ -87,6 +87,13 @@ describe("local tooling contracts", () => {
     startupFailure = false,
     testExit = 0,
     residualRuntime = false,
+    hangServer = false,
+    hangTester = false,
+    forceFailure = false,
+    guestKillFailure = false,
+    removalFailure = false,
+    invalidRelayIdentity = false,
+    platform = "linux",
   } = {}) {
     const root = mkdtempSync(resolve(tmpdir(), "set-livre-edge-launcher-"));
     const functions = resolve(root, "supabase/functions");
@@ -103,21 +110,57 @@ describe("local tooling contracts", () => {
       DB_URL: "postgresql://postgres:local-password@127.0.0.1:54322/postgres",
     };
     const children = [];
-    const execute = vi.fn(() => ({
-      status: 0,
-      stdout: existingRuntime || (residualRuntime && children.length > 0) ? "runtime-id\n" : "",
-    }));
-    const startProcess = vi.fn((_command, _args, options) => {
+    const runtimeId = "a".repeat(64);
+    const relayGroupId = 41001;
+    let runtimeRemoved = false;
+    const execute = vi.fn((command, args) => {
+      if (args.at(-1) === "--version") return { status: 0, stdout: "2.116.0\n" };
+      if (command === "docker" && args[1] === "rm") {
+        if (removalFailure) return { status: 1, stdout: "" };
+        runtimeRemoved = true;
+        return { status: 0, stdout: runtimeId };
+      }
+      if (command === "/bin/kill" || args.includes("/bin/kill") || command === "taskkill.exe") {
+        if (forceFailure || (guestKillFailure && command !== "taskkill.exe"))
+          return { status: 1, stdout: "" };
+        const pid = command === "taskkill.exe" ? Number(args[1]) : -Number(args.at(-1));
+        const child =
+          pid === relayGroupId ? children[0] : children.find((entry) => entry.pid === pid);
+        if (child !== undefined) queueMicrotask(() => child.emit("close", 137));
+        return { status: 0, stdout: "" };
+      }
+      return {
+        status: 0,
+        stdout:
+          existingRuntime || (residualRuntime && children.length > 0 && !runtimeRemoved)
+            ? `${runtimeId}\n`
+            : "",
+      };
+    });
+    const startProcess = vi.fn((_command, args, options) => {
       const child = new EventEmitter();
+      child.pid = 42001 + children.length;
+      child.unref = vi.fn();
       child.stdin = new PassThrough();
       child.stdout = new PassThrough();
       child.stderr = new PassThrough();
-      child.kill = vi.fn(() => child.emit("close", 143));
+      child.kill = vi.fn(() => {
+        if ((children[0] === child && hangServer) || (children[1] === child && hangTester))
+          return false;
+        return child.emit("close", 143);
+      });
       children.push(child);
       if (children.length === 1) {
-        child.stdin.once("finish", () =>
-          queueMicrotask(() => child.emit("close", startupFailure ? 1 : 0)),
-        );
+        const marker = args[args.indexOf("set-livre-edge-relay") + 1];
+        expect(marker).toMatch(/^set-livre-edge-relay-[a-f0-9]{32}:$/u);
+        queueMicrotask(() => {
+          child.stdout.write(marker.slice(0, 12));
+          child.stderr.write("interleaved diagnostic\n");
+          child.stdout.write(`${marker.slice(12)}${invalidRelayIdentity ? "0" : relayGroupId}\n`);
+        });
+        child.stdin.once("finish", () => {
+          if (!hangServer) queueMicrotask(() => child.emit("close", startupFailure ? 1 : 0));
+        });
         if (startupFailure) queueMicrotask(() => child.emit("close", 1));
       } else {
         const slug = options.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SLUG;
@@ -125,7 +168,7 @@ describe("local tooling contracts", () => {
         expect(readFileSync(resolve(functions, slug, "index.ts"), "utf8")).toBe(
           "canonical index.ts",
         );
-        queueMicrotask(() => child.emit("close", testExit));
+        if (!hangTester) queueMicrotask(() => child.emit("close", testExit));
       }
       return child;
     });
@@ -140,13 +183,24 @@ describe("local tooling contracts", () => {
       root,
       startProcess,
       values,
+      relayGroupId,
+      runtimeId,
       options: {
         execute,
         fetchImplementation,
-        platform: "linux",
+        platform,
         root,
         startProcess,
+        // Files stay host-native; the simulated Windows launcher needs Windows coordinates.
+        resolveLaunch: (args, options) =>
+          resolveSupabaseLaunch(args, {
+            ...options,
+            root: platform === "win32" ? "C:\\set-livre-edge-fixture" : root,
+          }),
         resolveLocalDockerEnvironment: () => ({ PATH: "trusted" }),
+        testTimeoutMs: 10,
+        shutdownTimeoutMs: 10,
+        forcedShutdownTimeoutMs: 10,
       },
       dispose: () => rmSync(root, { recursive: true, force: true }),
     };
@@ -159,7 +213,8 @@ describe("local tooling contracts", () => {
       await runLocalCleanupIntegration(fixture.values, fixture.options);
       expect(fixture.startProcess).toHaveBeenCalledTimes(2);
       const [command, args] = fixture.startProcess.mock.calls[0];
-      expect(command).toBe("/bin/bash");
+      expect(command).toBe("/usr/bin/setsid");
+      expect(args.slice(0, 2)).toEqual(["--wait", "/bin/bash"]);
       expect(args).toContain("--no-verify-jwt");
       expect(args.slice(-2)).toEqual(["--network-id", supabaseLocalNetworkName]);
       const [, testArgs, testOptions] = fixture.startProcess.mock.calls[1];
@@ -231,14 +286,162 @@ describe("local tooling contracts", () => {
     },
   );
 
-  it("fails closed and preserves the candidate if the Edge runtime remains", async () => {
+  it("removes only the exact residual Edge runtime but still fails the gate", async () => {
     const fixture = cleanupLauncherFixture({ residualRuntime: true });
     try {
       await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
         "não foi comprovada",
       );
-      expect(readdirSync(fixture.functions)).toHaveLength(2);
+      expect(fixture.execute).toHaveBeenCalledWith(
+        "docker",
+        ["container", "rm", "--force", fixture.runtimeId],
+        expect.objectContaining({ timeout: 10, killSignal: "SIGKILL" }),
+      );
+      expect(readdirSync(fixture.functions)).toEqual(["media-cleanup"]);
       expect(fixture.children[0].stdin.writableEnded).toBe(true);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it.each(["linux", "win32"])(
+    "bounds ignored termination of the owned Edge group on %s",
+    async (platform) => {
+      const fixture = cleanupLauncherFixture({ platform, hangServer: true, residualRuntime: true });
+      try {
+        await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+          "não foi comprovada",
+        );
+        const forced = fixture.execute.mock.calls.find(
+          ([command, args]) => command === "/bin/kill" || args.includes("/bin/kill"),
+        );
+        expect(forced[1].slice(-3)).toEqual(["-KILL", "--", `-${fixture.relayGroupId}`]);
+        expect(forced[2]).toMatchObject({ timeout: 10, killSignal: "SIGKILL" });
+        if (platform === "win32") {
+          expect(forced[1].slice(0, 6)).toEqual([
+            "--distribution",
+            "SetLivreDocker",
+            "--user",
+            "root",
+            "--exec",
+            "/bin/kill",
+          ]);
+          expect(fixture.execute).toHaveBeenCalledWith(
+            "taskkill.exe",
+            ["/PID", String(fixture.children[0].pid), "/T", "/F"],
+            expect.any(Object),
+          );
+        }
+        expect(fixture.children[0].unref).not.toHaveBeenCalled();
+        expect(readdirSync(fixture.functions)).toEqual(["media-cleanup"]);
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.each(["linux", "win32"])(
+    "also terminates a stuck test runner tree on %s",
+    async (platform) => {
+      const fixture = cleanupLauncherFixture({ platform, hangTester: true });
+      try {
+        await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+          "não foi comprovada",
+        );
+        const tester = fixture.children[1];
+        expect(tester.kill).toHaveBeenCalledWith("SIGTERM");
+        expect(fixture.execute).toHaveBeenCalledWith(
+          platform === "win32" ? "taskkill.exe" : "/bin/kill",
+          platform === "win32"
+            ? ["/PID", String(tester.pid), "/T", "/F"]
+            : ["-KILL", "--", `-${tester.pid}`],
+          expect.objectContaining({ timeout: 10, killSignal: "SIGKILL" }),
+        );
+        expect(tester.unref).not.toHaveBeenCalled();
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it.each([
+    ["linux", "server"],
+    ["win32", "server"],
+    ["linux", "tester"],
+    ["win32", "tester"],
+  ])(
+    "returns failure and releases owned pipes when forced shutdown fails on %s for %s",
+    async (platform, target) => {
+      const fixture = cleanupLauncherFixture({
+        platform,
+        hangServer: target === "server",
+        hangTester: target === "tester",
+        forceFailure: true,
+        residualRuntime: true,
+      });
+      try {
+        await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+          "não foi comprovada",
+        );
+        const stuck = fixture.children[target === "server" ? 0 : 1];
+        expect(stuck.unref).toHaveBeenCalledOnce();
+        for (const stream of [stuck.stdin, stuck.stdout, stuck.stderr])
+          expect(stream.destroyed).toBe(true);
+        expect(readdirSync(fixture.functions)).toHaveLength(2);
+        expect(fixture.execute).toHaveBeenCalledWith(
+          "docker",
+          ["container", "rm", "--force", fixture.runtimeId],
+          expect.any(Object),
+        );
+      } finally {
+        fixture.dispose();
+      }
+    },
+  );
+
+  it("preserves the candidate when only the Windows launcher closes after guest kill failure", async () => {
+    const fixture = cleanupLauncherFixture({
+      platform: "win32",
+      hangServer: true,
+      guestKillFailure: true,
+    });
+    try {
+      await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+        "não foi comprovada",
+      );
+      expect(fixture.execute).toHaveBeenCalledWith(
+        "taskkill.exe",
+        ["/PID", String(fixture.children[0].pid), "/T", "/F"],
+        expect.any(Object),
+      );
+      expect(fixture.children[0].unref).not.toHaveBeenCalled();
+      expect(readdirSync(fixture.functions)).toHaveLength(2);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("never sends a group signal for an unproven relay identity", async () => {
+    const fixture = cleanupLauncherFixture({ hangServer: true, invalidRelayIdentity: true });
+    try {
+      await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+        "não foi comprovada",
+      );
+      expect(fixture.execute.mock.calls.some(([command]) => command === "/bin/kill")).toBe(false);
+      expect(fixture.children[0].kill).toHaveBeenCalledWith("SIGKILL");
+      expect(readdirSync(fixture.functions)).toHaveLength(2);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("preserves its candidate when removal of the exact owned runtime fails", async () => {
+    const fixture = cleanupLauncherFixture({ residualRuntime: true, removalFailure: true });
+    try {
+      await expect(runLocalCleanupIntegration(fixture.values, fixture.options)).rejects.toThrow(
+        "não foi comprovada",
+      );
+      expect(readdirSync(fixture.functions)).toHaveLength(2);
     } finally {
       fixture.dispose();
     }

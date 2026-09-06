@@ -41,8 +41,13 @@ canônica copiada para um slug imutável efêmero. A secret key moderna vem da C
 upload e leitura autorizada, URL externa do gateway, handler Deno, remoção física e ledger terminal,
 e confirma a ausência pelo contrato do [ADR-010](adr/ADR-010-media-storage-and-delivery.md).
 Configuração incompleta ou runtime indisponível falha o gate. O processo e a candidata temporários
-são encerrados/removidos ao terminar; nenhum servidor extra fica residente. Execute sem reset ou
-Playwright concorrente sobre o mesmo banco.
+são encerrados/removidos ao terminar. Se o encerramento normal expirar, o wrapper força somente o
+grupo de processos identificado daquela execução (inclusive dentro do WSL) e remove o container
+residual pelo ID exato; essa recuperação continua sendo falha do teste. Se o sistema não confirmar
+o encerramento ou a remoção, o comando retorna erro sem ficar preso aos pipes e preserva a candidata
+para diagnóstico; fechar apenas `wsl.exe` não comprova o encerramento do grupo Linux. Um runtime
+preexistente nunca é substituído. Execute sem reset ou Playwright
+concorrente sobre o mesmo banco.
 
 A porta 2375 não usa TLS porque existe somente no loopback da mesma máquina. Ela concede controle total
 do daemon a processos locais e, portanto, nunca pode ser encaminhada, publicada na LAN ou reutilizada
