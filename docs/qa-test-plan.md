@@ -161,6 +161,9 @@ enviada: exclusões Auth QA, exatas ou bulk, adquirem o advisory lock transacion
 sessão que usam o lock compartilhado, sem inverter a ordem binding/Auth e sem retries. O cenário
 `SL-F031-E2E-036` mantém esse leitor aberto em outra conexão, observa a espera real em `pg_locks` e
 comprova a conclusão exata e idempotente após liberá-lo. Esse mecanismo é somente do teardown local.
+No cenário de expiração offline `SL-F031-E2E-023`, a limpeza libera a navegação suspensa e fecha a
+página antes de excluir a identidade. Como o contexto isolado será descartado, não restaura sua rede
+nem reconfigura interceptações com `unrouteAll` durante esse encerramento.
 
 Recomposições de segurança aguardam a superfície autoritativa final e suas evidências de escopo, não
 uma navegação intermediária. Reload seguido de redirect ou nova composição SSR pode cancelar um
