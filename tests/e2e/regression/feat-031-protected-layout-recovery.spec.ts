@@ -69,11 +69,13 @@ async function failLayoutLookup(page: Page, verifyBlockedRetry: boolean) {
       if (verifyBlockedRetry) {
         const retried = page.waitForResponse(isUsersRsc);
         await page.getByRole("button", { name: "Tentar novamente", exact: true }).click();
+        await expect(
+          page.getByRole("button", { name: "Verificando acesso", exact: true }),
+        ).toBeDisabled();
         await expectBlockedSessionLookup(locker);
         await expect(page.getByRole("navigation")).toHaveCount(0);
         await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);
-        const response = await retried;
-        expect(await response.finished()).toBeNull();
+        expect((await retried).status()).toBe(200);
         await expectClosedFallback(page);
       }
     } finally {
@@ -103,7 +105,7 @@ test("SL-F031-E2E-037 @p0 falha do layout fecha acesso e recovery revalida autor
     const retry = page.getByRole("button", { name: "Tentar novamente", exact: true });
     await retry.focus();
     await page.keyboard.press("Enter");
-    expect(await (await recovered).finished()).toBeNull();
+    expect((await recovered).status()).toBe(200);
     await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Buscar usuários" })).toBeEnabled();
     await expect(page.getByRole("heading", { level: 1, name: errorTitle })).toHaveCount(0);
@@ -134,7 +136,7 @@ test("SL-F031-E2E-037 @p0 falha do layout fecha acesso e recovery revalida autor
     }, disclosureEvidenceKey);
     const rechecked = page.waitForResponse(isUsersRsc);
     await page.getByRole("button", { name: "Tentar novamente", exact: true }).click();
-    expect(await (await rechecked).finished()).toBeNull();
+    expect((await rechecked).status()).toBe(200);
     await expect(page).toHaveURL(/\/entrar$/u);
     await expect(page.getByRole("heading", { level: 1, name: "Operação Set Livre" })).toBeVisible();
     await expect(page.getByRole("heading", { level: 1, name: "Usuários" })).toHaveCount(0);

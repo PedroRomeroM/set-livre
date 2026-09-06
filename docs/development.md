@@ -35,6 +35,20 @@ RPCs e Storage locais reais. Somente um resultado terminal saudável cria o hear
 role DAL é provisionada e testada depois dessa execução. O setup não insere sucesso artificial no
 ledger e falha fechado se o worker ou sua resposta forem ambíguos.
 
+Essa chamada direta não substitui a prova do gateway. `npm run test:edge`, obrigatório no job Linux
+do CI, inicia temporariamente o runtime oficial por `supabase functions serve`, usando a fonte
+canônica copiada para um slug imutável efêmero. A secret key moderna vem da CLI local; o teste percorre
+upload e leitura autorizada, URL externa do gateway, handler Deno, remoção física e ledger terminal,
+e confirma a ausência pelo contrato do [ADR-010](adr/ADR-010-media-storage-and-delivery.md).
+Configuração incompleta ou runtime indisponível falha o gate. O processo e a candidata temporários
+são encerrados/removidos ao terminar. Se o encerramento normal expirar, o wrapper força somente o
+grupo de processos identificado daquela execução (inclusive dentro do WSL) e remove o container
+residual pelo ID exato; essa recuperação continua sendo falha do teste. Se o sistema não confirmar
+o encerramento ou a remoção, o comando retorna erro sem ficar preso aos pipes e preserva a candidata
+para diagnóstico; fechar apenas `wsl.exe` não comprova o encerramento do grupo Linux. Um runtime
+preexistente nunca é substituído. Execute sem reset ou Playwright
+concorrente sobre o mesmo banco.
+
 A porta 2375 não usa TLS porque existe somente no loopback da mesma máquina. Ela concede controle total
 do daemon a processos locais e, portanto, nunca pode ser encaminhada, publicada na LAN ou reutilizada
 com credenciais/dados reais. Docker e Supabase de desenvolvimento contêm apenas QA descartável.
@@ -86,20 +100,21 @@ views, sequences e funções não recebem acesso implícito das roles da Data AP
 
 ## Comandos cotidianos
 
-| Objetivo                    | Comando                                                           |
-| --------------------------- | ----------------------------------------------------------------- |
-| web em `127.0.0.1:3000`     | `npm run dev`                                                     |
-| backoffice em `:3001`       | `npm run dev:backoffice`                                          |
-| iniciar/parar banco         | `npm run supabase:start` / `npm run supabase:stop`                |
-| recriar banco e ambientes   | `npm run supabase:reset`                                          |
-| lint oficial do banco       | `npm run supabase:lint`                                           |
-| testes SQL/RLS              | `npm run test:db`                                                 |
-| imutabilidade de migrations | `npm run migrations:check`                                        |
-| regenerar schema e tipos    | `npm run supabase:generate`                                       |
-| unitários                   | `npm run test:unit`                                               |
-| Playwright afetado/completo | `npm run test:e2e:affected` / `npm run test:e2e`                  |
-| gates estáticos             | `npm run format:check`, `lint`, `typecheck`, `docs:check`, `knip` |
-| build das duas aplicações   | `npm run build`                                                   |
+| Objetivo                     | Comando                                                           |
+| ---------------------------- | ----------------------------------------------------------------- |
+| web em `127.0.0.1:3000`      | `npm run dev`                                                     |
+| backoffice em `:3001`        | `npm run dev:backoffice`                                          |
+| iniciar/parar banco          | `npm run supabase:start` / `npm run supabase:stop`                |
+| recriar banco e ambientes    | `npm run supabase:reset`                                          |
+| lint oficial do banco        | `npm run supabase:lint`                                           |
+| testes SQL/RLS               | `npm run test:db`                                                 |
+| gateway Edge e Storage reais | `npm run test:edge`                                               |
+| imutabilidade de migrations  | `npm run migrations:check`                                        |
+| regenerar schema e tipos     | `npm run supabase:generate`                                       |
+| unitários                    | `npm run test:unit`                                               |
+| Playwright afetado/completo  | `npm run test:e2e:affected` / `npm run test:e2e`                  |
+| gates estáticos              | `npm run format:check`, `lint`, `typecheck`, `docs:check`, `knip` |
+| build das duas aplicações    | `npm run build`                                                   |
 
 Os comandos usam diretamente Playwright e Prettier. O wrapper único chama as CLIs Next e Supabase
 diretamente somente quando precisa coordenar uma regra do Set Livre que essas ferramentas não oferecem:
@@ -108,6 +123,16 @@ contratos gerados.
 
 O transformador TSX dos testes unitários pertence a `vitest.config.ts`; specs importam o componente
 diretamente e não iniciam um servidor Vite aninhado.
+
+Navegações causadas por ações usam `page.waitForURL` com destino exato e a leitura autoritativa
+esperada, registradas junto ao clique. Uma asserção de URL não substitui a sincronização da navegação.
+Playwright usa builds novos e os servidores standalone dos dois apps, tanto localmente quanto em cada
+shard do CI; a compilação termina antes da primeira navegação. O helper existente reutiliza a limpeza
+de cache do build e copia `public` e `.next/static` para o layout standalone suportado pelo Next. Uma
+falha de build interrompe a suíte, sem reutilizar artefato anterior. Não há compilação de rotas sob
+demanda, aquecimento manual de endpoints, aumento dos deadlines HTTP, sleeps ou retries. `npm run dev`
+permanece disponível para desenvolvimento interativo. As asserções de CSP exigem também a política de
+produção: nonce por request e ausência de `unsafe-eval` e `unsafe-inline`.
 
 O setup global do Playwright executa o cleanup local real antes da primeira spec e a cada dez minutos
 enquanto a suíte existir, reproduzindo a cadência operacional da VM. As execuções são serializadas e
@@ -143,9 +168,11 @@ apps, a chave pública `anon`, a conexão administrativa local e um marcador ale
 esse arquivo existe, seus valores canônicos têm precedência sobre variáveis herdadas do shell; sem ele,
 o guardrail ainda aceita somente o contrato local completo. O webServer do Playwright neutraliza o
 ambiente herdado e repõe explicitamente em cada app somente os valores locais já validados, inclusive a
-URL DAL que as fixtures usam. Os dois servidores chamam o executável Node corrente e o CLI Next fixado
-no lockfile diretamente, com cwd explícito; `.npmrc` e `script-shell` do usuário não participam dessa
-fronteira. Ela também fixa `APP_ENV=test`; somente nessa
+URL DAL que as fixtures usam. O helper chama o executável Node corrente e o CLI Next fixado no lockfile
+para compilar com cwd explícito, depois carrega o `server.js` standalone no próprio processo;
+`.npmrc` e `script-shell` do usuário não participam dessa fronteira. Build e runtime usam os mesmos
+valores validados, sem reler o `.env.local` pelo wrapper interativo. Ela também fixa `NODE_ENV=production`,
+`APP_RELEASE_SHA=local` e `APP_ENV=test`; somente nessa
 fronteira as fixtures privadas e allowlisted dos adapters locais ficam disponíveis. Nunca copie esses
 arquivos para produção.
 

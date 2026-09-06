@@ -1785,7 +1785,7 @@ $$;
 ALTER FUNCTION "private"."canonical_platform_roles"("p_roles" "text"[]) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
+CREATE OR REPLACE FUNCTION "private"."check_deployment_structure"("expected_version" "text") RETURNS boolean
     LANGUAGE "sql" STABLE SECURITY DEFINER
     SET "search_path" TO ''
     AS $_$
@@ -2480,10 +2480,29 @@ CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text"
 $_$;
 
 
+ALTER FUNCTION "private"."check_deployment_structure"("expected_version" "text") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "private"."check_deployment_structure"("expected_version" "text") IS 'Preflight administrativo: migration aplicada e fronteiras estruturais completas, sem depender da saúde operacional do cleanup; execução restrita a postgres.';
+
+
+
+CREATE OR REPLACE FUNCTION "private"."check_readiness"("expected_version" "text") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    private.check_deployment_structure(expected_version)
+      and private.studio_media_cleanup_runs_are_healthy(),
+    false
+  );
+$$;
+
+
 ALTER FUNCTION "private"."check_readiness"("expected_version" "text") OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health fail-closed: DAL, grants/policies editoriais exatos e única policy sign_many para preview.';
+COMMENT ON FUNCTION "private"."check_readiness"("expected_version" "text") IS 'Health fail-closed da aplicação: estrutura, migration aplicada e sucesso terminal recente do cleanup; assinatura DAL preservada para ativação e rollback.';
 
 
 
@@ -6657,8 +6676,7 @@ CREATE OR REPLACE FUNCTION "private"."managed_runtime_boundaries_are_ready"() RE
     )
     and (select ready from managed_http_access_is_restricted)
     and (select ready from application_database_access_is_restricted)
-    and (select ready from production_runtime_members_are_restricted)
-    and private.studio_media_cleanup_runs_are_healthy(),
+    and (select ready from production_runtime_members_are_restricted),
     false
   );
 $_$;
@@ -6667,7 +6685,7 @@ $_$;
 ALTER FUNCTION "private"."managed_runtime_boundaries_are_ready"() OWNER TO "postgres";
 
 
-COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Falha fechado se catálogos legíveis contêm setting sensível, roles runtime alcançam pg_net, recebem CREATE/TEMP ou possuem membro assumível.';
+COMMENT ON FUNCTION "private"."managed_runtime_boundaries_are_ready"() IS 'Fronteira estrutural gerenciada: catálogos/settings sensíveis, net, CREATE/TEMP e memberships; saúde do cleanup é exigida separadamente por check_readiness.';
 
 
 
@@ -14583,6 +14601,10 @@ GRANT ALL ON FUNCTION "private"."can_sign_backoffice_studio_media"("p_object_nam
 
 
 REVOKE ALL ON FUNCTION "private"."canonical_platform_roles"("p_roles" "text"[]) FROM PUBLIC;
+
+
+
+REVOKE ALL ON FUNCTION "private"."check_deployment_structure"("expected_version" "text") FROM PUBLIC;
 
 
 

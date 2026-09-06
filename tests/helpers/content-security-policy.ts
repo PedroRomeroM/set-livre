@@ -14,7 +14,7 @@ export function policyNonce(contentSecurityPolicy: string) {
   const matches = [...scriptSource.matchAll(/'nonce-([a-f0-9]{32})'/gu)];
   expect(matches, "script-src deve declarar exatamente um nonce por request.").toHaveLength(1);
   expect(scriptSource).toContain("'strict-dynamic'");
-  expect(scriptSource).toContain("'unsafe-eval'");
+  expect(scriptSource).not.toContain("'unsafe-eval'");
   expect(scriptSource).not.toContain("'unsafe-inline'");
   return matches[0]?.[1] ?? "";
 }

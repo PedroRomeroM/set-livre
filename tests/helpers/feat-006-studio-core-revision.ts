@@ -165,23 +165,23 @@ async function expectFeat006EditorCommand(
 }
 
 export async function createFeat006StudioThroughUi(page: Page) {
-  const initialEditorRead = page.waitForResponse((response) => {
-    const request = response.request();
-    return (
-      request.method() === "GET" &&
-      /^\/api\/owner\/studios\/[0-9a-f-]+$/u.test(new URL(response.url()).pathname)
-    );
-  });
   const result = await expectFeat006EditorCommand(page, "studio.create", () =>
     page.getByRole("button", { name: "Criar estúdio em rascunho" }).click(),
   );
   expect(result.response.status()).toBe(200);
   if (result.editor === undefined) throw new Error("A criação FEAT-006 não retornou o editor.");
-  await page.getByRole("button", { name: "Abrir editor criado" }).click();
-  await expect(page).toHaveURL(new RegExp(`/dono/estudios/${result.editor.studioId}/dados$`, "u"));
-  const editorRead = await initialEditorRead;
+  const editorPath = `/dono/estudios/${result.editor.studioId}/dados`;
+  const readPath = `/api/owner/studios/${result.editor.studioId}`;
+  const [editorRead] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" && new URL(response.url()).pathname === readPath,
+    ),
+    page.waitForURL(new URL(editorPath, page.url()).href),
+    page.getByRole("button", { name: "Abrir editor criado" }).click(),
+  ]);
   expect(editorRead.status()).toBe(200);
-  expect(new URL(editorRead.url()).pathname).toBe(`/api/owner/studios/${result.editor.studioId}`);
+  expect(new URL(editorRead.url()).pathname).toBe(readPath);
   await expect(page.getByRole("textbox", { name: "Nome do estúdio" })).toBeEnabled();
   return result.editor;
 }

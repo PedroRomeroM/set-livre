@@ -114,6 +114,9 @@ jobs:
       - name: Database gates
         run: npm run test:db
 
+      - name: Real Edge gateway and Storage integration
+        run: npm run test:edge
+
       - name: Build and package Linux release
         env:
           APP_ENV: production

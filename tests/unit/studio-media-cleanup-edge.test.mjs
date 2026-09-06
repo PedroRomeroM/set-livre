@@ -9,6 +9,7 @@ import {
   runStudioMediaCleanup,
 } from "../../supabase/functions/media-cleanup/cleanup-core.ts";
 import { createCleanupRequestHandler } from "../../supabase/functions/media-cleanup/index.ts";
+import { isConfirmedStorageObjectAbsence } from "../../scripts/configure-production-media-cleanup.mjs";
 
 const runId = "87000000-0000-4000-8000-000000000000";
 const functionSlug = `media-cleanup-${"a".repeat(40)}`;
@@ -94,7 +95,7 @@ function adapterRpc(items = [candidates[0]]) {
 }
 
 describe("studio media cleanup edge adapter", () => {
-  it("executa claim e complete com o workerId entregue pelo core", async () => {
+  it("recebe a rota interna do provider e executa claim e complete com a identidade do core", async () => {
     const remove = vi.fn(async () => ({ data: [], error: null }));
     const rpc = adapterRpc();
     const createSupabaseClient = vi.fn(() => ({
@@ -108,7 +109,7 @@ describe("studio media cleanup edge adapter", () => {
     });
 
     const response = await handler(
-      new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+      new Request(`https://supabase.example/${functionSlug}`, {
         body: JSON.stringify({ runId }),
         headers: { apikey: secretKey, "content-type": "application/json" },
         method: "POST",
@@ -132,6 +133,37 @@ describe("studio media cleanup edge adapter", () => {
       p_succeeded: true,
     });
     expect(remove).toHaveBeenCalledWith(candidates[0].paths);
+  });
+
+  it("rejeita prefixo externo e sufixos de rota antes de abrir o ledger", async () => {
+    const createSupabaseClient = vi.fn();
+    const secretKey = "sb_secret_adapterTestKey123";
+    const handler = createCleanupRequestHandler({
+      createSupabaseClient,
+      readConfiguration: () => ({ secretKey, url: "https://supabase.example" }),
+    });
+    for (const path of [
+      `/functions/v1/${functionSlug}`,
+      `/${functionSlug}/extra`,
+      `/${functionSlug}?retry=1`,
+      `/${functionSlug}#fragment`,
+    ]) {
+      const response = await handler(
+        new Request(`https://supabase.example${path}`, {
+          body: JSON.stringify({ runId }),
+          headers: { apikey: secretKey, "content-type": "application/json" },
+          method: "POST",
+        }),
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        claimed: 0,
+        deleted: 0,
+        errorCode: "invalid_request",
+        failed: 0,
+      });
+    }
+    expect(createSupabaseClient).not.toHaveBeenCalled();
   });
 
   it("aborta remoção Storage pendente no deadline individual e fecha o ledger", async () => {
@@ -186,7 +218,7 @@ describe("studio media cleanup edge adapter", () => {
       });
 
       const responsePromise = handler(
-        new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+        new Request(`https://supabase.example/${functionSlug}`, {
           body: JSON.stringify({ runId }),
           headers: { apikey: secretKey, "content-type": "application/json" },
           method: "POST",
@@ -288,7 +320,7 @@ describe("studio media cleanup edge adapter", () => {
       });
 
       const responsePromise = handler(
-        new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+        new Request(`https://supabase.example/${functionSlug}`, {
           body: JSON.stringify({ runId }),
           headers: { apikey: secretKey, "content-type": "application/json" },
           method: "POST",
@@ -363,7 +395,7 @@ describe("studio media cleanup edge adapter", () => {
     });
 
     const response = await handler(
-      new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+      new Request(`https://supabase.example/${functionSlug}`, {
         body: JSON.stringify({ runId }),
         headers: { apikey: secretKey, "content-type": "application/json" },
         method: "POST",
@@ -409,7 +441,7 @@ describe("studio media cleanup edge adapter", () => {
     });
 
     const response = await handler(
-      new Request(`https://supabase.example/functions/v1/${functionSlug}`, {
+      new Request(`https://supabase.example/${functionSlug}`, {
         body: JSON.stringify({ runId }),
         headers: { ...headers, "content-type": "application/json" },
         method: "POST",
@@ -481,14 +513,23 @@ describe("studio media cleanup edge core", () => {
       expect.objectContaining({ claimed: 5, failed: 5 }),
     );
   });
-  it("extrai somente o slug imutável exato da URL canônica", () => {
-    expect(parseCleanupFunctionSlug(`https://supabase.example/functions/v1/${functionSlug}`)).toBe(
-      functionSlug,
-    );
+  it("extrai somente o slug imutável exato da URL interna do provider", () => {
+    for (const origin of ["https://supabase.example", "http://edge-runtime:9000"]) {
+      expect(parseCleanupFunctionSlug(`${origin}/${functionSlug}`)).toBe(functionSlug);
+    }
     for (const url of [
-      "https://supabase.example/functions/v1/media-cleanup",
-      `https://supabase.example/functions/v1/${functionSlug}/extra`,
-      `https://supabase.example/functions/v1/${functionSlug}?retry=1`,
+      "https://supabase.example/media-cleanup",
+      `https://supabase.example/media-cleanup-${"a".repeat(39)}`,
+      `https://supabase.example/media-cleanup-${"a".repeat(41)}`,
+      `https://supabase.example/media-cleanup-${"g".repeat(40)}`,
+      `https://supabase.example/media-cleanup-${"A".repeat(40)}`,
+      `https://supabase.example/functions/v1/${functionSlug}`,
+      `https://supabase.example/${functionSlug}/extra`,
+      `https://supabase.example/${functionSlug}/`,
+      `https://supabase.example/${functionSlug}?retry=1`,
+      `https://supabase.example/${functionSlug}?`,
+      `https://supabase.example/${functionSlug}#fragment`,
+      `https://supabase.example/${functionSlug}#`,
       `https://supabase.example/other/${functionSlug}`,
     ]) {
       expect(() => parseCleanupFunctionSlug(url)).toThrow("URL");
@@ -946,28 +987,29 @@ describe.runIf(integrationEnabled)("studio media cleanup local integration", () 
     const secretKey = process.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SECRET_KEY;
     const slug = process.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SLUG;
     const supabaseUrl = process.env.SET_LIVRE_MEDIA_CLEANUP_INTEGRATION_SUPABASE_URL;
-    const parsedUrl = new URL(supabaseUrl);
-    if (!["127.0.0.1", "localhost", "::1"].includes(parsedUrl.hostname)) {
+    const parsedDatabaseUrl = new URL(databaseUrl);
+    if (
+      supabaseUrl !== "http://127.0.0.1:54321" ||
+      parsedDatabaseUrl.protocol !== "postgresql:" ||
+      parsedDatabaseUrl.hostname !== "127.0.0.1" ||
+      parsedDatabaseUrl.port !== "54322" ||
+      parsedDatabaseUrl.username !== "postgres" ||
+      parsedDatabaseUrl.pathname !== "/postgres" ||
+      parsedDatabaseUrl.search !== "" ||
+      parsedDatabaseUrl.hash !== ""
+    ) {
       throw new Error("A integração destrutiva de cleanup aceita somente Supabase local.");
     }
-    const { Buffer } = await import("node:buffer");
-    let localSecretClaims;
-    try {
-      const segments = secretKey.split(".");
-      localSecretClaims = JSON.parse(Buffer.from(segments[1] ?? "", "base64url").toString("utf8"));
-    } catch {
-      throw new Error("A integração local exige a chave JWT legada service_role do stack local.");
-    }
-    if (localSecretClaims?.role !== "service_role") {
-      throw new Error("A integração local exige a chave JWT legada service_role do stack local.");
+    if (!/^sb_secret_[A-Za-z0-9_-]{12,}$/u.test(secretKey)) {
+      throw new Error("A integração local exige a secret key moderna gerada pela CLI.");
     }
 
     const runId = randomUUID();
     const client = new Client({ connectionString: databaseUrl });
     const storage = new StorageClient(
       `${supabaseUrl}/storage/v1`,
-      { apikey: secretKey, Authorization: `Bearer ${secretKey}` },
-      fetch,
+      { apikey: secretKey },
+      (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
     );
     let probe;
     await client.connect();
@@ -980,14 +1022,16 @@ describe.runIf(integrationEnabled)("studio media cleanup local integration", () 
       expect(probe).toMatchObject({ bucket: "studio-media", runId, status: "prepared" });
       expect(probe.paths).toHaveLength(2);
 
+      const bytes = new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80]);
       for (const path of probe.paths) {
-        const { error } = await storage
-          .from(probe.bucket)
-          .upload(path, new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80]), {
-            contentType: "image/webp",
-            upsert: false,
-          });
+        const { error } = await storage.from(probe.bucket).upload(path, bytes, {
+          contentType: "image/webp",
+          upsert: false,
+        });
         expect(error).toBeNull();
+        const downloaded = await storage.from(probe.bucket).download(path);
+        expect(downloaded.error).toBeNull();
+        expect(new Uint8Array(await downloaded.data.arrayBuffer())).toEqual(bytes);
       }
       const armed = await client.query(
         "select maintenance.arm_studio_media_cleanup_probe($1::uuid) as probe",
@@ -1003,6 +1047,7 @@ describe.runIf(integrationEnabled)("studio media cleanup local integration", () 
           "content-type": "application/json",
         },
         method: "POST",
+        signal: AbortSignal.timeout(20_000),
       });
       expect(response.status).toBe(200);
       const result = await response.json();
@@ -1041,7 +1086,7 @@ describe.runIf(integrationEnabled)("studio media cleanup local integration", () 
       for (const path of probe.paths) {
         const { data, error } = await storage.from(probe.bucket).download(path);
         expect(data).toBeNull();
-        expect(error).not.toBeNull();
+        expect(isConfirmedStorageObjectAbsence(error)).toBe(true);
       }
     } finally {
       if (probe !== undefined) {

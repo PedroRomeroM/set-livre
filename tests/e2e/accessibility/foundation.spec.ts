@@ -2,9 +2,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { gotoExpectedPage } from "../../helpers/expected-page";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 
-const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
+const { publicBaseUrl, backofficeBaseUrl } = readSafeE2EEnvironment();
 
 async function expectRenderedTheme(page: Parameters<typeof gotoExpectedPage>[0]) {
   const renderedTheme = await page.evaluate(() => {

@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
-const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
+
+const { backofficeBaseUrl } = readSafeE2EEnvironment();
 
 test("FOUNDATION-E2E-003 health endpoints retornam contrato autoritativo", async ({ request }) => {
   const propagatedRequestId = "e65fe64c-3788-4cf0-beb3-c344025b0bb0";

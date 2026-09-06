@@ -137,7 +137,8 @@ No merge, o workflow:
    pelo menos 24 horas, SAN, `nginx -t`, serviço ativo e `/robots.txt` pela rota HTTPS pública também
    precisam passar sem desabilitar a validação TLS;
 3. quando as roles já existem, exige antes de qualquer migration que os atributos, memberships, grants,
-   ownership e read models do banco atualmente implantado passem no readiness do próprio head remoto;
+   ownership e read models do banco atualmente implantado passem no preflight estrutural do próprio
+   head remoto, com a transição versionada descrita em [Banco de produção](#banco-de-producao);
 4. prepara os dois ambientes efêmeros e seu SHA-256 combinado, então inspeciona no host uma release
    root-owned do mesmo SHA: quando ela já existe e passa novamente em checksum, manifesto, digest de
    árvore, digest do host e contrato de ambiente corrente, reutiliza exatamente seus bytes; quando está
@@ -490,12 +491,18 @@ na memória necessária ao limiter e em `X-Forwarded-For`, não no access log.
 A VM IPv4 usa o Supavisor em **session mode** na coordenada fixa
 `aws-0-sa-east-1.pooler.supabase.com:5432`. O preflight valida host, porta, projeto, banco e identidade,
 abre uma sessão administrativa curta e relê as duas roles, seus atributos restritos e os dois sentidos
-dos memberships. Se ambas já existem, o readiness versionado do head atualmente implantado precisa
+dos memberships. Se ambas já existem, o preflight versionado do head atualmente implantado precisa
 reprovar qualquer drift de grants, ownership, RLS ou superfície DAL antes de qualquer migration. A
 ausência simultânea das duas roles é aceita somente com ledger ausente/vazio e sem schemas `audit` ou
 `private`, relações, rotinas ou tipos de aplicação não pertencentes a extensões no schema `public`;
 estado parcial ou banco não vazio é ambíguo e falha fechado. Uma runtime ainda `NOLOGIN` só dispensa a
-autenticação, não o readiness do banco atual.
+autenticação, não a validação estrutural do banco atual.
+Desde o head `20260906051637`, a sessão administrativa exige
+`private.check_deployment_structure(text)`, restrita a `postgres` e independente da saúde operacional
+do cleanup. Para heads anteriores, seleciona em JavaScript a query de `private.check_readiness(text)`
+legada: o helper novo ainda não existe, e a primeira transição exige a
+[recuperação inicial do cleanup](#recuperação-inicial-do-cleanup). Não há fallback por erro ou função
+ausente. O readiness completo continua obrigatório depois do canário e antes da ativação.
 Quando já possui `LOGIN`, uma conexão real com a URL DAL também precisa assumir `app_dal` e passar
 `check_runtime_readiness`. O usuário de conexão segue o formato oficial
 `app_runtime_production.<project-ref>`, mas a sessão PostgreSQL efetiva precisa ser
@@ -660,7 +667,8 @@ O cleanup de mídia não adiciona segredo ao GitHub. No começo do job, o workfl
 web e o canário, e é truncada/removida em `always()`. Depois das migrations e da publicação da Function
 candidata, `npm run production:media-cleanup` cria objetos canário reais, invoca a candidata diretamente
 por HTTPS com `apikey` — sem duplicar a secret key moderna em `Authorization` —, exige remoção de ambos
-pela Storage API e comprova cada ausência somente por `404/NoSuchKey`, além de conferir a execução terminal vinculada
+pela Storage API e comprova cada ausência pelo contrato estrito do
+[ADR-010](adr/ADR-010-media-storage-and-delivery.md#confirmação-de-ausência-no-storage), além de conferir a execução terminal vinculada
 ao slug no ledger durável. Esse comando executa somente o canário; não depende da disponibilidade da
 release anterior nem exclui Functions. Resposta negada, contrato ambíguo, chave legada, ACL excedente,
 timeout, contagem que não fecha ou cleanup com falha interrompe o deploy sem imprimir credenciais.
@@ -689,8 +697,8 @@ A coordenação administrativa dessa janela segue
 Um advisory lock de sessão impede dois configuradores de manipular o canário simultaneamente. Antes do
 novo probe, checkpoints `prepared` ou `queued` abandonados há 30 minutos são removidos pela Storage API,
 com ausência estrita comprovada para os dois paths, e só depois terminalizados como `probe_abandoned`.
-Queda entre remoção e atualização do banco deixa o mesmo checkpoint repetível; erro `400`, `404` com
-outro código ou resposta ambígua bloqueia a entrega e não encerra o probe.
+Queda entre remoção e atualização do banco deixa o mesmo checkpoint repetível; erro genérico,
+`NoSuchBucket`, falha de autorização ou resposta ambígua bloqueia a entrega e não encerra o probe.
 
 O ledger também é autorrecuperável: um run interrompido permanece replayable pelo mesmo UUID, mas,
 depois de 30 minutos, a primeira execução com outra identidade o fecha como
@@ -779,7 +787,8 @@ header `apikey`, recusa redirect, timeout, resposta diferente de 200 ou JSON inv
 chave. Em seguida, a sessão administrativa relê as duas roles e seus memberships. Roles ausentes só são
 aceitas quando o ledger de migrations ainda não existe ou está comprovadamente vazio; qualquer histórico
 com roles ausentes é drift e bloqueia o deploy. Quando as roles existem, a sessão descobre o maior head
-remoto e exige que o `check_readiness` já implantado aprove exatamente esse head.
+remoto e exige a verificação administrativa correspondente à versão, conforme
+[Banco de produção](#banco-de-producao).
 Se a runtime estiver ativa, uma conexão separada precisa autenticar, assumir `app_dal` e passar no
 `check_runtime_readiness`. Senha obsoleta, privilégio ou grant excedente, identidade ambígua ou
 indisponibilidade bloqueia o workflow antes de alterar o schema. A mesma fronteira exige a entrada
@@ -791,6 +800,38 @@ aceita exclusivamente o formato moderno `sb_publishable_` no campo público; `sb
 artifact. A fronteira server-only do web aceita `sb_secret_` em produção e o JWT `service_role`
 somente no runtime local/teste gerado pelo CLI. Senhas, access token, URL DAL e chave SSH privada
 nunca entram em logs, artifacts ou documentação.
+
+## Recuperação inicial do cleanup
+
+Procedimento pontual autorizado em 2026-09-06 no [ADR-019](adr/ADR-019-controlled-cloud-delivery.md),
+necessário apenas enquanto o schema anterior a `20260906051637` ainda exige cleanup saudável no
+preflight. Não é um segundo fluxo normal de deploy.
+
+1. Concluir os gates, os reviews incremental e holístico limpos e o merge da correção. Fixar o SHA
+   aprovado de `main`, conferir o histórico aplicado no Supabase e comprovar nos testes locais que a
+   Function e o canário desse SHA também funcionam com o schema anterior à separação estrutural.
+2. Aguardar o workflow desse SHA atingir estado terminal antes de qualquer intervenção; se falhar no
+   preflight legado, registrar a evidência e confirmar que nenhum job de produção continua ativo.
+   Não executar a recuperação em paralelo com publicação, ativação, rollback ou manutenção do host.
+3. Em checkout limpo do SHA aprovado, usar o mesmo passo de publicação do workflow: copiar a fonte
+   canônica `supabase/functions/media-cleanup` para o diretório efêmero `media-cleanup-<SHA>` e executar
+   `supabase functions deploy <slug> --project-ref oirvvnojgkzdppkdvhej --no-verify-jwt --use-api`.
+   Não modificar a Function publicada nem antecipar migrations. Credenciais continuam protegidas;
+   não imprimir tokens, arquivos de ambiente ou URLs autenticadas.
+4. Executar o canário existente, `npm run production:media-cleanup`, com esse slug e as credenciais
+   normais do deploy. Ele recupera probes abandonados pela Storage API, cria objetos reais, invoca a
+   Function, confirma as duas ausências e verifica o sucesso terminal vinculado ao slug no ledger.
+   Qualquer falha interrompe o procedimento, sem SQL manual, checkpoint fabricado ou ativação de apps.
+5. Com sucesso recente comprovado, reexecutar os jobs falhos do workflow do mesmo SHA. Isso preserva
+   os gates já verdes e permite atravessar o preflight legado dentro da janela de saúde de 30 minutos.
+   O fluxo normal faz staging, aplica a migration, repete o canário e o readiness completo, ativa a
+   release e prova o health público. Expiração ou nova falha não autoriza ignorar nenhuma etapa.
+6. Confirmar o head novo, os dois apps saudáveis e o workflow integralmente aprovado. A coleta de
+   Functions antigas continua exclusiva do passo pós-ativação. Remover o diretório local efêmero e
+   registrar SHA, run e resultado no PR; não duplicar evidências temporais neste runbook.
+
+Após essa transição, o preflight estrutural permite que o workflow normal repare cleanup degradado,
+mas não libera a ativação sem sucesso operacional recente.
 
 ## Operação e capacidade
 

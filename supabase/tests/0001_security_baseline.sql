@@ -1,6 +1,106 @@
 begin;
 
-select plan(41);
+select plan(46);
+
+select ok(
+  (
+    select routine.proowner = 'postgres'::pg_catalog.regrole
+      and routine.prosecdef
+      and routine.provolatile = 's'
+      and routine.proconfig = array['search_path=""']::text[]
+      and routine.prorettype = 'boolean'::pg_catalog.regtype
+      and (
+        select pg_catalog.count(*) = 1
+          and pg_catalog.bool_and(
+            privilege.grantee = routine.proowner
+            and privilege.privilege_type = 'EXECUTE'
+            and not privilege.is_grantable
+          )
+        from pg_catalog.aclexplode(routine.proacl) as privilege
+      )
+    from pg_catalog.pg_proc as routine
+    where routine.oid = 'private.check_deployment_structure(text)'::pg_catalog.regprocedure
+  ),
+  'verificador estrutural mantém atributos seguros e ACL exclusiva de postgres após o rename'
+);
+
+select ok(
+  exists (
+    select 1 from private.dal_routine_allowlist
+    where signature = 'private.check_readiness(text)'
+  )
+    and not exists (
+      select 1 from private.dal_routine_allowlist
+      where signature = 'private.check_deployment_structure(text)'
+    )
+    and pg_catalog.has_function_privilege('app_dal', 'private.check_readiness(text)', 'EXECUTE')
+    and not pg_catalog.has_function_privilege(
+      'app_dal', 'private.check_readiness(text)', 'EXECUTE WITH GRANT OPTION'
+    )
+    and (
+      select routine.proowner = 'postgres'::pg_catalog.regrole
+        and routine.prosecdef
+        and routine.provolatile = 's'
+        and routine.proconfig = array['search_path=""']::text[]
+        and (
+          select pg_catalog.count(*) = 2
+            and pg_catalog.bool_and(
+              privilege.grantee in (routine.proowner, 'app_dal'::pg_catalog.regrole)
+              and privilege.privilege_type = 'EXECUTE'
+              and not privilege.is_grantable
+            )
+          from pg_catalog.aclexplode(routine.proacl) as privilege
+        )
+      from pg_catalog.pg_proc as routine
+      where routine.oid = 'private.check_readiness(text)'::pg_catalog.regprocedure
+    )
+    and not exists (
+      select 1
+      from (values
+        ('anon'), ('authenticated'), ('service_role'), ('app_dal'),
+        ('app_runtime_local'), ('app_runtime_production')
+      ) as application_role(role_name)
+      where pg_catalog.has_function_privilege(
+        application_role.role_name, 'private.check_deployment_structure(text)', 'EXECUTE'
+      )
+    ),
+  'allowlist continua nomeando a fachada e nenhuma role da aplicação ganha acesso ao helper'
+);
+
+savepoint cleanup_without_success;
+delete from maintenance.studio_media_cleanup_probes;
+delete from maintenance.studio_media_cleanup_runs;
+select ok(
+  private.managed_runtime_boundaries_are_ready()
+    and private.check_deployment_structure('20260828174500')
+    and not private.studio_media_cleanup_runs_are_healthy()
+    and not private.check_readiness('20260828174500'),
+  'ledger vazio permite preflight estrutural mas mantém readiness da aplicação indisponível'
+);
+
+grant execute on function private.profile_command_result(uuid) to app_dal;
+select ok(
+  not private.check_deployment_structure('20260828174500')
+    and not private.check_readiness('20260828174500'),
+  'ausência de cleanup não dispensa a rejeição estrutural de um grant DAL indevido'
+);
+revoke execute on function private.profile_command_result(uuid) from app_dal;
+
+select public.begin_studio_media_cleanup_run(
+  '8b000000-0000-4000-8000-000000000002',
+  'media-cleanup-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+);
+select public.complete_studio_media_cleanup_run(
+  '8b000000-0000-4000-8000-000000000002', 'succeeded', 0, 0, 0, null
+);
+select ok(
+  private.check_deployment_structure('20260828174500')
+    and private.studio_media_cleanup_runs_are_healthy()
+    and private.check_readiness('20260828174500'),
+  'sucesso terminal pelo protocolo do cleanup restaura a fachada sem alterar a estrutura'
+);
+rollback to savepoint cleanup_without_success;
+release savepoint cleanup_without_success;
 
 insert into maintenance.studio_media_cleanup_runs (
   run_id,
@@ -304,7 +404,8 @@ select ok(
 );
 
 select ok(
-  private.check_readiness('20260828174500'),
+  private.check_readiness('20260828174500')
+    and private.check_deployment_structure('20260828174500'),
   'readiness aceita a migration head atual'
 );
 
@@ -329,7 +430,8 @@ begin
 end;
 $$;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita owner não canônico no schema private'
 );
 rollback to savepoint private_schema_owner_drift;
@@ -342,7 +444,8 @@ alter function private.complete_profile(uuid, bigint, text, text, text, text, te
   owner to readiness_owner_intruder;
 revoke create on schema private from readiness_owner_intruder;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita owner não canônico em comando private'
 );
 rollback to savepoint private_routine_owner_drift;
@@ -351,7 +454,8 @@ savepoint authorized_dal_security_mode_drift;
 alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
   security invoker;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita comando DAL sem security definer'
 );
 rollback to savepoint authorized_dal_security_mode_drift;
@@ -360,7 +464,8 @@ savepoint authorized_dal_search_path_drift;
 alter function private.complete_profile(uuid, bigint, text, text, text, text, text)
   reset search_path;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita comando DAL sem search_path vazio fixado'
 );
 rollback to savepoint authorized_dal_search_path_drift;
@@ -368,26 +473,30 @@ rollback to savepoint authorized_dal_search_path_drift;
 insert into supabase_migrations.schema_migrations(version, statements, name)
 values ('20260815000100', array[]::text[], 'rollback-readiness-probe');
 select ok(
-  private.check_readiness('20260815000100'),
+  private.check_readiness('20260815000100')
+    and private.check_deployment_structure('20260815000100'),
   'readiness mantém uma migration aplicada apta ao rollback expand/contract'
 );
 delete from supabase_migrations.schema_migrations where version = '20260815000100';
 
 select ok(
-  not private.check_readiness('20260815000100'),
+  not private.check_readiness('20260815000100')
+    and not private.check_deployment_structure('20260815000100'),
   'readiness rejeita uma migration que não foi aplicada'
 );
 
 grant execute on function private.profile_command_result(uuid) to app_dal;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita rotina privada fora da allowlist DAL'
 );
 revoke execute on function private.profile_command_result(uuid) from app_dal;
 
 grant usage on schema private to public;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita acesso ao schema privado herdado por PUBLIC'
 );
 revoke usage on schema private from public;
@@ -395,7 +504,8 @@ revoke usage on schema private from public;
 grant execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
   to public;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita comando privado herdado por PUBLIC'
 );
 revoke execute on function private.complete_profile(uuid, bigint, text, text, text, text, text)
@@ -403,7 +513,8 @@ revoke execute on function private.complete_profile(uuid, bigint, text, text, te
 
 grant select on table private.identity_recovery_grants to public;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita acesso a dados herdado por PUBLIC'
 );
 revoke select on table private.identity_recovery_grants from public;
@@ -414,7 +525,8 @@ create table readiness_external.public_probe (id bigint primary key);
 grant usage on schema readiness_external to public;
 grant select on table readiness_external.public_probe to public;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita acesso efetivo da DAL a schema externo herdado por PUBLIC'
 );
 rollback to savepoint managed_schema_drift;
@@ -422,7 +534,8 @@ rollback to savepoint managed_schema_drift;
 create role readiness_intruder nologin noinherit;
 grant app_dal to readiness_intruder with admin false, inherit false, set true;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita membro inesperado de app_dal'
 );
 revoke app_dal from readiness_intruder;
@@ -448,7 +561,8 @@ select extensions.dblink_exec(
     || 'alter table private.readiness_owner_probe owner to app_dal'
 );
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita qualquer objeto pertencente a app_dal'
 );
 select extensions.dblink_exec(
@@ -505,14 +619,16 @@ revoke usage on schema audit from app_runtime_local;
 
 alter role app_dal login;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita elevação da role DAL'
 );
 alter role app_dal nologin;
 
 grant create on schema public to public;
 select ok(
-  not private.check_readiness('20260828174500'),
+  not private.check_readiness('20260828174500')
+    and not private.check_deployment_structure('20260828174500'),
   'readiness rejeita CREATE público'
 );
 revoke create on schema public from public;

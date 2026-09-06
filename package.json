@@ -52,6 +52,7 @@
     "supabase:types": "node scripts/local-setup.mjs generate-types",
     "supabase:generate": "node scripts/local-setup.mjs generate",
     "test:db": "node scripts/local-setup.mjs test",
+    "test:edge": "node scripts/local-setup.mjs test-cleanup",
     "test:e2e:install": "playwright install chromium firefox webkit",
     "test:e2e": "playwright test",
     "test:e2e:affected": "playwright test",

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const databaseMigrationHead = "20260905190840" as const;
+export const databaseMigrationHead = "20260906051637" as const;
 export const databaseCommandPoolTimeouts = Object.freeze({
   queryTimeoutMs: 3_000,
   statementTimeoutMs: 2_000,

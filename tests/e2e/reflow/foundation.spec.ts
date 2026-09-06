@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 import { gotoExpectedPage } from "../../helpers/expected-page";
+import { readSafeE2EEnvironment } from "../../helpers/e2e-environment";
 
-const publicBaseUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
-const backofficeBaseUrl = process.env.E2E_BACKOFFICE_URL ?? "http://127.0.0.1:3001";
+const { publicBaseUrl, backofficeBaseUrl } = readSafeE2EEnvironment();
 
 test("FOUNDATION-E2E-011 zoom 200% preserva reflow nos dois apps", async ({ page }) => {
   for (const [surface, url, heading] of [

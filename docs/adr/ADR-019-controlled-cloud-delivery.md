@@ -3,6 +3,8 @@
 ## Status
 
 Aceito em 2026-08-24, consolidando autorizações humanas anteriores.
+Separação de preflight estrutural e saúde operacional, com recuperação inicial limitada, aprovada
+explicitamente em 2026-09-06 (OPEN-007).
 
 ## Contexto
 
@@ -45,6 +47,10 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - ativação e recuperação do runtime de banco são fail-closed e seguem o contrato operacional em
   [infrastructure.md, Banco de produção](../infrastructure.md#banco-de-producao); rotação implícita
   permanece fora do deploy normal;
+- o preflight anterior às migrations comprova a estrutura do head remoto, as permissões e a identidade
+  real da conexão, sem exigir saúde da rotina que o próprio deploy precisa reparar. O helper estrutural
+  é exclusivo da administração; readiness dos aplicativos e ativação continuam exigindo também cleanup
+  saudável. A separação não libera grants, RLS, credenciais inválidas ou drift estrutural;
 - o startup packet do cliente não é autoridade para a role efetiva porque o Supavisor pode não
   encaminhar opções arbitrárias. Uma migration append-only fixa o setting não secreto `role=app_dal`
   para `app_runtime_production` somente no database `postgres`, e o readiness valida a configuração e
@@ -71,6 +77,25 @@ customizados. A complexidade não era proporcional ao estágio do produto.
 - deploy permanece desabilitado durante o bootstrap e só é ativado quando certificado, credenciais,
   gates e review estiverem prontos, imediatamente antes do merge aprovado; o health posterior ao
   merge comprova o primeiro ciclo completo.
+
+### Recuperação inicial do cleanup
+
+A primeira migration dessa separação não consegue desbloquear o preflight antigo que impede sua
+própria aplicação. A autorização de 2026-09-06 permite, somente para essa transição, publicar primeiro
+a Function corrigida a partir do SHA de `main` aprovado pelo ciclo completo, compatível com o schema
+já aplicado, e executar o canário real. Somente após comprovar o ledger saudável o workflow normal
+retoma, aplica a migration append-only e valida a ativação. O procedimento está no runbook de
+[infraestrutura](../infrastructure.md#recuperação-inicial-do-cleanup).
+
+A seleção da query administrativa acompanha a versão realmente aplicada: antes de `20260906051637`,
+o preflight usa o readiness completo legado, pois o helper estrutural ainda não existe; a partir desse
+marco, exige `private.check_deployment_structure(text)`. A seleção ocorre antes de preparar a query,
+sem capturar erro de função ausente para tentar outra verificação. Essa compatibilidade de migração
+não dispensa o cleanup na primeira recuperação nem aceita helper ausente em schema novo.
+
+Não há flag permanente para ignorar preflight, alteração manual do banco, fabricação de checkpoint ou
+publicação de código não revisado. Falha em qualquer prova interrompe a recuperação; autorização não
+equivale a execução concluída.
 
 ## Alternativas
 
