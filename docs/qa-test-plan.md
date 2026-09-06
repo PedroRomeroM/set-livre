@@ -93,6 +93,8 @@ O cenário P0 exige a requisição de documento e o resultado autoritativo nos t
 Os cenários `SL-F002-E2E-002/003`, `SL-F003-E2E-009` e `SL-F004-E2E-001/002` exercitam
 leitura offline, erro recuperável, nova tentativa real e reconexão sem expor a composição privada.
 Sessão e perfil também provam reconexão com cache ainda fresco, sem adiantar os deadlines de rede.
+No logout ambíguo de `SL-F003-E2E-009`, a prova exige exatamente um POST, navegação real,
+sessão autoritativa e ausência de reenvio na reconexão.
 
 ## Segurança do E2E
 
@@ -161,6 +163,8 @@ enviada: exclusões Auth QA, exatas ou bulk, adquirem o advisory lock transacion
 sessão que usam o lock compartilhado, sem inverter a ordem binding/Auth e sem retries. O cenário
 `SL-F031-E2E-036` mantém esse leitor aberto em outra conexão, observa a espera real em `pg_locks` e
 comprova a conclusão exata e idempotente após liberá-lo. Esse mecanismo é somente do teardown local.
+No cenário de expiração offline `SL-F031-E2E-023`, a página deve estar encerrada antes da exclusão
+da identidade QA.
 
 Recomposições de segurança aguardam a superfície autoritativa final e suas evidências de escopo, não
 uma navegação intermediária. Reload seguido de redirect ou nova composição SSR pode cancelar um
@@ -343,7 +347,9 @@ Os cenários `SL-F008-E2E-*` e `SL-F008-CACHE-*` cobrem:
 - `SL-F008-E2E-015` devolve uma reserva real de tentativa irmã do mesmo estúdio: chave ou ação
   divergentes impedem qualquer upload ao Storage, preservam o comando e só a confirmação do retry
   original permite finalizar a mídia correta;
-- axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições;
+- axe, teclado, foco, tema escuro e viewports móveis executam em quatro composições. `SL-F008-E2E-010`
+  prova que reordenação e cancelamento da exclusão restauram foco sem sobrescrever uma escolha
+  posterior; Enter abre a foto escolhida e Escape devolve seu acionador;
 - reflow a 200% executa em Chromium, Firefox e WebKit.
 
 O helper usa Auth, Storage e banco locais reais, envia bytes por token assinado, remove original e

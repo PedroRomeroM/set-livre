@@ -25,6 +25,37 @@ async function expectTouchTarget(control: Locator) {
   expect(box?.width).toBeGreaterThanOrEqual(44);
 }
 
+async function holdPageAnimationFrames(page: Page) {
+  return page.evaluateHandle(() => {
+    const requestFrame = window.requestAnimationFrame;
+    const cancelFrame = window.cancelAnimationFrame;
+    const pending = new Map<number, FrameRequestCallback>();
+    let nextId = -1;
+    let restored = false;
+    window.requestAnimationFrame = (callback) => {
+      const id = nextId--;
+      pending.set(id, callback);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      if (!pending.delete(id)) cancelFrame.call(window, id);
+    };
+    return {
+      async restore() {
+        if (restored) return;
+        restored = true;
+        window.requestAnimationFrame = requestFrame;
+        window.cancelAnimationFrame = cancelFrame;
+        for (const callback of pending.values()) requestFrame.call(window, callback);
+        pending.clear();
+        await new Promise<void>((resolve) => {
+          requestFrame.call(window, () => requestFrame.call(window, () => resolve()));
+        });
+      },
+    };
+  });
+}
+
 test("SL-F008-E2E-010 @p1 galeria passa axe, teclado, foco, tema escuro e viewports móveis", async ({
   page,
 }, testInfo) => {
@@ -46,14 +77,24 @@ test("SL-F008-E2E-010 @p1 galeria passa axe, teclado, foco, tema escuro e viewpo
     await expectNoHorizontalOverflow(page);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
-    await reorder.focus();
-    await expect(reorder).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(
-      page.getByText("Foto movida para a posição 2 de 2.", { exact: true }),
-    ).toBeVisible();
     const currentFirst = page.getByRole("button", { name: /Visualizar foto 1/iu });
-    await currentFirst.focus();
+    const reorderFrames = await holdPageAnimationFrames(page);
+    try {
+      await reorder.focus();
+      await expect(reorder).toBeFocused();
+      await page.keyboard.press("Enter");
+      await expect(
+        page.getByText("Foto movida para a posição 2 de 2.", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: /Visualizar foto 2/iu })).toBeFocused();
+      await currentFirst.focus();
+      await expect(currentFirst).toBeFocused();
+      await reorderFrames.evaluate((frames) => frames.restore());
+      await expect(currentFirst).toBeFocused();
+    } finally {
+      await reorderFrames.evaluate((frames) => frames.restore());
+      await reorderFrames.dispose();
+    }
     await page.keyboard.press("Enter");
     const dialog = page.getByRole("dialog", { name: "Foto 1 de 2" });
     await expect(dialog).toBeVisible();
@@ -61,6 +102,19 @@ test("SL-F008-E2E-010 @p1 galeria passa axe, teclado, foco, tema escuro e viewpo
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     await page.keyboard.press("Escape");
     await expect(currentFirst).toBeFocused();
+    const cancelFrames = await holdPageAnimationFrames(page);
+    try {
+      const deleteButton = page.getByRole("button", { name: "Excluir foto 1" });
+      await deleteButton.click();
+      await page.getByRole("button", { name: "Manter foto" }).click();
+      await expect(deleteButton).toBeFocused();
+      await currentFirst.focus();
+      await cancelFrames.evaluate((frames) => frames.restore());
+      await expect(currentFirst).toBeFocused();
+    } finally {
+      await cancelFrames.evaluate((frames) => frames.restore());
+      await cancelFrames.dispose();
+    }
     await expectNoHorizontalOverflow(page);
 
     if (testInfo.project.name === "axe-dark-chromium") {

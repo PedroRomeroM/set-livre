@@ -462,11 +462,7 @@ test("SL-F031-E2E-023 @p0 expiração autoritativa oculta o shell offline", asyn
     await expect(page.getByText(support.email, { exact: true })).toHaveCount(0);
   } finally {
     heldNavigation.release();
-    await page
-      .context()
-      .setOffline(false)
-      .catch(() => undefined);
-    await page.unrouteAll({ behavior: "ignoreErrors" });
+    // The isolated context is discarded; do not reconfigure interception during offline teardown.
     await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat031Users({ operators: [support] });
   }

@@ -15,6 +15,7 @@ import Image from "next/image";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -51,6 +52,8 @@ import {
 import styles from "./studio-media.module.css";
 
 type MediaItem = StudioMediaGallery["items"][number];
+type MediaFocusTarget =
+  Readonly<{ kind: "thumbnail" | "delete"; mediaId: string }> | Readonly<{ kind: "file-picker" }>;
 type PrepareCommand = Extract<StudioMediaCommand, { action: "studio.media.upload.prepare" }>;
 type FinalizeCommand = Extract<StudioMediaCommand, { action: "studio.media.upload.finalize" }>;
 type GalleryCommand = Extract<
@@ -307,6 +310,7 @@ function HydratedStudioMediaPanel({
   const galleryOperationReference = useRef<GalleryOperation | undefined>(undefined);
   const galleryReference = useRef<StudioMediaGallery | undefined>(undefined);
   const lightboxOpenerReference = useRef<HTMLElement | null>(null);
+  const pendingFocusReference = useRef<MediaFocusTarget | undefined>(undefined);
   const queueRunningReference = useRef(false);
   const thumbnailReferences = useRef(new Map<string, HTMLButtonElement>());
   const uploadAbortReference = useRef<AbortController | undefined>(undefined);
@@ -360,6 +364,21 @@ function HydratedStudioMediaPanel({
     setAnnouncement({ sequence: announcementSequenceReference.current, text });
   }
 
+  useLayoutEffect(() => {
+    const pending = pendingFocusReference.current;
+    if (pending === undefined) return;
+    const target =
+      pending.kind === "file-picker"
+        ? filePickerReference.current
+        : pending.kind === "thumbnail"
+          ? thumbnailReferences.current.get(pending.mediaId)
+          : deleteButtonReferences.current.get(pending.mediaId);
+    if (target?.disabled === true) return;
+    // Consume the intent in the enabled DOM commit, never in a later animation frame.
+    pendingFocusReference.current = undefined;
+    target?.focus();
+  });
+
   function replaceAttempts(
     update: (current: readonly UploadAttempt[]) => readonly UploadAttempt[],
   ) {
@@ -408,8 +427,6 @@ function HydratedStudioMediaPanel({
 
   async function publishGallery(
     gallery: StudioMediaGallery,
-    focusMediaId?: string,
-    focusFilePicker = false,
     source: "authoritative-read" | "command-result" = "command-result",
   ) {
     const scoped = assertStudioMediaBoundary(gallery, userId, studioId);
@@ -425,20 +442,12 @@ function HydratedStudioMediaPanel({
       exact: true,
       queryKey: studioQueryKeys.editor(userId, studioId),
     });
-    if (focusMediaId !== undefined || focusFilePicker) {
-      requestAnimationFrame(() => {
-        if (focusMediaId !== undefined) thumbnailReferences.current.get(focusMediaId)?.focus();
-        else filePickerReference.current?.focus();
-      });
-    }
     return selected;
   }
 
-  async function refreshAuthoritativeGallery(focusMediaId?: string, focusFilePicker = false) {
+  async function refreshAuthoritativeGallery() {
     return publishGallery(
       assertStudioMediaBoundary(await readStudioMedia(studioId), userId, studioId),
-      focusMediaId,
-      focusFilePicker,
       "authoritative-read",
     );
   }
@@ -809,10 +818,7 @@ function HydratedStudioMediaPanel({
     });
     try {
       await galleryMutation.mutateAsync(operation.command);
-      const gallery = await refreshAuthoritativeGallery(
-        operation.focusMediaId,
-        operation.focusFilePicker,
-      );
+      const gallery = await refreshAuthoritativeGallery();
       if (!galleryIntentIsConfirmed(operation, gallery)) {
         galleryOperationReference.current = undefined;
         setGalleryOperation({
@@ -824,6 +830,12 @@ function HydratedStudioMediaPanel({
         return;
       }
       galleryOperationReference.current = undefined;
+      pendingFocusReference.current =
+        operation.focusMediaId !== undefined
+          ? { kind: "thumbnail", mediaId: operation.focusMediaId }
+          : operation.focusFilePicker
+            ? { kind: "file-picker" }
+            : undefined;
       setGalleryOperation(undefined);
       setDeleteConfirmationId(undefined);
       announce(
@@ -970,8 +982,8 @@ function HydratedStudioMediaPanel({
   }
 
   function cancelDelete(mediaId: string) {
+    pendingFocusReference.current = { kind: "delete", mediaId };
     setDeleteConfirmationId(undefined);
-    requestAnimationFrame(() => deleteButtonReferences.current.get(mediaId)?.focus());
   }
 
   const closeLightbox = useCallback(() => setLightboxId(undefined), []);

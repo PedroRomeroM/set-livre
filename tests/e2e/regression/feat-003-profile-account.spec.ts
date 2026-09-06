@@ -16,6 +16,7 @@ import {
   stageFeat003SensitiveValue,
 } from "../../helpers/feat-003-profile-account";
 import { gotoExpectedPage } from "../../helpers/expected-page";
+import { closePageBeforeDatabaseCleanup } from "../../helpers/page-cleanup";
 
 function createDeferredSignal() {
   let resolved = false;
@@ -557,25 +558,23 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
         logoutVerificationRequest = request;
       }
     });
-    await page.route(
-      "**/api/auth/logout",
-      async (route) => {
-        logoutRequestStarted.resolve();
-        await releaseLogoutRequest.promise;
-        await route.fulfill({
-          body: JSON.stringify({
-            error: {
-              code: "SERVICE_UNAVAILABLE",
-              message: "Não foi possível confirmar a saída agora.",
-              requestId: "30000000-0000-4000-8000-000000000019",
-            },
-          }),
-          contentType: "application/json",
-          status: 503,
-        });
-      },
-      { times: 1 },
-    );
+    // Keep interception stable while the mocked response triggers a document navigation.
+    // The exact POST count below still rejects any duplicate logout attempt.
+    await page.route("**/api/auth/logout", async (route) => {
+      logoutRequestStarted.resolve();
+      await releaseLogoutRequest.promise;
+      await route.fulfill({
+        body: JSON.stringify({
+          error: {
+            code: "SERVICE_UNAVAILABLE",
+            message: "Não foi possível confirmar a saída agora.",
+            requestId: "30000000-0000-4000-8000-000000000019",
+          },
+        }),
+        contentType: "application/json",
+        status: 503,
+      });
+    });
     await page.evaluate(() => {
       window.dispatchEvent(new Event("offline"));
     });
@@ -668,6 +667,7 @@ test("SL-F003-E2E-009 @p1 fecha PII, rejeita fila offline e recupera timeout/con
   } finally {
     releaseFetchRequest.resolve();
     releaseLogoutRequest.resolve();
+    await closePageBeforeDatabaseCleanup(page);
     await cleanupFeat003QaIdentity(identity);
   }
 });
